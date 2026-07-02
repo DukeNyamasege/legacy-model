@@ -1,0 +1,77 @@
+deriv:
+  app_id: 33cCr2bWsByPgLlormNFw
+  environment: demo
+  public_ws_url: wss://api.derivws.com/trading/v1/options/ws/public
+  rest_base_url: https://api.derivws.com
+  trading_enabled: true
+  allow_real_trading: false
+  production_acknowledgement: ''
+  oauth_client_id: 33cCr2bWsByPgLlormNFw
+  oauth_redirect_url: https://localhost/oauth/callback
+  token_encryption_key: ''
+model:
+  name: The Underdog Legacy Model
+  version: 2.1.0-bin22001
+  brand: Father of Automation Series
+  run_id: bin22001
+files:
+  tokens: tokens.txt
+  state: bot_state.json
+  users: users.json
+logging:
+  level: INFO
+  file: trading_bot.log
+strategy:
+  symbol: 1HZ100V
+  contract_type: DIGITOVER
+  prediction: 3
+  duration: 1
+  duration_unit: t
+  pattern_length: 5
+  currency: USD
+  initial_stake: 0.35
+signal:
+  trigger_name: BIN22001x5
+  pattern_ranges:
+    - [6, 9]
+    - [6, 9]
+    - [0, 2]
+    - [0, 2]
+    - [3, 5]
+  overlapping_signals_allowed: false
+  require_pattern_reset: true
+execution:
+  reject_if_new_tick_arrives: true
+  maximum_signal_age_ms: 900
+  maximum_proposal_age_ms: 900
+bayesian:
+  enabled: true
+  mode: shadow
+  prior_alpha: 3.0
+  prior_beta: 2.0
+  credible_interval: 0.95
+  safety_margin_probability: 0.02
+  minimum_completed_trades: 300
+  minimum_probability_edge_confidence: 0.95
+hmm:
+  enabled: true
+  mode: shadow
+  minimum_training_ticks: 5000
+  retrain_every_ticks: 1000
+  favourable_state: MEAN_REVERSION
+  minimum_favourable_state_probability: 0.70
+cooldown:
+  after_win_ticks: 1
+  after_loss_ticks: 3
+  after_three_consecutive_losses_ticks: 15
+  after_five_consecutive_losses_ticks: 50
+  require_pattern_reset: true
+storage:
+  database_url_env: DATABASE_URL
+  local_database_url: sqlite:///data/bin22001.db
+  export_directory: exports/bin22001
+  database_required: true
+trade:
+  settle_wait_seconds: 3
+  max_tick_silence_seconds: 45
+  reconnect_delay_seconds: 10

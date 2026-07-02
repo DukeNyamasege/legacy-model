@@ -1,0 +1,38 @@
+# Ignore local runtime state
+bot_state.json
+trading_bot.log
+__pycache__/
+
+# Python virtual environment
+.venv/
+
+# Environment files with real secrets
+.env
+.env.*
+!.env.example
+!.env.vps.example
+tokens.txt
+users.json
+.runtime_tokens.txt
+.runtime_users.json
+.dashboard_state.json
+.local_dashboard_*.log
+*.token
+secrets/
+
+# Temp files
+*.tmp
+*.pyc
+
+# Test 2 runtime data
+data/
+storage/
+model_artifacts/
+exports/
+archives/
+.pytest_cache/
+.mypy_cache/
+
+# Netlify build output and local state
+dist/
+.netlify/

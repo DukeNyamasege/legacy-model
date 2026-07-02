@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="api-base-url" content="__API_BASE_URL__">
+  <title>Underdog Legacy Model</title>
+  <style>
+    :root {
+      --ink: #102c25;
+      --paper: #f7f0df;
+      --card: rgba(255, 253, 247, .88);
+      --line: #dcc9a6;
+      --green: #0d503e;
+      --red: #aa3434;
+      --gold: #b9852f;
+      --muted: #765f46;
+      --shadow: 0 18px 45px rgba(52, 39, 21, .12);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: "Book Antiqua", Palatino, Georgia, serif;
+      background:
+        radial-gradient(circle at 8% 4%, rgba(185,133,47,.17), transparent 28rem),
+        linear-gradient(135deg, #fbf7ec 0%, #efe2c7 100%);
+      min-height: 100vh;
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: .28;
+      background-image: repeating-linear-gradient(90deg, transparent 0 47px, rgba(16,44,37,.05) 48px);
+    }
+    main { position: relative; width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 24px 0 46px; }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 16px;
+      padding: 18px 20px;
+      border-bottom: 1px solid rgba(185,133,47,.34);
+    }
+    h1, h2, p { margin: 0; }
+    h1 { font-size: clamp(2rem, 4vw, 3.15rem); letter-spacing: -.045em; line-height: 1; }
+    h1 span { color: var(--gold); font-style: italic; font-weight: 400; }
+    h2 { font-size: 1.35rem; }
+    .brand { color: var(--gold); text-transform: uppercase; letter-spacing: .2em; font: 700 .65rem Georgia, serif; margin-bottom: 7px; }
+    .tagline { color: var(--muted); margin-top: 7px; font-size: .82rem; }
+    .version {
+      flex: 0 0 auto;
+      color: var(--ink);
+      text-align: left;
+      font-size: .76rem;
+      line-height: 1.45;
+      padding: 10px 14px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255,255,255,.55);
+    }
+    .version strong { display: block; color: var(--green); letter-spacing: .08em; text-transform: uppercase; }
+    .panel {
+      min-width: 0;
+      border: 1px solid var(--line);
+      background: var(--card);
+      box-shadow: var(--shadow);
+      border-radius: 22px;
+      backdrop-filter: blur(8px);
+    }
+    .control { padding: 15px 17px; display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; }
+    .status-line { display: flex; align-items: center; gap: 11px; font-weight: 700; font-size: 1.15rem; }
+    .status-copy small { display: block; margin-top: 3px; color: var(--muted); font-size: .72rem; font-weight: 400; }
+    .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--muted); box-shadow: 0 0 0 5px rgba(118,95,70,.12); }
+    .dot.running { background: #15906d; box-shadow: 0 0 0 5px rgba(21,144,109,.13); }
+    .dot.stopped { background: var(--red); box-shadow: 0 0 0 5px rgba(170,52,52,.13); }
+    button, input {
+      min-height: 44px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      font: 700 .95rem Georgia, serif;
+    }
+    button { padding: 0 22px; cursor: pointer; color: white; background: var(--green); transition: transform .12s ease, opacity .12s ease; }
+    button:active { transform: scale(.97); }
+    button:disabled { opacity: .55; cursor: wait; }
+    button.stop { background: var(--red); }
+    button.secondary { color: var(--ink); background: #efe3cc; }
+    .metrics { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin: 12px 0; }
+    .metric { padding: 15px; min-height: 96px; animation: rise .38s both; }
+    .metric span { display: block; color: var(--muted); font-size: .75rem; margin-bottom: 11px; overflow-wrap: anywhere; }
+    .metric strong { font-size: clamp(1.45rem, 3vw, 2rem); line-height: 1; }
+    .negative { color: var(--red); }
+    .positive { color: var(--green); }
+    .lower { display: grid; grid-template-columns: 1.35fr .65fr; gap: 12px; align-items: start; }
+    .section { padding: 19px; }
+    .section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; }
+    .trades { display: grid; gap: 9px; }
+    .trade {
+      display: grid;
+      grid-template-columns: 1.2fr .8fr .7fr .7fr;
+      gap: 10px;
+      padding: 13px;
+      border: 1px solid #e5d6bb;
+      border-radius: 14px;
+      background: rgba(255,255,255,.58);
+      font-size: .88rem;
+    }
+    .trade small, .model-row small { display: block; color: var(--muted); margin-bottom: 4px; }
+    .empty {
+      color: var(--muted);
+      padding: 48px 15px;
+      text-align: center;
+      border: 1px dashed rgba(185,133,47,.35);
+      border-radius: 14px;
+      background: rgba(247,240,223,.35);
+    }
+    .model-grid { display: grid; gap: 10px; }
+    .model-row { border-bottom: 1px solid #e5d6bb; padding: 10px 0; }
+    .model-row:last-child { border-bottom: 0; }
+    .access { margin-top: 14px; }
+    .access input { width: 100%; padding: 0 13px; color: var(--ink); background: rgba(255,255,255,.68); font-weight: 400; }
+    .emergency { width: 100%; margin-top: 9px; min-height: 40px; background: transparent; color: var(--red); border-color: rgba(170,52,52,.65); }
+    .error { color: var(--red); min-height: 20px; margin-top: 12px; font-size: .85rem; }
+    @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+    @media (max-width: 850px) {
+      .metrics { grid-template-columns: repeat(3, 1fr); }
+      .lower { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 580px) {
+      main { width: calc(100% - 18px); padding-top: 20px; overflow: hidden; }
+      header { display: block; padding: 10px 4px 16px; }
+      h1 { font-size: clamp(1.9rem, 9vw, 2.55rem); overflow-wrap: anywhere; }
+      .version { display: inline-block; max-width: none; margin-top: 13px; text-align: left; }
+      .control { grid-template-columns: 1fr 1fr; }
+      .status-line { grid-column: 1 / -1; min-height: 42px; }
+      .control button { width: 100%; padding: 0 12px; }
+      .metrics { grid-template-columns: repeat(2, 1fr); gap: 9px; }
+      .metric { min-height: 92px; padding: 14px 13px; }
+      .trade { grid-template-columns: 1fr 1fr; }
+      .section-head { gap: 10px; }
+      .section-head > * { min-width: 0; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <div class="brand">Father of Automation Series</div>
+      <h1>Underdog Legacy <span>Model</span></h1>
+      <p class="tagline">Adaptive digit execution and account intelligence</p>
+    </div>
+    <div class="version"><strong>Pattern 22001</strong>DIGITOVER 3 · 1 tick</div>
+  </header>
+
+  <section class="panel control">
+    <div class="status-line">
+      <i id="dot" class="dot"></i>
+      <div class="status-copy"><span id="status">Connecting</span><small id="status-note">Checking worker</small></div>
+    </div>
+    <button id="toggle" type="button">Start</button>
+    <button id="refresh" class="secondary" type="button">Refresh</button>
+  </section>
+
+  <section class="metrics">
+    <article class="panel metric"><span>Candidate signals</span><strong id="candidates">0</strong></article>
+    <article class="panel metric"><span>Trades</span><strong id="trades">0</strong></article>
+    <article class="panel metric"><span>Wins</span><strong id="wins">0</strong></article>
+    <article class="panel metric"><span>Losses</span><strong id="losses">0</strong></article>
+    <article class="panel metric"><span>Strategy P/L</span><strong id="profit">0.00</strong></article>
+    <article class="panel metric"><span>Account balance</span><strong id="balance">0.00</strong></article>
+  </section>
+
+  <div class="lower">
+    <section class="panel section">
+      <div class="section-head"><h2>Trades</h2><span id="trade-count">Latest 0</span></div>
+      <div id="trade-list" class="trades"><div class="empty">No trades yet.</div></div>
+    </section>
+
+    <aside class="panel section">
+      <div class="section-head"><h2>Model</h2><span>Shadow mode</span></div>
+      <div class="model-grid">
+        <div class="model-row"><small>Purchase condition</small><strong>6-9 · 6-9 · 0-2 · 0-2 · 3-5 → Over 3</strong></div>
+        <div class="model-row"><small>Bayesian evidence</small><strong id="bayesian">Not ready</strong></div>
+        <div class="model-row"><small>HMM evidence</small><strong id="hmm">Not ready</strong></div>
+        <div class="model-row"><small>Fixed stake</small><strong>$0.35 · 1 tick</strong></div>
+      </div>
+      <div id="access" class="access">
+        <input id="api-key" type="password" autocomplete="off" placeholder="Control key">
+        <button id="emergency" class="emergency" type="button">Emergency stop</button>
+      </div>
+      <div id="error" class="error"></div>
+    </aside>
+  </div>
+</main>
+<script>
+  const $ = id => document.getElementById(id);
+  const configuredApiBase = document.querySelector('meta[name="api-base-url"]').content.trim();
+  const apiBase = configuredApiBase.startsWith("__")
+    ? ""
+    : configuredApiBase.replace(/\/+$/, "");
+  const apiUrl = path => `${apiBase}${path}`;
+  const keyInput = $("api-key");
+  keyInput.value = sessionStorage.getItem("control-key") || "";
+  keyInput.addEventListener("input", () => sessionStorage.setItem("control-key", keyInput.value));
+  let currentStatus = "UNKNOWN";
+  let localControl = false;
+
+  function number(value, digits = 0) {
+    return Number(value || 0).toLocaleString(undefined, {minimumFractionDigits: digits, maximumFractionDigits: digits});
+  }
+  async function api(path, options = {}) {
+    const response = await fetch(apiUrl(path), options);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || `Request failed (${response.status})`);
+    return data;
+  }
+  function escapeHtml(value) {
+    return String(value ?? "").replace(/[&<>"']/g, character => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;"
+    })[character]);
+  }
+  function renderStatus(data) {
+    currentStatus = data.status || "UNKNOWN";
+    const running = currentStatus === "RUNNING";
+    $("status").textContent = running ? "Running" : currentStatus.replaceAll("_", " ").toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+    $("status-note").textContent = running
+      ? "Signals and execution are active"
+      : currentStatus === "STOPPED"
+        ? "Worker connected, trading paused"
+        : data.pause_reason || "Trading is not active";
+    $("dot").className = `dot ${running ? "running" : "stopped"}`;
+    $("toggle").textContent = running ? "Stop" : "Start";
+    $("toggle").className = running ? "stop" : "";
+    $("candidates").textContent = number(data.candidate_signals);
+    $("trades").textContent = number(data.purchased_trades);
+    $("wins").textContent = number(data.wins);
+    $("losses").textContent = number(data.losses);
+    const profit = Number(data.net_profit || 0);
+    $("profit").textContent = number(profit, 2);
+    $("profit").className = profit < 0 ? "negative" : profit > 0 ? "positive" : "";
+    const currency = data.accounts?.[0]?.currency || "USD";
+    $("balance").textContent = `${number(data.account_balance_total, 2)} ${currency}`;
+  }
+  function renderTrades(rows) {
+    $("trade-count").textContent = `Latest ${rows.length}`;
+    if (!rows.length) {
+      $("trade-list").innerHTML = '<div class="empty">No trades yet.</div>';
+      return;
+    }
+    $("trade-list").innerHTML = rows.map(row => `
+      <article class="trade">
+        <div><small>Contract</small><strong>${escapeHtml(row.contract_id)}</strong></div>
+        <div><small>Time</small><span>${new Date(row.purchase_time).toLocaleTimeString()}</span></div>
+        <div><small>Outcome</small><strong class="${row.outcome === "WIN" ? "positive" : row.outcome === "LOSS" ? "negative" : ""}">${escapeHtml(row.outcome)}</strong></div>
+        <div><small>Profit</small><strong>${row.profit == null ? "Pending" : number(row.profit, 2)}</strong></div>
+      </article>`).join("");
+  }
+  async function refresh() {
+    $("error").textContent = "";
+    try {
+      const [summary, trades, model] = await Promise.all([
+        api("/metrics/summary"),
+        api("/metrics/recent-trades?limit=30"),
+        api("/metrics/model")
+      ]);
+      renderStatus(summary);
+      renderTrades(trades.trades || []);
+      $("bayesian").textContent = `${model.bayesian.completed_trades} / ${model.bayesian.minimum_completed_trades}${model.bayesian.ready ? " - Ready" : ""}`;
+      $("hmm").textContent = `${model.hmm.observed_ticks} / ${model.hmm.minimum_training_ticks}${model.hmm.ready ? " - Ready" : ""}`;
+    } catch (error) {
+      $("error").textContent = "Unable to reach the service.";
+    }
+  }
+  async function control(path, button, busyText) {
+    button.disabled = true;
+    const original = button.textContent;
+    button.textContent = busyText;
+    $("error").textContent = "";
+    try {
+      const headers = {};
+      if (!localControl && keyInput.value) headers["X-API-Key"] = keyInput.value;
+      const data = await api(path, {
+        method: "POST",
+        headers
+      });
+      renderStatus(data);
+    } catch (error) {
+      $("error").textContent = error.message;
+    } finally {
+      button.disabled = false;
+      button.textContent = original;
+      await refresh();
+    }
+  }
+  $("toggle").addEventListener("click", () => {
+    const stopping = currentStatus === "RUNNING";
+    control(stopping ? "/control/pause" : "/control/resume", $("toggle"), stopping ? "Stopping..." : "Starting...");
+  });
+  $("emergency").addEventListener("click", () => control("/control/emergency-stop", $("emergency"), "Stopping..."));
+  $("refresh").addEventListener("click", async () => {
+    $("refresh").disabled = true;
+    $("refresh").textContent = "Refreshing...";
+    await refresh();
+    $("refresh").disabled = false;
+    $("refresh").textContent = "Refresh";
+  });
+  async function initialize() {
+    try {
+      const runtime = await api("/runtime");
+      localControl = Boolean(runtime.local_control);
+      if (localControl) {
+        keyInput.style.display = "none";
+        keyInput.value = "";
+      }
+    } catch (_) {
+      localControl = false;
+    }
+    await refresh();
+  }
+  initialize();
+  setInterval(refresh, 5000);
+</script>
+</body>
+</html>

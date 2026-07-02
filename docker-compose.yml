@@ -1,0 +1,54 @@
+services:
+  database:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-underdog_test2}
+      POSTGRES_USER: ${POSTGRES_USER:-underdog}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - test2_database:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-underdog} -d ${POSTGRES_DB:-underdog_test2}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [test2]
+
+  api:
+    build: .
+    restart: unless-stopped
+    command: sh -c "alembic upgrade head && uvicorn app.api:app --host 0.0.0.0 --port 8080"
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-underdog}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB:-underdog_test2}
+      DEPLOYMENT_ID: vps-api
+    ports:
+      - "${PORT:-8080}:8080"
+    depends_on:
+      database:
+        condition: service_healthy
+    networks: [test2]
+
+  worker:
+    build: .
+    restart: unless-stopped
+    command: sh -c "alembic upgrade head && python -m app.worker"
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-underdog}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB:-underdog_test2}
+      DEPLOYMENT_ID: vps-worker
+    volumes:
+      - test2_models:/app/model_artifacts
+    depends_on:
+      database:
+        condition: service_healthy
+    networks: [test2]
+
+volumes:
+  test2_database:
+  test2_models:
+
+networks:
+  test2:
+    internal: false

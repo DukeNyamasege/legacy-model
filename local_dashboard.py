@@ -1,0 +1,65 @@
+"""Run the Test 2 API and trading worker together for local evaluation."""
+
+from __future__ import annotations
+
+import os
+import secrets
+import subprocess
+import sys
+from pathlib import Path
+
+import uvicorn
+from dotenv import load_dotenv
+
+ROOT = Path(__file__).resolve().parent
+
+
+def main() -> None:
+    load_dotenv(ROOT / ".env")
+    os.environ.setdefault("DERIV_BOT_CONFIG", str(ROOT / "config.yaml"))
+    os.environ.setdefault("TRADING_MODE", "demo")
+    os.environ.setdefault("ALLOW_REAL_TRADING", "false")
+    os.environ.setdefault("DEPLOYMENT_ID", "local")
+    os.environ["LOCAL_CONTROL_ENABLED"] = "true"
+    if not os.getenv("CONTROL_API_KEY"):
+        os.environ["CONTROL_API_KEY"] = secrets.token_urlsafe(24)
+
+    host = os.getenv("HOST", "127.0.0.1")
+    port = int(os.getenv("PORT", "8080"))
+    print(f"Dashboard: http://{host}:{port}")
+    print(f"Control key: {os.environ['CONTROL_API_KEY']}")
+    print("The worker logs will remain visible in this terminal.")
+
+    worker = subprocess.Popen(
+        [sys.executable, "-m", "app.worker"],
+        cwd=ROOT,
+        env=os.environ.copy(),
+    )
+    try:
+        try:
+            worker.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            pass
+        else:
+            raise RuntimeError(
+                f"Trading worker exited during startup with code {worker.returncode}"
+            )
+        uvicorn.run(
+            "app.api:app",
+            host=host,
+            port=port,
+            reload=False,
+            access_log=False,
+        )
+    finally:
+        if worker.poll() is None:
+            worker.terminate()
+            try:
+                worker.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                worker.kill()
+                worker.wait()
+
+
+if __name__ == "__main__":
+    main()

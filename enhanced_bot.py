@@ -1,0 +1,1810 @@
+"""Deriv digit strategy bot migrated to the New Deriv APIs:
+
+- Uses the official public WS endpoint for unauthenticated market data.
+- Fetches and caches symbol precision (pip_size) dynamically.
+- Performs multi-account copy trading via the new REST bulk-purchase endpoint.
+- Validates tokens and maps account IDs dynamically on startup via REST.
+- Uses account-specific OTPs for secure authenticated WebSocket connections.
+- Monitores open contracts via proposal_open_contract subscriptions (no polling).
+- Exposes OAuth 2.0 PKCE helper flow on the command-line (--login).
+- Daily risk management, stop-loss, and take-profit per copier.
+- Fixed stake trading (no martingale).
+- Tick-based cooldown and global locking.
+"""
+
+import sys
+import os
+import json
+import asyncio
+import time
+import traceback
+import hashlib
+import logging
+import uuid
+import re
+import socket
+import subprocess
+from contextlib import suppress
+from pathlib import Path
+from collections import deque
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple, Set
+
+import aiohttp
+import websockets
+from websockets.exceptions import ConnectionClosed, ConnectionClosedError
+
+from app.config import load_test2_config
+from app.database import Database
+from app.model.bayesian_probability import BayesianProbability
+from app.model.feature_builder import build_features
+from app.model.hmm_regime import ThreeStateHmm
+from app.model.model_store import persist_model_metadata
+from app.repositories.test2_repository import Test2Repository
+from app.strategy.cooldown import AdaptiveCooldown
+from app.strategy.decision_engine import DecisionEngine, parse_proposal_economics
+from app.strategy.over3_strategy import (
+    TEST2_PATTERN_RANGES,
+    TEST2_TRIGGER,
+    validate_contract_parameters,
+)
+from app.strategy.signal_detector import CandidateSignal, Over3SignalDetector
+
+try:
+    from cryptography.fernet import Fernet
+    HAS_CRYPTOGRAPHY = True
+except ImportError:
+    HAS_CRYPTOGRAPHY = False
+
+# Fix Unicode output on Windows terminals
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+def load_config(config_path: str) -> Dict[str, Any]:
+    return load_test2_config(config_path).model_dump()
+
+
+def decrypt_tokens(tokens: List[str], key: str) -> List[str]:
+    """Decrypt tokens using a URL-safe Base64 key if encryption is set."""
+    if not key:
+        return tokens
+    if not HAS_CRYPTOGRAPHY:
+        logging.getLogger("deriv_bot").warning("cryptography library not installed. Processing tokens as plaintext.")
+        return tokens
+    try:
+        f = Fernet(key.encode("utf-8"))
+        decrypted = []
+        for t in tokens:
+            try:
+                decrypted.append(f.decrypt(t.encode("utf-8")).decode("utf-8"))
+            except Exception:
+                decrypted.append(t)
+        return decrypted
+    except Exception as e:
+        logging.getLogger("deriv_bot").error("Token decryption failed: %s. Using tokens as plaintext.", e)
+        return tokens
+
+
+def load_tokens(tokens_path: str) -> List[str]:
+    p = Path(tokens_path)
+    if not p.exists():
+        env_tokens = os.getenv("DERIV_TOKENS", "")
+        if env_tokens:
+            return [
+                token.strip()
+                for token in re.split(r"[\r\n,]+", env_tokens)
+                if token.strip()
+            ]
+        env_token = os.getenv("DERIV_TOKEN")
+        return [env_token] if env_token else []
+
+    tokens: List[str] = []
+    for line in p.read_text(encoding="utf-8").splitlines():
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        tokens.append(s)
+
+    seen = set()
+    uniq: List[str] = []
+    for t in tokens:
+        if t not in seen:
+            seen.add(t)
+            uniq.append(t)
+    return uniq
+
+
+def load_user_profiles(users_path: str) -> Dict[str, Dict[str, Any]]:
+    path = Path(users_path)
+    if not path.exists():
+        return {}
+
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+    records = raw.get("users", []) if isinstance(raw, dict) else []
+    profiles: Dict[str, Dict[str, Any]] = {}
+    for item in records:
+        if not isinstance(item, dict):
+            continue
+        token = str(item.get("token", "")).strip()
+        if not token:
+            continue
+        profiles[token] = {
+            "id": str(item.get("id", token_tag(token))),
+            "name": str(item.get("name", token_tag(token))),
+            "enabled": bool(item.get("enabled", True)),
+            "account_id": str(item.get("account_id", "")).strip(),
+        }
+    return profiles
+
+
+def token_tag(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()[:10]
+
+
+def mask_account_id(account_id: str) -> str:
+    value = str(account_id)
+    return f"{value[:3]}***{value[-3:]}" if len(value) > 6 else "***"
+
+
+def today_local_iso() -> str:
+    return datetime.now().date().isoformat()
+
+
+def _atomic_write_json(path: Path, data: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(path)
+
+
+def load_state(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        return {"version": 1, "bot": {"cooldown_ticks_remaining": 0}, "clients": {}, "unresolved_contracts": []}
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(loaded, dict):
+            raise ValueError("state must be a JSON object")
+        # Migrate legacy version 4 to version 1 for crash resilience
+        if loaded.get("version") == 4:
+            migration = loaded
+            migration.setdefault("version", 1)
+            # Move clients/unresolved_contracts into version 1 format
+            migration["clients"] = migration.get("clients", {})
+            migration["unresolved_contracts"] = migration.get("unresolved_contracts", [])
+            return migration
+        loaded.setdefault("version", 1)
+        loaded.setdefault("clients", {})
+        loaded.setdefault("unresolved_contracts", [])
+        bot_state = loaded.get("bot")
+        if not isinstance(bot_state, dict):
+            bot_state = {}
+        bot_state.setdefault("cooldown_ticks_remaining", 0)
+        loaded["bot"] = bot_state
+        return loaded
+    except Exception:
+        return {"version": 1, "bot": {"cooldown_ticks_remaining": 0}, "clients": {}, "unresolved_contracts": []}
+
+
+def detect_digit_streak_signal(
+    last_digits: List[str],
+    streak_length: int,
+) -> Optional[Tuple[str, str, str]]:
+    """Compatibility helper for the five-digit BIN22001 Over-only signal."""
+    required = len(TEST2_PATTERN_RANGES)
+    if len(last_digits) < required:
+        return None
+
+    window = [int(d) for d in last_digits[-required:]]
+    if all(
+        lower <= digit <= upper
+        for digit, (lower, upper) in zip(
+            window, TEST2_PATTERN_RANGES, strict=True
+        )
+    ):
+        return "DIGITOVER", "3", TEST2_TRIGGER
+    return None
+
+
+async def _rest_request(
+    method: str,
+    path: str,
+    app_id: str,
+    base_url: str,
+    token: Optional[str] = None,
+    json_data: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """Perform a REST API request to the Deriv API."""
+    url = f"{base_url.rstrip('/')}{path}"
+    headers = {
+        "Deriv-App-ID": str(app_id),
+        "Content-Type": "application/json"
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            if method.upper() == "POST":
+                async with session.post(url, headers=headers, json=json_data) as resp:
+                    if resp.status in {200, 201}:
+                        return await resp.json()
+                    else:
+                        try:
+                            err_body = await resp.json()
+                            return err_body
+                        except Exception:
+                            text = await resp.text()
+                            return {"error": {"message": text, "code": f"HTTP_{resp.status}"}}
+            else:
+                async with session.get(url, headers=headers) as resp:
+                    if resp.status == 200:
+                        return await resp.json()
+                    else:
+                        try:
+                            err_body = await resp.json()
+                            return err_body
+                        except Exception:
+                            text = await resp.text()
+                            return {"error": {"message": text, "code": f"HTTP_{resp.status}"}}
+    except Exception as e:
+        return {"error": {"message": str(e), "code": "CONNECTION_ERROR"}}
+
+
+class ConnectionStaleError(Exception):
+    """Raised when the tick stream goes silent for too long."""
+
+
+def scan_source_for_hardcoded_tokens(root: Path) -> None:
+    token_pattern = re.compile(r"\bpat_[A-Za-z0-9_-]{24,}\b")
+    source_suffixes = {".py", ".yaml", ".yml", ".json", ".toml", ".md"}
+    excluded_names = {"tokens.txt", "users.json", ".env"}
+    excluded_parts = {
+        ".git",
+        ".venv",
+        "archives",
+        "data",
+        "exports",
+        "analysis",
+        "__pycache__",
+    }
+    tracked_paths: list[Path] = []
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-z"],
+            check=True,
+            capture_output=True,
+            text=False,
+        )
+        tracked_paths = [
+            root / item.decode("utf-8")
+            for item in result.stdout.split(b"\0")
+            if item
+        ]
+    except (OSError, subprocess.SubprocessError):
+        tracked_paths = list(root.rglob("*"))
+
+    offenders = []
+    for path in tracked_paths:
+        if (
+            not path.is_file()
+            or path.name in excluded_names
+            or path.name.startswith(".runtime_")
+            or path.suffix.lower() not in source_suffixes
+            or any(part in excluded_parts for part in path.parts)
+        ):
+            continue
+        try:
+            if token_pattern.search(path.read_text(encoding="utf-8", errors="ignore")):
+                offenders.append(str(path.relative_to(root)))
+        except OSError:
+            continue
+    if offenders:
+        raise RuntimeError(
+            "Startup security scan found a hard-coded Deriv PAT in source files: "
+            + ", ".join(offenders)
+        )
+
+
+class _EnsureExtraFieldsFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        for k in ("token", "token_tag", "contract_id", "stake"):
+            if not hasattr(record, k):
+                setattr(record, k, "-")
+        return True
+
+
+class JsonLogFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        message = record.getMessage()
+        first_word = message.split(" ", 1)[0].strip(":").upper() if message else "LOG"
+        payload = {
+            "timestamp": datetime.fromtimestamp(
+                record.created, timezone.utc
+            ).isoformat(),
+            "level": record.levelname,
+            "run_id": os.getenv("TEST_RUN_ID", "bin22001"),
+            "deployment_id": os.getenv("DEPLOYMENT_ID", "local"),
+            "worker_id": getattr(record, "worker_id", "-"),
+            "signal_id": getattr(record, "signal_id", "-"),
+            "proposal_id": getattr(record, "proposal_id", "-"),
+            "contract_id": getattr(record, "contract_id", "-"),
+            "event_type": getattr(record, "event_type", first_word),
+            "strategy_version": "2.1.0-bin22001",
+            "model_version": "2.1.0-bin22001",
+            "masked_account_id": getattr(record, "masked_account_id", "-"),
+            "token_tag": getattr(record, "token_tag", "-"),
+            "stake": getattr(record, "stake", "-"),
+            "message": message,
+        }
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
+        return json.dumps(payload, ensure_ascii=True)
+
+
+class LiveConsoleHandler(logging.StreamHandler):
+    def __init__(self, stream=None):
+        super().__init__(stream)
+        self._status_text = ""
+
+    def _erase_status(self) -> None:
+        if self._status_text:
+            self.stream.write("\r" + (" " * len(self._status_text)) + "\r")
+            self.flush()
+
+    def set_status(self, text: str) -> None:
+        text = text[:220]
+        self._erase_status()
+        self._status_text = text
+        if self._status_text:
+            self.stream.write(self._status_text)
+            self.flush()
+
+    def clear_status(self) -> None:
+        self._erase_status()
+        self._status_text = ""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self._erase_status()
+        try:
+            super().emit(record)
+        finally:
+            if self._status_text:
+                self.stream.write(self._status_text)
+                self.flush()
+
+
+def setup_logging(level: str, log_file: str) -> logging.Logger:
+    logger = logging.getLogger("deriv_bot")
+    logger.setLevel(getattr(logging, level.upper(), logging.INFO))
+    for handler in list(logger.handlers):
+        try:
+            handler.close()
+        except Exception:
+            pass
+    logger.handlers.clear()
+
+    fmt_console = logging.Formatter(
+        fmt="%(asctime)s %(levelname)s %(message)s | token=%(token_tag)s contract=%(contract_id)s stake=%(stake)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    sh = LiveConsoleHandler(sys.stdout)
+    sh.setFormatter(fmt_console)
+    sh.addFilter(_EnsureExtraFieldsFilter())
+    logger.addHandler(sh)
+    setattr(logger, "live_console_handler", sh)
+
+    fh = logging.FileHandler(log_file, encoding="utf-8")
+    fh.setFormatter(JsonLogFormatter())
+    fh.addFilter(_EnsureExtraFieldsFilter())
+    logger.addHandler(fh)
+
+    logger.propagate = False
+    return logger
+
+
+class PublicMarketDataClient:
+    """Manages the unauthenticated public WebSocket connection for ticks and symbol info."""
+    def __init__(self, bot: 'TradingBot'):
+        self.bot = bot
+        self.ws: Optional[websockets.WebSocketClientProtocol] = None
+        self.is_connected = False
+        self.pending_requests: Dict[int, asyncio.Future] = {}
+        self.next_req_id = 1
+        self.listen_task: Optional[asyncio.Task] = None
+
+    async def connect_and_run(self) -> None:
+        attempt = 0
+        url = self.bot.public_ws_url
+        while self.bot.is_running:
+            try:
+                self.bot.logger.info("Connecting to public market WebSocket: %s", url)
+                async with websockets.connect(url) as ws:
+                    self.ws = ws
+                    self.is_connected = True
+                    attempt = 0
+                    self.bot._on_public_connection_established()
+                    self.bot.logger.info("Public WebSocket connection established")
+
+                    # Fetch and cache pip size (symbol precision)
+                    await self._fetch_precision()
+
+                    # Subscribe to symbol ticks
+                    await self._subscribe_ticks()
+
+                    self.bot._mark_tick_received()
+
+                    # Handle messages
+                    async for msg in ws:
+                        await self._on_message(msg)
+
+            except (ConnectionClosed, OSError, Exception) as e:
+                self.is_connected = False
+                self.ws = None
+                attempt += 1
+                self.bot.logger.warning("Public WebSocket error: %s. Reconnecting in %ss...", e, self.bot.reconnect_delay_seconds)
+
+            await asyncio.sleep(min(30, self.bot.reconnect_delay_seconds * (1.5 ** attempt)))
+
+    async def send_request(self, req: Dict[str, Any]) -> Dict[str, Any]:
+        """Send a request over the public WebSocket and wait for its response using req_id."""
+        if not self.ws or not self.is_connected:
+            return {"error": {"message": "Public WebSocket is not connected", "code": "NOT_CONNECTED"}}
+
+        req_id = self.next_req_id
+        self.next_req_id += 1
+        req["req_id"] = req_id
+
+        fut = asyncio.get_running_loop().create_future()
+        self.pending_requests[req_id] = fut
+
+        try:
+            await self.ws.send(json.dumps(req))
+            return await asyncio.wait_for(fut, timeout=10.0)
+        except asyncio.TimeoutError:
+            return {"error": {"message": "Request timed out", "code": "TIMEOUT"}}
+        except Exception as e:
+            return {"error": {"message": str(e), "code": "ERROR"}}
+        finally:
+            self.pending_requests.pop(req_id, None)
+
+    async def _fetch_precision(self) -> None:
+        self.bot.logger.info("Retrieving symbol details for %s...", self.bot.symbol)
+        if not self.ws:
+            return
+        req_id = self.next_req_id
+        self.next_req_id += 1
+        await self.ws.send(
+            json.dumps({"active_symbols": "brief", "req_id": req_id})
+        )
+        try:
+            raw = await asyncio.wait_for(self.ws.recv(), timeout=10.0)
+            resp = json.loads(raw)
+        except (asyncio.TimeoutError, json.JSONDecodeError) as exc:
+            self.bot.logger.error("Failed to fetch active symbols: %s", exc)
+            return
+        if "error" in resp:
+            self.bot.logger.error("Failed to fetch active symbols: %s", resp["error"].get("message"))
+            return
+
+        symbols = resp.get("active_symbols", [])
+        matched = False
+        for sym in symbols:
+            if sym.get("underlying_symbol") == self.bot.symbol:
+                pip_size_val = sym.get("pip_size", 0.01)
+
+                # Convert pip_size float to decimal places
+                if isinstance(pip_size_val, (int, float)):
+                    if pip_size_val < 1:
+                        s = f"{pip_size_val:.10f}".rstrip('0')
+                        self.bot.pip_size = len(s.split('.')[1]) if '.' in s else 2
+                    else:
+                        self.bot.pip_size = int(pip_size_val)
+                else:
+                    self.bot.pip_size = 2
+
+                matched = True
+                self.bot.logger.info("Cached %s precision: %s decimal places", self.bot.symbol, self.bot.pip_size)
+                break
+
+        if not matched:
+            self.bot.logger.warning("Symbol %s not found in active symbols. Defaulting to 2 decimals.", self.bot.symbol)
+            self.bot.pip_size = 2
+
+    async def _subscribe_ticks(self) -> None:
+        req = {
+            "ticks": self.bot.symbol,
+            "subscribe": 1
+        }
+        await self.ws.send(json.dumps(req))
+        self.bot.logger.info("Subscribed to %s ticks on public connection", self.bot.symbol)
+
+    async def _on_message(self, msg_str: str) -> None:
+        try:
+            data = json.loads(msg_str)
+        except Exception:
+            return
+
+        req_id = data.get("req_id")
+        if req_id and req_id in self.pending_requests:
+            self.pending_requests[req_id].set_result(data)
+            return
+
+        msg_type = data.get("msg_type")
+        if msg_type == "tick":
+            await self.bot._on_tick(data)
+
+
+class ClientSession:
+    """Manages the authenticated WebSocket connection and contract monitoring for a single copier account."""
+    def __init__(self, token: str, account_id: str, bot: 'TradingBot'):
+        self.token = token
+        self.account_id = account_id
+        self.bot = bot
+        self.token_tag = token_tag(token)
+        self.ws: Optional[websockets.WebSocketClientProtocol] = None
+        self.is_connected = False
+        self.active_subscriptions: Dict[int, str] = {}  # contract_id -> subscription_id
+        self.pending_contracts: Set[int] = set()       # contract_ids being monitored
+        self.task: Optional[asyncio.Task] = None
+
+    async def get_otp_url(self) -> Optional[str]:
+        app_id = self.bot.app_id
+        base_url = self.bot.rest_base_url
+        path = f"/trading/v1/options/accounts/{self.account_id}/otp"
+        res = await _rest_request("POST", path, app_id, base_url, token=self.token)
+        if "error" in res:
+            self.bot.logger.error("Failed to get OTP: %s", res["error"].get("message"), extra={"token_tag": self.token_tag})
+            return None
+        return res.get("data", {}).get("url")
+
+    async def connect_and_run(self) -> None:
+        attempt = 0
+        while self.bot.is_running:
+            try:
+                # 1. Fetch short-lived OTP WebSocket URL
+                url = await self.get_otp_url()
+                if not url:
+                    await asyncio.sleep(self.bot.reconnect_delay_seconds)
+                    continue
+
+                self.bot.logger.info(
+                    "Connecting to private WebSocket for account %s...",
+                    mask_account_id(self.account_id),
+                    extra={
+                        "token_tag": self.token_tag,
+                        "masked_account_id": mask_account_id(self.account_id),
+                    },
+                )
+                async with websockets.connect(url) as ws:
+                    self.ws = ws
+                    self.is_connected = True
+                    attempt = 0
+                    self.bot.logger.info(
+                        "Private WebSocket connected for account %s",
+                        mask_account_id(self.account_id),
+                        extra={
+                            "token_tag": self.token_tag,
+                            "masked_account_id": mask_account_id(self.account_id),
+                        },
+                    )
+                    await self.ws.send(
+                        json.dumps({"balance": 1, "subscribe": 1, "req_id": 900001})
+                    )
+
+                    # Restore subscriptions for any unresolved contracts
+                    for cid in list(self.pending_contracts):
+                        await self.subscribe_contract(cid)
+
+                    # Start ping keep-alive
+                    ping_task = asyncio.create_task(self._ping_loop())
+                    try:
+                        async for msg in ws:
+                            await self._on_message(msg)
+                    finally:
+                        ping_task.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await ping_task
+
+            except (ConnectionClosed, OSError, Exception) as e:
+                self.is_connected = False
+                self.ws = None
+                attempt += 1
+                self.bot.logger.warning(
+                    "Private connection lost for account %s: %s. Reconnecting...",
+                    mask_account_id(self.account_id),
+                    e,
+                    extra={
+                        "token_tag": self.token_tag,
+                        "masked_account_id": mask_account_id(self.account_id),
+                    },
+                )
+
+            await asyncio.sleep(min(30, self.bot.reconnect_delay_seconds * (1.5 ** attempt)))
+
+    async def _ping_loop(self) -> None:
+        while self.ws and self.is_connected:
+            try:
+                await self.ws.send(json.dumps({"ping": 1}))
+            except Exception:
+                break
+            await asyncio.sleep(30)
+
+    async def subscribe_contract(self, contract_id: int) -> None:
+        if not self.ws or not self.is_connected:
+            return
+        req = {
+            "proposal_open_contract": 1,
+            "contract_id": int(contract_id),
+            "subscribe": 1,
+            "req_id": int(contract_id)
+        }
+        try:
+            await self.ws.send(json.dumps(req))
+            self.bot.logger.info("Subscribed to contract %s updates", contract_id, extra={"token_tag": self.token_tag})
+        except Exception as e:
+            self.bot.logger.error("Failed to subscribe to contract %s: %s", contract_id, e, extra={"token_tag": self.token_tag})
+
+    async def unsubscribe_contract(self, subscription_id: str) -> None:
+        if not self.ws or not self.is_connected:
+            return
+        try:
+            await self.ws.send(json.dumps({"forget": subscription_id}))
+        except Exception:
+            pass
+
+    async def _on_message(self, msg_str: str) -> None:
+        try:
+            data = json.loads(msg_str)
+        except Exception:
+            return
+
+        msg_type = data.get("msg_type")
+        if msg_type == "balance":
+            balance = data.get("balance", {})
+            try:
+                self.bot.repository.update_account_balance(
+                    account_id=self.account_id,
+                    balance=float(balance["balance"]),
+                    currency=str(balance.get("currency", "USD")),
+                    status="active",
+                )
+            except (KeyError, TypeError, ValueError):
+                self.bot.logger.warning(
+                    "Ignored malformed balance update",
+                    extra={"token_tag": self.token_tag},
+                )
+            return
+        if msg_type == "proposal_open_contract":
+            contract = data.get("proposal_open_contract")
+            if not contract:
+                return
+
+            contract_id = contract.get("contract_id")
+            if not contract_id:
+                return
+
+            sub_id = data.get("subscription", {}).get("id")
+            if sub_id:
+                self.active_subscriptions[int(contract_id)] = sub_id
+
+            await self.bot.handle_contract_update(self.token, int(contract_id), contract)
+
+
+class TradingBot:
+    def __init__(self, config_path: Optional[str] = None):
+        self.config_path = config_path or os.getenv("DERIV_BOT_CONFIG", "config.yaml")
+        scan_source_for_hardcoded_tokens(Path(self.config_path).resolve().parent)
+        self.test2_config = load_test2_config(self.config_path)
+        self.cfg = self.test2_config.model_dump()
+
+        self.app_id = str(self.cfg["deriv"].get("app_id", "71937"))
+        self.environment = str(self.cfg["deriv"].get("environment", "demo")).lower()
+        self.public_ws_url = str(self.cfg["deriv"].get("public_ws_url", "wss://api.derivws.com/trading/v1/options/ws/public"))
+        self.rest_base_url = str(self.cfg["deriv"].get("rest_base_url", "https://api.derivws.com"))
+        self.trading_enabled = bool(self.cfg["deriv"].get("trading_enabled", True))
+        self.encryption_key = str(self.cfg["deriv"].get("token_encryption_key", ""))
+
+        self.symbol = self.cfg["strategy"].get("symbol", "1HZ100V")
+        self.pattern_length = 5
+        self.max_tick_silence_seconds = max(5, int(self.cfg["trade"].get("max_tick_silence_seconds", 45)))
+        self.reconnect_delay_seconds = max(1, int(self.cfg["trade"].get("reconnect_delay_seconds", 10)))
+        self.watchdog_poll_interval_seconds = 5.0
+
+        validate_contract_parameters(
+            contract_type=self.cfg["strategy"]["contract_type"],
+            barrier=str(self.cfg["strategy"]["prediction"]),
+            symbol=self.symbol,
+            stake=float(self.cfg["strategy"]["initial_stake"]),
+            duration=int(self.cfg["strategy"]["duration"]),
+            duration_unit=self.cfg["strategy"]["duration_unit"],
+        )
+
+        self.logger = setup_logging(
+            self.cfg["logging"].get("level", "INFO"),
+            self.cfg["logging"].get("file", "trading_bot.log"),
+        )
+
+        tokens_file = self.cfg["files"]["tokens"]
+        tokens_file = os.getenv("DERIV_TOKENS_FILE", tokens_file)
+        raw_tokens = load_tokens(tokens_file)
+        self.tokens: List[str] = decrypt_tokens(raw_tokens, self.encryption_key)
+        users_file = self.cfg["files"].get("users", "users.json")
+        users_file = os.getenv("DERIV_USER_FILE", users_file)
+        self.user_profiles = load_user_profiles(users_file)
+        if not self.tokens:
+            raise SystemExit(
+                "No tokens found. Add tokens to tokens.txt (config files.tokens) "
+                "or set DERIV_TOKENS_FILE, or set DERIV_TOKEN (single token mode)."
+            )
+
+        self.is_running = True
+        self.is_trading_locked = False
+        self.pip_size = 2
+        self.last_tick_received_at = 0.0
+        self.tick_sequence = 0
+        self.connection_session_id = ""
+        self.pending_signal: Optional[CandidateSignal] = None
+        self.ticks_history = deque(maxlen=50)
+        self.live_ticks_history = deque(maxlen=7)
+
+        self.database = Database(self.test2_config.database_url)
+        self.database.create_schema()
+        self.repository = Test2Repository(self.database, self.test2_config)
+        self.tick_sequence = self.repository.current_tick_sequence()
+        historical_digits = self.repository.recent_digits(limit=6000)
+        self.raw_tick_digits = deque(historical_digits, maxlen=10000)
+
+        signal_cfg = self.test2_config.signal
+        self.signal_detector = Over3SignalDetector(
+            run_id=self.test2_config.model.run_id,
+            trigger_name=signal_cfg.trigger_name,
+            pattern_ranges=signal_cfg.pattern_ranges,
+            overlapping_signals_allowed=signal_cfg.overlapping_signals_allowed,
+            require_pattern_reset=signal_cfg.require_pattern_reset,
+        )
+        bayes_cfg = self.test2_config.bayesian
+        self.bayesian = BayesianProbability(
+            prior_alpha=bayes_cfg.prior_alpha,
+            prior_beta=bayes_cfg.prior_beta,
+            credible_interval=bayes_cfg.credible_interval,
+            minimum_completed_trades=bayes_cfg.minimum_completed_trades,
+        )
+        wins, losses = self.repository.completed_outcomes()
+        self.bayesian.restore(wins, losses)
+        hmm_cfg = self.test2_config.hmm
+        self.hmm = ThreeStateHmm(hmm_cfg.minimum_training_ticks)
+        if self.hmm.train(list(self.raw_tick_digits)):
+            self._persist_hmm_metadata()
+        execution_cfg = self.test2_config.execution
+        self.decision_engine = DecisionEngine(
+            maximum_signal_age_ms=execution_cfg.maximum_signal_age_ms,
+            maximum_proposal_age_ms=execution_cfg.maximum_proposal_age_ms,
+            bayesian_mode=bayes_cfg.mode,
+            bayesian_confidence_threshold=bayes_cfg.minimum_probability_edge_confidence,
+            hmm_mode=hmm_cfg.mode,
+            favourable_state=hmm_cfg.favourable_state,
+            favourable_state_threshold=hmm_cfg.minimum_favourable_state_probability,
+        )
+        cooldown_cfg = self.test2_config.cooldown
+        self.cooldown = AdaptiveCooldown(
+            after_win_ticks=cooldown_cfg.after_win_ticks,
+            after_loss_ticks=cooldown_cfg.after_loss_ticks,
+            after_three_consecutive_losses_ticks=cooldown_cfg.after_three_consecutive_losses_ticks,
+            after_five_consecutive_losses_ticks=cooldown_cfg.after_five_consecutive_losses_ticks,
+        )
+
+        self.state_path = Path(self.cfg["files"]["state"])
+        self.state_doc = load_state(self.state_path)
+        self.cooldown_ticks_remaining = 0
+
+        self.clients: Dict[str, Dict[str, Any]] = self._init_clients_from_state()
+        self.sessions: Dict[str, ClientSession] = {}
+        self.valid_clients: List[Tuple[str, str]] = [] # list of (token, account_id) pairs
+        self.unresolved_contracts_from_state: Set[int] = set()
+
+        # Trade cycle monitoring variables
+        self.pending_contracts_for_current_cycle: Set[int] = set()
+        self.cycle_outcomes: List[str] = []
+        self.contract_signal_ids: Dict[int, str] = {}
+        self.pending_by_signal: Dict[str, Set[int]] = {}
+        self.outcomes_by_signal: Dict[str, List[str]] = {}
+
+        self._watchdog_task: Optional[asyncio.Task] = None
+        self._lease_task: Optional[asyncio.Task] = None
+        self._background_tasks: Set[asyncio.Task] = set()
+        self.worker_id = str(uuid.uuid4())
+        self.lease_key = ""
+        self.public_client = PublicMarketDataClient(self)
+        self._save_state()
+
+    def _persist_hmm_metadata(self) -> None:
+        model_id = f"hmm-{self.test2_config.model.run_id}-{self.tick_sequence}"
+        first_sequence = max(1, self.tick_sequence - len(self.raw_tick_digits) + 1)
+        metadata = persist_model_metadata(
+            "model_artifacts",
+            model_id=model_id,
+            model_version=self.test2_config.model.version,
+            training_run_id=self.test2_config.model.run_id,
+            training_tick_range=(first_sequence, self.tick_sequence),
+            observation_count=len(self.raw_tick_digits),
+            state_mappings={
+                "0": "MEAN_REVERSION",
+                "1": "NEUTRAL_RANDOM",
+                "2": "CONTINUATION",
+            },
+            validation_metrics={"framework_ready": True},
+        )
+        self.repository.record_model_artifact(
+            model_type="HMM",
+            model_version=self.test2_config.model.version,
+            storage_location=f"model_artifacts/{model_id}.json",
+            metadata=metadata,
+            checksum=metadata["checksum"],
+        )
+
+    def _init_clients_from_state(self) -> Dict[str, Dict[str, Any]]:
+        today = today_local_iso()
+        clients_doc = self.state_doc.get("clients", {})
+
+        clients: Dict[str, Dict[str, Any]] = {}
+        for token in self.tokens:
+            tag = token_tag(token)
+            existing = clients_doc.get(tag, {})
+            profile = self.user_profiles.get(token, {})
+            st = {
+                "token_tag": tag,
+                "user_id": str(profile.get("id", tag)),
+                "name": str(profile.get("name", tag)),
+                "total_profit": float(existing.get("total_profit", 0.0)),
+                "profit_today": float(existing.get("profit_today", 0.0)),
+                "current_stake": float(self.cfg["strategy"]["initial_stake"]),
+                "day": str(existing.get("day", today)),
+                "total_trades": int(existing.get("total_trades", 0)),
+                "wins": int(existing.get("wins", 0)),
+                "losses": int(existing.get("losses", 0)),
+                "last_result": str(existing.get("last_result", "idle")),
+                "last_profit": float(existing.get("last_profit", 0.0)),
+            }
+            if st["day"] != today:
+                st["profit_today"] = 0.0
+                st["day"] = today
+            clients[token] = st
+        return clients
+
+    def _save_state(self) -> None:
+        doc = {
+            "version": 6,
+            "bot": {
+                "run_id": self.test2_config.model.run_id,
+                "cooldown_ticks_remaining": self.cooldown_ticks_remaining,
+                "environment": self.environment,
+                "symbol": self.symbol,
+                "is_trading_locked": self.is_trading_locked,
+                "pending_contract_count": len(self.pending_contracts_for_current_cycle),
+                "last_tick_received_at": self.last_tick_received_at,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+            "clients": {},
+            "unresolved_contracts": []
+        }
+        for token, st in self.clients.items():
+            doc["clients"][st["token_tag"]] = {
+                "user_id": st["user_id"],
+                "name": st["name"],
+                "total_profit": st["total_profit"],
+                "profit_today": st["profit_today"],
+                "current_stake": st["current_stake"],
+                "day": st["day"],
+                "total_trades": st["total_trades"],
+                "wins": st["wins"],
+                "losses": st["losses"],
+                "last_result": st["last_result"],
+                "last_profit": st["last_profit"],
+            }
+
+        unresolved = []
+        for token, session in self.sessions.items():
+            for cid in session.pending_contracts:
+                unresolved.append({
+                    "token_tag": token_tag(token),
+                    "contract_id": cid,
+                    "account_id_masked": f"{session.account_id[:3]}***{session.account_id[-3:]}",
+                })
+        doc["unresolved_contracts"] = unresolved
+        _atomic_write_json(self.state_path, doc)
+
+    def _spawn_background_task(self, coro: Any, *, name: str) -> None:
+        task = asyncio.create_task(coro, name=name)
+        self._background_tasks.add(task)
+
+        def _on_done(done_task: asyncio.Task) -> None:
+            self._background_tasks.discard(done_task)
+            try:
+                done_task.result()
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:
+                self.logger.error("Background task %s failed: %s", name, exc)
+
+        task.add_done_callback(_on_done)
+
+    def _cooldown_remaining_ticks(self) -> int:
+        return max(0, int(self.cooldown.state.ticks_remaining))
+
+    def _is_cooldown_active(self) -> bool:
+        return self._cooldown_remaining_ticks() > 0
+
+    def _cooldown_note(self) -> str:
+        remaining = self._cooldown_remaining_ticks()
+        return f"trade=COOLDOWN {remaining} ticks"
+
+    def _consume_cooldown_tick(self) -> None:
+        ended = self.cooldown.observe_tick()
+        self.cooldown_ticks_remaining = self.cooldown.state.ticks_remaining
+        if ended:
+            self.logger.info(
+                "COOLDOWN_ENDED reason=%s",
+                self.cooldown.state.reason,
+            )
+        self._save_state()
+
+    def _register_trade_cycle_outcome(self, outcome: str) -> None:
+        state = self.cooldown.register_outcome(outcome)
+        self.cooldown_ticks_remaining = state.ticks_remaining
+        self.logger.info(
+            "COOLDOWN_STARTED result=%s reason=%s cooldown_ticks=%s",
+            str(outcome).upper(),
+            state.reason,
+            self.cooldown_ticks_remaining,
+        )
+        self._save_state()
+
+    def _get_live_console_handler(self) -> Optional[LiveConsoleHandler]:
+        handler = getattr(self.logger, "live_console_handler", None)
+        return handler if isinstance(handler, LiveConsoleHandler) else None
+
+    def _render_live_ticks(self, note: str = "") -> None:
+        handler = self._get_live_console_handler()
+        if handler is None or not self.live_ticks_history:
+            return
+
+        symbol = self.symbol
+        digits_display = " | ".join(t["last_digit"] for t in self.live_ticks_history)
+        quotes_display = " | ".join(t["display"] for t in self.live_ticks_history)
+        state = note
+        if not state:
+            if self.is_trading_locked:
+                state = "trade=ACTIVE"
+            elif self._is_cooldown_active():
+                state = self._cooldown_note()
+            else:
+                state = "trade=WATCHING"
+        handler.set_status(
+            f"LIVE {symbol} | digits=[{digits_display}] | ticks=[{quotes_display}] | {state}"
+        )
+
+    def _clear_live_ticks(self) -> None:
+        handler = self._get_live_console_handler()
+        if handler is not None:
+            handler.clear_status()
+
+    def _mark_tick_received(self) -> None:
+        self.last_tick_received_at = time.monotonic()
+
+    def _on_public_connection_established(self) -> None:
+        previous = self.connection_session_id
+        self.connection_session_id = str(uuid.uuid4())
+        if previous and self.pending_signal and not self.pending_signal.consumed:
+            self.repository.mark_signal(
+                self.pending_signal.signal_id,
+                status="SKIP_CONNECTION_UNHEALTHY",
+                stale=True,
+            )
+            self.pending_signal = None
+
+    def _reset_session_runtime_state(self) -> None:
+        self.is_trading_locked = False
+        self.last_tick_received_at = 0.0
+        self.ticks_history.clear()
+        self.live_ticks_history.clear()
+        self._clear_live_ticks()
+
+    async def validate_accounts(self) -> None:
+        """Fetch and validate account IDs REST-side, sorting demo and real accounts."""
+        valid = []
+        for token in self.tokens:
+            tag = token_tag(token)
+            profile = self.user_profiles.get(token, {})
+            preferred_account_id = str(profile.get("account_id", "")).strip()
+            self.logger.info("Validating account for token...", extra={"token_tag": tag})
+
+            path = "/trading/v1/options/accounts"
+            resp = await _rest_request("GET", path, self.app_id, self.rest_base_url, token=token)
+
+            if "error" in resp:
+                self.logger.error("Account verification failed: %s", resp["error"].get("message"), extra={"token_tag": tag})
+                continue
+
+            accounts = resp.get("data", [])
+            matched = None
+            if preferred_account_id:
+                matched = next((acc for acc in accounts if acc.get("account_id") == preferred_account_id), None)
+                if matched and matched.get("account_type") != self.environment:
+                    self.logger.error(
+                        "Configured account %s does not match environment %s",
+                        mask_account_id(preferred_account_id),
+                        self.environment,
+                        extra={"token_tag": tag},
+                    )
+                    matched = None
+            if matched is None:
+                for acc in accounts:
+                    if acc.get("account_type") == self.environment:
+                        matched = acc
+                        break
+
+            if not matched:
+                self.logger.error("No valid options %s account found for token", self.environment, extra={"token_tag": tag})
+                continue
+
+            account_id = matched["account_id"]
+            self.repository.update_account_balance(
+                account_id=account_id,
+                balance=float(matched.get("balance", 0.0)),
+                currency=str(matched.get("currency", "USD")),
+                status=str(matched.get("status", "active")),
+            )
+            self.logger.info(
+                "Successfully validated %s account: %s",
+                self.environment,
+                mask_account_id(account_id),
+                extra={
+                    "token_tag": tag,
+                    "masked_account_id": mask_account_id(account_id),
+                },
+            )
+            valid.append((token, account_id))
+
+        self.valid_clients = valid
+        if not self.valid_clients:
+            raise SystemExit(f"No valid Options accounts matched the configured environment: {self.environment}")
+
+    async def _on_tick(self, tick_data: Dict[str, Any]) -> None:
+        tick = tick_data["tick"]
+        quote = float(tick["quote"])
+        display_value = f"{quote:.{self.pip_size}f}"
+        last_digit = display_value[-1]
+        epoch = int(tick["epoch"])
+        tick_id = str(tick.get("id") or f"{epoch}:{display_value}")
+        self._mark_tick_received()
+        self.tick_sequence += 1
+
+        tick_snapshot = {
+            "quote": quote,
+            "display": display_value,
+            "last_digit": last_digit,
+            "epoch": epoch,
+            "tick_id": tick_id,
+        }
+        self.live_ticks_history.append(tick_snapshot)
+        self.ticks_history.append(tick_snapshot)
+        self.raw_tick_digits.append(int(last_digit))
+        self.repository.record_tick(
+            sequence_id=self.tick_sequence,
+            symbol=str(tick.get("symbol") or self.symbol),
+            epoch=epoch,
+            tick_id=tick_id,
+            quote=quote,
+            final_digit=int(last_digit),
+            connection_session_id=self.connection_session_id,
+        )
+        self._render_live_ticks()
+
+        hmm_cfg = self.test2_config.hmm
+        if (
+            hmm_cfg.enabled
+            and len(self.raw_tick_digits) >= hmm_cfg.minimum_training_ticks
+            and (
+                not self.hmm.trained
+                or self.tick_sequence % hmm_cfg.retrain_every_ticks == 0
+            )
+        ):
+            if self.hmm.train(list(self.raw_tick_digits)):
+                self._persist_hmm_metadata()
+
+        if self.is_trading_locked:
+            return
+
+        if self._is_cooldown_active():
+            self._consume_cooldown_tick()
+            self._render_live_ticks(note=self._cooldown_note() if self._is_cooldown_active() else "trade=WATCHING")
+            return
+
+        status, pause_reason = self.repository.control_state()
+        if status in {"STOPPED", "MANUAL_PAUSE", "EMERGENCY_STOP"}:
+            self._render_live_ticks(note=f"trade={status}")
+            return
+
+        digits_display = " | ".join(
+            t["last_digit"] for t in list(self.ticks_history)[-self.pattern_length :]
+        )
+        self.logger.debug("tick %s last_digits=[%s]", display_value, digits_display)
+
+        signal = self.signal_detector.observe(
+            list(self.ticks_history),
+            connection_session_id=self.connection_session_id,
+            tick_sequence=self.tick_sequence,
+        )
+        if signal is None:
+            return
+
+        self.repository.record_candidate(signal)
+        self.pending_signal = signal
+        self.is_trading_locked = True
+        self._render_live_ticks(note=f"CANDIDATE {signal.trigger_name}")
+        self.logger.info(
+            "SIGNAL_CREATED signal_id=%s digits=[%s] trigger=%s contract_type=DIGITOVER barrier=3",
+            signal.signal_id,
+            digits_display,
+            signal.trigger_name,
+        )
+        self._spawn_background_task(
+            self._purchase_for_multiple_accounts(signal),
+            name=f"purchase_{signal.signal_id}",
+        )
+
+    async def _purchase_for_multiple_accounts(
+        self,
+        signal: CandidateSignal,
+    ) -> None:
+        """Evaluate one Test 2 candidate and submit a new-API bulk purchase."""
+        try:
+            validate_contract_parameters(
+                contract_type=signal.contract_type,
+                barrier=signal.barrier,
+                symbol=signal.symbol,
+                stake=float(self.cfg["strategy"]["initial_stake"]),
+                duration=int(self.cfg["strategy"]["duration"]),
+                duration_unit=self.cfg["strategy"]["duration_unit"],
+            )
+            self.logger.info(
+                "Validating candidate via proposal request signal_id=%s",
+                signal.signal_id,
+            )
+            proposal_requested = time.monotonic()
+            self.repository.mark_signal(
+                signal.signal_id,
+                status="PROPOSAL_REQUESTED",
+                proposal_requested=True,
+            )
+            prop_req = {
+                "proposal": 1,
+                "amount": 0.35,
+                "basis": "stake",
+                "contract_type": "DIGITOVER",
+                "currency": "USD",
+                "duration": 1,
+                "duration_unit": "t",
+                "barrier": "3",
+                "underlying_symbol": "1HZ100V",
+            }
+            prop_resp = await self.public_client.send_request(prop_req)
+            proposal_received = time.monotonic()
+            if "error" in prop_resp:
+                self.logger.error("Proposal validation rejected: %s", prop_resp["error"].get("message"))
+                self.repository.mark_signal(
+                    signal.signal_id,
+                    status="SKIP_INVALID_PROPOSAL",
+                    proposal_received=True,
+                )
+                return
+
+            echo = prop_resp.get("echo_req", {})
+            for key, expected in {
+                "contract_type": "DIGITOVER",
+                "barrier": "3",
+                "underlying_symbol": "1HZ100V",
+            }.items():
+                if key in echo and str(echo[key]) != expected:
+                    self.repository.mark_signal(
+                        signal.signal_id,
+                        status="SKIP_INVALID_PROPOSAL",
+                        proposal_received=True,
+                    )
+                    self.logger.error("Proposal echo mismatch for %s", key)
+                    return
+
+            preliminary = self.bayesian.snapshot(0.60, self.test2_config.bayesian.safety_margin_probability)
+            try:
+                economics = parse_proposal_economics(
+                    prop_resp,
+                    stake=0.35,
+                    predicted_probability=preliminary.posterior_mean,
+                    requested_monotonic=proposal_requested,
+                    received_monotonic=proposal_received,
+                )
+                self.repository.record_proposal(signal, economics)
+            except Exception as exc:
+                self.repository.mark_signal(
+                    signal.signal_id,
+                    status="SKIP_INVALID_PROPOSAL",
+                    proposal_received=True,
+                )
+                self.logger.error("Proposal validation rejected: %s", exc)
+                return
+
+            bayesian = self.bayesian.snapshot(
+                economics.break_even_probability,
+                self.test2_config.bayesian.safety_margin_probability,
+            )
+            features = build_features(list(self.raw_tick_digits))
+            hmm = self.hmm.infer(features)
+            decision = self.decision_engine.decide(
+                signal=signal,
+                economics=economics,
+                bayesian=bayesian,
+                hmm=hmm,
+                current_tick_sequence=self.tick_sequence,
+                connection_session_id=self.connection_session_id,
+                connection_healthy=(
+                    self.public_client.is_connected
+                    and bool(self.sessions)
+                    and all(session.is_connected for session in self.sessions.values())
+                ),
+                pattern_reset_required=False,
+            )
+            self.repository.record_decision(
+                decision,
+                hmm=hmm,
+                bayesian=bayesian,
+            )
+            self.logger.info(
+                "MODEL_DECISION signal_id=%s action=%s expected_value=%.5f "
+                "posterior_mean=%.5f hmm_state=%s",
+                signal.signal_id,
+                decision.final_action,
+                decision.expected_value,
+                decision.posterior_mean,
+                decision.hmm_state,
+            )
+            if decision.final_action != "PURCHASE":
+                self.repository.mark_signal(
+                    signal.signal_id,
+                    status=decision.final_action,
+                    stale=decision.final_action == "SKIP_STALE_SIGNAL",
+                    proposal_received=True,
+                )
+                return
+
+            if not self.trading_enabled:
+                self.repository.mark_signal(signal.signal_id, status="OBSERVATION_ONLY")
+                self.logger.info("Trading is DISABLED; candidate recorded as observation only")
+                return
+
+            if (
+                self.test2_config.execution.reject_if_new_tick_arrives
+                and self.tick_sequence != signal.tick_sequence
+            ):
+                self.repository.mark_signal(
+                    signal.signal_id,
+                    status="SKIP_STALE_SIGNAL",
+                    stale=True,
+                )
+                return
+            status, _ = self.repository.control_state()
+            if status in {"MANUAL_PAUSE", "EMERGENCY_STOP"}:
+                self.repository.mark_signal(signal.signal_id, status="SKIP_MANUAL_PAUSE")
+                return
+            if not self.repository.consume_signal(signal.signal_id):
+                self.repository.mark_signal(signal.signal_id, status="SKIP_DUPLICATE")
+                return
+            signal.consumed = True
+
+            eligible_accounts = list(self.valid_clients)
+            bulk_path = f"/trading/v1/options/contracts/bulk-purchase/{self.environment}"
+            req_body = {
+                "contract_parameters": {
+                    "contract_type": "DIGITOVER",
+                    "underlying_symbol": "1HZ100V",
+                    "amount": 0.35,
+                    "duration": 1,
+                    "duration_unit": "t",
+                    "barrier": "3",
+                    "basis": "stake",
+                    "currency": "USD",
+                },
+                "accounts": [
+                    {"token": token, "account_id": account_id} for token, account_id in eligible_accounts
+                ]
+            }
+
+            purchase_requested_at = datetime.now(timezone.utc)
+            self.repository.mark_signal(
+                signal.signal_id,
+                status="PURCHASE_REQUESTED",
+                purchase_requested=True,
+                ticks_between=self.tick_sequence - signal.tick_sequence,
+            )
+            self.logger.info(
+                "PURCHASE_REQUESTED signal_id=%s account_count=%s proposal_id=%s",
+                signal.signal_id,
+                len(eligible_accounts),
+                economics.proposal_id,
+            )
+            resp = await _rest_request("POST", bulk_path, self.app_id, self.rest_base_url, token=None, json_data=req_body)
+
+            if "error" in resp:
+                self.logger.error("REST Bulk Purchase request failed: %s", resp["error"].get("message"))
+                self.repository.mark_signal(signal.signal_id, status="PURCHASE_FAILED")
+                return
+            if resp.get("errors"):
+                messages = "; ".join(err.get("message", "Unknown bulk-purchase error") for err in resp.get("errors", []))
+                self.logger.error("REST Bulk Purchase validation failed: %s", messages)
+                self.repository.mark_signal(signal.signal_id, status="PURCHASE_FAILED")
+                return
+
+            transactions = resp.get("data", {}).get("transactions", [])
+            signal_contracts: Set[int] = set()
+            self.outcomes_by_signal[signal.signal_id] = []
+
+            for tx in transactions:
+                account_id = tx.get("account_id")
+                token = next((t for t, acc in eligible_accounts if acc == account_id), None)
+                if not token:
+                    continue
+
+                st = self.clients[token]
+                tag = st["token_tag"]
+
+                if "error" in tx:
+                    self.logger.error(
+                        "Purchase failed for account %s: %s",
+                        mask_account_id(account_id),
+                        tx["error"].get("message"),
+                        extra={
+                            "token_tag": tag,
+                            "masked_account_id": mask_account_id(account_id),
+                        },
+                    )
+                    continue
+
+                contract_id = tx.get("contract_id")
+                transaction_id = tx.get("transaction_id")
+                if contract_id:
+                    contract_id = int(contract_id)
+                    st["current_stake"] = 0.35
+                    self.pending_contracts_for_current_cycle.add(contract_id)
+                    signal_contracts.add(contract_id)
+                    self.contract_signal_ids[contract_id] = signal.signal_id
+                    session = self.sessions[token]
+                    session.pending_contracts.add(contract_id)
+                    self.repository.register_purchase(
+                        signal_id=signal.signal_id,
+                        contract_id=str(contract_id),
+                        transaction_id=str(transaction_id or contract_id),
+                        account_id=str(account_id),
+                        purchase_time=purchase_requested_at,
+                        aligned_with_signal=True,
+                    )
+
+                    self.logger.info(
+                        "PURCHASE_CONFIRMED signal_id=%s contract_type=DIGITOVER barrier=3 trigger=%s",
+                        signal.signal_id,
+                        signal.trigger_name,
+                        extra={"token_tag": tag, "contract_id": str(contract_id), "stake": "0.35"}
+                    )
+                    await session.subscribe_contract(contract_id)
+
+            self.pending_by_signal[signal.signal_id] = signal_contracts
+            self._save_state()
+
+            if not signal_contracts:
+                self.repository.mark_signal(signal.signal_id, status="PURCHASE_FAILED")
+                self.logger.warning("No contracts were purchased successfully")
+                return
+
+            self.repository.mark_signal(
+                signal.signal_id,
+                status="PURCHASE_CONFIRMED",
+                purchase_confirmed=True,
+            )
+            asyncio.create_task(
+                self._cycle_timeout_watchdog(signal.signal_id, list(signal_contracts))
+            )
+
+        except Exception as e:
+            self.logger.error("Unexpected error during multi-trade: %s", e)
+            traceback.print_exc()
+            self.repository.mark_signal(signal.signal_id, status="PURCHASE_FAILED")
+        finally:
+            self.is_trading_locked = False
+            self.pending_signal = None
+
+    async def _cycle_timeout_watchdog(
+        self, signal_id: str, contract_ids: List[int]
+    ) -> None:
+        """Enforces a timeout in case contract settlement updates are not received."""
+        await asyncio.sleep(60.0)
+        pending = self.pending_by_signal.get(signal_id, set())
+        timed_out = [cid for cid in contract_ids if cid in pending]
+        if timed_out:
+            self.logger.warning(
+                "Settlement updates delayed for signal_id=%s contract_count=%s; "
+                "contracts remain registered for recovery",
+                signal_id,
+                len(timed_out),
+            )
+
+    async def handle_contract_update(self, token: str, contract_id: int, contract: Dict[str, Any]) -> None:
+        status = contract.get("status", "unknown")
+        if status not in {"won", "lost", "sold", "cancelled"}:
+            return # not settled
+
+        st = self.clients[token]
+        tag = st["token_tag"]
+        extra = {"token_tag": tag, "contract_id": str(contract_id), "stake": f"{st['current_stake']:.2f}"}
+
+        # Prevent duplicate processing
+        if contract_id not in self.pending_contracts_for_current_cycle and contract_id not in self.unresolved_contracts_from_state:
+            return
+
+        profit = float(contract.get("profit", 0.0))
+        entry_value = contract.get("entry_tick", contract.get("entry_spot"))
+        exit_value = contract.get("exit_tick", contract.get("exit_spot"))
+        try:
+            entry_tick = float(entry_value) if entry_value is not None else None
+        except (TypeError, ValueError):
+            entry_tick = None
+        try:
+            exit_tick = float(exit_value) if exit_value is not None else None
+        except (TypeError, ValueError):
+            exit_tick = None
+        exit_digit = None
+        if exit_tick is not None:
+            exit_digit = int(f"{exit_tick:.{self.pip_size}f}"[-1])
+
+        if status == "won":
+            outcome = "win"
+        elif status == "lost":
+            outcome = "loss"
+        else:
+            outcome = "win" if profit > 0 else "loss"
+        if not self.repository.settle_trade(
+            contract_id=str(contract_id),
+            profit=profit,
+            outcome=outcome,
+            entry_tick=entry_tick,
+            exit_tick=exit_tick,
+            exit_digit=exit_digit,
+        ):
+            return
+
+        st["total_profit"] = float(st["total_profit"]) + profit
+        st["profit_today"] = float(st["profit_today"]) + profit
+        st["total_trades"] = int(st.get("total_trades", 0)) + 1
+        st["last_profit"] = profit
+
+        if status == "won":
+            self.logger.info("WIN profit=%.2f", profit, extra=extra)
+            st["wins"] = int(st.get("wins", 0)) + 1
+        elif status == "lost":
+            self.logger.info("LOSS profit=%.2f", profit, extra=extra)
+            st["losses"] = int(st.get("losses", 0)) + 1
+        elif status in {"sold", "cancelled"}:
+            self.logger.info("SETTLED status=%s profit=%.2f", status, profit, extra=extra)
+            if outcome == "win":
+                st["wins"] = int(st.get("wins", 0)) + 1
+            else:
+                st["losses"] = int(st.get("losses", 0)) + 1
+        else:
+            outcome = "loss"
+            st["losses"] = int(st.get("losses", 0)) + 1
+        st["last_result"] = outcome
+
+        st["current_stake"] = 0.35
+
+        self.logger.info(
+            "total_profit=%.2f profit_today=%.2f next_stake=%.2f",
+            st["total_profit"],
+            st["profit_today"],
+            st["current_stake"],
+            extra=extra,
+        )
+
+        # Cleanup subscription
+        session = self.sessions.get(token)
+        if session:
+            sub_id = session.active_subscriptions.pop(contract_id, None)
+            if sub_id:
+                await session.unsubscribe_contract(sub_id)
+            session.pending_contracts.discard(contract_id)
+
+        self.unresolved_contracts_from_state.discard(contract_id)
+        self.pending_contracts_for_current_cycle.discard(contract_id)
+
+        signal_id = self.contract_signal_ids.pop(contract_id, "")
+        if signal_id:
+            pending = self.pending_by_signal.setdefault(signal_id, set())
+            pending.discard(contract_id)
+            self.outcomes_by_signal.setdefault(signal_id, []).append(outcome)
+            if not pending:
+                outcomes = self.outcomes_by_signal.pop(signal_id, [outcome])
+                self.pending_by_signal.pop(signal_id, None)
+                cycle_outcome = "win" if all(value == "win" for value in outcomes) else "loss"
+                self.bayesian.update(cycle_outcome == "win")
+                self._register_trade_cycle_outcome(cycle_outcome)
+                self.logger.info(
+                    "CONTRACT_SETTLED signal_id=%s result=%s exit_digit=%s",
+                    signal_id,
+                    cycle_outcome.upper(),
+                    exit_digit,
+                )
+
+        self._save_state()
+
+    async def _watchdog_loop(self) -> None:
+        await asyncio.sleep(min(self.max_tick_silence_seconds, self.watchdog_poll_interval_seconds))
+        while self.is_running:
+            if self.last_tick_received_at > 0:
+                silence = time.monotonic() - self.last_tick_received_at
+                if silence > self.max_tick_silence_seconds:
+                    raise ConnectionStaleError(f"No tick received for {silence:.1f} seconds")
+            await asyncio.sleep(self.watchdog_poll_interval_seconds)
+
+    async def _lease_heartbeat_loop(self) -> None:
+        while self.is_running and self.lease_key:
+            acquired = self.repository.acquire_lease(
+                lease_key=self.lease_key,
+                worker_id=self.worker_id,
+                host_name=socket.gethostname(),
+                process_id=os.getpid(),
+                deployment_id=os.getenv("DEPLOYMENT_ID", "local"),
+            )
+            if not acquired:
+                self.logger.critical("TRADER_LOCK_LOST lease_key=%s", self.lease_key)
+                self.repository.set_status("EMERGENCY_STOP", "TRADER_LOCK_LOST")
+                self.is_running = False
+                return
+            self.repository.heartbeat(self.connection_session_id)
+            await asyncio.sleep(10)
+
+    async def _stop_watchdog(self) -> None:
+        task = self._watchdog_task
+        self._watchdog_task = None
+        if task and not task.done():
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+
+    async def run(self) -> None:
+        attempt = 0
+        while self.is_running:
+            should_retry = True
+            public_task: Optional[asyncio.Task] = None
+            try:
+                attempt += 1
+                if attempt > 1:
+                    self.logger.warning("reconnect attempt #%s", attempt - 1)
+
+                self._reset_session_runtime_state()
+
+                # Validate and retrieve account IDs REST-side
+                await self.validate_accounts()
+                account_scope = hashlib.sha256(
+                    ",".join(
+                        sorted(account_id for _, account_id in self.valid_clients)
+                    ).encode()
+                ).hexdigest()[:16]
+                self.lease_key = (
+                    f"{self.test2_config.model.run_id}:{self.environment}:{account_scope}"
+                )
+                acquired = self.repository.acquire_lease(
+                    lease_key=self.lease_key,
+                    worker_id=self.worker_id,
+                    host_name=socket.gethostname(),
+                    process_id=os.getpid(),
+                    deployment_id=os.getenv("DEPLOYMENT_ID", "local"),
+                )
+                if not acquired:
+                    raise SystemExit(
+                        "Another healthy Test 2 worker already owns the trader lease"
+                    )
+                if self._lease_task is None or self._lease_task.done():
+                    self._lease_task = asyncio.create_task(self._lease_heartbeat_loop())
+                    self.logger.info("TRADER_LOCK_ACQUIRED lease_key=%s", self.lease_key)
+
+                # Initialize private sessions before reconciling unresolved DB trades.
+                for token, account_id in self.valid_clients:
+                    session = ClientSession(token, account_id, self)
+                    self.sessions[token] = session
+
+                for trade in self.repository.unresolved_contracts():
+                    cid = int(trade.contract_id)
+                    matched_token = None
+                    for token, account_id in self.valid_clients:
+                        masked = f"{account_id[:3]}***{account_id[-3:]}"
+                        if masked == trade.account_id_masked:
+                            matched_token = token
+                            break
+                    if matched_token is None:
+                        self.logger.error(
+                            "Unresolved contract %s has no matching configured account; manual review required",
+                            cid,
+                            extra={"contract_id": str(cid)},
+                        )
+                        continue
+                    self.sessions[matched_token].pending_contracts.add(cid)
+                    self.unresolved_contracts_from_state.add(cid)
+                    self.pending_contracts_for_current_cycle.add(cid)
+                    self.contract_signal_ids[cid] = trade.signal_id
+                    self.pending_by_signal.setdefault(trade.signal_id, set()).add(cid)
+
+                for session in self.sessions.values():
+                    session.task = asyncio.create_task(session.connect_and_run())
+
+                status, _ = self.repository.control_state()
+                if status == "RECONNECTING":
+                    self.repository.set_status("RUNNING")
+
+                # Start public market data WebSocket client
+                public_task = asyncio.create_task(self.public_client.connect_and_run())
+
+                # Start watchdog
+                self._watchdog_task = asyncio.create_task(self._watchdog_loop())
+
+                # Keep loop alive running watchdog
+                await self._watchdog_task
+
+            except ConnectionStaleError as e:
+                self.logger.warning("Watchdog alert: %s", e)
+            except (ConnectionClosedError, OSError, ConnectionResetError) as e:
+                self.logger.warning("Connection lost: %s", e)
+            except KeyboardInterrupt:
+                self.logger.info("Bot stopped by user")
+                should_retry = False
+            except Exception as e:
+                self.logger.error("Unexpected error in run loop: %s", e)
+                traceback.print_exc()
+            finally:
+                await self._stop_watchdog()
+                if public_task and not public_task.done():
+                    public_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await public_task
+                for task in list(self._background_tasks):
+                    task.cancel()
+                for task in list(self._background_tasks):
+                    with suppress(asyncio.CancelledError):
+                        await task
+                self._background_tasks.clear()
+                # Stop private client WS tasks
+                for session in self.sessions.values():
+                    if session.task and not session.task.done():
+                        session.task.cancel()
+                for session in self.sessions.values():
+                    if session.task:
+                        with suppress(asyncio.CancelledError):
+                            await session.task
+                self.sessions.clear()
+                self._reset_session_runtime_state()
+
+            if not should_retry or not self.is_running:
+                break
+
+            self.logger.info("Waiting %ss before reconnecting...", self.reconnect_delay_seconds)
+            self.repository.set_status("RECONNECTING", "PUBLIC_TICK_STREAM_RECOVERY")
+            await asyncio.sleep(self.reconnect_delay_seconds)
+
+        if self._lease_task and not self._lease_task.done():
+            self._lease_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._lease_task
+        if self.lease_key:
+            self.repository.release_lease(self.lease_key, self.worker_id)
+        self.repository.set_status("STOPPED")
+
+
+def run_oauth_flow(client_id: str, redirect_uri: str) -> None:
+    """OAuth 2.0 PKCE helper flow."""
+    import secrets
+    import base64
+    import urllib.parse
+    import requests
+
+    code_verifier = secrets.token_urlsafe(64)
+    sha_hash = hashlib.sha256(code_verifier.encode('utf-8')).digest()
+    code_challenge = base64.urlsafe_b64encode(sha_hash).decode('utf-8').replace('=', '')
+    state = secrets.token_hex(16)
+
+    params = {
+        "response_type": "code",
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "scope": "trade",
+        "state": state,
+        "code_challenge": code_challenge,
+        "code_challenge_method": "S256"
+    }
+
+    auth_url = "https://auth.deriv.com/oauth2/auth?" + urllib.parse.urlencode(params)
+
+    print("\n=== Deriv OAuth 2.0 Login Helper ===")
+    print("1. Open this URL in your browser to log in:")
+    print(auth_url)
+    print("\n2. Paste the redirect callback URL below:")
+
+    try:
+        user_url = input("\nRedirect URL: ").strip()
+        parsed = urllib.parse.urlparse(user_url)
+        query = urllib.parse.parse_qs(parsed.query)
+
+        code = query.get("code", [None])[0]
+        ret_state = query.get("state", [None])[0]
+
+        if not code:
+            print("Error: No code found in callback URL.")
+            return
+        if ret_state != state:
+            print("Error: State mismatch!")
+            return
+
+        print("\nExchanging code for token...")
+        token_url = "https://auth.deriv.com/oauth2/token"
+        data = {
+            "grant_type": "authorization_code",
+            "client_id": client_id,
+            "code": code,
+            "code_verifier": code_verifier,
+            "redirect_uri": redirect_uri
+        }
+
+        resp = requests.post(token_url, data=data)
+        if resp.status_code == 200:
+            token_data = resp.json()
+            secret_directory = Path("secrets")
+            secret_directory.mkdir(parents=True, exist_ok=True)
+            secret_path = secret_directory / "oauth_access.token"
+            secret_path.write_text(
+                str(token_data.get("access_token", "")), encoding="utf-8"
+            )
+            print("\nOAuth access token saved to secrets/oauth_access.token.")
+        else:
+            print("Error:", resp.status_code, resp.text)
+    except KeyboardInterrupt:
+        print("\nFlow cancelled.")
+
+
+if __name__ == "__main__":
+    if "--login" in sys.argv:
+        config_path = os.getenv("DERIV_BOT_CONFIG", "config.yaml")
+        cfg = load_config(config_path)
+        c_id = os.getenv("DERIV_OAUTH_CLIENT_ID") or cfg["deriv"].get("oauth_client_id")
+        r_uri = os.getenv("DERIV_OAUTH_REDIRECT_URL") or cfg["deriv"].get("oauth_redirect_url")
+        if not c_id:
+            c_id = input("Enter your Client ID: ").strip()
+        if not r_uri:
+            r_uri = input("Enter Redirect URI: ").strip()
+        run_oauth_flow(c_id, r_uri)
+        sys.exit(0)
+
+    if sys.platform == "win32":
+        loop = asyncio.SelectorEventLoop()
+        asyncio.set_event_loop(loop)
+    else:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+    bot = TradingBot()
+    try:
+        loop.run_until_complete(bot.run())
+    except KeyboardInterrupt:
+        bot._clear_live_ticks()
+        print("\n⏹️ Bot stopped by user.")
+    finally:
+        bot._clear_live_ticks()
+        loop.close()
