@@ -1,4 +1,4 @@
-import { store, json } from "./shared.mjs";
+import { getDashboardStore, json } from "./shared.mjs";
 
 export default async (request) => {
   if (request.method !== "POST") {
@@ -16,6 +16,7 @@ export default async (request) => {
     return json({ error: "Invalid JSON payload" }, 400);
   }
 
+  const store = getDashboardStore();
   await store.setJSON("latest", payload);
   return json({ ok: true, synced_at: payload?.meta?.synced_at || null });
 };

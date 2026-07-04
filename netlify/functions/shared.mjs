@@ -1,8 +1,13 @@
 import { getStore } from "@netlify/blobs";
 
-export const store = getStore("dashboard-state");
+export function getDashboardStore() {
+  // Build a fresh store client per invocation so warm functions don't keep
+  // using an expired internal blobs token.
+  return getStore("dashboard-state");
+}
 
 export async function readSnapshot() {
+  const store = getDashboardStore();
   return (await store.get("latest", { type: "json" })) || {
     summary: {
       status: "OFFLINE",
