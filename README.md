@@ -53,6 +53,7 @@ checked through Deriv.
 
 ## Deployment
 
+Netlify mirror instructions are in [README_NETLIFY_RENDER_DEPLOYMENT.md](README_NETLIFY_RENDER_DEPLOYMENT.md).
 Render instructions are in [README_TEST2_DEPLOYMENT.md](README_TEST2_DEPLOYMENT.md).
 Ubuntu VPS instructions are in [README_VPS_DEPLOYMENT.md](README_VPS_DEPLOYMENT.md).
 

@@ -1,6 +1,27 @@
 [build]
   command = "node scripts/build-netlify.mjs"
   publish = "dist"
+  functions = "netlify/functions"
 
 [build.environment]
   NODE_VERSION = "22"
+
+[[redirects]]
+  from = "/runtime"
+  to = "/.netlify/functions/runtime"
+  status = 200
+
+[[redirects]]
+  from = "/metrics/summary"
+  to = "/.netlify/functions/metrics-summary"
+  status = 200
+
+[[redirects]]
+  from = "/metrics/recent-trades"
+  to = "/.netlify/functions/metrics-recent-trades"
+  status = 200
+
+[[redirects]]
+  from = "/settings/accounts"
+  to = "/.netlify/functions/settings-accounts"
+  status = 200

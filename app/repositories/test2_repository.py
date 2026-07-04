@@ -7,7 +7,7 @@ import socket
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import func, select, update
+from sqlalchemy import case, func, select, update
 
 from app.config import Test2Config
 from app.database import Database
@@ -16,9 +16,11 @@ from app.models import (
     AuditEvent,
     BotState,
     CandidateSignalRecord,
+    ManagedAccount,
     ModelArtifact,
     ModelDecisionRecord,
     ProposalRecord,
+    RuntimePreference,
     TestRun,
     Tick,
     Trade,
@@ -70,6 +72,55 @@ class Test2Repository:
                 session.flush()
                 session.add(BotState(run_id=run.id))
             return int(run.id)
+
+    def runtime_mode(self) -> str:
+        with self.database.session() as session:
+            row = session.get(RuntimePreference, "trading_mode")
+            value = (row.preference_value if row else self.config.deriv.environment).strip().lower()
+            return value if value in {"demo", "real"} else "demo"
+
+    def set_runtime_mode(self, mode: str) -> str:
+        normalized = str(mode or "demo").strip().lower()
+        if normalized not in {"demo", "real"}:
+            raise ValueError("Mode must be demo or real")
+        with self.database.session() as session:
+            row = session.get(RuntimePreference, "trading_mode")
+            if row is None:
+                row = RuntimePreference(preference_key="trading_mode")
+                session.add(row)
+            row.preference_value = normalized
+            row.updated_at = utc_now()
+        return normalized
+
+    def managed_accounts_revision(self) -> str:
+        with self.database.session() as session:
+            latest = session.scalar(select(func.max(ManagedAccount.updated_at)))
+        return latest.isoformat() if latest else ""
+
+    def list_managed_accounts(self) -> list[ManagedAccount]:
+        with self.database.session() as session:
+            return list(
+                session.scalars(
+                    select(ManagedAccount).order_by(ManagedAccount.created_at, ManagedAccount.id)
+                ).all()
+            )
+
+    def add_managed_account(self, *, label: str, token_secret: str) -> dict[str, Any]:
+        with self.database.session() as session:
+            row = ManagedAccount(
+                label=str(label or "").strip()[:120],
+                token_secret=str(token_secret),
+                enabled=True,
+            )
+            session.add(row)
+            session.flush()
+            return {
+                "id": int(row.id),
+                "label": row.label,
+                "enabled": bool(row.enabled),
+                "created_at": row.created_at.isoformat(),
+                "updated_at": row.updated_at.isoformat(),
+            }
 
     def record_tick(
         self,
@@ -383,21 +434,67 @@ class Test2Repository:
                     CandidateSignalRecord.final_status.like("SKIP%"),
                 )
             )
+            total_managed_accounts = session.scalar(
+                select(func.count()).select_from(ManagedAccount).where(
+                    ManagedAccount.enabled.is_(True)
+                )
+            )
             accounts = session.scalars(
                 select(AccountSnapshot)
                 .where(AccountSnapshot.run_id == self.run_id)
                 .order_by(AccountSnapshot.account_id_masked)
             ).all()
+            account_trade_rows = session.execute(
+                select(
+                    Trade.account_id_masked,
+                    func.count().label("trades"),
+                    func.sum(case((Trade.outcome == "WIN", 1), else_=0)).label("wins"),
+                    func.sum(case((Trade.outcome == "LOSS", 1), else_=0)).label("losses"),
+                )
+                .group_by(Trade.account_id_masked)
+                .order_by(Trade.account_id_masked)
+            ).all()
+            trade_stats_by_account = {
+                str(row.account_id_masked): {
+                    "trades": int(row.trades or 0),
+                    "wins": int(row.wins or 0),
+                    "losses": int(row.losses or 0),
+                }
+                for row in account_trade_rows
+            }
+            settled_trades = session.scalars(
+                select(Trade)
+                .where(Trade.settlement_time.is_not(None))
+                .order_by(Trade.settlement_time.asc(), Trade.id.asc())
+            ).all()
+            longest_win_streak = 0
+            longest_loss_streak = 0
+            current_outcome = ""
+            current_length = 0
+            for trade in settled_trades:
+                outcome = str(trade.outcome or "").upper()
+                if outcome == current_outcome:
+                    current_length += 1
+                else:
+                    current_outcome = outcome
+                    current_length = 1
+                if outcome == "WIN":
+                    longest_win_streak = max(longest_win_streak, current_length)
+                elif outcome == "LOSS":
+                    longest_loss_streak = max(longest_loss_streak, current_length)
             return {
                 "run_id": self.config.model.run_id,
                 "status": state.status if state else "UNKNOWN",
                 "pause_reason": state.pause_reason if state else "",
+                "mode": self.runtime_mode(),
                 "candidate_signals": int(candidates or 0),
                 "purchased_trades": int(purchased or 0),
                 "open_trades": int(open_trades or 0),
                 "skipped_signals": int(skipped or 0),
                 "wins": int(wins or 0),
                 "losses": int(losses or 0),
+                "longest_win_streak": longest_win_streak,
+                "longest_loss_streak": longest_loss_streak,
                 "win_rate": (
                     int(wins or 0) / (int(wins or 0) + int(losses or 0))
                     if int(wins or 0) + int(losses or 0)
@@ -405,6 +502,7 @@ class Test2Repository:
                 ),
                 "net_profit": state.total_profit if state else 0.0,
                 "maximum_drawdown": state.current_drawdown if state else 0.0,
+                "total_traders": int(total_managed_accounts or len(accounts)),
                 "accounts": [
                     {
                         "account": account.account_id_masked,
@@ -412,6 +510,10 @@ class Test2Repository:
                         "currency": account.currency,
                         "status": account.status,
                         "updated_at": account.updated_at.isoformat(),
+                        **trade_stats_by_account.get(
+                            account.account_id_masked,
+                            {"trades": 0, "wins": 0, "losses": 0},
+                        ),
                     }
                     for account in accounts
                 ],

@@ -1,123 +1,118 @@
-# Netlify Frontend and Render Backend
+# Netlify Mirror Deployment
+
+This deployment model keeps the trading bot on your local PC and publishes only
+results to a public Netlify URL.
 
 The production layout is:
 
-- Netlify serves the static dashboard.
-- Render runs one FastAPI web service.
-- Render runs one background trading worker continuously.
-- Render Postgres stores bot state, trades, balances, and control status.
+- Your **local PC** runs the worker and keeps the Deriv tokens.
+- **Netlify** serves the public dashboard and Netlify Functions.
+- **Netlify Blobs** stores the latest mirrored dashboard state.
 
-The Netlify site does not run the bot. Closing the browser does not stop the
-Render worker.
+This means:
 
-## Before deployment
+- Tokens stay local unless you deliberately choose a different model.
+- The public dashboard is **read-only**.
+- Closing the Netlify dashboard does not affect the bot.
 
-1. Revoke any Deriv PAT that has been pasted into chat, logs, screenshots, or
-   source files.
-2. Generate a new PAT with only the scopes required by the trading worker.
-3. Keep the new PAT out of Git and provide it only through Render's secret
-   environment-variable prompt.
-4. Push this repository to a private GitHub repository.
-5. Confirm `git status` does not include `.env`, `tokens.txt`, databases, or
-   other runtime files.
+## What Gets Synced
 
-The committed configuration starts in demo mode. Keep it there for the first
-deployment.
+The local bot publishes:
 
-## Deploy the backend to Render
+- bot status
+- account mode (`demo` or `real`)
+- total traders
+- wins, losses, total trades
+- win rate
+- longest win streak
+- longest loss streak
+- account balances
+- trades per account
+- recent trades
 
-1. Sign in to Render and select **New > Blueprint**.
-2. Connect the GitHub repository containing this project.
-3. Render detects `render.yaml`.
-4. During Blueprint creation, enter these prompted values:
-   - `DERIV_APP_ID`: use the same Deriv application ID for the API and worker.
-   - `DERIV_TOKEN`: enter the newly generated PAT only for the worker.
-5. Apply the Blueprint.
-6. Wait for all three resources:
-   - `underdog-bin22001-db`
-   - `underdog-bin22001-api`
-   - `underdog-bin22001-worker`
-7. Open the API service and copy its public URL, for example:
-   `https://underdog-bin22001-api.onrender.com`
-8. Verify:
-   - `<RENDER_API_URL>/health/live` returns a live status.
-   - `<RENDER_API_URL>/health/ready` returns ready after the worker heartbeat.
-9. Open the API service's environment page and securely copy the generated
-   `CONTROL_API_KEY`. Do not add this key to Netlify or Git.
+The strategy pattern itself is not shown on the public dashboard.
 
-The Blueprint uses paid Starter instances for the API and worker because Render
-background workers do not support the free instance type. Postgres is also a
-persistent managed resource. Review the displayed Render cost before applying
-the Blueprint.
+## Deploy To Netlify
 
-## Deploy the frontend to Netlify
-
-1. In Netlify, select **Add new site > Import an existing project**.
-2. Connect the same GitHub repository.
-3. Netlify reads `netlify.toml`; do not override its build command or publish
-   directory.
-4. Add this environment variable with the **Builds** scope:
-   - `API_BASE_URL=https://your-render-api.onrender.com`
-5. Trigger the production deployment.
-6. Open the generated `netlify.app` URL.
-7. Enter the Render `CONTROL_API_KEY` in the dashboard's **Control key** field.
-   It is kept only in the current browser tab's session storage.
-8. Press **Start**. The status should change to `Running`.
-9. Confirm the Render worker logs show tick streaming and `BIN22001x5`
-   monitoring.
-
-Render currently accepts Netlify production and deploy-preview origins through
-the configured origin regex. If a custom frontend domain is added, set the API
-service environment variable below and redeploy the API:
+1. Push this repository to GitHub.
+2. In Netlify, choose **Add new site > Import an existing project**.
+3. Select this repository.
+4. Netlify reads `netlify.toml`.
+5. Do not override:
+   - build command
+   - publish directory
+   - functions directory
+6. Add this environment variable in Netlify:
 
 ```text
-FRONTEND_ORIGINS=https://trade.example.com
+NETLIFY_SYNC_TOKEN=choose-a-long-random-secret
 ```
 
-Use comma-separated origins when more than one custom domain is required.
+7. Deploy the site.
 
-## Deployment environment
-
-The initial worker values must remain:
+After deployment, Netlify gives you a URL like:
 
 ```text
-DERIV_ENVIRONMENT=demo
-TRADING_MODE=demo
-ALLOW_REAL_TRADING=false
-DERIV_TRADING_ENABLED=true
-TEST_RUN_ID=bin22001
+https://your-site.netlify.app
 ```
 
-Do not enable real trading until demo verification is complete. Real mode also
-requires all of these explicit worker values:
+Your local bot will post results to this Netlify function endpoint:
 
 ```text
-DERIV_ENVIRONMENT=real
-TRADING_MODE=real
-ALLOW_REAL_TRADING=true
-PRODUCTION_ACKNOWLEDGEMENT=I_ACKNOWLEDGE_REAL_MONEY_TRADING
+https://your-site.netlify.app/.netlify/functions/sync-ingest
 ```
 
-The API and worker must use the same `DATABASE_URL` and `TEST_RUN_ID`. The
-Blueprint configures both automatically.
+## Run The Bot Locally And Sync To Netlify
 
-## Post-deployment checks
+On the PC running the bot, set these environment variables before startup:
 
-1. Refresh updates status, balance, model evidence, and recent trades.
-2. Start, Stop, and Emergency stop work only with the control key.
-3. Restart the worker and confirm database totals remain unchanged.
-4. Confirm only one worker instance exists.
-5. Confirm the worker reconnects to Deriv after a Render restart.
-6. Keep the first deployment in demo mode and review forward results before any
-   real-money decision.
+```powershell
+$env:NETLIFY_SYNC_URL="https://your-site.netlify.app/.netlify/functions/sync-ingest"
+$env:NETLIFY_SYNC_TOKEN="choose-a-long-random-secret"
+$env:NETLIFY_SYNC_INTERVAL_SECONDS="15"
+```
 
-Official references:
+Then start the local dashboard/worker:
 
-- Render Blueprint specification:
-  https://render.com/docs/blueprint-spec
-- Render environment variables:
-  https://render.com/docs/configure-environment-variables
-- Netlify file-based configuration:
-  https://docs.netlify.com/build/configure-builds/file-based-configuration/
+```powershell
+& ".\.venv\Scripts\python.exe" local_dashboard.py
+```
+
+The worker will push fresh dashboard snapshots to Netlify every few seconds.
+
+## Security Notes
+
+- Keep **Deriv tokens local** on your PC.
+- Do **not** put live trading tokens into Netlify environment variables unless
+  you intentionally want cloud-side token storage.
+- The Netlify site only needs `NETLIFY_SYNC_TOKEN`.
+- Use a long random sync token and rotate it if exposed.
+
+## Public Dashboard Behavior
+
+The Netlify dashboard is automatically read-only:
+
+- no start/stop control
+- no emergency stop
+- no account token editing
+- no strategy signal display
+
+It mirrors your local bot results only.
+
+## Optional Local + Public Split
+
+You can keep using:
+
+- local dashboard at `http://127.0.0.1:8080` for control
+- Netlify URL for public/remote monitoring
+
+That is the recommended setup.
+
+## Official References
+
+- Netlify Functions:
+  https://docs.netlify.com/functions/overview/
+- Netlify Blobs:
+  https://docs.netlify.com/blobs/overview/
 - Netlify environment variables:
-  https://docs.netlify.com/build/environment-variables/overview/
+  https://docs.netlify.com/build/configure-builds/environment-variables/

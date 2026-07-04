@@ -23,6 +23,8 @@ services:
         sync: false
       - key: CONTROL_API_KEY
         generateValue: true
+      - key: DERIV_TOKEN_ENCRYPTION_KEY
+        sync: false
       - key: FRONTEND_ORIGIN_REGEX
         value: '^https://[a-z0-9-]+(?:--[a-z0-9-]+)?\.netlify\.app$'
       - key: TRADING_MODE
@@ -51,6 +53,8 @@ services:
       - key: DERIV_APP_ID
         sync: false
       - key: DERIV_TOKEN
+        sync: false
+      - key: DERIV_TOKEN_ENCRYPTION_KEY
         sync: false
       - key: DERIV_TRADING_ENABLED
         value: "true"

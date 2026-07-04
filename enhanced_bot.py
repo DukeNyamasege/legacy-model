@@ -42,6 +42,7 @@ from app.model.feature_builder import build_features
 from app.model.hmm_regime import ThreeStateHmm
 from app.model.model_store import persist_model_metadata
 from app.repositories.test2_repository import Test2Repository
+from app.netlify_sync import NetlifyDashboardSync
 from app.strategy.cooldown import AdaptiveCooldown
 from app.strategy.decision_engine import DecisionEngine, parse_proposal_economics
 from app.strategy.over3_strategy import (
@@ -50,6 +51,7 @@ from app.strategy.over3_strategy import (
     validate_contract_parameters,
 )
 from app.strategy.signal_detector import CandidateSignal, Over3SignalDetector
+from app.token_store import decrypt_token
 
 try:
     from cryptography.fernet import Fernet
@@ -730,17 +732,15 @@ class TradingBot:
             self.cfg["logging"].get("file", "trading_bot.log"),
         )
 
-        tokens_file = self.cfg["files"]["tokens"]
-        tokens_file = os.getenv("DERIV_TOKENS_FILE", tokens_file)
-        raw_tokens = load_tokens(tokens_file)
-        self.tokens: List[str] = decrypt_tokens(raw_tokens, self.encryption_key)
-        users_file = self.cfg["files"].get("users", "users.json")
-        users_file = os.getenv("DERIV_USER_FILE", users_file)
-        self.user_profiles = load_user_profiles(users_file)
+        self.database = Database(self.test2_config.database_url)
+        self.database.create_schema()
+        self.repository = Test2Repository(self.database, self.test2_config)
+        self.netlify_sync = NetlifyDashboardSync(self.repository)
+        self.environment = self.repository.runtime_mode()
+        self.tokens, self.user_profiles = self._load_runtime_accounts()
         if not self.tokens:
             raise SystemExit(
-                "No tokens found. Add tokens to tokens.txt (config files.tokens) "
-                "or set DERIV_TOKENS_FILE, or set DERIV_TOKEN (single token mode)."
+                "No tokens found. Add tokens in the dashboard or provide tokens.txt / DERIV_TOKEN."
             )
 
         self.is_running = True
@@ -752,10 +752,6 @@ class TradingBot:
         self.pending_signal: Optional[CandidateSignal] = None
         self.ticks_history = deque(maxlen=50)
         self.live_ticks_history = deque(maxlen=7)
-
-        self.database = Database(self.test2_config.database_url)
-        self.database.create_schema()
-        self.repository = Test2Repository(self.database, self.test2_config)
         self.tick_sequence = self.repository.current_tick_sequence()
         historical_digits = self.repository.recent_digits(limit=6000)
         self.raw_tick_digits = deque(historical_digits, maxlen=10000)
@@ -822,7 +818,41 @@ class TradingBot:
         self.worker_id = str(uuid.uuid4())
         self.lease_key = ""
         self.public_client = PublicMarketDataClient(self)
+        self._managed_accounts_revision = self.repository.managed_accounts_revision()
+        self._runtime_mode_cache = self.environment
         self._save_state()
+
+    def _load_runtime_accounts(self) -> Tuple[List[str], Dict[str, Dict[str, Any]]]:
+        managed_accounts = self.repository.list_managed_accounts()
+        tokens: List[str] = []
+        profiles: Dict[str, Dict[str, Any]] = {}
+        if managed_accounts:
+            for row in managed_accounts:
+                if not row.enabled:
+                    continue
+                try:
+                    token = decrypt_token(row.token_secret, self.encryption_key)
+                except Exception as exc:
+                    self.logger.error("Managed token %s could not be decrypted: %s", row.id, exc)
+                    continue
+                tokens.append(token)
+                profiles[token] = {
+                    "id": str(row.id),
+                    "name": row.label or f"Account {row.id}",
+                    "enabled": True,
+                    "account_id": "",
+                }
+            if tokens:
+                return tokens, profiles
+
+        tokens_file = self.cfg["files"]["tokens"]
+        tokens_file = os.getenv("DERIV_TOKENS_FILE", tokens_file)
+        raw_tokens = load_tokens(tokens_file)
+        tokens = decrypt_tokens(raw_tokens, self.encryption_key)
+        users_file = self.cfg["files"].get("users", "users.json")
+        users_file = os.getenv("DERIV_USER_FILE", users_file)
+        profiles = load_user_profiles(users_file)
+        return tokens, profiles
 
     def _persist_hmm_metadata(self) -> None:
         model_id = f"hmm-{self.test2_config.model.run_id}-{self.tick_sequence}"
@@ -1138,6 +1168,8 @@ class TradingBot:
 
     async def validate_accounts(self) -> None:
         """Fetch and validate account IDs REST-side, sorting demo and real accounts."""
+        self.environment = self.repository.runtime_mode()
+        self.tokens, self.user_profiles = self._load_runtime_accounts()
         valid = []
         for token in self.tokens:
             tag = token_tag(token)
@@ -1195,6 +1227,27 @@ class TradingBot:
         self.valid_clients = valid
         if not self.valid_clients:
             raise SystemExit(f"No valid Options accounts matched the configured environment: {self.environment}")
+
+    async def _ensure_sessions_for_valid_clients(self) -> None:
+        for token, account_id in self.valid_clients:
+            if token in self.sessions:
+                continue
+            session = ClientSession(token, account_id, self)
+            self.sessions[token] = session
+            session.task = asyncio.create_task(session.connect_and_run())
+
+    async def _refresh_runtime_accounts_if_needed(self) -> None:
+        current_revision = self.repository.managed_accounts_revision()
+        current_mode = self.repository.runtime_mode()
+        if (
+            current_revision == self._managed_accounts_revision
+            and current_mode == self._runtime_mode_cache
+        ):
+            return
+        self._managed_accounts_revision = current_revision
+        self._runtime_mode_cache = current_mode
+        await self.validate_accounts()
+        await self._ensure_sessions_for_valid_clients()
 
     async def _on_tick(self, tick_data: Dict[str, Any]) -> None:
         tick = tick_data["tick"]
@@ -1343,6 +1396,7 @@ class TradingBot:
     ) -> None:
         """Evaluate one Test 2 candidate and submit a new-API bulk purchase."""
         try:
+            await self._refresh_runtime_accounts_if_needed()
             base_stake = self.base_stake
             validate_contract_parameters(
                 contract_type=signal.contract_type,
@@ -1788,6 +1842,9 @@ class TradingBot:
             self.repository.heartbeat(self.connection_session_id)
             await asyncio.sleep(10)
 
+    async def _netlify_sync_loop(self) -> None:
+        await self.netlify_sync.loop(self.logger)
+
     async def _stop_watchdog(self) -> None:
         task = self._watchdog_task
         self._watchdog_task = None
@@ -1871,6 +1928,11 @@ class TradingBot:
 
                 # Start watchdog
                 self._watchdog_task = asyncio.create_task(self._watchdog_loop())
+                if self.netlify_sync.enabled:
+                    self._spawn_background_task(
+                        self._netlify_sync_loop(),
+                        name="netlify_sync",
+                    )
 
                 # Keep loop alive running watchdog
                 await self._watchdog_task

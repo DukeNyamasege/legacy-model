@@ -35,7 +35,7 @@
       opacity: .28;
       background-image: repeating-linear-gradient(90deg, transparent 0 47px, rgba(16,44,37,.05) 48px);
     }
-    main { position: relative; width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 24px 0 46px; }
+    main { position: relative; width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 24px 0 46px; }
     header {
       display: flex;
       align-items: center;
@@ -77,7 +77,7 @@
     .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--muted); box-shadow: 0 0 0 5px rgba(118,95,70,.12); }
     .dot.running { background: #15906d; box-shadow: 0 0 0 5px rgba(21,144,109,.13); }
     .dot.stopped { background: var(--red); box-shadow: 0 0 0 5px rgba(170,52,52,.13); }
-    button, input {
+    button, input, textarea, select {
       min-height: 44px;
       border-radius: 12px;
       border: 1px solid var(--line);
@@ -91,17 +91,17 @@
     .metrics { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin: 12px 0; }
     .metric { padding: 15px; min-height: 96px; animation: rise .38s both; }
     .metric span { display: block; color: var(--muted); font-size: .75rem; margin-bottom: 11px; overflow-wrap: anywhere; }
-    .metric strong { font-size: clamp(1.45rem, 3vw, 2rem); line-height: 1; }
+    .metric strong { font-size: clamp(1.25rem, 2.8vw, 1.9rem); line-height: 1; }
     .negative { color: var(--red); }
     .positive { color: var(--green); }
-    .lower { display: grid; grid-template-columns: 1.35fr .65fr; gap: 12px; align-items: start; }
+    .lower { display: grid; grid-template-columns: 1.1fr .9fr; gap: 12px; align-items: start; }
     .stack { display: grid; gap: 12px; }
     .section { padding: 19px; }
     .section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; }
     .trades { display: grid; gap: 9px; }
     .trade {
       display: grid;
-      grid-template-columns: 1.2fr .8fr .7fr .7fr;
+      grid-template-columns: 1.1fr .8fr .7fr .7fr;
       gap: 10px;
       padding: 13px;
       border: 1px solid #e5d6bb;
@@ -109,10 +109,10 @@
       background: rgba(255,255,255,.58);
       font-size: .88rem;
     }
-    .signals { display: grid; gap: 9px; }
-    .signal {
+    .account-grid { display: grid; gap: 9px; }
+    .account-row {
       display: grid;
-      grid-template-columns: 1.1fr .9fr .8fr .8fr;
+      grid-template-columns: 1.2fr .7fr .7fr .7fr .8fr;
       gap: 10px;
       padding: 13px;
       border: 1px solid #e5d6bb;
@@ -120,7 +120,7 @@
       background: rgba(255,255,255,.58);
       font-size: .88rem;
     }
-    .trade small, .model-row small, .signal small { display: block; color: var(--muted); margin-bottom: 4px; }
+    .trade small, .model-row small, .account-row small { display: block; color: var(--muted); margin-bottom: 4px; }
     .empty {
       color: var(--muted);
       padding: 48px 15px;
@@ -132,12 +132,21 @@
     .model-grid { display: grid; gap: 10px; }
     .model-row { border-bottom: 1px solid #e5d6bb; padding: 10px 0; }
     .model-row:last-child { border-bottom: 0; }
-    .access { margin-top: 14px; }
-    .access input { width: 100%; padding: 0 13px; color: var(--ink); background: rgba(255,255,255,.68); font-weight: 400; }
-    .emergency { width: 100%; margin-top: 9px; min-height: 40px; background: transparent; color: var(--red); border-color: rgba(170,52,52,.65); }
+    .access { margin-top: 14px; display: grid; gap: 10px; }
+    .access input, .access textarea, .access select {
+      width: 100%;
+      padding: 0 13px;
+      color: var(--ink);
+      background: rgba(255,255,255,.68);
+      font-weight: 400;
+      font-family: Georgia, serif;
+    }
+    .access textarea { min-height: 136px; padding: 12px 13px; resize: vertical; }
+    .inline-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .emergency { width: 100%; background: transparent; color: var(--red); border-color: rgba(170,52,52,.65); }
     .error { color: var(--red); min-height: 20px; margin-top: 12px; font-size: .85rem; }
     @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
-    @media (max-width: 850px) {
+    @media (max-width: 980px) {
       .metrics { grid-template-columns: repeat(3, 1fr); }
       .lower { grid-template-columns: 1fr; }
     }
@@ -145,16 +154,15 @@
       main { width: calc(100% - 18px); padding-top: 20px; overflow: hidden; }
       header { display: block; padding: 10px 4px 16px; }
       h1 { font-size: clamp(1.9rem, 9vw, 2.55rem); overflow-wrap: anywhere; }
-      .version { display: inline-block; max-width: none; margin-top: 13px; text-align: left; }
+      .version { display: inline-block; margin-top: 13px; }
       .control { grid-template-columns: 1fr 1fr; }
       .status-line { grid-column: 1 / -1; min-height: 42px; }
       .control button { width: 100%; padding: 0 12px; }
       .metrics { grid-template-columns: repeat(2, 1fr); gap: 9px; }
       .metric { min-height: 92px; padding: 14px 13px; }
-      .trade { grid-template-columns: 1fr 1fr; }
-      .signal { grid-template-columns: 1fr 1fr; }
+      .trade, .account-row { grid-template-columns: 1fr 1fr; }
       .section-head { gap: 10px; }
-      .section-head > * { min-width: 0; }
+      .inline-actions { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -164,9 +172,9 @@
     <div>
       <div class="brand">Father of Automation Series</div>
       <h1>Underdog Legacy <span>Model</span></h1>
-      <p class="tagline">Adaptive digit execution and account intelligence</p>
+      <p class="tagline">Adaptive digit execution and secure copy-account operations</p>
     </div>
-    <div class="version"><strong>Pattern 201</strong>DIGITOVER 3 · 1 tick</div>
+    <div class="version"><strong>Deployment Ready</strong>Global mode control and encrypted account intake</div>
   </header>
 
   <section class="panel control">
@@ -179,37 +187,56 @@
   </section>
 
   <section class="metrics">
-    <article class="panel metric"><span>Candidate signals</span><strong id="candidates">0</strong></article>
-    <article class="panel metric"><span>Trades</span><strong id="trades">0</strong></article>
+    <article class="panel metric"><span>Total traders</span><strong id="traders">0</strong></article>
+    <article class="panel metric"><span>Total trades</span><strong id="trades">0</strong></article>
     <article class="panel metric"><span>Wins</span><strong id="wins">0</strong></article>
     <article class="panel metric"><span>Losses</span><strong id="losses">0</strong></article>
+    <article class="panel metric"><span>Strategy win rate</span><strong id="win-rate">0%</strong></article>
     <article class="panel metric"><span>Strategy P/L</span><strong id="profit">0.00</strong></article>
+  </section>
+
+  <section class="metrics">
+    <article class="panel metric"><span>Longest win streak</span><strong id="longest-win">0</strong></article>
+    <article class="panel metric"><span>Longest loss streak</span><strong id="longest-loss">0</strong></article>
     <article class="panel metric"><span>Account balance</span><strong id="balance">0.00</strong></article>
+    <article class="panel metric"><span>Open trades</span><strong id="open-trades">0</strong></article>
+    <article class="panel metric"><span>Skipped</span><strong id="skipped">0</strong></article>
+    <article class="panel metric"><span>Current mode</span><strong id="mode-pill">DEMO</strong></article>
   </section>
 
   <div class="lower">
     <div class="stack">
-    <section class="panel section">
-      <div class="section-head"><h2>Trades</h2><span id="trade-count">Latest 0</span></div>
-      <div id="trade-list" class="trades"><div class="empty">No trades yet.</div></div>
-    </section>
-    <section class="panel section">
-      <div class="section-head"><h2>Signals</h2><span id="signal-count">Latest 0</span></div>
-      <div id="signal-list" class="signals"><div class="empty">No signals yet.</div></div>
-    </section>
+      <section class="panel section">
+        <div class="section-head"><h2>Trades</h2><span id="trade-count">Latest 0</span></div>
+        <div id="trade-list" class="trades"><div class="empty">No trades yet.</div></div>
+      </section>
+
+      <section class="panel section">
+        <div class="section-head"><h2>Account Stats</h2><span id="account-count">0 configured</span></div>
+        <div id="account-list" class="account-grid"><div class="empty">No account stats yet.</div></div>
+      </section>
     </div>
 
     <aside class="panel section">
-      <div class="section-head"><h2>Model</h2><span>Shadow mode</span></div>
+      <div class="section-head"><h2>Operations</h2><span id="storage-state">Encrypted token storage</span></div>
       <div class="model-grid">
-        <div class="model-row"><small>Skipped signals</small><strong id="skipped">0</strong></div>
-        <div class="model-row"><small>Bayesian evidence</small><strong id="bayesian">Not ready</strong></div>
-        <div class="model-row"><small>HMM evidence</small><strong id="hmm">Not ready</strong></div>
-        <div class="model-row"><small>Fixed stake</small><strong>$0.35 · 1 tick</strong></div>
+        <div class="model-row"><small>Mode for all accounts</small><strong id="mode-copy">DEMO</strong></div>
+        <div class="model-row"><small>Trades per hour</small><strong id="tph">Use terminal report</strong></div>
+        <div class="model-row"><small>Account intake rule</small><strong>Stop the bot before storing new tokens</strong></div>
       </div>
-      <div id="access" class="access">
+      <div class="access">
+        <select id="mode-select">
+          <option value="demo">Demo all accounts</option>
+          <option value="real">Real all accounts</option>
+        </select>
+        <button id="save-mode" class="secondary" type="button">Save mode</button>
+        <textarea id="token-batch" autocomplete="off" placeholder="Paste one Deriv token per line"></textarea>
+        <button id="import-tokens" class="secondary" type="button">Store tokens</button>
         <input id="api-key" type="password" autocomplete="off" placeholder="Control key">
-        <button id="emergency" class="emergency" type="button">Emergency stop</button>
+        <div class="inline-actions">
+          <button id="refresh-settings" class="secondary" type="button">Refresh accounts</button>
+          <button id="emergency" class="emergency" type="button">Emergency stop</button>
+        </div>
       </div>
       <div id="error" class="error"></div>
     </aside>
@@ -227,6 +254,7 @@
   keyInput.addEventListener("input", () => sessionStorage.setItem("control-key", keyInput.value));
   let currentStatus = "UNKNOWN";
   let localControl = false;
+  let readOnlyDashboard = false;
 
   function number(value, digits = 0) {
     return Number(value || 0).toLocaleString(undefined, {minimumFractionDigits: digits, maximumFractionDigits: digits});
@@ -251,23 +279,44 @@
     const running = currentStatus === "RUNNING";
     $("status").textContent = running ? "Running" : currentStatus.replaceAll("_", " ").toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
     $("status-note").textContent = running
-      ? "Signals and execution are active"
+      ? "Copy trading is active"
       : currentStatus === "STOPPED"
-        ? "Worker connected, trading paused"
+        ? "Worker connected, waiting for start"
         : data.pause_reason || "Trading is not active";
     $("dot").className = `dot ${running ? "running" : "stopped"}`;
     $("toggle").textContent = running ? "Stop" : "Start";
     $("toggle").className = running ? "stop" : "";
-    $("candidates").textContent = number(data.candidate_signals);
+    $("traders").textContent = number(data.total_traders);
     $("trades").textContent = number(data.purchased_trades);
     $("wins").textContent = number(data.wins);
     $("losses").textContent = number(data.losses);
+    $("win-rate").textContent = `${number(Number(data.win_rate || 0) * 100, 2)}%`;
+    $("longest-win").textContent = number(data.longest_win_streak);
+    $("longest-loss").textContent = number(data.longest_loss_streak);
     $("skipped").textContent = number(data.skipped_signals);
+    $("open-trades").textContent = number(data.open_trades);
+    $("mode-pill").textContent = String(data.mode || "demo").toUpperCase();
+    $("mode-copy").textContent = String(data.mode || "demo").toUpperCase();
     const profit = Number(data.net_profit || 0);
     $("profit").textContent = number(profit, 2);
     $("profit").className = profit < 0 ? "negative" : profit > 0 ? "positive" : "";
     const currency = data.accounts?.[0]?.currency || "USD";
     $("balance").textContent = `${number(data.account_balance_total, 2)} ${currency}`;
+  }
+  function applyReadOnlyMode() {
+    const controls = ["toggle", "save-mode", "import-tokens", "emergency"];
+    for (const id of controls) {
+      $(id).disabled = readOnlyDashboard;
+      $(id).style.display = readOnlyDashboard && (id === "save-mode" || id === "import-tokens" || id === "emergency")
+        ? "none"
+        : "";
+    }
+    $("mode-select").disabled = readOnlyDashboard;
+    $("token-batch").disabled = readOnlyDashboard;
+    $("api-key").style.display = readOnlyDashboard ? "none" : "";
+    if (readOnlyDashboard) {
+      $("status-note").textContent = "Live mirror from your local bot";
+    }
   }
   function renderTrades(rows) {
     $("trade-count").textContent = `Latest ${rows.length}`;
@@ -277,53 +326,63 @@
     }
     $("trade-list").innerHTML = rows.map(row => `
       <article class="trade">
-        <div><small>Contract</small><strong>${escapeHtml(row.contract_id)}</strong></div>
+        <div><small>Account</small><strong>${escapeHtml(row.account)}</strong></div>
         <div><small>Time</small><span>${new Date(row.purchase_time).toLocaleTimeString()}</span></div>
         <div><small>Outcome</small><strong class="${row.outcome === "WIN" ? "positive" : row.outcome === "LOSS" ? "negative" : ""}">${escapeHtml(row.outcome)}</strong></div>
         <div><small>Profit</small><strong>${row.profit == null ? "Pending" : number(row.profit, 2)}</strong></div>
       </article>`).join("");
   }
-  function renderSignals(rows) {
-    $("signal-count").textContent = `Latest ${rows.length}`;
-    if (!rows.length) {
-      $("signal-list").innerHTML = '<div class="empty">No signals yet.</div>';
+  function renderAccounts(statusAccounts, settingsAccounts, settingsMode, tokenStorageSecure) {
+    const statusMap = new Map((statusAccounts || []).map(row => [row.account, row]));
+    const merged = [];
+    for (const row of (statusAccounts || [])) merged.push(row);
+    for (const row of (settingsAccounts || [])) {
+      if (!merged.find(item => item.label === row.label || item.account === row.label)) {
+        merged.push({
+          account: row.label,
+          trades: 0,
+          wins: 0,
+          losses: 0,
+          status: row.enabled ? "stored" : "disabled"
+        });
+      }
+    }
+    $("account-count").textContent = `${merged.length} configured`;
+    $("storage-state").textContent = readOnlyDashboard
+      ? "Read-only cloud mirror"
+      : tokenStorageSecure
+        ? "Encrypted token storage"
+        : "Set DERIV_TOKEN_ENCRYPTION_KEY";
+    $("mode-select").value = settingsMode || "demo";
+    if (!merged.length) {
+      $("account-list").innerHTML = '<div class="empty">No account stats yet.</div>';
       return;
     }
-    $("signal-list").innerHTML = rows.map(row => {
-      const statusClass = row.final_status === "PURCHASE_CONFIRMED"
-        ? "positive"
-        : row.final_status?.startsWith("SKIP")
-          ? "negative"
-          : "";
-      const digits = Array.isArray(row.trigger_digits) ? row.trigger_digits.join(" · ") : "";
-      const reason = Array.isArray(row.rejection_reasons) && row.rejection_reasons.length
-        ? row.rejection_reasons.join(", ")
-        : row.final_status;
-      return `
-      <article class="signal">
-        <div><small>Digits</small><strong>${escapeHtml(digits)}</strong></div>
-        <div><small>Status</small><strong class="${statusClass}">${escapeHtml(row.final_status)}</strong></div>
-        <div><small>Time</small><span>${new Date(row.generated_at).toLocaleTimeString()}</span></div>
-        <div><small>Reason</small><span>${escapeHtml(reason)}</span></div>
-      </article>`;
-    }).join("");
+    $("account-list").innerHTML = merged.map(row => `
+      <article class="account-row">
+        <div><small>Account</small><strong>${escapeHtml(row.account || row.label || "Pending validation")}</strong></div>
+        <div><small>Trades</small><strong>${number(row.trades)}</strong></div>
+        <div><small>Wins</small><strong class="positive">${number(row.wins)}</strong></div>
+        <div><small>Losses</small><strong class="negative">${number(row.losses)}</strong></div>
+        <div><small>Status</small><span>${escapeHtml(row.status || "active")}</span></div>
+      </article>`).join("");
   }
   async function refresh() {
     $("error").textContent = "";
     try {
-      const [summary, trades, signals, model] = await Promise.all([
+      const [summary, trades, settings] = await Promise.all([
         api("/metrics/summary"),
         api("/metrics/recent-trades?limit=30"),
-        api("/metrics/recent-signals?limit=30"),
-        api("/metrics/model")
+        api("/settings/accounts")
       ]);
+      readOnlyDashboard = Boolean(settings.read_only_dashboard);
       renderStatus(summary);
       renderTrades(trades.trades || []);
-      renderSignals(signals.signals || []);
-      $("bayesian").textContent = `${model.bayesian.completed_trades} / ${model.bayesian.minimum_completed_trades}${model.bayesian.ready ? " - Ready" : ""}`;
-      $("hmm").textContent = `${model.hmm.observed_ticks} / ${model.hmm.minimum_training_ticks}${model.hmm.ready ? " - Ready" : ""}`;
+      renderAccounts(summary.accounts || [], settings.accounts || [], settings.mode, settings.token_storage_secure);
+      $("tph").textContent = summary.purchased_trades > 1 ? "Use terminal report" : "Not enough trades yet";
+      applyReadOnlyMode();
     } catch (error) {
-      $("error").textContent = "Unable to reach the service.";
+      $("error").textContent = error.message || "Unable to reach the service.";
     }
   }
   async function control(path, button, busyText) {
@@ -334,10 +393,7 @@
     try {
       const headers = {};
       if (!localControl && keyInput.value) headers["X-API-Key"] = keyInput.value;
-      const data = await api(path, {
-        method: "POST",
-        headers
-      });
+      const data = await api(path, {method: "POST", headers});
       renderStatus(data);
     } catch (error) {
       $("error").textContent = error.message;
@@ -352,6 +408,44 @@
     control(stopping ? "/control/pause" : "/control/resume", $("toggle"), stopping ? "Stopping..." : "Starting...");
   });
   $("emergency").addEventListener("click", () => control("/control/emergency-stop", $("emergency"), "Stopping..."));
+  $("save-mode").addEventListener("click", async () => {
+    $("save-mode").disabled = true;
+    $("error").textContent = "";
+    try {
+      const headers = {"Content-Type": "application/json"};
+      if (!localControl && keyInput.value) headers["X-API-Key"] = keyInput.value;
+      await api("/settings/mode", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({mode: $("mode-select").value})
+      });
+      await refresh();
+    } catch (error) {
+      $("error").textContent = error.message;
+    } finally {
+      $("save-mode").disabled = false;
+    }
+  });
+  $("import-tokens").addEventListener("click", async () => {
+    $("import-tokens").disabled = true;
+    $("error").textContent = "";
+    try {
+      const headers = {"Content-Type": "application/json"};
+      if (!localControl && keyInput.value) headers["X-API-Key"] = keyInput.value;
+      await api("/settings/accounts/import", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({tokens_text: $("token-batch").value, label_prefix: "Account"})
+      });
+      $("token-batch").value = "";
+      await refresh();
+    } catch (error) {
+      $("error").textContent = error.message;
+    } finally {
+      $("import-tokens").disabled = false;
+    }
+  });
+  $("refresh-settings").addEventListener("click", refresh);
   $("refresh").addEventListener("click", async () => {
     $("refresh").disabled = true;
     $("refresh").textContent = "Refreshing...";
@@ -363,10 +457,12 @@
     try {
       const runtime = await api("/runtime");
       localControl = Boolean(runtime.local_control);
+      readOnlyDashboard = Boolean(runtime.read_only_dashboard);
       if (localControl) {
         keyInput.style.display = "none";
         keyInput.value = "";
       }
+      applyReadOnlyMode();
     } catch (_) {
       localControl = false;
     }

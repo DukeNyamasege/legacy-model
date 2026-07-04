@@ -175,6 +175,10 @@ def load_test2_config(path: str | Path = "config.yaml") -> Test2Config:
         raw.setdefault("deriv", {})["public_ws_url"] = os.environ["DERIV_PUBLIC_WS_URL"]
     if os.getenv("DERIV_REST_BASE_URL"):
         raw.setdefault("deriv", {})["rest_base_url"] = os.environ["DERIV_REST_BASE_URL"]
+    if os.getenv("DERIV_TOKEN_ENCRYPTION_KEY"):
+        raw.setdefault("deriv", {})["token_encryption_key"] = os.environ[
+            "DERIV_TOKEN_ENCRYPTION_KEY"
+        ]
     if os.getenv("DERIV_TRADING_ENABLED"):
         raw.setdefault("deriv", {})["trading_enabled"] = os.environ[
             "DERIV_TRADING_ENABLED"

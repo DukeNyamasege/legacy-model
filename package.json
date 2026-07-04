@@ -1,0 +1,11 @@
+{
+  "name": "legacy-model-netlify-dashboard",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build-netlify.mjs"
+  },
+  "dependencies": {
+    "@netlify/blobs": "^8.1.0"
+  }
+}

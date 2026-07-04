@@ -9,10 +9,12 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 from app.config import load_test2_config
 from app.database import Database
 from app.repositories.test2_repository import Test2Repository
+from app.token_store import encrypt_token, has_encryption_key, parse_token_lines
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = load_test2_config(os.getenv("DERIV_BOT_CONFIG", ROOT / "config.yaml"))
@@ -20,6 +22,15 @@ DATABASE = Database(CONFIG.database_url)
 DATABASE.create_schema()
 REPOSITORY = Test2Repository(DATABASE, CONFIG)
 CONTROL_RATE: dict[str, deque[float]] = defaultdict(deque)
+
+
+class ModeUpdateRequest(BaseModel):
+    mode: str
+
+
+class TokenImportRequest(BaseModel):
+    tokens_text: str
+    label_prefix: str = "Account"
 
 app = FastAPI(
     title="Underdog Legacy Model",
@@ -122,17 +133,8 @@ def bot_status() -> dict:
         "model": CONFIG.model.name,
         "version": CONFIG.model.version,
         "brand": CONFIG.model.brand,
-        "mode": CONFIG.deriv.environment,
+        "mode": summary.get("mode", CONFIG.deriv.environment),
         "trading_enabled": CONFIG.deriv.trading_enabled,
-        "strategy": {
-            "symbol": "1HZ100V",
-            "contract_type": "DIGITOVER",
-            "barrier": "3",
-            "trigger": CONFIG.signal.trigger_name,
-            "pattern": [list(bounds) for bounds in CONFIG.signal.pattern_ranges],
-            "stake": 0.35,
-            "duration": "1 tick",
-        },
         **summary,
     }
 
@@ -152,7 +154,8 @@ def runtime_mode(request: Request) -> dict:
     }
     return {
         "local_control": local_control
-        and client_host in {"127.0.0.1", "::1", "localhost"}
+        and client_host in {"127.0.0.1", "::1", "localhost"},
+        "read_only_dashboard": False,
     }
 
 
@@ -243,3 +246,88 @@ def emergency_stop(
         target_status="EMERGENCY_STOP",
         reason="ADMINISTRATIVE_EMERGENCY_STOP",
     )
+
+
+@app.get("/settings/accounts")
+def settings_accounts() -> dict:
+    accounts = [
+        {
+            "id": row.id,
+            "label": row.label or f"Account {row.id}",
+            "enabled": row.enabled,
+            "token_masked": "Stored securely",
+            "created_at": row.created_at.isoformat(),
+            "updated_at": row.updated_at.isoformat(),
+        }
+        for row in REPOSITORY.list_managed_accounts()
+    ]
+    return {
+        "mode": REPOSITORY.runtime_mode(),
+        "accounts": accounts,
+        "token_storage_secure": has_encryption_key(CONFIG.deriv.token_encryption_key),
+        "read_only_dashboard": False,
+    }
+
+
+@app.post("/settings/mode")
+def update_mode(
+    payload: ModeUpdateRequest,
+    request: Request,
+    actor: str = Depends(require_control_auth),
+) -> dict:
+    enforce_control_rate_limit(request)
+    running_status, _ = REPOSITORY.control_state()
+    if running_status == "RUNNING":
+        raise HTTPException(
+            status_code=409,
+            detail="Stop the bot before switching trading mode.",
+        )
+    mode = REPOSITORY.set_runtime_mode(payload.mode)
+    REPOSITORY.audit(
+        "RUNTIME_MODE_CHANGED",
+        actor,
+        request.client.host if request.client else "unknown",
+        {"mode": mode},
+    )
+    return settings_accounts()
+
+
+@app.post("/settings/accounts/import")
+def import_accounts(
+    payload: TokenImportRequest,
+    request: Request,
+    actor: str = Depends(require_control_auth),
+) -> dict:
+    enforce_control_rate_limit(request)
+    running_status, _ = REPOSITORY.control_state()
+    if running_status == "RUNNING":
+        raise HTTPException(
+            status_code=409,
+            detail="Stop the bot before adding tokens for a clean next start.",
+        )
+    if not has_encryption_key(CONFIG.deriv.token_encryption_key):
+        raise HTTPException(
+            status_code=409,
+            detail="Set DERIV_TOKEN_ENCRYPTION_KEY before storing dashboard-managed tokens.",
+        )
+    tokens = parse_token_lines(payload.tokens_text)
+    if not tokens:
+        raise HTTPException(status_code=400, detail="Add at least one token.")
+    imported = []
+    for index, token in enumerate(tokens, start=1):
+        imported.append(
+            REPOSITORY.add_managed_account(
+                label=f"{payload.label_prefix.strip() or 'Account'} {index}",
+                token_secret=encrypt_token(token, CONFIG.deriv.token_encryption_key),
+            )
+        )
+    REPOSITORY.audit(
+        "MANAGED_ACCOUNTS_IMPORTED",
+        actor,
+        request.client.host if request.client else "unknown",
+        {"count": len(imported)},
+    )
+    return {
+        **settings_accounts(),
+        "imported_count": len(imported),
+    }

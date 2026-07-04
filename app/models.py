@@ -248,3 +248,22 @@ class AccountSnapshot(Base):
     currency: Mapped[str] = mapped_column(String(10), default="USD")
     status: Mapped[str] = mapped_column(String(30), default="active")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class ManagedAccount(Base):
+    __tablename__ = "managed_accounts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    label: Mapped[str] = mapped_column(String(120), default="")
+    token_secret: Mapped[str] = mapped_column(Text)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class RuntimePreference(Base):
+    __tablename__ = "runtime_preferences"
+
+    preference_key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    preference_value: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
