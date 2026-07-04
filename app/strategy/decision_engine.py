@@ -97,6 +97,7 @@ class DecisionEngine:
     def __init__(
         self,
         *,
+        reject_if_new_tick_arrives: bool,
         maximum_signal_age_ms: int,
         maximum_proposal_age_ms: int,
         bayesian_mode: str,
@@ -105,6 +106,7 @@ class DecisionEngine:
         favourable_state: str,
         favourable_state_threshold: float,
     ) -> None:
+        self.reject_if_new_tick_arrives = reject_if_new_tick_arrives
         self.maximum_signal_age_ms = maximum_signal_age_ms
         self.maximum_proposal_age_ms = maximum_proposal_age_ms
         self.bayesian_mode = bayesian_mode
@@ -132,9 +134,11 @@ class DecisionEngine:
             reasons.append("SKIP_DUPLICATE")
         if pattern_reset_required:
             reasons.append("SKIP_PATTERN_NOT_RESET")
-        if (
-            current_tick_sequence != signal.tick_sequence
-            or signal_age_ms > self.maximum_signal_age_ms
+        if signal_age_ms > self.maximum_signal_age_ms:
+            reasons.append("SKIP_STALE_SIGNAL")
+        elif (
+            self.reject_if_new_tick_arrives
+            and current_tick_sequence != signal.tick_sequence
         ):
             reasons.append("SKIP_STALE_SIGNAL")
         if connection_session_id != signal.connection_session_id or not connection_healthy:

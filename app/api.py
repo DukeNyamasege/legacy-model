@@ -129,7 +129,7 @@ def bot_status() -> dict:
             "contract_type": "DIGITOVER",
             "barrier": "3",
             "trigger": CONFIG.signal.trigger_name,
-            "pattern": [[6, 9], [6, 9], [0, 2], [0, 2], [3, 5]],
+            "pattern": [list(bounds) for bounds in CONFIG.signal.pattern_ranges],
             "stake": 0.35,
             "duration": "1 tick",
         },
@@ -164,6 +164,11 @@ def metrics_summary() -> dict:
 @app.get("/metrics/recent-trades")
 def recent_trades(limit: int = 50) -> dict:
     return {"trades": REPOSITORY.recent_trades(max(1, min(limit, 200)))}
+
+
+@app.get("/metrics/recent-signals")
+def recent_signals(limit: int = 50) -> dict:
+    return {"signals": REPOSITORY.recent_signals(max(1, min(limit, 200)))}
 
 
 @app.get("/metrics/model")

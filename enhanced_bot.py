@@ -24,6 +24,7 @@ import uuid
 import re
 import socket
 import subprocess
+import math
 from contextlib import suppress
 from pathlib import Path
 from collections import deque
@@ -193,8 +194,8 @@ def load_state(path: Path) -> Dict[str, Any]:
 def detect_digit_streak_signal(
     last_digits: List[str],
     streak_length: int,
-) -> Optional[Tuple[str, str, str]]:
-    """Compatibility helper for the five-digit BIN22001 Over-only signal."""
+    ) -> Optional[Tuple[str, str, str]]:
+    """Compatibility helper for the three-digit BIN201 Over-only signal."""
     required = len(TEST2_PATTERN_RANGES)
     if len(last_digits) < required:
         return None
@@ -710,7 +711,7 @@ class TradingBot:
         self.encryption_key = str(self.cfg["deriv"].get("token_encryption_key", ""))
 
         self.symbol = self.cfg["strategy"].get("symbol", "1HZ100V")
-        self.pattern_length = 5
+        self.pattern_length = int(self.cfg["strategy"].get("pattern_length", 3))
         self.max_tick_silence_seconds = max(5, int(self.cfg["trade"].get("max_tick_silence_seconds", 45)))
         self.reconnect_delay_seconds = max(1, int(self.cfg["trade"].get("reconnect_delay_seconds", 10)))
         self.watchdog_poll_interval_seconds = 5.0
@@ -782,6 +783,7 @@ class TradingBot:
             self._persist_hmm_metadata()
         execution_cfg = self.test2_config.execution
         self.decision_engine = DecisionEngine(
+            reject_if_new_tick_arrives=execution_cfg.reject_if_new_tick_arrives,
             maximum_signal_age_ms=execution_cfg.maximum_signal_age_ms,
             maximum_proposal_age_ms=execution_cfg.maximum_proposal_age_ms,
             bayesian_mode=bayes_cfg.mode,
@@ -850,6 +852,7 @@ class TradingBot:
     def _init_clients_from_state(self) -> Dict[str, Dict[str, Any]]:
         today = today_local_iso()
         clients_doc = self.state_doc.get("clients", {})
+        base_stake = float(self.cfg["strategy"]["initial_stake"])
 
         clients: Dict[str, Dict[str, Any]] = {}
         for token in self.tokens:
@@ -862,13 +865,16 @@ class TradingBot:
                 "name": str(profile.get("name", tag)),
                 "total_profit": float(existing.get("total_profit", 0.0)),
                 "profit_today": float(existing.get("profit_today", 0.0)),
-                "current_stake": float(self.cfg["strategy"]["initial_stake"]),
+                "current_stake": float(existing.get("current_stake", base_stake)),
                 "day": str(existing.get("day", today)),
                 "total_trades": int(existing.get("total_trades", 0)),
                 "wins": int(existing.get("wins", 0)),
                 "losses": int(existing.get("losses", 0)),
                 "last_result": str(existing.get("last_result", "idle")),
                 "last_profit": float(existing.get("last_profit", 0.0)),
+                "loss_streak": int(existing.get("loss_streak", 0)),
+                "recovery_loss_pool": float(existing.get("recovery_loss_pool", 0.0)),
+                "last_profit_ratio": float(existing.get("last_profit_ratio", 0.0)),
             }
             if st["day"] != today:
                 st["profit_today"] = 0.0
@@ -905,6 +911,9 @@ class TradingBot:
                 "losses": st["losses"],
                 "last_result": st["last_result"],
                 "last_profit": st["last_profit"],
+                "loss_streak": st["loss_streak"],
+                "recovery_loss_pool": st["recovery_loss_pool"],
+                "last_profit_ratio": st["last_profit_ratio"],
             }
 
         unresolved = []
@@ -942,6 +951,119 @@ class TradingBot:
     def _cooldown_note(self) -> str:
         remaining = self._cooldown_remaining_ticks()
         return f"trade=COOLDOWN {remaining} ticks"
+
+    @property
+    def base_stake(self) -> float:
+        return float(self.cfg["strategy"]["initial_stake"])
+
+    def _last_three_ticks_rising(self) -> bool:
+        if len(self.ticks_history) < 3:
+            return False
+        quotes = [float(item["quote"]) for item in list(self.ticks_history)[-3:]]
+        return quotes[0] < quotes[1] < quotes[2]
+
+    @property
+    def recovery_stake_cap(self) -> float:
+        return 3.50
+
+    def _round_stake_up(self, value: float) -> float:
+        return math.ceil(max(self.base_stake, value) * 100.0 - 1e-9) / 100.0
+
+    def _calculate_recovery_stake(
+        self,
+        *,
+        recovery_loss_pool: float,
+        profit_ratio: float,
+    ) -> float:
+        if recovery_loss_pool <= 0 or profit_ratio <= 0:
+            return self.base_stake
+        target_profit = self.base_stake * profit_ratio
+        required = (recovery_loss_pool + target_profit) / profit_ratio
+        return min(self.recovery_stake_cap, self._round_stake_up(required))
+
+    def _planned_stake_for_accounts(self, profit_ratio: float) -> float:
+        required = self.base_stake
+        for token, _account_id in self.valid_clients:
+            state = self.clients[token]
+            if int(state.get("loss_streak", 0)) >= 2:
+                required = max(
+                    required,
+                    self._calculate_recovery_stake(
+                        recovery_loss_pool=float(state.get("recovery_loss_pool", 0.0)),
+                        profit_ratio=profit_ratio,
+                    ),
+                )
+        return required
+
+    def _update_client_recovery_state(
+        self,
+        state: Dict[str, Any],
+        *,
+        outcome: str,
+        profit: float,
+    ) -> None:
+        if outcome == "win":
+            state["loss_streak"] = 0
+            state["recovery_loss_pool"] = 0.0
+            state["current_stake"] = self.base_stake
+            return
+
+        state["loss_streak"] = int(state.get("loss_streak", 0)) + 1
+        state["recovery_loss_pool"] = float(state.get("recovery_loss_pool", 0.0)) + abs(profit)
+        if state["loss_streak"] >= 2:
+            state["current_stake"] = self._calculate_recovery_stake(
+                recovery_loss_pool=float(state["recovery_loss_pool"]),
+                profit_ratio=float(state.get("last_profit_ratio", 0.0)),
+            )
+        else:
+            state["current_stake"] = self.base_stake
+
+    def _record_blocked_signal(
+        self,
+        signal: CandidateSignal,
+        *,
+        status: str,
+        digits_display: str,
+        note: str,
+    ) -> None:
+        self.repository.record_candidate(signal)
+        self.repository.mark_signal(signal.signal_id, status=status)
+        self.logger.info(
+            "SIGNAL_SKIPPED signal_id=%s digits=[%s] trigger=%s status=%s",
+            signal.signal_id,
+            digits_display,
+            signal.trigger_name,
+            status,
+        )
+        self._render_live_ticks(note=note)
+
+    def _build_candidate_signal_from_ticks(
+        self,
+        ticks: List[Dict[str, Any]],
+        *,
+        connection_session_id: str,
+        tick_sequence: int,
+    ) -> CandidateSignal:
+        required = len(TEST2_PATTERN_RANGES)
+        window = ticks[-required:]
+        trigger_digits = tuple(int(item["last_digit"]) for item in window)
+        newest = window[-1]
+        return CandidateSignal(
+            signal_id=str(uuid.uuid4()),
+            run_id=self.test2_config.model.run_id,
+            symbol=self.symbol,
+            contract_type="DIGITOVER",
+            barrier="3",
+            trigger_name=TEST2_TRIGGER,
+            trigger_digits=trigger_digits,
+            signal_tick_epoch=int(newest["epoch"]),
+            signal_tick_id=str(newest["tick_id"]),
+            signal_last_digit=int(newest["last_digit"]),
+            generated_at=datetime.now(timezone.utc).isoformat(),
+            generated_monotonic=time.monotonic(),
+            connection_session_id=connection_session_id,
+            tick_sequence=tick_sequence,
+        )
 
     def _consume_cooldown_tick(self) -> None:
         ended = self.cooldown.observe_tick()
@@ -1117,30 +1239,87 @@ class TradingBot:
             if self.hmm.train(list(self.raw_tick_digits)):
                 self._persist_hmm_metadata()
 
-        if self.is_trading_locked:
-            return
-
-        if self._is_cooldown_active():
-            self._consume_cooldown_tick()
-            self._render_live_ticks(note=self._cooldown_note() if self._is_cooldown_active() else "trade=WATCHING")
-            return
-
-        status, pause_reason = self.repository.control_state()
-        if status in {"STOPPED", "MANUAL_PAUSE", "EMERGENCY_STOP"}:
-            self._render_live_ticks(note=f"trade={status}")
-            return
-
         digits_display = " | ".join(
             t["last_digit"] for t in list(self.ticks_history)[-self.pattern_length :]
         )
         self.logger.debug("tick %s last_digits=[%s]", display_value, digits_display)
+        last_digits = [t["last_digit"] for t in list(self.ticks_history)]
+        raw_match = detect_digit_streak_signal(last_digits, self.pattern_length)
+        if raw_match is not None:
+            self.logger.info(
+                "RAW_MATCH_DETECTED digits=[%s] trigger=%s tick_sequence=%s",
+                digits_display,
+                raw_match[2],
+                self.tick_sequence,
+            )
 
         signal = self.signal_detector.observe(
             list(self.ticks_history),
             connection_session_id=self.connection_session_id,
             tick_sequence=self.tick_sequence,
         )
+        if raw_match is not None and signal is None:
+            signal = self._build_candidate_signal_from_ticks(
+                list(self.ticks_history),
+                connection_session_id=self.connection_session_id,
+                tick_sequence=self.tick_sequence,
+            )
+            self.logger.warning(
+                "RAW_MATCH_RECOVERED digits=[%s] tick_sequence=%s detector_returned_none",
+                digits_display,
+                self.tick_sequence,
+            )
+
+        if self.is_trading_locked:
+            if signal is not None:
+                self._record_blocked_signal(
+                    signal,
+                    status="SKIP_TRADING_LOCK",
+                    digits_display=digits_display,
+                    note="trade=TRADING_LOCK",
+                )
+            return
+
+        if self._is_cooldown_active():
+            if signal is not None:
+                self._record_blocked_signal(
+                    signal,
+                    status="SKIP_COOLDOWN",
+                    digits_display=digits_display,
+                    note=self._cooldown_note(),
+                )
+            self._consume_cooldown_tick()
+            self._render_live_ticks(note=self._cooldown_note() if self._is_cooldown_active() else "trade=WATCHING")
+            return
+
+        status, pause_reason = self.repository.control_state()
+        if status in {"STOPPED", "MANUAL_PAUSE", "EMERGENCY_STOP"}:
+            if signal is not None:
+                blocked_status = {
+                    "STOPPED": "SKIP_STOPPED",
+                    "MANUAL_PAUSE": "SKIP_MANUAL_PAUSE",
+                    "EMERGENCY_STOP": "SKIP_EMERGENCY_STOP",
+                }[status]
+                self._record_blocked_signal(
+                    signal,
+                    status=blocked_status,
+                    digits_display=digits_display,
+                    note=f"trade={status}",
+                )
+            else:
+                self._render_live_ticks(note=f"trade={status}")
+            return
+
         if signal is None:
+            return
+
+        if not self._last_three_ticks_rising():
+            self._record_blocked_signal(
+                signal,
+                status="SKIP_NOT_RISING",
+                digits_display=digits_display,
+                note="trade=NOT_RISING",
+            )
             return
 
         self.repository.record_candidate(signal)
@@ -1164,11 +1343,12 @@ class TradingBot:
     ) -> None:
         """Evaluate one Test 2 candidate and submit a new-API bulk purchase."""
         try:
+            base_stake = self.base_stake
             validate_contract_parameters(
                 contract_type=signal.contract_type,
                 barrier=signal.barrier,
                 symbol=signal.symbol,
-                stake=float(self.cfg["strategy"]["initial_stake"]),
+                stake=base_stake,
                 duration=int(self.cfg["strategy"]["duration"]),
                 duration_unit=self.cfg["strategy"]["duration_unit"],
             )
@@ -1184,7 +1364,7 @@ class TradingBot:
             )
             prop_req = {
                 "proposal": 1,
-                "amount": 0.35,
+                "amount": base_stake,
                 "basis": "stake",
                 "contract_type": "DIGITOVER",
                 "currency": "USD",
@@ -1223,12 +1403,11 @@ class TradingBot:
             try:
                 economics = parse_proposal_economics(
                     prop_resp,
-                    stake=0.35,
+                    stake=base_stake,
                     predicted_probability=preliminary.posterior_mean,
                     requested_monotonic=proposal_requested,
                     received_monotonic=proposal_received,
                 )
-                self.repository.record_proposal(signal, economics)
             except Exception as exc:
                 self.repository.mark_signal(
                     signal.signal_id,
@@ -1237,6 +1416,39 @@ class TradingBot:
                 )
                 self.logger.error("Proposal validation rejected: %s", exc)
                 return
+
+            profit_ratio = economics.potential_profit / economics.stake
+            target_stake = self._planned_stake_for_accounts(profit_ratio)
+            if abs(target_stake - base_stake) > 1e-9:
+                proposal_requested = time.monotonic()
+                prop_req["amount"] = target_stake
+                prop_resp = await self.public_client.send_request(prop_req)
+                proposal_received = time.monotonic()
+                if "error" in prop_resp:
+                    self.logger.error("Proposal validation rejected: %s", prop_resp["error"].get("message"))
+                    self.repository.mark_signal(
+                        signal.signal_id,
+                        status="SKIP_INVALID_PROPOSAL",
+                        proposal_received=True,
+                    )
+                    return
+                try:
+                    economics = parse_proposal_economics(
+                        prop_resp,
+                        stake=target_stake,
+                        predicted_probability=preliminary.posterior_mean,
+                        requested_monotonic=proposal_requested,
+                        received_monotonic=proposal_received,
+                    )
+                except Exception as exc:
+                    self.repository.mark_signal(
+                        signal.signal_id,
+                        status="SKIP_INVALID_PROPOSAL",
+                        proposal_received=True,
+                    )
+                    self.logger.error("Proposal validation rejected: %s", exc)
+                    return
+            self.repository.record_proposal(signal, economics)
 
             bayesian = self.bayesian.snapshot(
                 economics.break_even_probability,
@@ -1306,12 +1518,16 @@ class TradingBot:
             signal.consumed = True
 
             eligible_accounts = list(self.valid_clients)
+            stake_amount = round(float(economics.stake), 2)
+            for token, _account_id in eligible_accounts:
+                self.clients[token]["current_stake"] = stake_amount
+                self.clients[token]["last_profit_ratio"] = economics.potential_profit / economics.stake
             bulk_path = f"/trading/v1/options/contracts/bulk-purchase/{self.environment}"
             req_body = {
                 "contract_parameters": {
                     "contract_type": "DIGITOVER",
                     "underlying_symbol": "1HZ100V",
-                    "amount": 0.35,
+                    "amount": stake_amount,
                     "duration": 1,
                     "duration_unit": "t",
                     "barrier": "3",
@@ -1377,7 +1593,6 @@ class TradingBot:
                 transaction_id = tx.get("transaction_id")
                 if contract_id:
                     contract_id = int(contract_id)
-                    st["current_stake"] = 0.35
                     self.pending_contracts_for_current_cycle.add(contract_id)
                     signal_contracts.add(contract_id)
                     self.contract_signal_ids[contract_id] = signal.signal_id
@@ -1396,7 +1611,7 @@ class TradingBot:
                         "PURCHASE_CONFIRMED signal_id=%s contract_type=DIGITOVER barrier=3 trigger=%s",
                         signal.signal_id,
                         signal.trigger_name,
-                        extra={"token_tag": tag, "contract_id": str(contract_id), "stake": "0.35"}
+                        extra={"token_tag": tag, "contract_id": str(contract_id), "stake": f"{stake_amount:.2f}"}
                     )
                     await session.subscribe_contract(contract_id)
 
@@ -1506,7 +1721,7 @@ class TradingBot:
             st["losses"] = int(st.get("losses", 0)) + 1
         st["last_result"] = outcome
 
-        st["current_stake"] = 0.35
+        self._update_client_recovery_state(st, outcome=outcome, profit=profit)
 
         self.logger.info(
             "total_profit=%.2f profit_today=%.2f next_stake=%.2f",

@@ -6,11 +6,9 @@ TEST2_BARRIER = "3"
 TEST2_STAKE = 0.35
 TEST2_DURATION = 1
 TEST2_DURATION_UNIT = "t"
-TEST2_TRIGGER = "BIN22001x5"
+TEST2_TRIGGER = "BIN201x3"
 TEST2_PATTERN_RANGES = (
     (6, 9),
-    (6, 9),
-    (0, 2),
     (0, 2),
     (3, 5),
 )
@@ -25,21 +23,16 @@ def validate_contract_parameters(
     duration: int,
     duration_unit: str,
 ) -> None:
-    actual = (
-        contract_type,
-        str(barrier),
-        symbol,
-        round(float(stake), 2),
-        int(duration),
-        duration_unit,
-    )
-    required = (
-        TEST2_CONTRACT_TYPE,
-        TEST2_BARRIER,
-        TEST2_SYMBOL,
-        TEST2_STAKE,
-        TEST2_DURATION,
-        TEST2_DURATION_UNIT,
-    )
-    if actual != required:
-        raise ValueError(f"Rejected non-Test-2 contract parameters: {actual!r}")
+    if (
+        contract_type != TEST2_CONTRACT_TYPE
+        or str(barrier) != TEST2_BARRIER
+        or symbol != TEST2_SYMBOL
+        or int(duration) != TEST2_DURATION
+        or duration_unit != TEST2_DURATION_UNIT
+    ):
+        raise ValueError(
+            "Rejected non-Test-2 contract parameters: "
+            f"{(contract_type, str(barrier), symbol, int(duration), duration_unit)!r}"
+        )
+    if round(float(stake), 2) < TEST2_STAKE:
+        raise ValueError(f"Rejected stake below Test-2 base stake: {stake!r}")

@@ -17,6 +17,7 @@ users.json
 .runtime_users.json
 .dashboard_state.json
 .local_dashboard_*.log
+run_logs/
 *.token
 secrets/
 

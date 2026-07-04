@@ -27,22 +27,20 @@ strategy:
   prediction: 3
   duration: 1
   duration_unit: t
-  pattern_length: 5
+  pattern_length: 3
   currency: USD
   initial_stake: 0.35
 signal:
-  trigger_name: BIN22001x5
+  trigger_name: BIN201x3
   pattern_ranges:
     - [6, 9]
-    - [6, 9]
-    - [0, 2]
     - [0, 2]
     - [3, 5]
   overlapping_signals_allowed: false
   require_pattern_reset: true
 execution:
-  reject_if_new_tick_arrives: true
-  maximum_signal_age_ms: 900
+  reject_if_new_tick_arrives: false
+  maximum_signal_age_ms: 2500
   maximum_proposal_age_ms: 900
 bayesian:
   enabled: true

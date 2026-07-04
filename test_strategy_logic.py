@@ -35,11 +35,22 @@ def tick(digit: int, sequence: int) -> dict:
     }
 
 
-def pattern_ticks(offset: int = 0, digits: tuple[int, ...] = (6, 9, 0, 2, 3)) -> list[dict]:
+def pattern_ticks(offset: int = 0, digits: tuple[int, ...] = (6, 0, 3)) -> list[dict]:
     return [
         tick(digit, offset + sequence)
         for sequence, digit in enumerate(digits, start=1)
     ]
+
+
+def live_tick_payload(sequence: int, quote: float) -> dict:
+    return {
+        "tick": {
+            "quote": quote,
+            "epoch": 1_700_000_000 + sequence,
+            "id": f"tick-{sequence}",
+            "symbol": "1HZ100V",
+        }
+    }
 
 
 class SignalTests(unittest.TestCase):
@@ -50,32 +61,30 @@ class SignalTests(unittest.TestCase):
             require_pattern_reset=True,
         )
 
-    def test_bin_22001_pattern_creates_over_candidate(self) -> None:
+    def test_bin_201_pattern_creates_over_candidate(self) -> None:
         valid_patterns = (
-            (6, 6, 0, 0, 3),
-            (9, 9, 2, 2, 5),
-            (7, 8, 1, 0, 4),
+            (6, 0, 3),
+            (9, 2, 5),
+            (7, 1, 4),
         )
         for digits in valid_patterns:
             detector = self.make_detector()
             signal = detector.observe(
                 pattern_ticks(digits=digits),
                 connection_session_id="connection-1",
-                tick_sequence=5,
+                tick_sequence=3,
             )
             self.assertIsNotNone(signal)
             self.assertEqual(signal.contract_type, "DIGITOVER")
             self.assertEqual(signal.barrier, "3")
-            self.assertEqual(signal.trigger_name, "BIN22001x5")
+            self.assertEqual(signal.trigger_name, "BIN201x3")
             self.assertEqual(signal.trigger_digits, digits)
 
     def test_near_miss_patterns_never_signal(self) -> None:
         invalid_patterns = (
-            (5, 9, 0, 2, 3),
-            (6, 5, 0, 2, 3),
-            (6, 9, 3, 2, 3),
-            (6, 9, 0, 3, 3),
-            (6, 9, 0, 2, 6),
+            (5, 0, 3),
+            (6, 3, 3),
+            (6, 0, 6),
         )
         for digits in invalid_patterns:
             detector = self.make_detector()
@@ -83,7 +92,7 @@ class SignalTests(unittest.TestCase):
                 detector.observe(
                     pattern_ticks(digits=digits),
                     connection_session_id="connection-1",
-                    tick_sequence=5,
+                    tick_sequence=3,
                 )
             )
 
@@ -92,29 +101,29 @@ class SignalTests(unittest.TestCase):
         history = pattern_ticks()
         self.assertIsNotNone(
             detector.observe(
-                history, connection_session_id="connection-1", tick_sequence=5
+                history, connection_session_id="connection-1", tick_sequence=3
             )
         )
         self.assertIsNone(
             detector.observe(
-                history, connection_session_id="connection-1", tick_sequence=5
+                history, connection_session_id="connection-1", tick_sequence=3
             )
         )
 
-        history.append(tick(7, 6))
+        history.append(tick(7, 4))
         self.assertIsNone(
             detector.observe(
-                history, connection_session_id="connection-1", tick_sequence=6
+                history, connection_session_id="connection-1", tick_sequence=4
             )
         )
-        for sequence, digit in enumerate((8, 1, 2, 4), start=7):
+        for sequence, digit in enumerate((8, 1, 4), start=5):
             history.append(tick(digit, sequence))
             signal = detector.observe(
                 history,
                 connection_session_id="connection-1",
                 tick_sequence=sequence,
             )
-        self.assertEqual([int(item["last_digit"]) for item in history[-5:]], [7, 8, 1, 2, 4])
+        self.assertEqual([int(item["last_digit"]) for item in history[-3:]], [8, 1, 4])
         self.assertIsNotNone(signal)
 
 
@@ -132,7 +141,7 @@ class ContractTests(unittest.TestCase):
             {"contract_type": "DIGITUNDER"},
             {"barrier": "4"},
             {"symbol": "R_100"},
-            {"stake": 0.36},
+            {"stake": 0.10},
             {"duration": 2},
             {"duration_unit": "s"},
         ]
@@ -198,7 +207,7 @@ class TimingAndModelTests(unittest.TestCase):
         signal = detector.observe(
             pattern_ticks(),
             connection_session_id="connection-1",
-            tick_sequence=5,
+            tick_sequence=3,
         )
         bayesian_model = BayesianProbability(
             prior_alpha=3,
@@ -221,6 +230,7 @@ class TimingAndModelTests(unittest.TestCase):
             received_monotonic=time.monotonic(),
         )
         engine = DecisionEngine(
+            reject_if_new_tick_arrives=True,
             maximum_signal_age_ms=900,
             maximum_proposal_age_ms=900,
             bayesian_mode="shadow",
@@ -234,7 +244,7 @@ class TimingAndModelTests(unittest.TestCase):
             economics=economics,
             bayesian=bayesian,
             hmm=HmmInference(False, "NOT_READY", {}, 0),
-            current_tick_sequence=3,
+            current_tick_sequence=4,
             connection_session_id="connection-1",
             connection_healthy=True,
             pattern_reset_required=False,
@@ -263,6 +273,43 @@ class TimingAndModelTests(unittest.TestCase):
             state = cooldown.register_outcome("loss")
         self.assertEqual(state.ticks_remaining, 50)
         self.assertEqual(state.consecutive_losses, 5)
+
+    def test_dynamic_recovery_stake_is_capped_at_three_fifty(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            raw = yaml.safe_load(Path("config.yaml").read_text(encoding="utf-8"))
+            token_path = root / "tokens.txt"
+            token_path.write_text("test-token\n", encoding="utf-8")
+            raw["files"] = {
+                "tokens": token_path.as_posix(),
+                "state": (root / "state.json").as_posix(),
+                "users": (root / "users.json").as_posix(),
+            }
+            raw["logging"]["file"] = (root / "bot.log").as_posix()
+            raw["storage"]["local_database_url"] = (
+                "sqlite:///" + (root / "test2.db").as_posix()
+            )
+            path = root / "config.yaml"
+            path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+            bot = enhanced_bot.TradingBot(str(path))
+            try:
+                state = next(iter(bot.clients.values()))
+                state["last_profit_ratio"] = 0.20 / 0.35
+                bot._update_client_recovery_state(state, outcome="loss", profit=-0.35)
+                self.assertEqual(state["current_stake"], 0.35)
+                bot._update_client_recovery_state(state, outcome="loss", profit=-0.35)
+                self.assertEqual(state["current_stake"], 1.58)
+                bot._update_client_recovery_state(state, outcome="loss", profit=-1.58)
+                self.assertEqual(state["current_stake"], 3.50)
+                bot._update_client_recovery_state(state, outcome="win", profit=0.60)
+                self.assertEqual(state["current_stake"], 0.35)
+                self.assertEqual(state["loss_streak"], 0)
+                self.assertEqual(state["recovery_loss_pool"], 0.0)
+            finally:
+                bot.database.engine.dispose()
+                for handler in list(bot.logger.handlers):
+                    handler.close()
+                bot.logger.handlers.clear()
 
 
 class PersistenceTests(unittest.TestCase):
@@ -297,7 +344,7 @@ class PersistenceTests(unittest.TestCase):
         signal = detector.observe(
             pattern_ticks(),
             connection_session_id="connection-1",
-            tick_sequence=5,
+            tick_sequence=3,
         )
         self.repository.record_candidate(signal)
         self.assertTrue(self.repository.consume_signal(signal.signal_id))
@@ -334,7 +381,7 @@ class PersistenceTests(unittest.TestCase):
             signal = detector.observe(
                 pattern_ticks(offset=offset),
                 connection_session_id=f"connection-{offset}",
-                tick_sequence=5 + offset,
+                tick_sequence=3 + offset,
             )
             self.repository.record_candidate(signal)
             signals.append(signal)
@@ -370,7 +417,7 @@ class PersistenceTests(unittest.TestCase):
         signal = detector.observe(
             pattern_ticks(),
             connection_session_id="connection-1",
-            tick_sequence=5,
+            tick_sequence=3,
         )
         self.repository.record_candidate(signal)
         self.repository.consume_signal(signal.signal_id)
@@ -408,7 +455,7 @@ class PersistenceTests(unittest.TestCase):
 
 
 class BotSignalIntegrationTests(unittest.IsolatedAsyncioTestCase):
-    async def test_bot_schedules_only_the_exact_bin_22001_pattern(self) -> None:
+    async def test_bot_schedules_only_the_exact_bin_201_pattern(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
             raw = yaml.safe_load(Path("config.yaml").read_text(encoding="utf-8"))
@@ -437,36 +484,154 @@ class BotSignalIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 coroutine.close()
 
             bot._spawn_background_task = capture_task
-            for sequence, digit in enumerate([8, 9, 0, 3, 3], start=1):
-                await bot._on_tick(
-                    {
-                        "tick": {
-                            "quote": 100 + digit / 100,
-                            "epoch": 1_700_000_000 + sequence,
-                            "id": f"tick-{sequence}",
-                            "symbol": "1HZ100V",
-                        }
-                    }
-                )
+            for sequence, quote in enumerate([100.08, 100.09, 100.03], start=1):
+                await bot._on_tick(live_tick_payload(sequence, quote))
             self.assertEqual(spawned, [])
 
-            for sequence, digit in enumerate([6, 9, 0, 2, 3], start=6):
-                await bot._on_tick(
-                    {
-                        "tick": {
-                            "quote": 100 + digit / 100,
-                            "epoch": 1_700_000_000 + sequence,
-                            "id": f"tick-{sequence}",
-                            "symbol": "1HZ100V",
-                        }
-                    }
-                )
+            for sequence, quote in enumerate([101.06, 102.00, 103.03], start=4):
+                await bot._on_tick(live_tick_payload(sequence, quote))
             self.assertEqual(len(spawned), 1)
             self.assertIn("purchase_", spawned[0])
             bot.database.engine.dispose()
             for handler in list(bot.logger.handlers):
                 handler.close()
             bot.logger.handlers.clear()
+
+    async def test_cooldown_blocked_match_is_recorded_with_skip_reason(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            raw = yaml.safe_load(Path("config.yaml").read_text(encoding="utf-8"))
+            token_path = root / "tokens.txt"
+            token_path.write_text("test-token\n", encoding="utf-8")
+            raw["files"] = {
+                "tokens": token_path.as_posix(),
+                "state": (root / "state.json").as_posix(),
+                "users": (root / "users.json").as_posix(),
+            }
+            raw["logging"]["file"] = (root / "bot.log").as_posix()
+            raw["storage"]["local_database_url"] = (
+                "sqlite:///" + (root / "test2.db").as_posix()
+            )
+            path = root / "config.yaml"
+            path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+            bot = enhanced_bot.TradingBot(str(path))
+            try:
+                bot.connection_session_id = "connection-1"
+                bot.public_client.is_connected = True
+                bot.repository.set_status("RUNNING")
+                bot._render_live_ticks = lambda note="": None
+                bot.cooldown.restore(
+                    ticks_remaining=1,
+                    consecutive_wins=0,
+                    consecutive_losses=1,
+                )
+                bot.tick_sequence = 2
+                bot.ticks_history.extend(
+                    [
+                        {"quote": 101.06, "display": "101.06", "last_digit": "6", "epoch": 1_700_000_001, "tick_id": "tick-1"},
+                        {"quote": 102.00, "display": "102.00", "last_digit": "0", "epoch": 1_700_000_002, "tick_id": "tick-2"},
+                    ]
+                )
+                bot.raw_tick_digits.extend([6, 0])
+
+                await bot._on_tick(live_tick_payload(3, 103.03))
+
+                recent = bot.repository.recent_signals(1)
+                self.assertEqual(len(recent), 1)
+                self.assertEqual(recent[0]["final_status"], "SKIP_COOLDOWN")
+                self.assertEqual(recent[0]["trigger_digits"], [6, 0, 3])
+            finally:
+                bot.database.engine.dispose()
+                for handler in list(bot.logger.handlers):
+                    handler.close()
+                bot.logger.handlers.clear()
+
+    async def test_raw_match_recovery_creates_candidate_when_detector_returns_none(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            raw = yaml.safe_load(Path("config.yaml").read_text(encoding="utf-8"))
+            token_path = root / "tokens.txt"
+            token_path.write_text("test-token\n", encoding="utf-8")
+            raw["files"] = {
+                "tokens": token_path.as_posix(),
+                "state": (root / "state.json").as_posix(),
+                "users": (root / "users.json").as_posix(),
+            }
+            raw["logging"]["file"] = (root / "bot.log").as_posix()
+            raw["storage"]["local_database_url"] = (
+                "sqlite:///" + (root / "test2.db").as_posix()
+            )
+            path = root / "config.yaml"
+            path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+            bot = enhanced_bot.TradingBot(str(path))
+            try:
+                bot.connection_session_id = "connection-1"
+                bot.public_client.is_connected = True
+                bot.repository.set_status("RUNNING")
+                bot._render_live_ticks = lambda note="": None
+                spawned: list[str] = []
+
+                def capture_task(coroutine, *, name: str) -> None:
+                    spawned.append(name)
+                    coroutine.close()
+
+                bot._spawn_background_task = capture_task
+                bot.signal_detector.observe = lambda *args, **kwargs: None
+
+                for sequence, quote in enumerate([101.06, 102.00, 103.03], start=1):
+                    await bot._on_tick(live_tick_payload(sequence, quote))
+
+                self.assertEqual(len(spawned), 1)
+                recent = bot.repository.recent_signals(1)
+                self.assertEqual(recent[0]["trigger_digits"], [6, 0, 3])
+            finally:
+                bot.database.engine.dispose()
+                for handler in list(bot.logger.handlers):
+                    handler.close()
+                bot.logger.handlers.clear()
+
+    async def test_non_rising_match_is_skipped(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            raw = yaml.safe_load(Path("config.yaml").read_text(encoding="utf-8"))
+            token_path = root / "tokens.txt"
+            token_path.write_text("test-token\n", encoding="utf-8")
+            raw["files"] = {
+                "tokens": token_path.as_posix(),
+                "state": (root / "state.json").as_posix(),
+                "users": (root / "users.json").as_posix(),
+            }
+            raw["logging"]["file"] = (root / "bot.log").as_posix()
+            raw["storage"]["local_database_url"] = (
+                "sqlite:///" + (root / "test2.db").as_posix()
+            )
+            path = root / "config.yaml"
+            path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+            bot = enhanced_bot.TradingBot(str(path))
+            try:
+                bot.connection_session_id = "connection-1"
+                bot.public_client.is_connected = True
+                bot.repository.set_status("RUNNING")
+                bot._render_live_ticks = lambda note="": None
+                spawned: list[str] = []
+
+                def capture_task(coroutine, *, name: str) -> None:
+                    spawned.append(name)
+                    coroutine.close()
+
+                bot._spawn_background_task = capture_task
+
+                for sequence, quote in enumerate([103.06, 102.00, 101.03], start=1):
+                    await bot._on_tick(live_tick_payload(sequence, quote))
+
+                self.assertEqual(spawned, [])
+                recent = bot.repository.recent_signals(1)
+                self.assertEqual(recent[0]["final_status"], "SKIP_NOT_RISING")
+            finally:
+                bot.database.engine.dispose()
+                for handler in list(bot.logger.handlers):
+                    handler.close()
+                bot.logger.handlers.clear()
 
 
 if __name__ == "__main__":

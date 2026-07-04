@@ -95,6 +95,7 @@
     .negative { color: var(--red); }
     .positive { color: var(--green); }
     .lower { display: grid; grid-template-columns: 1.35fr .65fr; gap: 12px; align-items: start; }
+    .stack { display: grid; gap: 12px; }
     .section { padding: 19px; }
     .section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; }
     .trades { display: grid; gap: 9px; }
@@ -108,7 +109,18 @@
       background: rgba(255,255,255,.58);
       font-size: .88rem;
     }
-    .trade small, .model-row small { display: block; color: var(--muted); margin-bottom: 4px; }
+    .signals { display: grid; gap: 9px; }
+    .signal {
+      display: grid;
+      grid-template-columns: 1.1fr .9fr .8fr .8fr;
+      gap: 10px;
+      padding: 13px;
+      border: 1px solid #e5d6bb;
+      border-radius: 14px;
+      background: rgba(255,255,255,.58);
+      font-size: .88rem;
+    }
+    .trade small, .model-row small, .signal small { display: block; color: var(--muted); margin-bottom: 4px; }
     .empty {
       color: var(--muted);
       padding: 48px 15px;
@@ -140,6 +152,7 @@
       .metrics { grid-template-columns: repeat(2, 1fr); gap: 9px; }
       .metric { min-height: 92px; padding: 14px 13px; }
       .trade { grid-template-columns: 1fr 1fr; }
+      .signal { grid-template-columns: 1fr 1fr; }
       .section-head { gap: 10px; }
       .section-head > * { min-width: 0; }
     }
@@ -153,7 +166,7 @@
       <h1>Underdog Legacy <span>Model</span></h1>
       <p class="tagline">Adaptive digit execution and account intelligence</p>
     </div>
-    <div class="version"><strong>Pattern 22001</strong>DIGITOVER 3 · 1 tick</div>
+    <div class="version"><strong>Pattern 201</strong>DIGITOVER 3 · 1 tick</div>
   </header>
 
   <section class="panel control">
@@ -175,15 +188,21 @@
   </section>
 
   <div class="lower">
+    <div class="stack">
     <section class="panel section">
       <div class="section-head"><h2>Trades</h2><span id="trade-count">Latest 0</span></div>
       <div id="trade-list" class="trades"><div class="empty">No trades yet.</div></div>
     </section>
+    <section class="panel section">
+      <div class="section-head"><h2>Signals</h2><span id="signal-count">Latest 0</span></div>
+      <div id="signal-list" class="signals"><div class="empty">No signals yet.</div></div>
+    </section>
+    </div>
 
     <aside class="panel section">
       <div class="section-head"><h2>Model</h2><span>Shadow mode</span></div>
       <div class="model-grid">
-        <div class="model-row"><small>Purchase condition</small><strong>6-9 · 6-9 · 0-2 · 0-2 · 3-5 → Over 3</strong></div>
+        <div class="model-row"><small>Skipped signals</small><strong id="skipped">0</strong></div>
         <div class="model-row"><small>Bayesian evidence</small><strong id="bayesian">Not ready</strong></div>
         <div class="model-row"><small>HMM evidence</small><strong id="hmm">Not ready</strong></div>
         <div class="model-row"><small>Fixed stake</small><strong>$0.35 · 1 tick</strong></div>
@@ -243,6 +262,7 @@
     $("trades").textContent = number(data.purchased_trades);
     $("wins").textContent = number(data.wins);
     $("losses").textContent = number(data.losses);
+    $("skipped").textContent = number(data.skipped_signals);
     const profit = Number(data.net_profit || 0);
     $("profit").textContent = number(profit, 2);
     $("profit").className = profit < 0 ? "negative" : profit > 0 ? "positive" : "";
@@ -263,16 +283,43 @@
         <div><small>Profit</small><strong>${row.profit == null ? "Pending" : number(row.profit, 2)}</strong></div>
       </article>`).join("");
   }
+  function renderSignals(rows) {
+    $("signal-count").textContent = `Latest ${rows.length}`;
+    if (!rows.length) {
+      $("signal-list").innerHTML = '<div class="empty">No signals yet.</div>';
+      return;
+    }
+    $("signal-list").innerHTML = rows.map(row => {
+      const statusClass = row.final_status === "PURCHASE_CONFIRMED"
+        ? "positive"
+        : row.final_status?.startsWith("SKIP")
+          ? "negative"
+          : "";
+      const digits = Array.isArray(row.trigger_digits) ? row.trigger_digits.join(" · ") : "";
+      const reason = Array.isArray(row.rejection_reasons) && row.rejection_reasons.length
+        ? row.rejection_reasons.join(", ")
+        : row.final_status;
+      return `
+      <article class="signal">
+        <div><small>Digits</small><strong>${escapeHtml(digits)}</strong></div>
+        <div><small>Status</small><strong class="${statusClass}">${escapeHtml(row.final_status)}</strong></div>
+        <div><small>Time</small><span>${new Date(row.generated_at).toLocaleTimeString()}</span></div>
+        <div><small>Reason</small><span>${escapeHtml(reason)}</span></div>
+      </article>`;
+    }).join("");
+  }
   async function refresh() {
     $("error").textContent = "";
     try {
-      const [summary, trades, model] = await Promise.all([
+      const [summary, trades, signals, model] = await Promise.all([
         api("/metrics/summary"),
         api("/metrics/recent-trades?limit=30"),
+        api("/metrics/recent-signals?limit=30"),
         api("/metrics/model")
       ]);
       renderStatus(summary);
       renderTrades(trades.trades || []);
+      renderSignals(signals.signals || []);
       $("bayesian").textContent = `${model.bayesian.completed_trades} / ${model.bayesian.minimum_completed_trades}${model.bayesian.ready ? " - Ready" : ""}`;
       $("hmm").textContent = `${model.hmm.observed_ticks} / ${model.hmm.minimum_training_ticks}${model.hmm.ready ? " - Ready" : ""}`;
     } catch (error) {

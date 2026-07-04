@@ -444,6 +444,38 @@ class Test2Repository:
                 for trade in trades
             ]
 
+    def recent_signals(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self.database.session() as session:
+            signals = session.scalars(
+                select(CandidateSignalRecord)
+                .where(CandidateSignalRecord.run_id == self.run_id)
+                .order_by(CandidateSignalRecord.generated_timestamp.desc())
+                .limit(limit)
+            ).all()
+            results: list[dict[str, Any]] = []
+            for signal in signals:
+                decision = session.scalar(
+                    select(ModelDecisionRecord).where(
+                        ModelDecisionRecord.signal_id == signal.signal_id
+                    )
+                )
+                results.append(
+                    {
+                        "signal_id": signal.signal_id,
+                        "generated_at": signal.generated_timestamp.isoformat(),
+                        "trigger_name": signal.trigger_name,
+                        "trigger_digits": signal.trigger_digits,
+                        "final_status": signal.final_status,
+                        "stale": signal.stale,
+                        "consumed": signal.consumed,
+                        "signal_last_digit": signal.signal_last_digit,
+                        "ticks_between_signal_and_purchase": signal.ticks_between_signal_and_purchase,
+                        "decision": decision.final_decision if decision else None,
+                        "rejection_reasons": decision.rejection_reasons if decision else [],
+                    }
+                )
+            return results
+
     def audit(self, action: str, actor: str, source_ip: str, details: dict) -> None:
         with self.database.session() as session:
             session.add(

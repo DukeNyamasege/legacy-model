@@ -38,7 +38,7 @@ class StrategySettings(StrictModel):
     prediction: Literal[3] = 3
     duration: Literal[1] = 1
     duration_unit: Literal["t"] = "t"
-    pattern_length: Literal[5] = 5
+    pattern_length: Literal[3] = 3
     currency: Literal["USD"] = "USD"
     initial_stake: float = 0.35
 
@@ -50,11 +50,9 @@ class StrategySettings(StrictModel):
 
 
 class SignalSettings(StrictModel):
-    trigger_name: Literal["BIN22001x5"] = "BIN22001x5"
+    trigger_name: Literal["BIN201x3"] = "BIN201x3"
     pattern_ranges: tuple[tuple[int, int], ...] = (
         (6, 9),
-        (6, 9),
-        (0, 2),
         (0, 2),
         (3, 5),
     )
@@ -63,15 +61,15 @@ class SignalSettings(StrictModel):
 
     @model_validator(mode="after")
     def enforce_purchase_pattern(self) -> "SignalSettings":
-        required = ((6, 9), (6, 9), (0, 2), (0, 2), (3, 5))
+        required = ((6, 9), (0, 2), (3, 5))
         if self.pattern_ranges != required:
             raise ValueError(f"Purchase pattern must be exactly {required!r}")
         return self
 
 
 class ExecutionSettings(StrictModel):
-    reject_if_new_tick_arrives: bool = True
-    maximum_signal_age_ms: int = Field(default=900, gt=0)
+    reject_if_new_tick_arrives: bool = False
+    maximum_signal_age_ms: int = Field(default=2500, gt=0)
     maximum_proposal_age_ms: int = Field(default=900, gt=0)
 
 

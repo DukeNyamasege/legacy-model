@@ -1,14 +1,15 @@
-# The Underdog Legacy Model - Pattern 22001
+# The Underdog Legacy Model - Pattern 201
 
 Father of Automation Series.
 
-Pattern 22001 is an Over-only Deriv digit strategy using the current APIs documented at
+Pattern 201 is an Over-only Deriv digit strategy using the current APIs documented at
 <https://developers.deriv.com/docs/>:
 
-- Signal: the latest five completed digits match
-  `[6-9], [6-9], [0-2], [0-2], [3-5]` (`BIN22001x5`).
+- Signal: the latest three completed digits match
+  `[6-9], [0-2], [3-5]` (`BIN201x3`).
 - Contract: `DIGITOVER`, barrier `3`, symbol `1HZ100V`.
-- Fixed stake: `$0.35 USD`.
+- Base stake: `$0.35 USD`.
+- Recovery sizing: dynamic recovery after consecutive losses, capped at `$3.50 USD`.
 - Duration: one tick.
 - HMM and Bayesian layers: shadow mode until deliberately changed.
 - No session stop, drawdown stop, hourly cap, trade-count cap, open-contract cap,

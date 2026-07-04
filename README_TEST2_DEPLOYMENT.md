@@ -30,7 +30,7 @@ Web service:
 - `TRADING_MODE=demo`
 - `DERIV_ENVIRONMENT=demo`
 - `ALLOW_REAL_TRADING=false`
-- `TEST_RUN_ID=test2`
+- `TEST_RUN_ID=bin22001`
 - `DEPLOYMENT_ID=render-api`
 
 Worker:
@@ -41,7 +41,7 @@ Worker:
 - `DERIV_ENVIRONMENT=demo`
 - `TRADING_MODE=demo`
 - `ALLOW_REAL_TRADING=false`
-- `TEST_RUN_ID=test2`
+- `TEST_RUN_ID=bin22001`
 - `DEPLOYMENT_ID=render-worker`
 
 Do not add a token to `config.yaml`, `render.yaml`, logs, or exports. A real
