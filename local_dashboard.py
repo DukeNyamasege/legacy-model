@@ -26,8 +26,26 @@ def main() -> None:
 
     host = os.getenv("HOST", "127.0.0.1")
     port = int(os.getenv("PORT", "8080"))
+    sync_url = os.getenv("NETLIFY_SYNC_URL", "").strip()
+    sync_token = os.getenv("NETLIFY_SYNC_TOKEN", "").strip()
+    sync_interval = os.getenv("NETLIFY_SYNC_INTERVAL_SECONDS", "15").strip() or "15"
     print(f"Dashboard: http://{host}:{port}")
     print(f"Control key: {os.environ['CONTROL_API_KEY']}")
+    if sync_url and sync_token:
+        print(
+            "Netlify mirror sync: enabled "
+            f"({sync_url}, every {sync_interval}s)"
+        )
+    else:
+        missing = []
+        if not sync_url:
+            missing.append("NETLIFY_SYNC_URL")
+        if not sync_token:
+            missing.append("NETLIFY_SYNC_TOKEN")
+        print(
+            "Netlify mirror sync: disabled "
+            f"(missing {', '.join(missing)})"
+        )
     print("The worker logs will remain visible in this terminal.")
 
     worker = subprocess.Popen(
