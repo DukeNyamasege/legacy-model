@@ -46,10 +46,15 @@
       border-bottom: 1px solid rgba(185,133,47,.34);
     }
     h1, h2, p { margin: 0; }
-    h1 { font-size: clamp(2rem, 4vw, 3.15rem); letter-spacing: -.045em; line-height: 1; }
-    h1 span { color: var(--gold); font-style: italic; font-weight: 400; }
     h2 { font-size: 1.35rem; }
-    .brand { color: var(--gold); text-transform: uppercase; letter-spacing: .2em; font: 700 .65rem Georgia, serif; margin-bottom: 7px; }
+    .brand {
+      color: var(--gold);
+      text-transform: uppercase;
+      letter-spacing: .12em;
+      font: 700 clamp(1.1rem, 2.4vw, 1.9rem) Georgia, serif;
+      margin-bottom: 4px;
+      line-height: 1.1;
+    }
     .tagline { color: var(--muted); margin-top: 7px; font-size: .82rem; }
     .version {
       flex: 0 0 auto;
@@ -153,7 +158,6 @@
     @media (max-width: 580px) {
       main { width: calc(100% - 18px); padding-top: 20px; overflow: hidden; }
       header { display: block; padding: 10px 4px 16px; }
-      h1 { font-size: clamp(1.9rem, 9vw, 2.55rem); overflow-wrap: anywhere; }
       .version { display: inline-block; margin-top: 13px; }
       .control { grid-template-columns: 1fr 1fr; }
       .status-line { grid-column: 1 / -1; min-height: 42px; }
@@ -171,7 +175,6 @@
   <header>
     <div>
       <div class="brand">Father of Automation Series</div>
-      <h1>Underdog Legacy <span>Model</span></h1>
       <p class="tagline">Adaptive digit execution and secure copy-account operations</p>
     </div>
   </header>
@@ -202,14 +205,6 @@
     <article class="panel metric"><span>Skipped</span><strong id="skipped">0</strong></article>
   </section>
 
-  <div class="lower">
-    <div class="stack">
-      <section class="panel section">
-        <div class="section-head"><h2>Account Stats</h2><span id="account-count">0 configured</span></div>
-        <div id="account-list" class="account-grid"><div class="empty">No account stats yet.</div></div>
-      </section>
-    </div>
-  </div>
 </main>
 <script>
   const $ = id => document.getElementById(id);
@@ -289,43 +284,6 @@
       $("status-note").textContent = "Live mirror from your local bot";
     }
   }
-  function renderAccounts(statusAccounts, settingsAccounts, settingsMode, tokenStorageSecure) {
-    const statusMap = new Map((statusAccounts || []).map(row => [row.account, row]));
-    const merged = [];
-    for (const row of (statusAccounts || [])) merged.push(row);
-    for (const row of (settingsAccounts || [])) {
-      if (!merged.find(item => item.label === row.label || item.account === row.label)) {
-        merged.push({
-          account: row.label,
-          trades: 0,
-          wins: 0,
-          losses: 0,
-          status: row.enabled ? "stored" : "disabled"
-        });
-      }
-    }
-    $("account-count").textContent = `${merged.length} configured`;
-    if ($("storage-state")) {
-      $("storage-state").textContent = readOnlyDashboard
-        ? "Read-only cloud mirror"
-        : tokenStorageSecure
-          ? "Encrypted token storage"
-          : "Set DERIV_TOKEN_ENCRYPTION_KEY";
-    }
-    if ($("mode-select")) $("mode-select").value = settingsMode || "demo";
-    if (!merged.length) {
-      $("account-list").innerHTML = '<div class="empty">No account stats yet.</div>';
-      return;
-    }
-    $("account-list").innerHTML = merged.map(row => `
-      <article class="account-row">
-        <div><small>Account</small><strong>${escapeHtml(row.account || row.label || "Pending validation")}</strong></div>
-        <div><small>Trades</small><strong>${number(row.trades)}</strong></div>
-        <div><small>Wins</small><strong class="positive">${number(row.wins)}</strong></div>
-        <div><small>Losses</small><strong class="negative">${number(row.losses)}</strong></div>
-        <div><small>Status</small><span>${escapeHtml(row.status || "active")}</span></div>
-      </article>`).join("");
-  }
   async function refresh() {
     if ($("error")) $("error").textContent = "";
     try {
@@ -335,7 +293,6 @@
       ]);
       readOnlyDashboard = Boolean(settings.read_only_dashboard);
       renderStatus(summary);
-      renderAccounts(summary.accounts || [], settings.accounts || [], settings.mode, settings.token_storage_secure);
       applyReadOnlyMode();
     } catch (error) {
       if ($("error")) $("error").textContent = error.message || "Unable to reach the service.";
