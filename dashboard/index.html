@@ -94,7 +94,7 @@
     .metric strong { font-size: clamp(1.25rem, 2.8vw, 1.9rem); line-height: 1; }
     .negative { color: var(--red); }
     .positive { color: var(--green); }
-    .lower { display: grid; grid-template-columns: 1.1fr .9fr; gap: 12px; align-items: start; }
+    .lower { display: grid; grid-template-columns: 1fr; gap: 12px; align-items: start; }
     .stack { display: grid; gap: 12px; }
     .section { padding: 19px; }
     .section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; }
@@ -174,7 +174,6 @@
       <h1>Underdog Legacy <span>Model</span></h1>
       <p class="tagline">Adaptive digit execution and secure copy-account operations</p>
     </div>
-    <div class="version"><strong>Deployment Ready</strong>Global mode control and encrypted account intake</div>
   </header>
 
   <section class="panel control">
@@ -201,45 +200,15 @@
     <article class="panel metric"><span>Account balance</span><strong id="balance">0.00</strong></article>
     <article class="panel metric"><span>Open trades</span><strong id="open-trades">0</strong></article>
     <article class="panel metric"><span>Skipped</span><strong id="skipped">0</strong></article>
-    <article class="panel metric"><span>Current mode</span><strong id="mode-pill">DEMO</strong></article>
   </section>
 
   <div class="lower">
     <div class="stack">
       <section class="panel section">
-        <div class="section-head"><h2>Trades</h2><span id="trade-count">Latest 0</span></div>
-        <div id="trade-list" class="trades"><div class="empty">No trades yet.</div></div>
-      </section>
-
-      <section class="panel section">
         <div class="section-head"><h2>Account Stats</h2><span id="account-count">0 configured</span></div>
         <div id="account-list" class="account-grid"><div class="empty">No account stats yet.</div></div>
       </section>
     </div>
-
-    <aside class="panel section">
-      <div class="section-head"><h2>Operations</h2><span id="storage-state">Encrypted token storage</span></div>
-      <div class="model-grid">
-        <div class="model-row"><small>Mode for all accounts</small><strong id="mode-copy">DEMO</strong></div>
-        <div class="model-row"><small>Trades per hour</small><strong id="tph">Use terminal report</strong></div>
-        <div class="model-row"><small>Account intake rule</small><strong>Stop the bot before storing new tokens</strong></div>
-      </div>
-      <div class="access">
-        <select id="mode-select">
-          <option value="demo">Demo all accounts</option>
-          <option value="real">Real all accounts</option>
-        </select>
-        <button id="save-mode" class="secondary" type="button">Save mode</button>
-        <textarea id="token-batch" autocomplete="off" placeholder="Paste one Deriv token per line"></textarea>
-        <button id="import-tokens" class="secondary" type="button">Store tokens</button>
-        <input id="api-key" type="password" autocomplete="off" placeholder="Control key">
-        <div class="inline-actions">
-          <button id="refresh-settings" class="secondary" type="button">Refresh accounts</button>
-          <button id="emergency" class="emergency" type="button">Emergency stop</button>
-        </div>
-      </div>
-      <div id="error" class="error"></div>
-    </aside>
   </div>
 </main>
 <script>
@@ -250,8 +219,10 @@
     : configuredApiBase.replace(/\/+$/, "");
   const apiUrl = path => `${apiBase}${path}`;
   const keyInput = $("api-key");
-  keyInput.value = sessionStorage.getItem("control-key") || "";
-  keyInput.addEventListener("input", () => sessionStorage.setItem("control-key", keyInput.value));
+  if (keyInput) {
+    keyInput.value = sessionStorage.getItem("control-key") || "";
+    keyInput.addEventListener("input", () => sessionStorage.setItem("control-key", keyInput.value));
+  }
   let currentStatus = "UNKNOWN";
   let localControl = false;
   let readOnlyDashboard = false;
@@ -295,8 +266,6 @@
     $("longest-loss").textContent = number(data.longest_loss_streak);
     $("skipped").textContent = number(data.skipped_signals);
     $("open-trades").textContent = number(data.open_trades);
-    $("mode-pill").textContent = String(data.mode || "demo").toUpperCase();
-    $("mode-copy").textContent = String(data.mode || "demo").toUpperCase();
     const profit = Number(data.net_profit || 0);
     $("profit").textContent = number(profit, 2);
     $("profit").className = profit < 0 ? "negative" : profit > 0 ? "positive" : "";
@@ -306,31 +275,19 @@
   function applyReadOnlyMode() {
     const controls = ["toggle", "save-mode", "import-tokens", "emergency"];
     for (const id of controls) {
-      $(id).disabled = readOnlyDashboard;
-      $(id).style.display = readOnlyDashboard && (id === "save-mode" || id === "import-tokens" || id === "emergency")
+      const element = $(id);
+      if (!element) continue;
+      element.disabled = readOnlyDashboard;
+      element.style.display = readOnlyDashboard && (id === "save-mode" || id === "import-tokens" || id === "emergency")
         ? "none"
         : "";
     }
-    $("mode-select").disabled = readOnlyDashboard;
-    $("token-batch").disabled = readOnlyDashboard;
-    $("api-key").style.display = readOnlyDashboard ? "none" : "";
+    if ($("mode-select")) $("mode-select").disabled = readOnlyDashboard;
+    if ($("token-batch")) $("token-batch").disabled = readOnlyDashboard;
+    if ($("api-key")) $("api-key").style.display = readOnlyDashboard ? "none" : "";
     if (readOnlyDashboard) {
       $("status-note").textContent = "Live mirror from your local bot";
     }
-  }
-  function renderTrades(rows) {
-    $("trade-count").textContent = `Latest ${rows.length}`;
-    if (!rows.length) {
-      $("trade-list").innerHTML = '<div class="empty">No trades yet.</div>';
-      return;
-    }
-    $("trade-list").innerHTML = rows.map(row => `
-      <article class="trade">
-        <div><small>Account</small><strong>${escapeHtml(row.account)}</strong></div>
-        <div><small>Time</small><span>${new Date(row.purchase_time).toLocaleTimeString()}</span></div>
-        <div><small>Outcome</small><strong class="${row.outcome === "WIN" ? "positive" : row.outcome === "LOSS" ? "negative" : ""}">${escapeHtml(row.outcome)}</strong></div>
-        <div><small>Profit</small><strong>${row.profit == null ? "Pending" : number(row.profit, 2)}</strong></div>
-      </article>`).join("");
   }
   function renderAccounts(statusAccounts, settingsAccounts, settingsMode, tokenStorageSecure) {
     const statusMap = new Map((statusAccounts || []).map(row => [row.account, row]));
@@ -348,12 +305,14 @@
       }
     }
     $("account-count").textContent = `${merged.length} configured`;
-    $("storage-state").textContent = readOnlyDashboard
-      ? "Read-only cloud mirror"
-      : tokenStorageSecure
-        ? "Encrypted token storage"
-        : "Set DERIV_TOKEN_ENCRYPTION_KEY";
-    $("mode-select").value = settingsMode || "demo";
+    if ($("storage-state")) {
+      $("storage-state").textContent = readOnlyDashboard
+        ? "Read-only cloud mirror"
+        : tokenStorageSecure
+          ? "Encrypted token storage"
+          : "Set DERIV_TOKEN_ENCRYPTION_KEY";
+    }
+    if ($("mode-select")) $("mode-select").value = settingsMode || "demo";
     if (!merged.length) {
       $("account-list").innerHTML = '<div class="empty">No account stats yet.</div>';
       return;
@@ -368,35 +327,32 @@
       </article>`).join("");
   }
   async function refresh() {
-    $("error").textContent = "";
+    if ($("error")) $("error").textContent = "";
     try {
-      const [summary, trades, settings] = await Promise.all([
+      const [summary, settings] = await Promise.all([
         api("/metrics/summary"),
-        api("/metrics/recent-trades?limit=30"),
         api("/settings/accounts")
       ]);
       readOnlyDashboard = Boolean(settings.read_only_dashboard);
       renderStatus(summary);
-      renderTrades(trades.trades || []);
       renderAccounts(summary.accounts || [], settings.accounts || [], settings.mode, settings.token_storage_secure);
-      $("tph").textContent = summary.purchased_trades > 1 ? "Use terminal report" : "Not enough trades yet";
       applyReadOnlyMode();
     } catch (error) {
-      $("error").textContent = error.message || "Unable to reach the service.";
+      if ($("error")) $("error").textContent = error.message || "Unable to reach the service.";
     }
   }
   async function control(path, button, busyText) {
     button.disabled = true;
     const original = button.textContent;
     button.textContent = busyText;
-    $("error").textContent = "";
+    if ($("error")) $("error").textContent = "";
     try {
       const headers = {};
-      if (!localControl && keyInput.value) headers["X-API-Key"] = keyInput.value;
+      if (!localControl && keyInput && keyInput.value) headers["X-API-Key"] = keyInput.value;
       const data = await api(path, {method: "POST", headers});
       renderStatus(data);
     } catch (error) {
-      $("error").textContent = error.message;
+      if ($("error")) $("error").textContent = error.message;
     } finally {
       button.disabled = false;
       button.textContent = original;
@@ -407,45 +363,6 @@
     const stopping = currentStatus === "RUNNING";
     control(stopping ? "/control/pause" : "/control/resume", $("toggle"), stopping ? "Stopping..." : "Starting...");
   });
-  $("emergency").addEventListener("click", () => control("/control/emergency-stop", $("emergency"), "Stopping..."));
-  $("save-mode").addEventListener("click", async () => {
-    $("save-mode").disabled = true;
-    $("error").textContent = "";
-    try {
-      const headers = {"Content-Type": "application/json"};
-      if (!localControl && keyInput.value) headers["X-API-Key"] = keyInput.value;
-      await api("/settings/mode", {
-        method: "POST",
-        headers,
-        body: JSON.stringify({mode: $("mode-select").value})
-      });
-      await refresh();
-    } catch (error) {
-      $("error").textContent = error.message;
-    } finally {
-      $("save-mode").disabled = false;
-    }
-  });
-  $("import-tokens").addEventListener("click", async () => {
-    $("import-tokens").disabled = true;
-    $("error").textContent = "";
-    try {
-      const headers = {"Content-Type": "application/json"};
-      if (!localControl && keyInput.value) headers["X-API-Key"] = keyInput.value;
-      await api("/settings/accounts/import", {
-        method: "POST",
-        headers,
-        body: JSON.stringify({tokens_text: $("token-batch").value, label_prefix: "Account"})
-      });
-      $("token-batch").value = "";
-      await refresh();
-    } catch (error) {
-      $("error").textContent = error.message;
-    } finally {
-      $("import-tokens").disabled = false;
-    }
-  });
-  $("refresh-settings").addEventListener("click", refresh);
   $("refresh").addEventListener("click", async () => {
     $("refresh").disabled = true;
     $("refresh").textContent = "Refreshing...";
@@ -458,7 +375,7 @@
       const runtime = await api("/runtime");
       localControl = Boolean(runtime.local_control);
       readOnlyDashboard = Boolean(runtime.read_only_dashboard);
-      if (localControl) {
+      if (localControl && keyInput) {
         keyInput.style.display = "none";
         keyInput.value = "";
       }
