@@ -296,9 +296,10 @@ class TimingAndModelTests(unittest.TestCase):
                 state = next(iter(bot.clients.values()))
                 state["last_profit_ratio"] = 0.20 / 0.35
                 bot._update_client_recovery_state(state, outcome="loss", profit=-0.35)
-                self.assertEqual(state["current_stake"], 0.35)
-                bot._update_client_recovery_state(state, outcome="loss", profit=-0.35)
-                bot._update_client_recovery_state(state, outcome="loss", profit=-0.35)
+                self.assertEqual(state["current_stake"], 0.70)
+                self.assertAlmostEqual(state["oscar_debt"], 0.35)
+
+                bot._update_client_recovery_state(state, outcome="loss", profit=-0.70)
                 self.assertEqual(state["current_stake"], 0.35)
                 self.assertAlmostEqual(state["oscar_debt"], 1.05)
 

@@ -431,6 +431,7 @@ class Test2Repository:
             ]
         except (OSError, json.JSONDecodeError, TypeError, ValueError):
             pass
+        guard_paused = guard_paused and self.config.recovery.regime_guard_enabled
 
         shadow_sample_target = self.config.recovery.shadow_min_samples
         latest_shadow_outcomes = shadow_outcomes[-shadow_sample_target:]

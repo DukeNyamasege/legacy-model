@@ -843,8 +843,11 @@ class TradingBot:
         self.public_client = PublicMarketDataClient(self)
         self._managed_accounts_revision = self.repository.managed_accounts_revision()
         self._runtime_mode_cache = self.environment
-        if self.regime_guard_paused and self._shadow_resume_ready():
-            self._set_regime_guard(False, "SHADOW_SIGNAL_HEALTH_RECOVERED_ON_STARTUP")
+        if self.regime_guard_paused:
+            if not self.recovery_cfg.regime_guard_enabled:
+                self._set_regime_guard(False, "REGIME_GUARD_DISABLED")
+            elif self._shadow_resume_ready():
+                self._set_regime_guard(False, "SHADOW_SIGNAL_HEALTH_RECOVERED_ON_STARTUP")
         self._save_state()
 
     def _load_runtime_accounts(self) -> Tuple[List[str], Dict[str, Dict[str, Any]]]:
@@ -941,6 +944,14 @@ class TradingBot:
             if st["day"] != today:
                 st["profit_today"] = 0.0
                 st["day"] = today
+            if (
+                st["loss_streak"] == 1
+                and abs(st["last_profit"] + base_stake) <= 1e-9
+                and st["current_stake"] <= base_stake + 1e-9
+            ):
+                ladder = self._oscar_ladder()
+                if len(ladder) > 1:
+                    st["current_stake"] = ladder[1]
             clients[token] = st
         return clients
 
@@ -1093,12 +1104,21 @@ class TradingBot:
             state["current_stake"] = self._oscar_stake_for_state(state)
             return
 
+        settled_stake = float(state.get("current_stake", self.base_stake))
         state["loss_streak"] = int(state.get("loss_streak", 0)) + 1
         state["oscar_win_streak"] = 0
         debt += abs(profit)
         state["oscar_debt"] = debt
         state["recovery_loss_pool"] = debt
-        state["current_stake"] = self.base_stake
+        ladder = self._oscar_ladder()
+        if (
+            state["loss_streak"] == 1
+            and settled_stake <= self.base_stake + 1e-9
+            and len(ladder) > 1
+        ):
+            state["current_stake"] = ladder[1]
+        else:
+            state["current_stake"] = self.base_stake
 
     def _win_rate(self, outcomes: deque) -> float:
         if not outcomes:
@@ -1538,7 +1558,7 @@ class TradingBot:
             )
             return
 
-        if self.regime_guard_paused:
+        if self.recovery_cfg.regime_guard_enabled and self.regime_guard_paused:
             self._record_regime_guard_signal(signal, digits_display)
             return
 

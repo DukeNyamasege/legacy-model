@@ -70,7 +70,7 @@ recovery:
   deep_debt_threshold: 2.00
   ladder_stakes: [0.35, 0.70, 1.40, 2.80, 3.50]
   maximum_stake: 3.50
-  regime_guard_enabled: true
+  regime_guard_enabled: false
   rolling_window_trades: 30
   pause_below_win_rate: 0.58
   resume_above_shadow_win_rate: 0.60

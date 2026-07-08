@@ -107,7 +107,7 @@ class RecoverySettings(StrictModel):
     deep_debt_threshold: float = Field(default=2.00, ge=0)
     ladder_stakes: tuple[float, ...] = (0.35, 0.70, 1.40, 2.80, 3.50)
     maximum_stake: float = Field(default=3.50, gt=0)
-    regime_guard_enabled: bool = True
+    regime_guard_enabled: bool = False
     rolling_window_trades: int = Field(default=30, ge=1)
     pause_below_win_rate: float = Field(default=0.58, ge=0, le=1)
     resume_above_shadow_win_rate: float = Field(default=0.70, ge=0, le=1)
