@@ -267,18 +267,8 @@
   <header>
     <div>
       <div class="brand">Father of Automation Series</div>
-      <p class="tagline">Adaptive digit execution and secure copy-account operations</p>
     </div>
   </header>
-
-  <section class="panel control">
-    <div class="status-line">
-      <i id="dot" class="dot"></i>
-      <div class="status-copy"><span id="status">Connecting</span><small id="status-note">Checking worker</small></div>
-    </div>
-    <button id="toggle" type="button">Start</button>
-    <button id="refresh" class="secondary" type="button">Refresh</button>
-  </section>
 
   <section id="ai-mode-card" class="panel ai-mode-card idle" aria-live="polite">
     <div>
@@ -406,16 +396,6 @@
   }
   function renderStatus(data) {
     currentStatus = data.status || "UNKNOWN";
-    const running = currentStatus === "RUNNING";
-    $("status").textContent = running ? "Running" : currentStatus.replaceAll("_", " ").toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
-    $("status-note").textContent = running
-      ? "Copy trading is active"
-      : currentStatus === "STOPPED"
-        ? "Worker connected, waiting for start"
-        : data.pause_reason || "Trading is not active";
-    $("dot").className = `dot ${running ? "running" : "stopped"}`;
-    $("toggle").textContent = running ? "Stop" : "Start";
-    $("toggle").className = running ? "stop" : "";
     $("traders").textContent = number(data.total_traders);
     $("trades").textContent = number(data.purchased_trades);
     $("wins").textContent = number(data.wins);
@@ -445,9 +425,6 @@
     if ($("mode-select")) $("mode-select").disabled = readOnlyDashboard;
     if ($("token-batch")) $("token-batch").disabled = readOnlyDashboard;
     if ($("api-key")) $("api-key").style.display = readOnlyDashboard ? "none" : "";
-    if (readOnlyDashboard) {
-      $("status-note").textContent = "Live mirror from your local bot";
-    }
   }
   async function refresh() {
     if ($("error")) $("error").textContent = "";
@@ -463,35 +440,6 @@
       if ($("error")) $("error").textContent = error.message || "Unable to reach the service.";
     }
   }
-  async function control(path, button, busyText) {
-    button.disabled = true;
-    const original = button.textContent;
-    button.textContent = busyText;
-    if ($("error")) $("error").textContent = "";
-    try {
-      const headers = {};
-      if (!localControl && keyInput && keyInput.value) headers["X-API-Key"] = keyInput.value;
-      const data = await api(path, {method: "POST", headers});
-      renderStatus(data);
-    } catch (error) {
-      if ($("error")) $("error").textContent = error.message;
-    } finally {
-      button.disabled = false;
-      button.textContent = original;
-      await refresh();
-    }
-  }
-  $("toggle").addEventListener("click", () => {
-    const stopping = currentStatus === "RUNNING";
-    control(stopping ? "/control/pause" : "/control/resume", $("toggle"), stopping ? "Stopping..." : "Starting...");
-  });
-  $("refresh").addEventListener("click", async () => {
-    $("refresh").disabled = true;
-    $("refresh").textContent = "Refreshing...";
-    await refresh();
-    $("refresh").disabled = false;
-    $("refresh").textContent = "Refresh";
-  });
   $("voice-toggle").addEventListener("click", () => {
     voiceAlertsEnabled = !voiceAlertsEnabled;
     localStorage.setItem("ai-voice-alerts", String(voiceAlertsEnabled));
