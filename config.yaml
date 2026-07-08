@@ -64,6 +64,19 @@ cooldown:
   after_three_consecutive_losses_ticks: 15
   after_five_consecutive_losses_ticks: 50
   require_pattern_reset: true
+recovery:
+  mode: oscar_debt_guard
+  debt_threshold: 0.50
+  deep_debt_threshold: 2.00
+  ladder_stakes: [0.35, 0.70, 1.40, 2.80, 3.50]
+  maximum_stake: 3.50
+  regime_guard_enabled: true
+  rolling_window_trades: 30
+  pause_below_win_rate: 0.58
+  resume_above_shadow_win_rate: 0.70
+  shadow_min_samples: 30
+  shadow_consecutive_wins_required: 2
+  pause_after_consecutive_losses: 3
 storage:
   database_url_env: DATABASE_URL
   local_database_url: sqlite:///data/bin22001.db

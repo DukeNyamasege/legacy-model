@@ -795,10 +795,33 @@ class TradingBot:
             after_three_consecutive_losses_ticks=cooldown_cfg.after_three_consecutive_losses_ticks,
             after_five_consecutive_losses_ticks=cooldown_cfg.after_five_consecutive_losses_ticks,
         )
+        self.recovery_cfg = self.test2_config.recovery
 
         self.state_path = Path(self.cfg["files"]["state"])
         self.state_doc = load_state(self.state_path)
         self.cooldown_ticks_remaining = 0
+        saved_bot_state = self.state_doc.get("bot", {})
+        self.regime_outcomes = deque(
+            [
+                str(value).upper()
+                for value in saved_bot_state.get("regime_outcomes", [])
+                if str(value).upper() in {"WIN", "LOSS"}
+            ],
+            maxlen=self.recovery_cfg.rolling_window_trades,
+        )
+        self.shadow_outcomes = deque(
+            [
+                str(value).upper()
+                for value in saved_bot_state.get("shadow_outcomes", [])
+                if str(value).upper() in {"WIN", "LOSS"}
+            ],
+            maxlen=self.recovery_cfg.rolling_window_trades,
+        )
+        self.regime_guard_paused = bool(saved_bot_state.get("regime_guard_paused", False))
+        self.regime_guard_reason = str(saved_bot_state.get("regime_guard_reason", ""))
+        self.regime_consecutive_losses = int(saved_bot_state.get("regime_consecutive_losses", 0))
+        self.shadow_consecutive_wins = int(saved_bot_state.get("shadow_consecutive_wins", 0))
+        self.pending_shadow_signals: List[Dict[str, Any]] = []
 
         self.clients: Dict[str, Dict[str, Any]] = self._init_clients_from_state()
         self.sessions: Dict[str, ClientSession] = {}
@@ -905,6 +928,13 @@ class TradingBot:
                 "loss_streak": int(existing.get("loss_streak", 0)),
                 "recovery_loss_pool": float(existing.get("recovery_loss_pool", 0.0)),
                 "last_profit_ratio": float(existing.get("last_profit_ratio", 0.0)),
+                "oscar_debt": float(
+                    existing.get(
+                        "oscar_debt",
+                        existing.get("recovery_loss_pool", 0.0),
+                    )
+                ),
+                "oscar_win_streak": int(existing.get("oscar_win_streak", 0)),
             }
             if st["day"] != today:
                 st["profit_today"] = 0.0
@@ -923,6 +953,12 @@ class TradingBot:
                 "is_trading_locked": self.is_trading_locked,
                 "pending_contract_count": len(self.pending_contracts_for_current_cycle),
                 "last_tick_received_at": self.last_tick_received_at,
+                "regime_guard_paused": self.regime_guard_paused,
+                "regime_guard_reason": self.regime_guard_reason,
+                "regime_consecutive_losses": self.regime_consecutive_losses,
+                "regime_outcomes": list(self.regime_outcomes),
+                "shadow_outcomes": list(self.shadow_outcomes),
+                "shadow_consecutive_wins": self.shadow_consecutive_wins,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             },
             "clients": {},
@@ -944,6 +980,8 @@ class TradingBot:
                 "loss_streak": st["loss_streak"],
                 "recovery_loss_pool": st["recovery_loss_pool"],
                 "last_profit_ratio": st["last_profit_ratio"],
+                "oscar_debt": st["oscar_debt"],
+                "oscar_win_streak": st["oscar_win_streak"],
             }
 
         unresolved = []
@@ -994,35 +1032,35 @@ class TradingBot:
 
     @property
     def recovery_stake_cap(self) -> float:
-        return 3.50
+        return float(self.recovery_cfg.maximum_stake)
 
     def _round_stake_up(self, value: float) -> float:
         return math.ceil(max(self.base_stake, value) * 100.0 - 1e-9) / 100.0
 
-    def _calculate_recovery_stake(
-        self,
-        *,
-        recovery_loss_pool: float,
-        profit_ratio: float,
-    ) -> float:
-        if recovery_loss_pool <= 0 or profit_ratio <= 0:
+    def _oscar_ladder(self) -> Tuple[float, ...]:
+        return tuple(
+            min(self.recovery_stake_cap, round(float(stake), 2))
+            for stake in self.recovery_cfg.ladder_stakes
+        )
+
+    def _oscar_stake_for_state(self, state: Dict[str, Any]) -> float:
+        debt = max(0.0, float(state.get("oscar_debt", 0.0)))
+        win_streak = max(0, int(state.get("oscar_win_streak", 0)))
+        ladder = self._oscar_ladder()
+        if debt <= self.recovery_cfg.debt_threshold or not ladder:
             return self.base_stake
-        target_profit = self.base_stake * profit_ratio
-        required = (recovery_loss_pool + target_profit) / profit_ratio
-        return min(self.recovery_stake_cap, self._round_stake_up(required))
+
+        if debt <= self.recovery_cfg.deep_debt_threshold:
+            return ladder[1] if win_streak >= 1 and len(ladder) > 1 else self.base_stake
+
+        index = min(win_streak, len(ladder) - 1)
+        return ladder[index]
 
     def _planned_stake_for_accounts(self, profit_ratio: float) -> float:
         required = self.base_stake
         for token, _account_id in self.valid_clients:
             state = self.clients[token]
-            if int(state.get("loss_streak", 0)) >= 2:
-                required = max(
-                    required,
-                    self._calculate_recovery_stake(
-                        recovery_loss_pool=float(state.get("recovery_loss_pool", 0.0)),
-                        profit_ratio=profit_ratio,
-                    ),
-                )
+            required = max(required, self._oscar_stake_for_state(state))
         return required
 
     def _update_client_recovery_state(
@@ -1032,21 +1070,133 @@ class TradingBot:
         outcome: str,
         profit: float,
     ) -> None:
+        debt = max(
+            0.0,
+            float(
+                state.get(
+                    "oscar_debt",
+                    state.get("recovery_loss_pool", 0.0),
+                )
+            ),
+        )
         if outcome == "win":
+            debt = max(0.0, debt - max(0.0, profit))
             state["loss_streak"] = 0
-            state["recovery_loss_pool"] = 0.0
-            state["current_stake"] = self.base_stake
+            state["oscar_win_streak"] = int(state.get("oscar_win_streak", 0)) + 1
+            if debt <= self.recovery_cfg.debt_threshold:
+                debt = 0.0
+                state["oscar_win_streak"] = 0
+            state["oscar_debt"] = debt
+            state["recovery_loss_pool"] = debt
+            state["current_stake"] = self._oscar_stake_for_state(state)
             return
 
         state["loss_streak"] = int(state.get("loss_streak", 0)) + 1
-        state["recovery_loss_pool"] = float(state.get("recovery_loss_pool", 0.0)) + abs(profit)
-        if state["loss_streak"] >= 2:
-            state["current_stake"] = self._calculate_recovery_stake(
-                recovery_loss_pool=float(state["recovery_loss_pool"]),
-                profit_ratio=float(state.get("last_profit_ratio", 0.0)),
-            )
+        state["oscar_win_streak"] = 0
+        debt += abs(profit)
+        state["oscar_debt"] = debt
+        state["recovery_loss_pool"] = debt
+        state["current_stake"] = self.base_stake
+
+    def _win_rate(self, outcomes: deque) -> float:
+        if not outcomes:
+            return 0.0
+        return sum(value == "WIN" for value in outcomes) / len(outcomes)
+
+    def _set_regime_guard(self, paused: bool, reason: str = "") -> None:
+        if self.regime_guard_paused == paused and self.regime_guard_reason == reason:
+            return
+        self.regime_guard_paused = paused
+        self.regime_guard_reason = reason
+        if paused:
+            self.shadow_outcomes.clear()
+            self.shadow_consecutive_wins = 0
+            self.logger.warning("REGIME_GUARD_PAUSED reason=%s", reason)
         else:
-            state["current_stake"] = self.base_stake
+            self.logger.info("REGIME_GUARD_RESUMED reason=%s", reason or "signal_health_recovered")
+            self.regime_consecutive_losses = 0
+        self._save_state()
+
+    def _record_real_cycle_outcome(self, outcome: str) -> None:
+        if not self.recovery_cfg.regime_guard_enabled:
+            return
+        normalized = "WIN" if outcome == "win" else "LOSS"
+        self.regime_outcomes.append(normalized)
+        if normalized == "LOSS":
+            self.regime_consecutive_losses += 1
+        else:
+            self.regime_consecutive_losses = 0
+
+        if self.regime_consecutive_losses >= self.recovery_cfg.pause_after_consecutive_losses:
+            self._set_regime_guard(
+                True,
+                f"{self.regime_consecutive_losses}_CONSECUTIVE_LOSSES",
+            )
+            return
+
+        if len(self.regime_outcomes) >= self.recovery_cfg.rolling_window_trades:
+            win_rate = self._win_rate(self.regime_outcomes)
+            if win_rate < self.recovery_cfg.pause_below_win_rate:
+                self._set_regime_guard(
+                    True,
+                    f"ROLLING_WIN_RATE_{win_rate:.2f}",
+                )
+
+    def _record_shadow_outcome(self, outcome: str, signal_id: str) -> None:
+        normalized = "WIN" if outcome == "win" else "LOSS"
+        self.shadow_outcomes.append(normalized)
+        if normalized == "WIN":
+            self.shadow_consecutive_wins += 1
+        else:
+            self.shadow_consecutive_wins = 0
+        win_rate = self._win_rate(self.shadow_outcomes)
+        self.logger.info(
+            "REGIME_SHADOW_RESULT signal_id=%s outcome=%s shadow_samples=%s shadow_win_rate=%.2f",
+            signal_id,
+            normalized,
+            len(self.shadow_outcomes),
+            win_rate,
+        )
+        if (
+            self.regime_guard_paused
+            and len(self.shadow_outcomes) >= self.recovery_cfg.shadow_min_samples
+            and win_rate >= self.recovery_cfg.resume_above_shadow_win_rate
+            and self.shadow_consecutive_wins
+            >= self.recovery_cfg.shadow_consecutive_wins_required
+        ):
+            self._set_regime_guard(False, "SHADOW_SIGNAL_HEALTH_RECOVERED")
+        else:
+            self._save_state()
+
+    def _evaluate_pending_shadow_signals(self, final_digit: int) -> None:
+        if not self.pending_shadow_signals:
+            return
+        remaining: List[Dict[str, Any]] = []
+        for item in self.pending_shadow_signals:
+            if int(item["tick_sequence"]) >= self.tick_sequence:
+                remaining.append(item)
+                continue
+            outcome = "win" if final_digit > 3 else "loss"
+            self._record_shadow_outcome(outcome, str(item["signal_id"]))
+        self.pending_shadow_signals = remaining
+
+    def _record_regime_guard_signal(self, signal: CandidateSignal, digits_display: str) -> None:
+        self.repository.record_candidate(signal)
+        self.repository.mark_signal(signal.signal_id, status="SKIP_REGIME_GUARD")
+        self.pending_shadow_signals.append(
+            {
+                "signal_id": signal.signal_id,
+                "tick_sequence": signal.tick_sequence,
+            }
+        )
+        self.logger.warning(
+            "SIGNAL_SKIPPED signal_id=%s digits=[%s] trigger=%s status=SKIP_REGIME_GUARD reason=%s",
+            signal.signal_id,
+            digits_display,
+            signal.trigger_name,
+            self.regime_guard_reason,
+        )
+        self._render_live_ticks(note="trade=SHADOW_GUARD")
 
     def _record_blocked_signal(
         self,
@@ -1278,6 +1428,7 @@ class TradingBot:
             final_digit=int(last_digit),
             connection_session_id=self.connection_session_id,
         )
+        self._evaluate_pending_shadow_signals(int(last_digit))
         self._render_live_ticks()
 
         hmm_cfg = self.test2_config.hmm
@@ -1373,6 +1524,10 @@ class TradingBot:
                 digits_display=digits_display,
                 note="trade=NOT_RISING",
             )
+            return
+
+        if self.regime_guard_paused:
+            self._record_regime_guard_signal(signal, digits_display)
             return
 
         self.repository.record_candidate(signal)
@@ -1806,6 +1961,7 @@ class TradingBot:
                 self.pending_by_signal.pop(signal_id, None)
                 cycle_outcome = "win" if all(value == "win" for value in outcomes) else "loss"
                 self.bayesian.update(cycle_outcome == "win")
+                self._record_real_cycle_outcome(cycle_outcome)
                 self._register_trade_cycle_outcome(cycle_outcome)
                 self.logger.info(
                     "CONTRACT_SETTLED signal_id=%s result=%s exit_digit=%s",

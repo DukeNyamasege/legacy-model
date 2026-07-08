@@ -101,6 +101,37 @@ class CooldownSettings(StrictModel):
     require_pattern_reset: bool = True
 
 
+class RecoverySettings(StrictModel):
+    mode: Literal["oscar_debt_guard"] = "oscar_debt_guard"
+    debt_threshold: float = Field(default=0.50, ge=0)
+    deep_debt_threshold: float = Field(default=2.00, ge=0)
+    ladder_stakes: tuple[float, ...] = (0.35, 0.70, 1.40, 2.80, 3.50)
+    maximum_stake: float = Field(default=3.50, gt=0)
+    regime_guard_enabled: bool = True
+    rolling_window_trades: int = Field(default=30, ge=1)
+    pause_below_win_rate: float = Field(default=0.58, ge=0, le=1)
+    resume_above_shadow_win_rate: float = Field(default=0.70, ge=0, le=1)
+    shadow_min_samples: int = Field(default=30, ge=1)
+    shadow_consecutive_wins_required: int = Field(default=2, ge=0)
+    pause_after_consecutive_losses: int = Field(default=3, ge=1)
+
+    @model_validator(mode="after")
+    def enforce_ladder(self) -> "RecoverySettings":
+        if not self.ladder_stakes:
+            raise ValueError("Recovery ladder must contain at least one stake")
+        if abs(self.ladder_stakes[0] - 0.35) > 1e-9:
+            raise ValueError("Recovery ladder must start with the 0.35 base stake")
+        if any(stake <= 0 for stake in self.ladder_stakes):
+            raise ValueError("Recovery ladder stakes must be positive")
+        if any(stake > self.maximum_stake for stake in self.ladder_stakes):
+            raise ValueError("Recovery ladder cannot exceed maximum_stake")
+        if self.shadow_min_samples > self.rolling_window_trades:
+            raise ValueError("shadow_min_samples cannot exceed rolling_window_trades")
+        if self.deep_debt_threshold < self.debt_threshold:
+            raise ValueError("deep_debt_threshold must be >= debt_threshold")
+        return self
+
+
 class StorageSettings(StrictModel):
     database_url_env: str = "DATABASE_URL"
     local_database_url: str = "sqlite:///data/test2.db"
@@ -136,6 +167,7 @@ class Test2Config(StrictModel):
     bayesian: BayesianSettings
     hmm: HmmSettings
     cooldown: CooldownSettings
+    recovery: RecoverySettings = Field(default_factory=RecoverySettings)
     storage: StorageSettings
     trade: TradeSettings
 

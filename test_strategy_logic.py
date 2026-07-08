@@ -274,7 +274,7 @@ class TimingAndModelTests(unittest.TestCase):
         self.assertEqual(state.ticks_remaining, 50)
         self.assertEqual(state.consecutive_losses, 5)
 
-    def test_dynamic_recovery_stake_is_capped_at_three_fifty(self) -> None:
+    def test_oscar_debt_recovery_progression_resets_after_losses(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
             raw = yaml.safe_load(Path("config.yaml").read_text(encoding="utf-8"))
@@ -298,10 +298,27 @@ class TimingAndModelTests(unittest.TestCase):
                 bot._update_client_recovery_state(state, outcome="loss", profit=-0.35)
                 self.assertEqual(state["current_stake"], 0.35)
                 bot._update_client_recovery_state(state, outcome="loss", profit=-0.35)
-                self.assertEqual(state["current_stake"], 1.58)
-                bot._update_client_recovery_state(state, outcome="loss", profit=-1.58)
-                self.assertEqual(state["current_stake"], 3.50)
-                bot._update_client_recovery_state(state, outcome="win", profit=0.60)
+                bot._update_client_recovery_state(state, outcome="loss", profit=-0.35)
+                self.assertEqual(state["current_stake"], 0.35)
+                self.assertAlmostEqual(state["oscar_debt"], 1.05)
+
+                bot._update_client_recovery_state(state, outcome="win", profit=0.20)
+                self.assertEqual(state["current_stake"], 0.70)
+                self.assertAlmostEqual(state["oscar_debt"], 0.85)
+                bot._update_client_recovery_state(state, outcome="loss", profit=-0.70)
+                self.assertEqual(state["current_stake"], 0.35)
+                self.assertEqual(state["oscar_win_streak"], 0)
+
+                state["oscar_debt"] = 2.80
+                state["recovery_loss_pool"] = 2.80
+                bot._update_client_recovery_state(state, outcome="win", profit=0.20)
+                self.assertEqual(state["current_stake"], 0.70)
+                bot._update_client_recovery_state(state, outcome="win", profit=0.40)
+                self.assertEqual(state["current_stake"], 1.40)
+
+                state["oscar_debt"] = 0.45
+                state["recovery_loss_pool"] = 0.45
+                bot._update_client_recovery_state(state, outcome="win", profit=0.20)
                 self.assertEqual(state["current_stake"], 0.35)
                 self.assertEqual(state["loss_streak"], 0)
                 self.assertEqual(state["recovery_loss_pool"], 0.0)
