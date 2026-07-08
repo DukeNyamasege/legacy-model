@@ -73,9 +73,9 @@ recovery:
   regime_guard_enabled: true
   rolling_window_trades: 30
   pause_below_win_rate: 0.58
-  resume_above_shadow_win_rate: 0.70
-  shadow_min_samples: 30
-  shadow_consecutive_wins_required: 2
+  resume_above_shadow_win_rate: 0.65
+  shadow_min_samples: 20
+  shadow_consecutive_wins_required: 0
   pause_after_consecutive_losses: 3
 storage:
   database_url_env: DATABASE_URL

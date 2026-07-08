@@ -843,6 +843,8 @@ class TradingBot:
         self.public_client = PublicMarketDataClient(self)
         self._managed_accounts_revision = self.repository.managed_accounts_revision()
         self._runtime_mode_cache = self.environment
+        if self.regime_guard_paused and self._shadow_resume_ready():
+            self._set_regime_guard(False, "SHADOW_SIGNAL_HEALTH_RECOVERED_ON_STARTUP")
         self._save_state()
 
     def _load_runtime_accounts(self) -> Tuple[List[str], Dict[str, Dict[str, Any]]]:
@@ -1103,6 +1105,21 @@ class TradingBot:
             return 0.0
         return sum(value == "WIN" for value in outcomes) / len(outcomes)
 
+    def _recent_shadow_outcomes(self) -> List[str]:
+        sample_count = self.recovery_cfg.shadow_min_samples
+        return list(self.shadow_outcomes)[-sample_count:]
+
+    def _shadow_resume_ready(self) -> bool:
+        recent = self._recent_shadow_outcomes()
+        if len(recent) < self.recovery_cfg.shadow_min_samples:
+            return False
+        return (
+            self._win_rate(deque(recent))
+            >= self.recovery_cfg.resume_above_shadow_win_rate
+            and self.shadow_consecutive_wins
+            >= self.recovery_cfg.shadow_consecutive_wins_required
+        )
+
     def _set_regime_guard(self, paused: bool, reason: str = "") -> None:
         if self.regime_guard_paused == paused and self.regime_guard_reason == reason:
             return
@@ -1149,21 +1166,16 @@ class TradingBot:
             self.shadow_consecutive_wins += 1
         else:
             self.shadow_consecutive_wins = 0
-        win_rate = self._win_rate(self.shadow_outcomes)
+        recent = self._recent_shadow_outcomes()
+        win_rate = self._win_rate(deque(recent))
         self.logger.info(
             "REGIME_SHADOW_RESULT signal_id=%s outcome=%s shadow_samples=%s shadow_win_rate=%.2f",
             signal_id,
             normalized,
-            len(self.shadow_outcomes),
+            len(recent),
             win_rate,
         )
-        if (
-            self.regime_guard_paused
-            and len(self.shadow_outcomes) >= self.recovery_cfg.shadow_min_samples
-            and win_rate >= self.recovery_cfg.resume_above_shadow_win_rate
-            and self.shadow_consecutive_wins
-            >= self.recovery_cfg.shadow_consecutive_wins_required
-        ):
+        if self.regime_guard_paused and self._shadow_resume_ready():
             self._set_regime_guard(False, "SHADOW_SIGNAL_HEALTH_RECOVERED")
         else:
             self._save_state()
