@@ -430,17 +430,17 @@ class Test2Repository:
         if running and guard_paused:
             activity_mode = "learning"
             activity_label = "Learning Mode"
-            activity_message = "Learning initiated"
+            activity_message = "Ai is learning market changes"
             activity_detail = "AI is studying market changes before trading resumes."
         elif running:
             activity_mode = "trading"
             activity_label = "Trading Mode"
-            activity_message = "Trading resumed"
+            activity_message = "Ai trading resumed"
             activity_detail = "AI is watching for valid market entries."
         else:
             activity_mode = "idle"
             activity_label = "Standby"
-            activity_message = "Trading stopped"
+            activity_message = "Ai trading stopped"
             activity_detail = "AI trading is stopped."
 
         return {

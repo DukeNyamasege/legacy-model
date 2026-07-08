@@ -30,7 +30,7 @@ export async function readSnapshot() {
       regime_guard_updated_at: "",
       ai_activity_mode: "idle",
       ai_activity_label: "Standby",
-      ai_activity_message: "Trading stopped",
+      ai_activity_message: "Ai trading stopped",
       ai_activity_detail: "Waiting for synced local bot data.",
     },
     trades: [],

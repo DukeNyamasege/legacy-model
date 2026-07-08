@@ -334,9 +334,9 @@
     window.speechSynthesis.speak(utterance);
   }
   function alertForMode(mode) {
-    if (mode === "learning") return "Learning initiated";
-    if (mode === "trading") return "Trading resumed";
-    if (mode === "idle") return "Trading stopped";
+    if (mode === "learning") return "Ai is learning market changes";
+    if (mode === "trading") return "Ai trading resumed";
+    if (mode === "idle") return "Ai trading stopped";
     return "AI state updated";
   }
   function labelForMode(mode) {
