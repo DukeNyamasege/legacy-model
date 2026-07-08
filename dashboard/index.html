@@ -150,6 +150,30 @@
       line-height: .98;
       color: var(--ink);
     }
+    .shadow-snapshot {
+      position: relative;
+      display: grid;
+      gap: 6px;
+      width: min(420px, 100%);
+      margin-top: 16px;
+      padding: 13px 15px;
+      border: 1px solid rgba(185,133,47,.28);
+      border-radius: 16px;
+      background: rgba(255,255,255,.45);
+    }
+    .shadow-snapshot[hidden] { display: none; }
+    .shadow-snapshot span {
+      color: var(--muted);
+      font-size: .74rem;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .shadow-snapshot strong {
+      color: var(--ink);
+      font-size: clamp(1.05rem, 2.3vw, 1.45rem);
+      line-height: 1.05;
+    }
+    .shadow-snapshot small { color: var(--muted); font-size: .86rem; }
     button, input, textarea, select {
       min-height: 44px;
       border-radius: 12px;
@@ -255,6 +279,11 @@
     <div>
       <span id="ai-mode-label" class="ai-mode-label">Checking AI Mode</span>
       <h2 id="ai-mode-message" class="ai-mode-message">Reading bot state</h2>
+      <div id="shadow-snapshot" class="shadow-snapshot" hidden>
+        <span>Latest 20 shadow outcomes</span>
+        <strong><b id="shadow-wins">0</b> wins / <b id="shadow-losses">0</b> losses</strong>
+        <small>Shadow win rate: <b id="shadow-rate">0%</b></small>
+      </div>
     </div>
   </section>
 
@@ -293,6 +322,8 @@
   let localControl = false;
   let readOnlyDashboard = false;
   let currentAiActivityMode = "";
+  let pendingRobotMessage = "";
+  let robotSpeakTimer = 0;
   let robotVoice = null;
 
   function number(value, digits = 0) {
@@ -324,11 +355,25 @@
   }
   function speakRobot(message) {
     if (!message || !("speechSynthesis" in window)) return;
+    pendingRobotMessage = message;
+    window.clearTimeout(robotSpeakTimer);
+    robotSpeakTimer = window.setTimeout(() => playRobotMessage(message, 0), 80);
+  }
+  function playRobotMessage(message, attempt) {
+    if (!message || !("speechSynthesis" in window)) return;
     const utterance = new SpeechSynthesisUtterance(message);
     utterance.voice = robotVoice || pickRobotVoice();
     utterance.pitch = 0.55;
     utterance.rate = 0.82;
     utterance.volume = 0.95;
+    utterance.onend = () => {
+      if (pendingRobotMessage === message) pendingRobotMessage = "";
+    };
+    utterance.onerror = () => {
+      if (attempt < 2 && pendingRobotMessage === message) {
+        window.setTimeout(() => playRobotMessage(message, attempt + 1), 450);
+      }
+    };
     window.speechSynthesis.cancel();
     window.speechSynthesis.resume();
     window.speechSynthesis.speak(utterance);
@@ -356,6 +401,7 @@
     $("ai-mode-card").className = `panel ai-mode-card ${visualMode}`;
     $("ai-mode-label").textContent = label;
     $("ai-mode-message").textContent = message;
+    renderShadowSnapshot(data, mode);
 
     currentAiActivityMode = mode;
     if (
@@ -364,6 +410,16 @@
     ) {
       speakRobot(message);
     }
+  }
+  function renderShadowSnapshot(data, mode) {
+    const snapshot = $("shadow-snapshot");
+    if (!snapshot) return;
+    const isLearning = mode === "learning";
+    snapshot.hidden = !isLearning;
+    if (!isLearning) return;
+    $("shadow-wins").textContent = number(data.shadow_latest_wins);
+    $("shadow-losses").textContent = number(data.shadow_latest_losses);
+    $("shadow-rate").textContent = `${number(Number(data.shadow_latest_win_rate || 0) * 100, 0)}%`;
   }
   function renderStatus(data) {
     currentStatus = data.status || "UNKNOWN";
@@ -412,7 +468,19 @@
     }
   }
   if ("speechSynthesis" in window) {
-    window.speechSynthesis.onvoiceschanged = pickRobotVoice;
+    const replayPendingRobotMessage = () => {
+      if (pendingRobotMessage) speakRobot(pendingRobotMessage);
+    };
+    window.speechSynthesis.onvoiceschanged = () => {
+      pickRobotVoice();
+      replayPendingRobotMessage();
+    };
+    window.addEventListener("focus", replayPendingRobotMessage);
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) replayPendingRobotMessage();
+    });
+    window.addEventListener("pointerdown", replayPendingRobotMessage, { once: true });
+    window.addEventListener("keydown", replayPendingRobotMessage, { once: true });
     pickRobotVoice();
   }
   async function initialize() {

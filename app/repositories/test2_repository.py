@@ -413,6 +413,7 @@ class Test2Repository:
         guard_paused = False
         guard_reason = ""
         updated_at = ""
+        shadow_outcomes: list[str] = []
         state_path = Path(self.config.files.state)
         if not state_path.is_absolute():
             state_path = Path.cwd() / state_path
@@ -423,8 +424,20 @@ class Test2Repository:
             guard_paused = bool(bot_state.get("regime_guard_paused", False))
             guard_reason = str(bot_state.get("regime_guard_reason", ""))
             updated_at = str(bot_state.get("updated_at", ""))
+            shadow_outcomes = [
+                str(value).upper()
+                for value in bot_state.get("shadow_outcomes", [])
+                if str(value).upper() in {"WIN", "LOSS"}
+            ]
         except (OSError, json.JSONDecodeError, TypeError, ValueError):
             pass
+
+        shadow_sample_target = self.config.recovery.shadow_min_samples
+        latest_shadow_outcomes = shadow_outcomes[-shadow_sample_target:]
+        shadow_wins = sum(value == "WIN" for value in latest_shadow_outcomes)
+        shadow_losses = sum(value == "LOSS" for value in latest_shadow_outcomes)
+        shadow_samples = len(latest_shadow_outcomes)
+        shadow_win_rate = shadow_wins / shadow_samples if shadow_samples else 0.0
 
         running = status == "RUNNING"
         if running and guard_paused:
@@ -447,6 +460,11 @@ class Test2Repository:
             "regime_guard_paused": guard_paused,
             "regime_guard_reason": guard_reason,
             "regime_guard_updated_at": updated_at,
+            "shadow_latest_samples": shadow_samples,
+            "shadow_latest_wins": shadow_wins,
+            "shadow_latest_losses": shadow_losses,
+            "shadow_latest_win_rate": shadow_win_rate,
+            "shadow_required_win_rate": self.config.recovery.resume_above_shadow_win_rate,
             "ai_activity_mode": activity_mode,
             "ai_activity_label": activity_label,
             "ai_activity_message": activity_message,
