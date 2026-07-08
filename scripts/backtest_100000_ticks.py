@@ -378,11 +378,16 @@ def build_report(
     hours: list[dict[str, Any]],
     stake: float,
     payout: float,
+    prediction: int,
+    pattern_ranges: tuple[tuple[int, int], ...],
+    trigger_name: str,
     source: Path,
 ) -> str:
     raw = metrics(raw_trades)
     current = metrics(current_trades)
     break_even = stake / payout
+    pattern_label = ", ".join(f"[{low}-{high}]" for low, high in pattern_ranges)
+    natural_win_rate = max(0, min(9, 9 - prediction)) / 10
     profitable_blocks = sum(float(row["current_net_pnl"]) > 0 for row in blocks)
     losing_blocks = sum(float(row["current_net_pnl"]) < 0 for row in blocks)
     flat_blocks = len(blocks) - profitable_blocks - losing_blocks
@@ -432,11 +437,11 @@ def build_report(
 - Period UTC: {timestamp(ticks[0].epoch, UTC)} to {timestamp(ticks[-1].epoch, UTC)}
 - Period EAT: {timestamp(ticks[0].epoch, EAT)} to {timestamp(ticks[-1].epoch, EAT)}
 - Data integrity: {len(ticks):,} unique one-second ticks, zero gaps
-- Signal: `[6-9], [6-9], [0-2], [0-2], [3-5]` (`BIN22001x5`)
-- Contract: `DIGITOVER 3`, one tick, stake {fmt_money(stake)}
+- Signal: `{pattern_label}` (`{trigger_name}`)
+- Contract: `DIGITOVER {prediction}`, one tick, stake {fmt_money(stake)}
 - Settlement assumption: the tick immediately after the signal
 - Economics assumption: payout {fmt_money(payout)} including stake; win net {fmt_money(payout - stake)}, loss {fmt_money(-stake)}
-- Natural `DIGITOVER 3` outcome rate under uniform digits: 60.00%; paid break-even rate: {break_even:.2%}
+- Natural `DIGITOVER {prediction}` outcome rate under uniform digits: {natural_win_rate:.2%}; paid break-even rate: {break_even:.2%}
 - Bayesian and HMM modes are `shadow`, matching the current configuration, so neither blocks a trade
 - Network latency, stale proposals, rejected purchases, slippage, and payout changes cannot be reconstructed from tick history
 
@@ -507,8 +512,8 @@ def main() -> None:
     parser.add_argument(
         "--payout",
         type=float,
-        default=0.55,
-        help="Gross payout including returned stake for a winning $0.35 contract",
+        default=0.95,
+        help="Gross payout including returned stake for a winning contract",
     )
     args = parser.parse_args()
 
@@ -610,6 +615,9 @@ def main() -> None:
         hours=hours,
         stake=stake,
         payout=args.payout,
+        prediction=prediction,
+        pattern_ranges=pattern_ranges,
+        trigger_name=str(signal["trigger_name"]),
         source=args.ticks,
     )
     (args.output / "test2_100000_backtest_report.md").write_text(

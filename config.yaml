@@ -24,17 +24,17 @@ logging:
 strategy:
   symbol: 1HZ100V
   contract_type: DIGITOVER
-  prediction: 3
+  prediction: 4
   duration: 1
   duration_unit: t
   pattern_length: 3
   currency: USD
-  initial_stake: 0.35
+  initial_stake: 0.50
 signal:
   trigger_name: BIN201x3
   pattern_ranges:
     - [6, 9]
-    - [0, 2]
+    - [1, 2]
     - [3, 5]
   overlapping_signals_allowed: false
   require_pattern_reset: true
@@ -65,10 +65,10 @@ cooldown:
   after_five_consecutive_losses_ticks: 50
   require_pattern_reset: true
 recovery:
-  mode: oscar_debt_guard
+  mode: single_step
   debt_threshold: 0.50
   deep_debt_threshold: 2.00
-  ladder_stakes: [0.35, 0.70, 1.40, 2.80, 3.50]
+  ladder_stakes: [0.50]
   maximum_stake: 3.50
   regime_guard_enabled: false
   rolling_window_trades: 30

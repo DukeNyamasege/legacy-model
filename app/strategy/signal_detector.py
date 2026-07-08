@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Sequence
 
-from app.strategy.over3_strategy import TEST2_PATTERN_RANGES, TEST2_TRIGGER
+from app.strategy.over3_strategy import TEST2_BARRIER, TEST2_PATTERN_RANGES, TEST2_TRIGGER
 
 
 @dataclass(slots=True)
@@ -93,7 +93,7 @@ class Over3SignalDetector:
             run_id=self.run_id,
             symbol="1HZ100V",
             contract_type="DIGITOVER",
-            barrier="3",
+            barrier=TEST2_BARRIER,
             trigger_name=self.trigger_name,
             trigger_digits=trigger_digits,
             signal_tick_epoch=int(tick["epoch"]),

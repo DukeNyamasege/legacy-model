@@ -35,7 +35,7 @@ def tick(digit: int, sequence: int) -> dict:
     }
 
 
-def pattern_ticks(offset: int = 0, digits: tuple[int, ...] = (6, 0, 3)) -> list[dict]:
+def pattern_ticks(offset: int = 0, digits: tuple[int, ...] = (6, 1, 4)) -> list[dict]:
     return [
         tick(digit, offset + sequence)
         for sequence, digit in enumerate(digits, start=1)
@@ -63,7 +63,7 @@ class SignalTests(unittest.TestCase):
 
     def test_bin_201_pattern_creates_over_candidate(self) -> None:
         valid_patterns = (
-            (6, 0, 3),
+            (6, 1, 3),
             (9, 2, 5),
             (7, 1, 4),
         )
@@ -76,15 +76,16 @@ class SignalTests(unittest.TestCase):
             )
             self.assertIsNotNone(signal)
             self.assertEqual(signal.contract_type, "DIGITOVER")
-            self.assertEqual(signal.barrier, "3")
+            self.assertEqual(signal.barrier, "4")
             self.assertEqual(signal.trigger_name, "BIN201x3")
             self.assertEqual(signal.trigger_digits, digits)
 
     def test_near_miss_patterns_never_signal(self) -> None:
         invalid_patterns = (
-            (5, 0, 3),
+            (6, 0, 3),
+            (5, 1, 3),
             (6, 3, 3),
-            (6, 0, 6),
+            (6, 1, 6),
         )
         for digits in invalid_patterns:
             detector = self.make_detector()
@@ -131,15 +132,15 @@ class ContractTests(unittest.TestCase):
     def test_only_exact_test2_contract_is_accepted(self) -> None:
         validate_contract_parameters(
             contract_type="DIGITOVER",
-            barrier="3",
+            barrier="4",
             symbol="1HZ100V",
-            stake=0.35,
+            stake=0.50,
             duration=1,
             duration_unit="t",
         )
         invalid = [
             {"contract_type": "DIGITUNDER"},
-            {"barrier": "4"},
+            {"barrier": "3"},
             {"symbol": "R_100"},
             {"stake": 0.10},
             {"duration": 2},
@@ -147,9 +148,9 @@ class ContractTests(unittest.TestCase):
         ]
         base = {
             "contract_type": "DIGITOVER",
-            "barrier": "3",
+            "barrier": "4",
             "symbol": "1HZ100V",
-            "stake": 0.35,
+            "stake": 0.50,
             "duration": 1,
             "duration_unit": "t",
         }
@@ -160,8 +161,8 @@ class ContractTests(unittest.TestCase):
     def test_proposal_requires_current_economics(self) -> None:
         with self.assertRaises(ValueError):
             parse_proposal_economics(
-                {"proposal": {"id": "p1", "ask_price": "0.35"}},
-                stake=0.35,
+                {"proposal": {"id": "p1", "ask_price": "0.50"}},
+                stake=0.50,
                 predicted_probability=0.6,
                 requested_monotonic=time.monotonic(),
                 received_monotonic=time.monotonic(),
@@ -170,16 +171,16 @@ class ContractTests(unittest.TestCase):
             {
                 "proposal": {
                     "id": "p1",
-                    "ask_price": "0.35",
-                    "payout": "0.55",
+                    "ask_price": "0.50",
+                    "payout": "0.95",
                 }
             },
-            stake=0.35,
+            stake=0.50,
             predicted_probability=0.65,
             requested_monotonic=time.monotonic(),
             received_monotonic=time.monotonic(),
         )
-        self.assertAlmostEqual(economics.break_even_probability, 0.35 / 0.55)
+        self.assertAlmostEqual(economics.break_even_probability, 0.50 / 0.95)
 
     def test_security_scan_ignores_runtime_secret_store(self) -> None:
         with TemporaryDirectory() as directory:
@@ -218,11 +219,11 @@ class TimingAndModelTests(unittest.TestCase):
         bayesian = bayesian_model.snapshot(0.63, 0.02)
         economics = ProposalEconomics(
             proposal_id="p1",
-            stake=0.35,
-            payout=0.55,
-            potential_profit=0.20,
-            potential_loss=0.35,
-            break_even_probability=0.35 / 0.55,
+            stake=0.50,
+            payout=0.95,
+            potential_profit=0.45,
+            potential_loss=0.50,
+            break_even_probability=0.50 / 0.95,
             predicted_win_probability=bayesian.posterior_mean,
             expected_value=-0.02,
             expected_return_on_stake=-0.05,
@@ -274,7 +275,7 @@ class TimingAndModelTests(unittest.TestCase):
         self.assertEqual(state.ticks_remaining, 50)
         self.assertEqual(state.consecutive_losses, 5)
 
-    def test_oscar_debt_recovery_progression_resets_after_losses(self) -> None:
+    def test_single_step_recovery_resets_after_one_attempt(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
             raw = yaml.safe_load(Path("config.yaml").read_text(encoding="utf-8"))
@@ -293,36 +294,36 @@ class TimingAndModelTests(unittest.TestCase):
             path.write_text(yaml.safe_dump(raw), encoding="utf-8")
             bot = enhanced_bot.TradingBot(str(path))
             try:
+                token = next(iter(bot.clients))
+                bot.valid_clients = [(token, "DOT90000001")]
                 state = next(iter(bot.clients.values()))
-                state["last_profit_ratio"] = 0.20 / 0.35
-                bot._update_client_recovery_state(state, outcome="loss", profit=-0.35)
-                self.assertEqual(state["current_stake"], 0.70)
-                self.assertAlmostEqual(state["oscar_debt"], 0.35)
+                state["last_profit_ratio"] = 0.45 / 0.50
+                bot._update_client_recovery_state(state, outcome="loss", profit=-0.50)
+                self.assertTrue(state["single_recovery_pending"])
+                self.assertFalse(state["single_recovery_active"])
+                self.assertEqual(state["current_stake"], 0.56)
+                self.assertAlmostEqual(state["oscar_debt"], 0.50)
 
-                bot._update_client_recovery_state(state, outcome="loss", profit=-0.70)
-                self.assertEqual(state["current_stake"], 0.35)
-                self.assertAlmostEqual(state["oscar_debt"], 1.05)
-
-                bot._update_client_recovery_state(state, outcome="win", profit=0.20)
-                self.assertEqual(state["current_stake"], 0.70)
-                self.assertAlmostEqual(state["oscar_debt"], 0.85)
-                bot._update_client_recovery_state(state, outcome="loss", profit=-0.70)
-                self.assertEqual(state["current_stake"], 0.35)
-                self.assertEqual(state["oscar_win_streak"], 0)
-
-                state["oscar_debt"] = 2.80
-                state["recovery_loss_pool"] = 2.80
-                bot._update_client_recovery_state(state, outcome="win", profit=0.20)
-                self.assertEqual(state["current_stake"], 0.70)
-                bot._update_client_recovery_state(state, outcome="win", profit=0.40)
-                self.assertEqual(state["current_stake"], 1.40)
-
-                state["oscar_debt"] = 0.45
-                state["recovery_loss_pool"] = 0.45
-                bot._update_client_recovery_state(state, outcome="win", profit=0.20)
-                self.assertEqual(state["current_stake"], 0.35)
-                self.assertEqual(state["loss_streak"], 0)
+                self.assertEqual(bot._planned_stake_for_accounts(0.45 / 0.50), 0.56)
+                state["current_stake"] = 0.56
+                state["single_recovery_pending"] = False
+                state["single_recovery_active"] = True
+                bot._update_client_recovery_state(state, outcome="win", profit=0.50)
+                self.assertEqual(state["current_stake"], 0.50)
                 self.assertEqual(state["recovery_loss_pool"], 0.0)
+                self.assertFalse(state["single_recovery_pending"])
+                self.assertFalse(state["single_recovery_active"])
+
+                bot._update_client_recovery_state(state, outcome="loss", profit=-0.50)
+                state["current_stake"] = 0.56
+                state["single_recovery_pending"] = False
+                state["single_recovery_active"] = True
+                bot._update_client_recovery_state(state, outcome="loss", profit=-0.56)
+                self.assertEqual(state["current_stake"], 0.50)
+                self.assertEqual(state["loss_streak"], 2)
+                self.assertEqual(state["recovery_loss_pool"], 0.0)
+                self.assertFalse(state["single_recovery_pending"])
+                self.assertFalse(state["single_recovery_active"])
             finally:
                 bot.database.engine.dispose()
                 for handler in list(bot.logger.handlers):
@@ -405,11 +406,11 @@ class PersistenceTests(unittest.TestCase):
             signals.append(signal)
         economics = ProposalEconomics(
             proposal_id="reused-by-deriv",
-            stake=0.35,
-            payout=0.55,
-            potential_profit=0.20,
-            potential_loss=0.35,
-            break_even_probability=0.35 / 0.55,
+            stake=0.50,
+            payout=0.95,
+            potential_profit=0.45,
+            potential_loss=0.50,
+            break_even_probability=0.50 / 0.95,
             predicted_win_probability=0.60,
             expected_value=-0.02,
             expected_return_on_stake=-0.05,
@@ -506,7 +507,7 @@ class BotSignalIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 await bot._on_tick(live_tick_payload(sequence, quote))
             self.assertEqual(spawned, [])
 
-            for sequence, quote in enumerate([101.06, 102.00, 103.03], start=4):
+            for sequence, quote in enumerate([101.06, 102.01, 103.04], start=4):
                 await bot._on_tick(live_tick_payload(sequence, quote))
             self.assertEqual(len(spawned), 1)
             self.assertIn("purchase_", spawned[0])
@@ -547,17 +548,17 @@ class BotSignalIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 bot.ticks_history.extend(
                     [
                         {"quote": 101.06, "display": "101.06", "last_digit": "6", "epoch": 1_700_000_001, "tick_id": "tick-1"},
-                        {"quote": 102.00, "display": "102.00", "last_digit": "0", "epoch": 1_700_000_002, "tick_id": "tick-2"},
+                        {"quote": 102.01, "display": "102.01", "last_digit": "1", "epoch": 1_700_000_002, "tick_id": "tick-2"},
                     ]
                 )
-                bot.raw_tick_digits.extend([6, 0])
+                bot.raw_tick_digits.extend([6, 1])
 
-                await bot._on_tick(live_tick_payload(3, 103.03))
+                await bot._on_tick(live_tick_payload(3, 103.04))
 
                 recent = bot.repository.recent_signals(1)
                 self.assertEqual(len(recent), 1)
                 self.assertEqual(recent[0]["final_status"], "SKIP_COOLDOWN")
-                self.assertEqual(recent[0]["trigger_digits"], [6, 0, 3])
+                self.assertEqual(recent[0]["trigger_digits"], [6, 1, 4])
             finally:
                 bot.database.engine.dispose()
                 for handler in list(bot.logger.handlers):
@@ -596,12 +597,12 @@ class BotSignalIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 bot._spawn_background_task = capture_task
                 bot.signal_detector.observe = lambda *args, **kwargs: None
 
-                for sequence, quote in enumerate([101.06, 102.00, 103.03], start=1):
+                for sequence, quote in enumerate([101.06, 102.01, 103.04], start=1):
                     await bot._on_tick(live_tick_payload(sequence, quote))
 
                 self.assertEqual(len(spawned), 1)
                 recent = bot.repository.recent_signals(1)
-                self.assertEqual(recent[0]["trigger_digits"], [6, 0, 3])
+                self.assertEqual(recent[0]["trigger_digits"], [6, 1, 4])
             finally:
                 bot.database.engine.dispose()
                 for handler in list(bot.logger.handlers):
@@ -639,7 +640,7 @@ class BotSignalIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
                 bot._spawn_background_task = capture_task
 
-                for sequence, quote in enumerate([103.06, 102.00, 101.03], start=1):
+                for sequence, quote in enumerate([103.06, 102.01, 101.04], start=1):
                     await bot._on_tick(live_tick_payload(sequence, quote))
 
                 self.assertEqual(spawned, [])

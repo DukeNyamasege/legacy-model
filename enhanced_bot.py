@@ -46,6 +46,7 @@ from app.netlify_sync import NetlifyDashboardSync
 from app.strategy.cooldown import AdaptiveCooldown
 from app.strategy.decision_engine import DecisionEngine, parse_proposal_economics
 from app.strategy.over3_strategy import (
+    TEST2_BARRIER,
     TEST2_PATTERN_RANGES,
     TEST2_TRIGGER,
     validate_contract_parameters,
@@ -209,7 +210,7 @@ def detect_digit_streak_signal(
             window, TEST2_PATTERN_RANGES, strict=True
         )
     ):
-        return "DIGITOVER", "3", TEST2_TRIGGER
+        return "DIGITOVER", TEST2_BARRIER, TEST2_TRIGGER
     return None
 
 
@@ -713,18 +714,23 @@ class TradingBot:
         self.encryption_key = str(self.cfg["deriv"].get("token_encryption_key", ""))
 
         self.symbol = self.cfg["strategy"].get("symbol", "1HZ100V")
+        self.contract_type = str(self.cfg["strategy"]["contract_type"])
+        self.contract_barrier = str(self.cfg["strategy"]["prediction"])
+        self.duration = int(self.cfg["strategy"]["duration"])
+        self.duration_unit = str(self.cfg["strategy"]["duration_unit"])
+        self.currency = str(self.cfg["strategy"]["currency"])
         self.pattern_length = int(self.cfg["strategy"].get("pattern_length", 3))
         self.max_tick_silence_seconds = max(5, int(self.cfg["trade"].get("max_tick_silence_seconds", 45)))
         self.reconnect_delay_seconds = max(1, int(self.cfg["trade"].get("reconnect_delay_seconds", 10)))
         self.watchdog_poll_interval_seconds = 5.0
 
         validate_contract_parameters(
-            contract_type=self.cfg["strategy"]["contract_type"],
-            barrier=str(self.cfg["strategy"]["prediction"]),
+            contract_type=self.contract_type,
+            barrier=self.contract_barrier,
             symbol=self.symbol,
             stake=float(self.cfg["strategy"]["initial_stake"]),
-            duration=int(self.cfg["strategy"]["duration"]),
-            duration_unit=self.cfg["strategy"]["duration_unit"],
+            duration=self.duration,
+            duration_unit=self.duration_unit,
         )
 
         self.logger = setup_logging(
@@ -940,18 +946,16 @@ class TradingBot:
                     )
                 ),
                 "oscar_win_streak": int(existing.get("oscar_win_streak", 0)),
+                "single_recovery_pending": bool(
+                    existing.get("single_recovery_pending", False)
+                ),
+                "single_recovery_active": bool(
+                    existing.get("single_recovery_active", False)
+                ),
             }
             if st["day"] != today:
                 st["profit_today"] = 0.0
                 st["day"] = today
-            if (
-                st["loss_streak"] == 1
-                and abs(st["last_profit"] + base_stake) <= 1e-9
-                and st["current_stake"] <= base_stake + 1e-9
-            ):
-                ladder = self._oscar_ladder()
-                if len(ladder) > 1:
-                    st["current_stake"] = ladder[1]
             clients[token] = st
         return clients
 
@@ -995,6 +999,8 @@ class TradingBot:
                 "last_profit_ratio": st["last_profit_ratio"],
                 "oscar_debt": st["oscar_debt"],
                 "oscar_win_streak": st["oscar_win_streak"],
+                "single_recovery_pending": st["single_recovery_pending"],
+                "single_recovery_active": st["single_recovery_active"],
             }
 
         unresolved = []
@@ -1050,31 +1056,29 @@ class TradingBot:
     def _round_stake_up(self, value: float) -> float:
         return math.ceil(max(self.base_stake, value) * 100.0 - 1e-9) / 100.0
 
-    def _oscar_ladder(self) -> Tuple[float, ...]:
-        return tuple(
-            min(self.recovery_stake_cap, round(float(stake), 2))
-            for stake in self.recovery_cfg.ladder_stakes
-        )
-
-    def _oscar_stake_for_state(self, state: Dict[str, Any]) -> float:
-        debt = max(0.0, float(state.get("oscar_debt", 0.0)))
-        win_streak = max(0, int(state.get("oscar_win_streak", 0)))
-        ladder = self._oscar_ladder()
-        if debt <= self.recovery_cfg.debt_threshold or not ladder:
+    def _single_step_recovery_stake(self, debt: float, profit_ratio: float) -> float:
+        debt = max(0.0, float(debt))
+        ratio = max(0.0, float(profit_ratio))
+        if debt <= 1e-9 or ratio <= 1e-9:
             return self.base_stake
 
-        if debt <= self.recovery_cfg.deep_debt_threshold:
-            return ladder[1] if win_streak >= 1 and len(ladder) > 1 else self.base_stake
-
-        index = min(win_streak, len(ladder) - 1)
-        return ladder[index]
+        stake = self._round_stake_up(debt / ratio)
+        return min(self.recovery_stake_cap, stake)
 
     def _planned_stake_for_accounts(self, profit_ratio: float) -> float:
         required = self.base_stake
         for token, _account_id in self.valid_clients:
             state = self.clients[token]
-            required = max(required, self._oscar_stake_for_state(state))
-        return required
+            debt = max(
+                0.0,
+                float(state.get("recovery_loss_pool", state.get("oscar_debt", 0.0))),
+            )
+            if state.get("single_recovery_pending") or debt > 0:
+                required = max(
+                    required,
+                    self._single_step_recovery_stake(debt, profit_ratio),
+                )
+        return round(required, 2)
 
     def _update_client_recovery_state(
         self,
@@ -1083,42 +1087,39 @@ class TradingBot:
         outcome: str,
         profit: float,
     ) -> None:
-        debt = max(
-            0.0,
-            float(
-                state.get(
-                    "oscar_debt",
-                    state.get("recovery_loss_pool", 0.0),
-                )
-            ),
+        settled_stake = float(state.get("current_stake", self.base_stake))
+        was_recovery = (
+            bool(state.get("single_recovery_active", False))
+            or settled_stake > self.base_stake + 1e-9
         )
         if outcome == "win":
-            debt = max(0.0, debt - max(0.0, profit))
             state["loss_streak"] = 0
-            state["oscar_win_streak"] = int(state.get("oscar_win_streak", 0)) + 1
-            if debt <= self.recovery_cfg.debt_threshold:
-                debt = 0.0
-                state["oscar_win_streak"] = 0
-            state["oscar_debt"] = debt
-            state["recovery_loss_pool"] = debt
-            state["current_stake"] = self._oscar_stake_for_state(state)
+            state["oscar_win_streak"] = 0
+            state["oscar_debt"] = 0.0
+            state["recovery_loss_pool"] = 0.0
+            state["single_recovery_pending"] = False
+            state["single_recovery_active"] = False
+            state["current_stake"] = self.base_stake
             return
 
-        settled_stake = float(state.get("current_stake", self.base_stake))
         state["loss_streak"] = int(state.get("loss_streak", 0)) + 1
         state["oscar_win_streak"] = 0
-        debt += abs(profit)
-        state["oscar_debt"] = debt
-        state["recovery_loss_pool"] = debt
-        ladder = self._oscar_ladder()
-        if (
-            state["loss_streak"] == 1
-            and settled_stake <= self.base_stake + 1e-9
-            and len(ladder) > 1
-        ):
-            state["current_stake"] = ladder[1]
-        else:
+        state["single_recovery_active"] = False
+        if was_recovery:
+            state["oscar_debt"] = 0.0
+            state["recovery_loss_pool"] = 0.0
+            state["single_recovery_pending"] = False
             state["current_stake"] = self.base_stake
+            return
+
+        debt = abs(profit) if profit < 0 else settled_stake
+        state["oscar_debt"] = round(debt, 2)
+        state["recovery_loss_pool"] = round(debt, 2)
+        state["single_recovery_pending"] = True
+        state["current_stake"] = self._single_step_recovery_stake(
+            debt,
+            float(state.get("last_profit_ratio", 0.0)),
+        )
 
     def _win_rate(self, outcomes: deque) -> float:
         if not outcomes:
@@ -1208,7 +1209,7 @@ class TradingBot:
             if int(item["tick_sequence"]) >= self.tick_sequence:
                 remaining.append(item)
                 continue
-            outcome = "win" if final_digit > 3 else "loss"
+            outcome = "win" if final_digit > int(self.contract_barrier) else "loss"
             self._record_shadow_outcome(outcome, str(item["signal_id"]))
         self.pending_shadow_signals = remaining
 
@@ -1264,8 +1265,8 @@ class TradingBot:
             signal_id=str(uuid.uuid4()),
             run_id=self.test2_config.model.run_id,
             symbol=self.symbol,
-            contract_type="DIGITOVER",
-            barrier="3",
+            contract_type=self.contract_type,
+            barrier=self.contract_barrier,
             trigger_name=TEST2_TRIGGER,
             trigger_digits=trigger_digits,
             signal_tick_epoch=int(newest["epoch"]),
@@ -1567,10 +1568,12 @@ class TradingBot:
         self.is_trading_locked = True
         self._render_live_ticks(note=f"CANDIDATE {signal.trigger_name}")
         self.logger.info(
-            "SIGNAL_CREATED signal_id=%s digits=[%s] trigger=%s contract_type=DIGITOVER barrier=3",
+            "SIGNAL_CREATED signal_id=%s digits=[%s] trigger=%s contract_type=%s barrier=%s",
             signal.signal_id,
             digits_display,
             signal.trigger_name,
+            signal.contract_type,
+            signal.barrier,
         )
         self._spawn_background_task(
             self._purchase_for_multiple_accounts(signal),
@@ -1590,8 +1593,8 @@ class TradingBot:
                 barrier=signal.barrier,
                 symbol=signal.symbol,
                 stake=base_stake,
-                duration=int(self.cfg["strategy"]["duration"]),
-                duration_unit=self.cfg["strategy"]["duration_unit"],
+                duration=self.duration,
+                duration_unit=self.duration_unit,
             )
             self.logger.info(
                 "Validating candidate via proposal request signal_id=%s",
@@ -1607,12 +1610,12 @@ class TradingBot:
                 "proposal": 1,
                 "amount": base_stake,
                 "basis": "stake",
-                "contract_type": "DIGITOVER",
-                "currency": "USD",
-                "duration": 1,
-                "duration_unit": "t",
-                "barrier": "3",
-                "underlying_symbol": "1HZ100V",
+                "contract_type": signal.contract_type,
+                "currency": self.currency,
+                "duration": self.duration,
+                "duration_unit": self.duration_unit,
+                "barrier": signal.barrier,
+                "underlying_symbol": signal.symbol,
             }
             prop_resp = await self.public_client.send_request(prop_req)
             proposal_received = time.monotonic()
@@ -1627,9 +1630,9 @@ class TradingBot:
 
             echo = prop_resp.get("echo_req", {})
             for key, expected in {
-                "contract_type": "DIGITOVER",
-                "barrier": "3",
-                "underlying_symbol": "1HZ100V",
+                "contract_type": signal.contract_type,
+                "barrier": signal.barrier,
+                "underlying_symbol": signal.symbol,
             }.items():
                 if key in echo and str(echo[key]) != expected:
                     self.repository.mark_signal(
@@ -1760,20 +1763,18 @@ class TradingBot:
 
             eligible_accounts = list(self.valid_clients)
             stake_amount = round(float(economics.stake), 2)
-            for token, _account_id in eligible_accounts:
-                self.clients[token]["current_stake"] = stake_amount
-                self.clients[token]["last_profit_ratio"] = economics.potential_profit / economics.stake
+            profit_ratio = economics.potential_profit / economics.stake
             bulk_path = f"/trading/v1/options/contracts/bulk-purchase/{self.environment}"
             req_body = {
                 "contract_parameters": {
-                    "contract_type": "DIGITOVER",
-                    "underlying_symbol": "1HZ100V",
+                    "contract_type": signal.contract_type,
+                    "underlying_symbol": signal.symbol,
                     "amount": stake_amount,
-                    "duration": 1,
-                    "duration_unit": "t",
-                    "barrier": "3",
+                    "duration": self.duration,
+                    "duration_unit": self.duration_unit,
+                    "barrier": signal.barrier,
                     "basis": "stake",
-                    "currency": "USD",
+                    "currency": self.currency,
                 },
                 "accounts": [
                     {"token": token, "account_id": account_id} for token, account_id in eligible_accounts
@@ -1833,6 +1834,14 @@ class TradingBot:
                 contract_id = tx.get("contract_id")
                 transaction_id = tx.get("transaction_id")
                 if contract_id:
+                    st["current_stake"] = stake_amount
+                    st["last_profit_ratio"] = profit_ratio
+                    st["single_recovery_active"] = (
+                        bool(st.get("single_recovery_pending", False))
+                        or stake_amount > base_stake + 1e-9
+                    )
+                    if st["single_recovery_active"]:
+                        st["single_recovery_pending"] = False
                     contract_id = int(contract_id)
                     self.pending_contracts_for_current_cycle.add(contract_id)
                     signal_contracts.add(contract_id)
@@ -1849,8 +1858,10 @@ class TradingBot:
                     )
 
                     self.logger.info(
-                        "PURCHASE_CONFIRMED signal_id=%s contract_type=DIGITOVER barrier=3 trigger=%s",
+                        "PURCHASE_CONFIRMED signal_id=%s contract_type=%s barrier=%s trigger=%s",
                         signal.signal_id,
+                        signal.contract_type,
+                        signal.barrier,
                         signal.trigger_name,
                         extra={"token_tag": tag, "contract_id": str(contract_id), "stake": f"{stake_amount:.2f}"}
                     )

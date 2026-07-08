@@ -35,17 +35,17 @@ class DerivSettings(StrictModel):
 class StrategySettings(StrictModel):
     symbol: Literal["1HZ100V"] = "1HZ100V"
     contract_type: Literal["DIGITOVER"] = "DIGITOVER"
-    prediction: Literal[3] = 3
+    prediction: Literal[4] = 4
     duration: Literal[1] = 1
     duration_unit: Literal["t"] = "t"
     pattern_length: Literal[3] = 3
     currency: Literal["USD"] = "USD"
-    initial_stake: float = 0.35
+    initial_stake: float = 0.50
 
     @model_validator(mode="after")
     def enforce_test2_contract(self) -> "StrategySettings":
-        if abs(self.initial_stake - 0.35) > 1e-9:
-            raise ValueError("Test 2 requires a fixed stake of exactly 0.35 USD")
+        if abs(self.initial_stake - 0.50) > 1e-9:
+            raise ValueError("Over 4 recovery requires a base stake of exactly 0.50 USD")
         return self
 
 
@@ -53,7 +53,7 @@ class SignalSettings(StrictModel):
     trigger_name: Literal["BIN201x3"] = "BIN201x3"
     pattern_ranges: tuple[tuple[int, int], ...] = (
         (6, 9),
-        (0, 2),
+        (1, 2),
         (3, 5),
     )
     overlapping_signals_allowed: bool = False
@@ -61,7 +61,7 @@ class SignalSettings(StrictModel):
 
     @model_validator(mode="after")
     def enforce_purchase_pattern(self) -> "SignalSettings":
-        required = ((6, 9), (0, 2), (3, 5))
+        required = ((6, 9), (1, 2), (3, 5))
         if self.pattern_ranges != required:
             raise ValueError(f"Purchase pattern must be exactly {required!r}")
         return self
@@ -102,10 +102,10 @@ class CooldownSettings(StrictModel):
 
 
 class RecoverySettings(StrictModel):
-    mode: Literal["oscar_debt_guard"] = "oscar_debt_guard"
+    mode: Literal["single_step"] = "single_step"
     debt_threshold: float = Field(default=0.50, ge=0)
     deep_debt_threshold: float = Field(default=2.00, ge=0)
-    ladder_stakes: tuple[float, ...] = (0.35, 0.70, 1.40, 2.80, 3.50)
+    ladder_stakes: tuple[float, ...] = (0.50,)
     maximum_stake: float = Field(default=3.50, gt=0)
     regime_guard_enabled: bool = False
     rolling_window_trades: int = Field(default=30, ge=1)
@@ -119,8 +119,8 @@ class RecoverySettings(StrictModel):
     def enforce_ladder(self) -> "RecoverySettings":
         if not self.ladder_stakes:
             raise ValueError("Recovery ladder must contain at least one stake")
-        if abs(self.ladder_stakes[0] - 0.35) > 1e-9:
-            raise ValueError("Recovery ladder must start with the 0.35 base stake")
+        if abs(self.ladder_stakes[0] - 0.50) > 1e-9:
+            raise ValueError("Recovery ladder must start with the 0.50 base stake")
         if any(stake <= 0 for stake in self.ladder_stakes):
             raise ValueError("Recovery ladder stakes must be positive")
         if any(stake > self.maximum_stake for stake in self.ladder_stakes):

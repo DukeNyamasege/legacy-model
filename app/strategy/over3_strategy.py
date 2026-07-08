@@ -2,14 +2,14 @@ from __future__ import annotations
 
 TEST2_SYMBOL = "1HZ100V"
 TEST2_CONTRACT_TYPE = "DIGITOVER"
-TEST2_BARRIER = "3"
-TEST2_STAKE = 0.35
+TEST2_BARRIER = "4"
+TEST2_STAKE = 0.50
 TEST2_DURATION = 1
 TEST2_DURATION_UNIT = "t"
 TEST2_TRIGGER = "BIN201x3"
 TEST2_PATTERN_RANGES = (
     (6, 9),
-    (0, 2),
+    (1, 2),
     (3, 5),
 )
 
