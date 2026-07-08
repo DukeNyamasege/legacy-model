@@ -9,8 +9,9 @@ Pattern 201 is an Over-only Deriv digit strategy using the current APIs document
   `[6-9], [1-2], [3-5]` (`BIN201x3`); middle digit `0` is blocked.
 - Contract: `DIGITOVER`, barrier `4`, symbol `1HZ100V`.
 - Base stake: `$0.50 USD`.
-- Recovery sizing: one calculated recovery attempt after a base loss, then reset
-  to `$0.50 USD`, capped at `$3.50 USD`.
+- Recovery sizing: cumulative martingale recovery. Every loss is added to the
+  recovery pool, the next stake is calculated to recover the full pool in one
+  win, and any win resets the stake to `$0.50 USD`.
 - Duration: one tick.
 - HMM and Bayesian layers: shadow mode until deliberately changed.
 - No session stop, drawdown stop, hourly cap, trade-count cap, open-contract cap,

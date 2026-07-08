@@ -1088,10 +1088,6 @@ class TradingBot:
         profit: float,
     ) -> None:
         settled_stake = float(state.get("current_stake", self.base_stake))
-        was_recovery = (
-            bool(state.get("single_recovery_active", False))
-            or settled_stake > self.base_stake + 1e-9
-        )
         if outcome == "win":
             state["loss_streak"] = 0
             state["oscar_win_streak"] = 0
@@ -1105,14 +1101,12 @@ class TradingBot:
         state["loss_streak"] = int(state.get("loss_streak", 0)) + 1
         state["oscar_win_streak"] = 0
         state["single_recovery_active"] = False
-        if was_recovery:
-            state["oscar_debt"] = 0.0
-            state["recovery_loss_pool"] = 0.0
-            state["single_recovery_pending"] = False
-            state["current_stake"] = self.base_stake
-            return
-
-        debt = abs(profit) if profit < 0 else settled_stake
+        prior_debt = max(
+            0.0,
+            float(state.get("recovery_loss_pool", state.get("oscar_debt", 0.0))),
+        )
+        loss_amount = abs(profit) if profit < 0 else settled_stake
+        debt = round(prior_debt + loss_amount, 2)
         state["oscar_debt"] = round(debt, 2)
         state["recovery_loss_pool"] = round(debt, 2)
         state["single_recovery_pending"] = True

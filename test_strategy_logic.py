@@ -275,7 +275,7 @@ class TimingAndModelTests(unittest.TestCase):
         self.assertEqual(state.ticks_remaining, 50)
         self.assertEqual(state.consecutive_losses, 5)
 
-    def test_single_step_recovery_resets_after_one_attempt(self) -> None:
+    def test_cumulative_recovery_keeps_debt_until_a_win(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
             raw = yaml.safe_load(Path("config.yaml").read_text(encoding="utf-8"))
@@ -305,25 +305,56 @@ class TimingAndModelTests(unittest.TestCase):
                 self.assertAlmostEqual(state["oscar_debt"], 0.50)
 
                 self.assertEqual(bot._planned_stake_for_accounts(0.45 / 0.50), 0.56)
-                state["current_stake"] = 0.56
-                state["single_recovery_pending"] = False
-                state["single_recovery_active"] = True
-                bot._update_client_recovery_state(state, outcome="win", profit=0.50)
-                self.assertEqual(state["current_stake"], 0.50)
-                self.assertEqual(state["recovery_loss_pool"], 0.0)
-                self.assertFalse(state["single_recovery_pending"])
-                self.assertFalse(state["single_recovery_active"])
-
-                bot._update_client_recovery_state(state, outcome="loss", profit=-0.50)
-                state["current_stake"] = 0.56
-                state["single_recovery_pending"] = False
-                state["single_recovery_active"] = True
                 bot._update_client_recovery_state(state, outcome="loss", profit=-0.56)
-                self.assertEqual(state["current_stake"], 0.50)
+                self.assertTrue(state["single_recovery_pending"])
+                self.assertFalse(state["single_recovery_active"])
+                self.assertEqual(state["current_stake"], 1.18)
                 self.assertEqual(state["loss_streak"], 2)
+                self.assertEqual(state["recovery_loss_pool"], 1.06)
+
+                bot._update_client_recovery_state(state, outcome="win", profit=1.06)
+                self.assertEqual(state["current_stake"], 0.50)
                 self.assertEqual(state["recovery_loss_pool"], 0.0)
                 self.assertFalse(state["single_recovery_pending"])
                 self.assertFalse(state["single_recovery_active"])
+            finally:
+                bot.database.engine.dispose()
+                for handler in list(bot.logger.handlers):
+                    handler.close()
+                bot.logger.handlers.clear()
+
+    def test_fifth_loss_plans_sixth_stake_to_recover_full_pool(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            raw = yaml.safe_load(Path("config.yaml").read_text(encoding="utf-8"))
+            token_path = root / "tokens.txt"
+            token_path.write_text("test-token\n", encoding="utf-8")
+            raw["files"] = {
+                "tokens": token_path.as_posix(),
+                "state": (root / "state.json").as_posix(),
+                "users": (root / "users.json").as_posix(),
+            }
+            raw["logging"]["file"] = (root / "bot.log").as_posix()
+            raw["storage"]["local_database_url"] = (
+                "sqlite:///" + (root / "test2.db").as_posix()
+            )
+            path = root / "config.yaml"
+            path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+            bot = enhanced_bot.TradingBot(str(path))
+            try:
+                state = next(iter(bot.clients.values()))
+                state["last_profit_ratio"] = 0.45 / 0.50
+                for _ in range(5):
+                    stake = float(state["current_stake"])
+                    bot._update_client_recovery_state(
+                        state,
+                        outcome="loss",
+                        profit=-stake,
+                    )
+
+                self.assertEqual(state["loss_streak"], 5)
+                self.assertEqual(state["recovery_loss_pool"], 9.99)
+                self.assertEqual(state["current_stake"], 11.10)
             finally:
                 bot.database.engine.dispose()
                 for handler in list(bot.logger.handlers):
