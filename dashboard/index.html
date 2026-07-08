@@ -82,6 +82,92 @@
     .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--muted); box-shadow: 0 0 0 5px rgba(118,95,70,.12); }
     .dot.running { background: #15906d; box-shadow: 0 0 0 5px rgba(21,144,109,.13); }
     .dot.stopped { background: var(--red); box-shadow: 0 0 0 5px rgba(170,52,52,.13); }
+    .ai-mode-card {
+      position: relative;
+      overflow: hidden;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 18px;
+      align-items: center;
+      margin: 12px 0;
+      padding: 20px;
+      border-color: rgba(21,144,109,.32);
+    }
+    .ai-mode-card::before {
+      content: "";
+      position: absolute;
+      inset: -45% auto auto -8%;
+      width: 230px;
+      height: 230px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(21,144,109,.18), transparent 68%);
+      pointer-events: none;
+    }
+    .ai-mode-card.learning {
+      border-color: rgba(185,133,47,.48);
+      background: linear-gradient(135deg, rgba(255,253,247,.92), rgba(250,231,187,.86));
+    }
+    .ai-mode-card.learning::before {
+      background: radial-gradient(circle, rgba(185,133,47,.25), transparent 68%);
+    }
+    .ai-mode-card.idle { border-color: rgba(118,95,70,.35); }
+    .ai-mode-label {
+      position: relative;
+      display: inline-flex;
+      width: fit-content;
+      align-items: center;
+      gap: 8px;
+      color: var(--green);
+      text-transform: uppercase;
+      letter-spacing: .13em;
+      font-size: .72rem;
+      font-weight: 700;
+    }
+    .ai-mode-label::before {
+      content: "";
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: #15906d;
+      box-shadow: 0 0 0 6px rgba(21,144,109,.12);
+      animation: pulse 1.4s ease-in-out infinite;
+    }
+    .learning .ai-mode-label { color: var(--gold); }
+    .learning .ai-mode-label::before {
+      background: var(--gold);
+      box-shadow: 0 0 0 6px rgba(185,133,47,.14);
+    }
+    .idle .ai-mode-label { color: var(--muted); }
+    .idle .ai-mode-label::before {
+      background: var(--muted);
+      box-shadow: 0 0 0 6px rgba(118,95,70,.12);
+      animation: none;
+    }
+    .ai-mode-message {
+      position: relative;
+      margin-top: 9px;
+      font-size: clamp(1.45rem, 3vw, 2.45rem);
+      line-height: .98;
+      color: var(--ink);
+    }
+    .ai-mode-detail {
+      position: relative;
+      max-width: 680px;
+      margin-top: 9px;
+      color: var(--muted);
+      font-size: .92rem;
+      line-height: 1.42;
+    }
+    .ai-voice-toggle {
+      position: relative;
+      min-width: 172px;
+      color: var(--ink);
+      background: #efe3cc;
+    }
+    .ai-voice-toggle.active {
+      color: white;
+      background: var(--green);
+    }
     button, input, textarea, select {
       min-height: 44px;
       border-radius: 12px;
@@ -151,6 +237,10 @@
     .emergency { width: 100%; background: transparent; color: var(--red); border-color: rgba(170,52,52,.65); }
     .error { color: var(--red); min-height: 20px; margin-top: 12px; font-size: .85rem; }
     @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); opacity: .8; }
+      50% { transform: scale(1.32); opacity: 1; }
+    }
     @media (max-width: 980px) {
       .metrics { grid-template-columns: repeat(3, 1fr); }
       .lower { grid-template-columns: 1fr; }
@@ -161,6 +251,8 @@
       .version { display: inline-block; margin-top: 13px; }
       .control { grid-template-columns: 1fr 1fr; }
       .status-line { grid-column: 1 / -1; min-height: 42px; }
+      .ai-mode-card { grid-template-columns: 1fr; padding: 17px; gap: 14px; }
+      .ai-voice-toggle { width: 100%; }
       .control button { width: 100%; padding: 0 12px; }
       .metrics { grid-template-columns: repeat(2, 1fr); gap: 9px; }
       .metric { min-height: 92px; padding: 14px 13px; }
@@ -186,6 +278,15 @@
     </div>
     <button id="toggle" type="button">Start</button>
     <button id="refresh" class="secondary" type="button">Refresh</button>
+  </section>
+
+  <section id="ai-mode-card" class="panel ai-mode-card idle" aria-live="polite">
+    <div>
+      <span id="ai-mode-label" class="ai-mode-label">Checking AI Mode</span>
+      <h2 id="ai-mode-message" class="ai-mode-message">Reading bot state</h2>
+      <p id="ai-mode-detail" class="ai-mode-detail">Waiting for the latest trading state from the worker.</p>
+    </div>
+    <button id="voice-toggle" class="secondary ai-voice-toggle" type="button">Enable robot voice</button>
   </section>
 
   <section class="metrics">
@@ -222,6 +323,10 @@
   let currentStatus = "UNKNOWN";
   let localControl = false;
   let readOnlyDashboard = false;
+  let currentAiActivityMode = "";
+  let currentAiActivityMessage = "";
+  let voiceAlertsEnabled = localStorage.getItem("ai-voice-alerts") === "true";
+  let robotVoice = null;
 
   function number(value, digits = 0) {
     return Number(value || 0).toLocaleString(undefined, {minimumFractionDigits: digits, maximumFractionDigits: digits});
@@ -240,6 +345,64 @@
       '"': "&quot;",
       "'": "&#39;"
     })[character]);
+  }
+  function pickRobotVoice() {
+    if (!("speechSynthesis" in window)) return null;
+    const voices = window.speechSynthesis.getVoices();
+    robotVoice = voices.find(voice => /david|mark|daniel|zira|google us english|google uk english male/i.test(voice.name))
+      || voices.find(voice => /^en[-_]/i.test(voice.lang))
+      || voices[0]
+      || null;
+    return robotVoice;
+  }
+  function speakRobot(message) {
+    if (!voiceAlertsEnabled || !message || !("speechSynthesis" in window)) return;
+    const utterance = new SpeechSynthesisUtterance(message);
+    utterance.voice = robotVoice || pickRobotVoice();
+    utterance.pitch = 0.55;
+    utterance.rate = 0.82;
+    utterance.volume = 0.95;
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utterance);
+  }
+  function syncVoiceButton() {
+    const button = $("voice-toggle");
+    if (!button) return;
+    const supported = "speechSynthesis" in window;
+    button.disabled = !supported;
+    button.textContent = supported
+      ? voiceAlertsEnabled ? "Robot voice on" : "Enable robot voice"
+      : "Voice not supported";
+    button.classList.toggle("active", voiceAlertsEnabled && supported);
+  }
+  function renderAiActivity(data) {
+    const previousMode = currentAiActivityMode;
+    const guardLearning = Boolean(data.regime_guard_paused);
+    const mode = data.ai_activity_mode || (guardLearning ? "learning" : "trading");
+    const label = data.ai_activity_label || (mode === "learning" ? "Learning Mode" : "Trading Mode");
+    const message = data.ai_activity_message || (mode === "learning"
+      ? "AI is currently learning market changes"
+      : "AI is currently trading");
+    const detail = data.ai_activity_detail || (guardLearning
+      ? "Real buying is paused while the AI studies the current market behavior."
+      : "Real buying is enabled and the AI is watching for valid entries.");
+    const visualMode = mode === "learning" ? "learning" : mode === "trading" ? "trading" : "idle";
+
+    $("ai-mode-card").className = `panel ai-mode-card ${visualMode}`;
+    $("ai-mode-label").textContent = label;
+    $("ai-mode-message").textContent = message;
+    $("ai-mode-detail").textContent = detail;
+
+    currentAiActivityMode = mode;
+    currentAiActivityMessage = message;
+    if (
+      voiceAlertsEnabled
+      && previousMode
+      && previousMode !== mode
+      && (mode === "learning" || mode === "trading")
+    ) {
+      speakRobot(message);
+    }
   }
   function renderStatus(data) {
     currentStatus = data.status || "UNKNOWN";
@@ -267,6 +430,7 @@
     $("profit").className = profit < 0 ? "negative" : profit > 0 ? "positive" : "";
     const currency = data.accounts?.[0]?.currency || "USD";
     $("balance").textContent = `${number(data.account_balance_total, 2)} ${currency}`;
+    renderAiActivity(data);
   }
   function applyReadOnlyMode() {
     const controls = ["toggle", "save-mode", "import-tokens", "emergency"];
@@ -328,6 +492,21 @@
     $("refresh").disabled = false;
     $("refresh").textContent = "Refresh";
   });
+  $("voice-toggle").addEventListener("click", () => {
+    voiceAlertsEnabled = !voiceAlertsEnabled;
+    localStorage.setItem("ai-voice-alerts", String(voiceAlertsEnabled));
+    pickRobotVoice();
+    syncVoiceButton();
+    if (voiceAlertsEnabled) {
+      speakRobot(currentAiActivityMessage || "Robot voice alerts enabled");
+    } else if ("speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
+  });
+  if ("speechSynthesis" in window) {
+    window.speechSynthesis.onvoiceschanged = pickRobotVoice;
+    pickRobotVoice();
+  }
   async function initialize() {
     try {
       const runtime = await api("/runtime");
@@ -341,6 +520,7 @@
     } catch (_) {
       localControl = false;
     }
+    syncVoiceButton();
     await refresh();
   }
   initialize();

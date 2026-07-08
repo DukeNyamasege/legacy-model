@@ -5,6 +5,7 @@ import json
 import os
 import socket
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import case, func, select, update
@@ -408,9 +409,59 @@ class Test2Repository:
             state = session.get(BotState, self.run_id)
             return (state.status, state.pause_reason) if state else ("STOPPED", "")
 
+    def _runtime_guard_state(self, status: str) -> dict[str, Any]:
+        guard_paused = False
+        guard_reason = ""
+        updated_at = ""
+        state_path = Path(self.config.files.state)
+        if not state_path.is_absolute():
+            state_path = Path.cwd() / state_path
+
+        try:
+            payload = json.loads(state_path.read_text(encoding="utf-8"))
+            bot_state = payload.get("bot", {}) if isinstance(payload, dict) else {}
+            guard_paused = bool(bot_state.get("regime_guard_paused", False))
+            guard_reason = str(bot_state.get("regime_guard_reason", ""))
+            updated_at = str(bot_state.get("updated_at", ""))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            pass
+
+        running = status == "RUNNING"
+        if running and guard_paused:
+            activity_mode = "learning"
+            activity_label = "Learning Mode"
+            activity_message = "AI is currently learning market changes"
+            activity_detail = (
+                f"Real buying is paused by the regime guard: {guard_reason}"
+                if guard_reason
+                else "Real buying is paused by the regime guard while the AI watches signals."
+            )
+        elif running:
+            activity_mode = "trading"
+            activity_label = "Trading Mode"
+            activity_message = "AI is currently trading"
+            activity_detail = "Real buying is enabled and the AI is watching for valid entries."
+        else:
+            activity_mode = "idle"
+            activity_label = "Standby"
+            activity_message = "AI trading is paused"
+            activity_detail = "Press Start when you want the bot to resume watching the market."
+
+        return {
+            "regime_guard_paused": guard_paused,
+            "regime_guard_reason": guard_reason,
+            "regime_guard_updated_at": updated_at,
+            "ai_activity_mode": activity_mode,
+            "ai_activity_label": activity_label,
+            "ai_activity_message": activity_message,
+            "ai_activity_detail": activity_detail,
+        }
+
     def summary(self) -> dict[str, Any]:
         with self.database.session() as session:
             state = session.get(BotState, self.run_id)
+            status = state.status if state else "UNKNOWN"
+            runtime_guard_state = self._runtime_guard_state(status)
             candidates = session.scalar(
                 select(func.count()).select_from(CandidateSignalRecord).where(
                     CandidateSignalRecord.run_id == self.run_id
@@ -484,9 +535,10 @@ class Test2Repository:
                     longest_loss_streak = max(longest_loss_streak, current_length)
             return {
                 "run_id": self.config.model.run_id,
-                "status": state.status if state else "UNKNOWN",
+                "status": status,
                 "pause_reason": state.pause_reason if state else "",
                 "mode": self.runtime_mode(),
+                **runtime_guard_state,
                 "candidate_signals": int(candidates or 0),
                 "purchased_trades": int(purchased or 0),
                 "open_trades": int(open_trades or 0),
