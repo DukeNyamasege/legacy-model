@@ -430,22 +430,18 @@ class Test2Repository:
         if running and guard_paused:
             activity_mode = "learning"
             activity_label = "Learning Mode"
-            activity_message = "AI is currently learning market changes"
-            activity_detail = (
-                f"Real buying is paused by the regime guard: {guard_reason}"
-                if guard_reason
-                else "Real buying is paused by the regime guard while the AI watches signals."
-            )
+            activity_message = "Learning initiated"
+            activity_detail = "AI is studying market changes before trading resumes."
         elif running:
             activity_mode = "trading"
             activity_label = "Trading Mode"
-            activity_message = "AI is currently trading"
-            activity_detail = "Real buying is enabled and the AI is watching for valid entries."
+            activity_message = "Trading resumed"
+            activity_detail = "AI is watching for valid market entries."
         else:
             activity_mode = "idle"
             activity_label = "Standby"
-            activity_message = "AI trading is paused"
-            activity_detail = "Press Start when you want the bot to resume watching the market."
+            activity_message = "Trading stopped"
+            activity_detail = "AI trading is stopped."
 
         return {
             "regime_guard_paused": guard_paused,

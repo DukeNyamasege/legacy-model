@@ -86,7 +86,7 @@
       position: relative;
       overflow: hidden;
       display: grid;
-      grid-template-columns: 1fr auto;
+      grid-template-columns: 1fr;
       gap: 18px;
       align-items: center;
       margin: 12px 0;
@@ -149,24 +149,6 @@
       font-size: clamp(1.45rem, 3vw, 2.45rem);
       line-height: .98;
       color: var(--ink);
-    }
-    .ai-mode-detail {
-      position: relative;
-      max-width: 680px;
-      margin-top: 9px;
-      color: var(--muted);
-      font-size: .92rem;
-      line-height: 1.42;
-    }
-    .ai-voice-toggle {
-      position: relative;
-      min-width: 172px;
-      color: var(--ink);
-      background: #efe3cc;
-    }
-    .ai-voice-toggle.active {
-      color: white;
-      background: var(--green);
     }
     button, input, textarea, select {
       min-height: 44px;
@@ -252,7 +234,6 @@
       .control { grid-template-columns: 1fr 1fr; }
       .status-line { grid-column: 1 / -1; min-height: 42px; }
       .ai-mode-card { grid-template-columns: 1fr; padding: 17px; gap: 14px; }
-      .ai-voice-toggle { width: 100%; }
       .control button { width: 100%; padding: 0 12px; }
       .metrics { grid-template-columns: repeat(2, 1fr); gap: 9px; }
       .metric { min-height: 92px; padding: 14px 13px; }
@@ -274,9 +255,7 @@
     <div>
       <span id="ai-mode-label" class="ai-mode-label">Checking AI Mode</span>
       <h2 id="ai-mode-message" class="ai-mode-message">Reading bot state</h2>
-      <p id="ai-mode-detail" class="ai-mode-detail">Waiting for the latest trading state from the worker.</p>
     </div>
-    <button id="voice-toggle" class="secondary ai-voice-toggle" type="button">Enable robot voice</button>
   </section>
 
   <section class="metrics">
@@ -314,8 +293,6 @@
   let localControl = false;
   let readOnlyDashboard = false;
   let currentAiActivityMode = "";
-  let currentAiActivityMessage = "";
-  let voiceAlertsEnabled = localStorage.getItem("ai-voice-alerts") === "true";
   let robotVoice = null;
 
   function number(value, digits = 0) {
@@ -346,50 +323,44 @@
     return robotVoice;
   }
   function speakRobot(message) {
-    if (!voiceAlertsEnabled || !message || !("speechSynthesis" in window)) return;
+    if (!message || !("speechSynthesis" in window)) return;
     const utterance = new SpeechSynthesisUtterance(message);
     utterance.voice = robotVoice || pickRobotVoice();
     utterance.pitch = 0.55;
     utterance.rate = 0.82;
     utterance.volume = 0.95;
     window.speechSynthesis.cancel();
+    window.speechSynthesis.resume();
     window.speechSynthesis.speak(utterance);
   }
-  function syncVoiceButton() {
-    const button = $("voice-toggle");
-    if (!button) return;
-    const supported = "speechSynthesis" in window;
-    button.disabled = !supported;
-    button.textContent = supported
-      ? voiceAlertsEnabled ? "Robot voice on" : "Enable robot voice"
-      : "Voice not supported";
-    button.classList.toggle("active", voiceAlertsEnabled && supported);
+  function alertForMode(mode) {
+    if (mode === "learning") return "Learning initiated";
+    if (mode === "trading") return "Trading resumed";
+    if (mode === "idle") return "Trading stopped";
+    return "AI state updated";
+  }
+  function labelForMode(mode) {
+    if (mode === "learning") return "Learning Mode";
+    if (mode === "trading") return "Trading Mode";
+    if (mode === "idle") return "Standby";
+    return "AI Mode";
   }
   function renderAiActivity(data) {
     const previousMode = currentAiActivityMode;
     const guardLearning = Boolean(data.regime_guard_paused);
-    const mode = data.ai_activity_mode || (guardLearning ? "learning" : "trading");
-    const label = data.ai_activity_label || (mode === "learning" ? "Learning Mode" : "Trading Mode");
-    const message = data.ai_activity_message || (mode === "learning"
-      ? "AI is currently learning market changes"
-      : "AI is currently trading");
-    const detail = data.ai_activity_detail || (guardLearning
-      ? "Real buying is paused while the AI studies the current market behavior."
-      : "Real buying is enabled and the AI is watching for valid entries.");
+    const mode = data.ai_activity_mode || (guardLearning ? "learning" : currentStatus === "RUNNING" ? "trading" : "idle");
+    const label = data.ai_activity_label || labelForMode(mode);
+    const message = alertForMode(mode);
     const visualMode = mode === "learning" ? "learning" : mode === "trading" ? "trading" : "idle";
 
     $("ai-mode-card").className = `panel ai-mode-card ${visualMode}`;
     $("ai-mode-label").textContent = label;
     $("ai-mode-message").textContent = message;
-    $("ai-mode-detail").textContent = detail;
 
     currentAiActivityMode = mode;
-    currentAiActivityMessage = message;
     if (
-      voiceAlertsEnabled
-      && previousMode
-      && previousMode !== mode
-      && (mode === "learning" || mode === "trading")
+      previousMode !== mode
+      && (mode === "learning" || mode === "trading" || mode === "idle")
     ) {
       speakRobot(message);
     }
@@ -440,17 +411,6 @@
       if ($("error")) $("error").textContent = error.message || "Unable to reach the service.";
     }
   }
-  $("voice-toggle").addEventListener("click", () => {
-    voiceAlertsEnabled = !voiceAlertsEnabled;
-    localStorage.setItem("ai-voice-alerts", String(voiceAlertsEnabled));
-    pickRobotVoice();
-    syncVoiceButton();
-    if (voiceAlertsEnabled) {
-      speakRobot(currentAiActivityMessage || "Robot voice alerts enabled");
-    } else if ("speechSynthesis" in window) {
-      window.speechSynthesis.cancel();
-    }
-  });
   if ("speechSynthesis" in window) {
     window.speechSynthesis.onvoiceschanged = pickRobotVoice;
     pickRobotVoice();
@@ -468,7 +428,6 @@
     } catch (_) {
       localControl = false;
     }
-    syncVoiceButton();
     await refresh();
   }
   initialize();
