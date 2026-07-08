@@ -1,0 +1,83 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Bot: Watch live PowerShell logs",
+      "type": "shell",
+      "command": "Get-Content -Path .\\run_logs\\local_dashboard.stdout.log -Wait -Tail 120",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "shell": {
+          "executable": "powershell.exe",
+          "args": [
+            "-NoLogo",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command"
+          ]
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "panel": "dedicated",
+        "group": "bot-logs",
+        "clear": true,
+        "reveal": "always"
+      },
+      "isBackground": true
+    },
+    {
+      "label": "Bot: Watch trading events",
+      "type": "shell",
+      "command": "Get-Content -Path .\\run_logs\\local_dashboard.stdout.log -Wait -Tail 250 | Select-String -Pattern 'SIGNAL|PURCHASE|WIN|LOSS|RECOVERY|COOLDOWN|ERROR|WARNING|barrier=4'",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "shell": {
+          "executable": "powershell.exe",
+          "args": [
+            "-NoLogo",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command"
+          ]
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "panel": "dedicated",
+        "group": "bot-logs",
+        "clear": true,
+        "reveal": "always"
+      },
+      "isBackground": true
+    },
+    {
+      "label": "Bot: Watch error logs",
+      "type": "shell",
+      "command": "Get-Content -Path .\\run_logs\\local_dashboard.stderr.log -Wait -Tail 120",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "shell": {
+          "executable": "powershell.exe",
+          "args": [
+            "-NoLogo",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command"
+          ]
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "panel": "dedicated",
+        "group": "bot-logs",
+        "clear": true,
+        "reveal": "always"
+      },
+      "isBackground": true
+    }
+  ]
+}
