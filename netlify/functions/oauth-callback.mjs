@@ -1,4 +1,4 @@
-import { getBackendUrl } from "./shared.mjs";
+import { cloneResponseHeaders, getBackendUrl } from "./shared.mjs";
 
 export default async (request, context) => {
   try {
@@ -25,7 +25,7 @@ export default async (request, context) => {
       redirect: "manual"
     });
 
-    const responseHeaders = new Headers(response.headers);
+    const responseHeaders = cloneResponseHeaders(response);
     // If the backend wants to clear cookies (e.g. Set-Cookie: deriv_oauth_state=...), 
     // it will be passed along to the browser automatically by the responseHeaders
     

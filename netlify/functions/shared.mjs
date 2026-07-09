@@ -67,3 +67,52 @@ export function getBackendUrl() {
   }
   return url.replace(/\/+$/, "");
 }
+
+export function cloneResponseHeaders(response) {
+  const headers = new Headers(response.headers);
+  const getSetCookie = response.headers.getSetCookie;
+  const setCookies =
+    typeof getSetCookie === "function" ? getSetCookie.call(response.headers) : [];
+  if (setCookies.length) {
+    headers.delete("set-cookie");
+    for (const cookie of setCookies) {
+      headers.append("set-cookie", cookie);
+    }
+  }
+  return headers;
+}
+
+export async function proxyBackend(request, path) {
+  const backendUrl = getBackendUrl();
+  const incomingUrl = new URL(request.url);
+  const targetUrl = new URL(path, backendUrl);
+  incomingUrl.searchParams.forEach((value, key) => {
+    targetUrl.searchParams.append(key, value);
+  });
+
+  const requestHeaders = new Headers();
+  for (const header of ["cookie", "content-type", "authorization", "x-api-key"]) {
+    const value = request.headers.get(header);
+    if (value) {
+      requestHeaders.set(header, value);
+    }
+  }
+  requestHeaders.set("x-forwarded-proto", incomingUrl.protocol.replace(":", ""));
+  requestHeaders.set("x-forwarded-host", incomingUrl.host);
+
+  const init = {
+    method: request.method,
+    headers: requestHeaders,
+    redirect: "manual",
+  };
+  if (!["GET", "HEAD"].includes(request.method.toUpperCase())) {
+    init.body = await request.text();
+  }
+
+  const response = await fetch(targetUrl.toString(), init);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: cloneResponseHeaders(response),
+  });
+}

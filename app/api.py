@@ -119,11 +119,12 @@ def public_request_url_without_query(request: Request) -> str:
     return f"{scheme}://{host}{request.url.path}"
 
 
-def oauth_redirect_candidates(request: Request) -> list[str]:
+def oauth_redirect_candidates(request: Request, landed_redirect_uri: str = "") -> list[str]:
     candidates: list[str] = []
     configured = oauth_redirect_url()
     actual = public_request_url_without_query(request)
-    ordered = (actual, configured) if actual != configured else (configured,)
+    landed = str(landed_redirect_uri or "").strip()
+    ordered = (landed, actual, configured) if landed else (actual, configured)
     for value in ordered:
         normalized = str(value or "").strip()
         if normalized and normalized not in candidates:
@@ -326,6 +327,7 @@ def oauth_callback(
     state: str = "",
     error: str = "",
     error_description: str = "",
+    landed_redirect_uri: str = "",
 ) -> RedirectResponse:
     if error:
         return redirect_with_oauth_error(error_description or error)
@@ -338,7 +340,7 @@ def oauth_callback(
 
     token_payload = None
     exchange_error = ""
-    for redirect_uri in oauth_redirect_candidates(request):
+    for redirect_uri in oauth_redirect_candidates(request, landed_redirect_uri):
         try:
             token_payload = exchange_code_for_tokens(
                 client_id=oauth_client_id(),

@@ -27,6 +27,21 @@
   status = 200
 
 [[redirects]]
+  from = "/me"
+  to = "/.netlify/functions/me"
+  status = 200
+
+[[redirects]]
+  from = "/me/auto-trade"
+  to = "/.netlify/functions/me-auto-trade"
+  status = 200
+
+[[redirects]]
+  from = "/me/logout"
+  to = "/.netlify/functions/me-logout"
+  status = 200
+
+[[redirects]]
   from = "/oauth/start"
   to = "/.netlify/functions/oauth-start"
   status = 200

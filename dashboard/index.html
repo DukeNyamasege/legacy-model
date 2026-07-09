@@ -760,6 +760,18 @@ async function initialize() {
 // Parse URL parameters for OAuth errors
 document.addEventListener('DOMContentLoaded', () => {
   const params = new URLSearchParams(window.location.search);
+  if ((params.get("code") || params.get("error")) && window.location.pathname !== "/oauth/callback") {
+    const callbackUrl = new URL("/oauth/callback", window.location.origin);
+    for (const [key, value] of params.entries()) {
+      callbackUrl.searchParams.append(key, value);
+    }
+    callbackUrl.searchParams.set(
+      "landed_redirect_uri",
+      `${window.location.origin}${window.location.pathname}`
+    );
+    window.location.replace(callbackUrl.toString());
+    return;
+  }
   const oauthError = params.get('oauth_error');
   const errorElement = $("oauth-error");
   if (oauthError && errorElement) {

@@ -1,4 +1,4 @@
-import { getBackendUrl } from "./shared.mjs";
+import { cloneResponseHeaders, getBackendUrl } from "./shared.mjs";
 
 export default async (request, context) => {
   try {
@@ -17,7 +17,7 @@ export default async (request, context) => {
     });
 
     // Reconstruct the response headers, forwarding Set-Cookie
-    const headers = new Headers(response.headers);
+    const headers = cloneResponseHeaders(response);
     
     return new Response(response.body, {
       status: response.status,
