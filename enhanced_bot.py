@@ -676,9 +676,11 @@ class ClientSession:
         )
 
     async def _reconcile_contracts_loop(self) -> None:
-        await asyncio.sleep(max(5, self.bot.settle_wait_seconds))
+        await asyncio.sleep(max(1, self.bot.settle_wait_seconds))
         while self.ws and self.is_connected and self.bot.is_running:
             for cid in list(self.pending_contracts):
+                if self.bot._contract_age_seconds(cid) < self.bot.settle_wait_seconds:
+                    continue
                 snapshot = await self.request_contract_snapshot(cid)
                 if "error" in snapshot:
                     self.bot.logger.warning(
@@ -692,7 +694,7 @@ class ClientSession:
                 if not contract:
                     continue
                 await self.bot.handle_contract_update(self.token, int(cid), contract)
-            await asyncio.sleep(15)
+            await asyncio.sleep(max(1, self.bot.reconciliation_poll_seconds))
 
     async def subscribe_contract(self, contract_id: int) -> None:
         if not self.ws or not self.is_connected:
@@ -784,6 +786,9 @@ class TradingBot:
         self.pattern_length = int(self.cfg["strategy"].get("pattern_length", 3))
         self.max_tick_silence_seconds = max(5, int(self.cfg["trade"].get("max_tick_silence_seconds", 45)))
         self.reconnect_delay_seconds = max(1, int(self.cfg["trade"].get("reconnect_delay_seconds", 10)))
+        self.settle_wait_seconds = max(1, int(self.cfg["trade"].get("settle_wait_seconds", 3)))
+        self.max_open_trade_seconds = max(2, int(self.cfg["trade"].get("max_open_trade_seconds", 6)))
+        self.reconciliation_poll_seconds = max(1, int(self.cfg["trade"].get("reconciliation_poll_seconds", 2)))
         self.watchdog_poll_interval_seconds = 5.0
 
         validate_contract_parameters(
@@ -902,6 +907,8 @@ class TradingBot:
         self.contract_signal_ids: Dict[int, str] = {}
         self.pending_by_signal: Dict[str, Set[int]] = {}
         self.outcomes_by_signal: Dict[str, List[str]] = {}
+        self.pending_contract_started_at: Dict[int, datetime] = {}
+        self.delayed_contracts_logged: Set[int] = set()
 
         self._watchdog_task: Optional[asyncio.Task] = None
         self._lease_task: Optional[asyncio.Task] = None
@@ -1403,7 +1410,61 @@ class TradingBot:
         self.last_tick_received_at = 0.0
         self.ticks_history.clear()
         self.live_ticks_history.clear()
+        self.pending_contract_started_at.clear()
+        self.delayed_contracts_logged.clear()
         self._clear_live_ticks()
+
+    def _contract_age_seconds(self, contract_id: int) -> float:
+        opened_at = self.pending_contract_started_at.get(int(contract_id))
+        if not opened_at:
+            return 0.0
+        return max(0.0, (datetime.now(timezone.utc) - opened_at).total_seconds())
+
+    def _find_session_for_contract(
+        self, contract_id: int
+    ) -> Optional[Tuple[str, ClientSession]]:
+        for token, session in self.sessions.items():
+            if contract_id in session.pending_contracts:
+                return token, session
+        return None
+
+    async def _reconcile_pending_contract(self, contract_id: int, reason: str) -> None:
+        match = self._find_session_for_contract(contract_id)
+        if match is None:
+            self.logger.warning(
+                "Contract %s still pending but no live session owns it",
+                contract_id,
+                extra={"contract_id": str(contract_id)},
+            )
+            return
+        token, session = match
+        snapshot = await session.request_contract_snapshot(contract_id)
+        if "error" in snapshot:
+            self.logger.warning(
+                "Contract reconciliation failed for %s after %s seconds (%s): %s",
+                contract_id,
+                int(self._contract_age_seconds(contract_id)),
+                reason,
+                snapshot["error"].get("message"),
+                extra={"token_tag": token_tag(token), "contract_id": str(contract_id)},
+            )
+            return
+        contract = snapshot.get("proposal_open_contract")
+        if not contract:
+            return
+        if contract.get("is_sold"):
+            await self.handle_contract_update(token, int(contract_id), contract)
+            return
+        if contract_id not in self.delayed_contracts_logged:
+            self.delayed_contracts_logged.add(contract_id)
+            self.logger.warning(
+                "OPEN_CONTRACT_DELAYED contract_id=%s age_seconds=%s reason=%s status=%s",
+                contract_id,
+                int(self._contract_age_seconds(contract_id)),
+                reason,
+                contract.get("status", "unknown"),
+                extra={"token_tag": token_tag(token), "contract_id": str(contract_id)},
+            )
 
     async def validate_accounts(self) -> None:
         """Fetch and validate account IDs REST-side, sorting demo and real accounts."""
@@ -1904,6 +1965,7 @@ class TradingBot:
                     self.contract_signal_ids[contract_id] = signal.signal_id
                     session = self.sessions[token]
                     session.pending_contracts.add(contract_id)
+                    self.pending_contract_started_at[contract_id] = purchase_requested_at
                     self.repository.register_purchase(
                         signal_id=signal.signal_id,
                         contract_id=str(contract_id),
@@ -1952,16 +2014,18 @@ class TradingBot:
         self, signal_id: str, contract_ids: List[int]
     ) -> None:
         """Enforces a timeout in case contract settlement updates are not received."""
-        await asyncio.sleep(60.0)
+        await asyncio.sleep(float(self.max_open_trade_seconds))
         pending = self.pending_by_signal.get(signal_id, set())
         timed_out = [cid for cid in contract_ids if cid in pending]
         if timed_out:
             self.logger.warning(
                 "Settlement updates delayed for signal_id=%s contract_count=%s; "
-                "contracts remain registered for recovery",
+                "forcing reconciliation",
                 signal_id,
                 len(timed_out),
             )
+            for cid in timed_out:
+                await self._reconcile_pending_contract(cid, "timeout_watchdog")
 
     async def handle_contract_update(self, token: str, contract_id: int, contract: Dict[str, Any]) -> None:
         status = contract.get("status", "unknown")
@@ -2049,6 +2113,8 @@ class TradingBot:
 
         self.unresolved_contracts_from_state.discard(contract_id)
         self.pending_contracts_for_current_cycle.discard(contract_id)
+        self.pending_contract_started_at.pop(contract_id, None)
+        self.delayed_contracts_logged.discard(contract_id)
 
         signal_id = self.contract_signal_ids.pop(contract_id, "")
         if signal_id:
@@ -2166,6 +2232,7 @@ class TradingBot:
                         )
                         continue
                     self.sessions[matched_token].pending_contracts.add(cid)
+                    self.pending_contract_started_at[cid] = trade.purchase_time
                     self.unresolved_contracts_from_state.add(cid)
                     self.pending_contracts_for_current_cycle.add(cid)
                     self.contract_signal_ids[cid] = trade.signal_id

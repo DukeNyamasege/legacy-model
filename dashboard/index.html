@@ -378,6 +378,7 @@
     <article class="panel metric"><span>Longest loss streak</span><strong id="longest-loss">0</strong></article>
     <article class="panel metric"><span>Account balance</span><strong id="balance">0.00</strong></article>
     <article class="panel metric"><span>Open trades</span><strong id="open-trades">0</strong></article>
+    <article class="panel metric"><span>Open trade age</span><strong id="open-trade-age">0s</strong></article>
     <article class="panel metric"><span>Skipped</span><strong id="skipped">0</strong></article>
     <article class="panel metric"><span>Default stake</span><strong>0.50</strong></article>
   </section>
@@ -545,6 +546,11 @@
     $("longest-loss").textContent = number(data.longest_loss_streak);
     $("skipped").textContent = number(data.skipped_signals);
     $("open-trades").textContent = number(data.open_trades);
+    const staleOpenTrades = Number(data.stale_open_trades || 0);
+    const oldestOpenTradeSeconds = Number(data.oldest_open_trade_seconds || 0);
+    const maxOpenTradeSeconds = Number(data.max_open_trade_seconds || 6);
+    $("open-trade-age").textContent = `${number(oldestOpenTradeSeconds)}s`;
+    $("open-trade-age").className = staleOpenTrades > 0 || oldestOpenTradeSeconds > maxOpenTradeSeconds ? "negative" : "";
     const profit = Number(data.net_profit || 0);
     $("profit").textContent = number(profit, 2);
     $("profit").className = profit < 0 ? "negative" : profit > 0 ? "positive" : "";
@@ -569,6 +575,7 @@
         ? new Date(trade.purchase_time).toLocaleTimeString()
         : "Unknown";
       const exitTick = trade.exit_tick == null ? "N/A" : number(trade.exit_tick, 2);
+      const ageLabel = `${number(trade.age_seconds || 0)}s`;
       return `
         <article class="trade">
           <div>
@@ -589,7 +596,7 @@
           <div>
             <small>Bought</small>
             <strong>${escapeHtml(boughtAt)}</strong>
-            <small>${escapeHtml(trade.account || "-")}</small>
+            <small>${escapeHtml(trade.account || "-")} • ${escapeHtml(ageLabel)}</small>
           </div>
         </article>
       `;

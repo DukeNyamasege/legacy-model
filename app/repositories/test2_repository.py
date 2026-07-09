@@ -494,6 +494,11 @@ class Test2Repository:
                     Trade.settlement_time.is_(None)
                 )
             )
+            open_trade_rows = session.scalars(
+                select(Trade)
+                .where(Trade.settlement_time.is_(None))
+                .order_by(Trade.purchase_time.asc())
+            ).all()
             skipped = session.scalar(
                 select(func.count()).select_from(CandidateSignalRecord).where(
                     CandidateSignalRecord.run_id == self.run_id,
@@ -548,6 +553,24 @@ class Test2Repository:
                     longest_win_streak = max(longest_win_streak, current_length)
                 elif outcome == "LOSS":
                     longest_loss_streak = max(longest_loss_streak, current_length)
+            now = utc_now()
+            oldest_open_trade_seconds = 0
+            stale_open_trades = 0
+            max_open_trade_seconds = max(1, int(self.config.trade.max_open_trade_seconds))
+            if open_trade_rows:
+                oldest_open_trade_seconds = max(
+                    0,
+                    int(
+                        max(
+                            (now - trade.purchase_time).total_seconds()
+                            for trade in open_trade_rows
+                        )
+                    ),
+                )
+                stale_open_trades = sum(
+                    (now - trade.purchase_time).total_seconds() > max_open_trade_seconds
+                    for trade in open_trade_rows
+                )
             return {
                 "run_id": self.config.model.run_id,
                 "status": status,
@@ -557,6 +580,9 @@ class Test2Repository:
                 "candidate_signals": int(candidates or 0),
                 "purchased_trades": int(purchased or 0),
                 "open_trades": int(open_trades or 0),
+                "stale_open_trades": int(stale_open_trades),
+                "oldest_open_trade_seconds": int(oldest_open_trade_seconds),
+                "max_open_trade_seconds": max_open_trade_seconds,
                 "skipped_signals": int(skipped or 0),
                 "wins": int(wins or 0),
                 "losses": int(losses or 0),
@@ -616,6 +642,14 @@ class Test2Repository:
                             if trade.settlement_time is not None
                             else "Awaiting settlement"
                         )
+                    ),
+                    "age_seconds": max(
+                        0,
+                        int(
+                            (
+                                (trade.settlement_time or utc_now()) - trade.purchase_time
+                            ).total_seconds()
+                        ),
                     ),
                     "aligned_with_signal": trade.aligned_with_signal,
                 }

@@ -154,6 +154,8 @@ class TradeSettings(StrictModel):
     settle_wait_seconds: int = 3
     max_tick_silence_seconds: int = 45
     reconnect_delay_seconds: int = 10
+    max_open_trade_seconds: int = 6
+    reconciliation_poll_seconds: int = 2
 
 
 class Test2Config(StrictModel):
