@@ -684,6 +684,13 @@
     }
   }
 
+  function clearOAuthError() {
+    const errorElement = $("oauth-error");
+    if (!errorElement) return;
+    errorElement.textContent = "";
+    errorElement.style.display = "none";
+  }
+
   async function refresh() {
     if ($("error")) $("error").textContent = "";
     try {
@@ -707,6 +714,7 @@
         $("btn-logout").style.display = "inline-flex";
         $("user-info").style.display = "block";
         $("user-info").textContent = me.label;
+        clearOAuthError();
         
         $("personal-balance").textContent = `${number(me.balance, 2)} ${me.currency || "USD"}`;
         $("personal-trades").textContent = number(me.stats.trades);

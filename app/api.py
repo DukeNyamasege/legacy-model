@@ -94,6 +94,13 @@ def redirect_with_oauth_error(message: str) -> RedirectResponse:
     )
 
 
+def redirect_to_dashboard(request: Request) -> RedirectResponse:
+    response = RedirectResponse(url="/", status_code=303)
+    response.delete_cookie(OAUTH_STATE_COOKIE)
+    response.delete_cookie(OAUTH_VERIFIER_COOKIE)
+    return response
+
+
 def session_cookie_samesite() -> str:
     value = os.getenv("CLIENT_SESSION_SAMESITE", "lax").strip().lower()
     return value if value in {"lax", "strict", "none"} else "lax"
@@ -403,6 +410,8 @@ def oauth_callback(
     if state:
         REPOSITORY.delete_oauth_login_state(session_hash(state))
     if token_payload is None:
+        if get_current_account(request):
+            return redirect_to_dashboard(request)
         return redirect_with_oauth_error(f"OAuth token exchange failed: {exchange_error}")
     try:
         accounts = load_options_accounts(token_payload["access_token"])
