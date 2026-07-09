@@ -1605,6 +1605,10 @@ class TradingBot:
                 "No valid Options %s accounts are currently enabled; worker will keep watching.",
                 self.environment,
             )
+            return
+        status, _ = self.repository.control_state()
+        if status not in {"MANUAL_PAUSE", "EMERGENCY_STOP"}:
+            self.repository.set_status("RUNNING")
 
     async def _ensure_sessions_for_valid_clients(self) -> None:
         for token, account_id in self.valid_clients:

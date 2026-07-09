@@ -25,7 +25,13 @@ import json
 
 from app.config import load_test2_config
 from app.database import Database
-from app.oauth_client import build_authorization_url, build_pkce_pair, exchange_code_for_tokens
+from app.oauth_client import (
+    build_authorization_url,
+    build_pkce_pair,
+    exchange_code_for_tokens,
+    refresh_access_token,
+    token_is_expiring,
+)
 from app.repositories.test2_repository import Test2Repository, mask_account_id
 from app.token_store import (
     decrypt_auth_payload,
@@ -233,20 +239,33 @@ def refresh_global_account_snapshots(*, force: bool = False) -> list[dict]:
 
     runtime_mode_value = REPOSITORY.runtime_mode()
     updated_accounts: list[dict] = []
-    for token in global_runtime_tokens():
+    seen_accounts: set[str] = set()
+
+    def refresh_from_token(token: str, preferred_account_id: str = "") -> None:
         try:
             accounts = load_options_accounts(token)
         except requests.RequestException:
-            continue
-        matched = next(
-            (account for account in accounts if account.get("account_type") == runtime_mode_value),
-            accounts[0] if accounts else None,
-        )
+            return
+        matched = None
+        if preferred_account_id:
+            matched = next(
+                (
+                    account
+                    for account in accounts
+                    if str(account.get("account_id", "")).strip() == preferred_account_id
+                ),
+                None,
+            )
+        if matched is None:
+            matched = next(
+                (account for account in accounts if account.get("account_type") == runtime_mode_value),
+                accounts[0] if accounts else None,
+            )
         if not matched:
-            continue
+            return
         account_id = str(matched.get("account_id", "")).strip()
-        if not account_id:
-            continue
+        if not account_id or account_id in seen_accounts:
+            return
         try:
             REPOSITORY.update_account_balance(
                 account_id=account_id,
@@ -255,8 +274,44 @@ def refresh_global_account_snapshots(*, force: bool = False) -> list[dict]:
                 status=str(matched.get("status", "active")),
             )
             updated_accounts.append(REPOSITORY.account_summary(account_id))
+            seen_accounts.add(account_id)
         except (TypeError, ValueError):
+            return
+
+    for token in global_runtime_tokens():
+        refresh_from_token(token)
+
+    for row in REPOSITORY.list_managed_accounts():
+        try:
+            payload = decrypt_auth_payload(row.token_secret, CONFIG.deriv.token_encryption_key)
+        except Exception:
             continue
+        if str(payload.get("auth_type", "pat")).strip() == "oauth" and token_is_expiring(payload):
+            refresh_token_value = str(payload.get("refresh_token", "")).strip()
+            if refresh_token_value:
+                try:
+                    payload.update(
+                        refresh_access_token(
+                            client_id=oauth_client_id(),
+                            refresh_token=refresh_token_value,
+                        )
+                    )
+                    REPOSITORY.update_managed_account(
+                        int(row.id),
+                        token_secret=encrypt_auth_payload(
+                            payload,
+                            CONFIG.deriv.token_encryption_key,
+                        ),
+                        enabled=bool(row.enabled),
+                    )
+                except Exception:
+                    pass
+        token = str(payload.get("access_token", "")).strip()
+        if token:
+            refresh_from_token(
+                token,
+                preferred_account_id=str(payload.get("account_id", "")).strip(),
+            )
 
     GLOBAL_ACCOUNT_REFRESH["last"] = now
     GLOBAL_ACCOUNT_REFRESH["accounts"] = updated_accounts
