@@ -75,6 +75,44 @@
       min-height: 100vh;
       transition: background .22s ease, color .22s ease;
     }
+    .personal-accent {
+      background: linear-gradient(135deg, rgba(30, 80, 150, 0.08), rgba(60, 120, 200, 0.12));
+      border: 1px solid rgba(60, 120, 200, 0.25);
+    }
+    html[data-theme="dark"] .personal-accent {
+      background: linear-gradient(135deg, rgba(30, 80, 150, 0.15), rgba(60, 120, 200, 0.22));
+      border: 1px solid rgba(60, 120, 200, 0.4);
+    }
+    .text-blue { color: #2c75d8; }
+    html[data-theme="dark"] .text-blue { color: #5c9df5; }
+    
+    .btn-login {
+      background: #ff444f; /* Deriv red-ish */
+      border-radius: 999px;
+      padding: 0 20px;
+      font-size: 0.9rem;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      color: white;
+      font-weight: 700;
+      border: none;
+      min-height: 38px;
+    }
+    .btn-logout {
+      background: var(--pill-bg);
+      border: 1px solid var(--line);
+      color: var(--ink);
+      border-radius: 999px;
+      min-height: 38px;
+      font-size: 0.85rem;
+      padding: 0 16px;
+    }
+    .auth-controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
     body::before {
       content: "";
       position: fixed;
@@ -346,11 +384,53 @@
   <header>
     <div>
       <div class="brand">Father of Automation Series</div>
+      <div class="tagline">Global Dashboard</div>
     </div>
-    <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false">
-      <span id="theme-toggle-label">Dark mode</span>
-    </button>
+    <div class="auth-controls">
+      <div id="user-info" style="display: none; font-size: 0.85rem; font-weight: bold;"></div>
+      <a href="/oauth/start" id="btn-login" class="btn-login">Login with Deriv</a>
+      <button id="btn-logout" class="btn-logout" style="display: none;">Logout</button>
+      <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false" style="min-width: 44px; padding: 0 12px;">
+        <span id="theme-toggle-label" style="display: none;">Dark mode</span>
+      </button>
+    </div>
   </header>
+
+  <section id="personal-section" style="display: none;">
+    <h2 class="text-blue" style="margin: 20px 0 10px;">Your Personal Account</h2>
+    <div class="panel personal-accent" style="padding: 20px; border-radius: 22px; margin-bottom: 24px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 20px;">
+        <div>
+          <span style="display: block; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 4px; opacity: 0.8;">Account Balance</span>
+          <strong id="personal-balance" style="font-size: 2.5rem; line-height: 1;">0.00</strong>
+        </div>
+        <div style="display: flex; gap: 15px; text-align: center;">
+          <div>
+            <span style="display: block; font-size: 0.75rem; opacity: 0.8;">Trades</span>
+            <strong id="personal-trades" style="font-size: 1.4rem;">0</strong>
+          </div>
+          <div>
+            <span style="display: block; font-size: 0.75rem; opacity: 0.8;">Wins</span>
+            <strong id="personal-wins" class="positive" style="font-size: 1.4rem;">0</strong>
+          </div>
+          <div>
+            <span style="display: block; font-size: 0.75rem; opacity: 0.8;">Losses</span>
+            <strong id="personal-losses" class="negative" style="font-size: 1.4rem;">0</strong>
+          </div>
+        </div>
+        <div>
+          <button id="btn-toggle-auto" style="min-height: 54px; font-size: 1.1rem; border-radius: 16px; min-width: 220px;">
+            Join Auto Trading
+          </button>
+          <div style="margin-top: 8px; font-size: 0.75rem; opacity: 0.7; max-width: 220px; text-align: center;">
+            When joined, the bot trades for you automatically.
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <h2 style="margin: 30px 0 10px; opacity: 0.5;">Global Bot Statistics</h2>
 
   <section id="ai-mode-card" class="panel ai-mode-card idle" aria-live="polite">
     <div>
@@ -561,16 +641,81 @@
     if ($("token-batch")) $("token-batch").disabled = readOnlyDashboard;
     if ($("api-key")) $("api-key").style.display = readOnlyDashboard ? "none" : "";
   }
+  let isAutoTrading = false;
+
+  async function toggleAutoTrade() {
+    const btn = $("btn-toggle-auto");
+    btn.disabled = true;
+    try {
+      const res = await api("/me/auto-trade", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: !isAutoTrading })
+      });
+      isAutoTrading = res.enabled;
+      updateAutoTradeBtn();
+    } catch (e) {
+      alert("Failed to toggle auto trading: " + e.message);
+    }
+    btn.disabled = false;
+  }
+
+  $("btn-toggle-auto")?.addEventListener("click", toggleAutoTrade);
+  $("btn-logout")?.addEventListener("click", async () => {
+    try {
+      await api("/me/logout", { method: "POST" });
+    } catch (e) {}
+    window.location.reload();
+  });
+
+  function updateAutoTradeBtn() {
+    const btn = $("btn-toggle-auto");
+    if (!btn) return;
+    if (isAutoTrading) {
+      btn.textContent = "Stop Auto Trading";
+      btn.className = "stop";
+    } else {
+      btn.textContent = "Join Auto Trading";
+      btn.className = "";
+    }
+  }
+
   async function refresh() {
     if ($("error")) $("error").textContent = "";
     try {
+      // Fetch global metrics
       const [summary, settings] = await Promise.all([
         api("/metrics/summary"),
-        api("/settings/accounts")
+        api("/settings/accounts").catch(() => ({}))
       ]);
       readOnlyDashboard = Boolean(settings.read_only_dashboard);
       renderStatus(summary);
       applyReadOnlyMode();
+
+      // Fetch personal metrics
+      try {
+        const me = await api("/me");
+        $("personal-section").style.display = "block";
+        $("btn-login").style.display = "none";
+        $("btn-logout").style.display = "inline-flex";
+        $("user-info").style.display = "block";
+        $("user-info").textContent = me.label;
+        
+        $("personal-balance").textContent = number(me.balance, 2);
+        $("personal-trades").textContent = number(me.stats.trades);
+        $("personal-wins").textContent = number(me.stats.wins);
+        $("personal-losses").textContent = number(me.stats.losses);
+        
+        isAutoTrading = Boolean(me.enabled);
+        updateAutoTradeBtn();
+      } catch (authError) {
+        // Not logged in (401)
+        $("personal-section").style.display = "none";
+        $("btn-login").style.display = "inline-flex";
+        $("btn-logout").style.display = "none";
+        $("user-info").style.display = "none";
+      }
+      
     } catch (error) {
       if ($("error")) $("error").textContent = error.message || "Unable to reach the service.";
     }

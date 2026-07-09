@@ -8,10 +8,10 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, JSONResponse
 from pydantic import BaseModel
 import requests
-from dotenv import load_dotenv
+import json
 
 from app.config import load_test2_config
 from app.database import Database
@@ -21,6 +21,7 @@ from app.token_store import (
     decrypt_auth_payload,
     encrypt_auth_payload,
     encrypt_token,
+    decrypt_token,
     has_encryption_key,
     parse_token_lines,
 )
@@ -310,14 +311,97 @@ def oauth_callback(
         {"account_id_masked": label, "mode": runtime_mode_value},
     )
 
-    response = HTMLResponse(
-        "<html><head><meta http-equiv=\"refresh\" content=\"2;url=/\"></head>"
-        "<body><h2>Deriv account linked</h2>"
-        "<p>Your OAuth account has been stored for the bot.</p>"
-        "<p>Redirecting you back to the dashboard...</p></body></html>"
+    session_payload = json.dumps({"account_id": account_id})
+    session_token = encrypt_token(session_payload, CONFIG.deriv.token_encryption_key)
+
+    response = RedirectResponse(url="/", status_code=303)
+    response.set_cookie(
+        key="client_session",
+        value=session_token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=86400 * 30  # 30 days
     )
     response.delete_cookie(OAUTH_STATE_COOKIE)
     response.delete_cookie(OAUTH_VERIFIER_COOKIE)
+    return response
+
+def get_current_account(request: Request) -> dict | None:
+    session_token = request.cookies.get("client_session")
+    if not session_token:
+        return None
+    try:
+        decrypted = decrypt_token(session_token, CONFIG.deriv.token_encryption_key)
+        payload = json.loads(decrypted)
+        account_id = payload.get("account_id")
+        if not account_id:
+            return None
+        
+        for row in REPOSITORY.list_managed_accounts():
+            try:
+                stored = decrypt_auth_payload(row.token_secret, CONFIG.deriv.token_encryption_key)
+            except Exception:
+                continue
+            if str(stored.get("account_id", "")).strip() == account_id:
+                return {
+                    "id": row.id,
+                    "account_id": account_id,
+                    "label": row.label,
+                    "enabled": row.enabled,
+                    "created_at": row.created_at,
+                }
+    except Exception:
+        pass
+    return None
+
+class AutoTradeRequest(BaseModel):
+    enabled: bool
+
+@app.get("/me")
+def get_me(request: Request) -> dict:
+    account = get_current_account(request)
+    if not account:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    # We fetch their live stats based on their account ID
+    summary = REPOSITORY.summary()
+    personal_stats = {"trades": 0, "wins": 0, "losses": 0}
+    personal_balance = 0.0
+    for acct in summary.get("accounts", []):
+        if account["account_id"].endswith(acct["account"].replace("*", "")):
+            personal_balance = acct.get("balance", 0.0)
+            personal_stats["trades"] = acct.get("trades", 0)
+            personal_stats["wins"] = acct.get("wins", 0)
+            personal_stats["losses"] = acct.get("losses", 0)
+            break
+            
+    return {
+        "account_id": account["account_id"],
+        "label": account["label"],
+        "enabled": account["enabled"],
+        "balance": personal_balance,
+        "stats": personal_stats
+    }
+
+@app.post("/me/auto-trade")
+def toggle_auto_trade(request: Request, body: AutoTradeRequest) -> dict:
+    account = get_current_account(request)
+    if not account:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    REPOSITORY.update_managed_account(
+        account["id"],
+        label=account["label"],
+        token_secret=next(r.token_secret for r in REPOSITORY.list_managed_accounts() if r.id == account["id"]),
+        enabled=body.enabled
+    )
+    return {"success": True, "enabled": body.enabled}
+
+@app.post("/me/logout")
+def logout() -> dict:
+    response = JSONResponse({"success": True})
+    response.delete_cookie("client_session")
     return response
 
 
