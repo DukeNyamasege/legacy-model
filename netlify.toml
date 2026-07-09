@@ -6,6 +6,10 @@
 [build.environment]
   NODE_VERSION = "22"
 
+[[edge_functions]]
+  path = "/"
+  function = "oauth-root"
+
 [[redirects]]
   from = "/runtime"
   to = "/.netlify/functions/runtime"
