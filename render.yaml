@@ -21,6 +21,8 @@ services:
           property: connectionString
       - key: DERIV_APP_ID
         sync: false
+      - key: DERIV_TOKEN
+        sync: false
       - key: DERIV_OAUTH_CLIENT_ID
         value: 33MmAtDICSKcC7LAZj7JO
       - key: DERIV_OAUTH_REDIRECT_URL

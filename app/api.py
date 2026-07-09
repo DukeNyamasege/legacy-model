@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import secrets
 import time
 from collections import defaultdict, deque
@@ -42,6 +43,7 @@ DATABASE = Database(CONFIG.database_url)
 DATABASE.create_schema()
 REPOSITORY = Test2Repository(DATABASE, CONFIG)
 CONTROL_RATE: dict[str, deque[float]] = defaultdict(deque)
+GLOBAL_ACCOUNT_REFRESH: dict[str, object] = {"last": 0.0, "accounts": []}
 OAUTH_STATE_COOKIE = "deriv_oauth_state"
 OAUTH_VERIFIER_COOKIE = "deriv_oauth_code_verifier"
 CLIENT_SESSION_COOKIE = "client_session"
@@ -178,6 +180,87 @@ def load_options_accounts(access_token: str) -> list[dict]:
     response.raise_for_status()
     payload = response.json()
     return payload.get("data", [])
+
+
+def decrypt_runtime_token(token: str) -> str:
+    value = str(token or "").strip()
+    if not value or not CONFIG.deriv.token_encryption_key:
+        return value
+    try:
+        return decrypt_token(value, CONFIG.deriv.token_encryption_key)
+    except Exception:
+        return value
+
+
+def global_runtime_tokens() -> list[str]:
+    raw_tokens: list[str] = []
+    env_tokens = os.getenv("DERIV_TOKENS", "")
+    if env_tokens:
+        raw_tokens.extend(
+            token.strip()
+            for token in re.split(r"[\r\n,]+", env_tokens)
+            if token.strip()
+        )
+    env_token = os.getenv("DERIV_TOKEN", "").strip()
+    if env_token:
+        raw_tokens.append(env_token)
+
+    token_file = os.getenv("DERIV_TOKENS_FILE", CONFIG.files.tokens)
+    token_path = Path(token_file)
+    if not token_path.is_absolute():
+        token_path = ROOT / token_path
+    if token_path.exists():
+        raw_tokens.extend(parse_token_lines(token_path.read_text(encoding="utf-8")))
+
+    tokens: list[str] = []
+    seen: set[str] = set()
+    for raw_token in raw_tokens:
+        token = decrypt_runtime_token(raw_token)
+        if token and token not in seen:
+            seen.add(token)
+            tokens.append(token)
+    return tokens
+
+
+def refresh_global_account_snapshots(*, force: bool = False) -> list[dict]:
+    ttl_seconds = max(5, int(os.getenv("GLOBAL_ACCOUNT_REFRESH_SECONDS", "30")))
+    now = time.monotonic()
+    if (
+        not force
+        and now - float(GLOBAL_ACCOUNT_REFRESH.get("last") or 0.0) < ttl_seconds
+    ):
+        return list(GLOBAL_ACCOUNT_REFRESH.get("accounts") or [])
+
+    runtime_mode_value = REPOSITORY.runtime_mode()
+    updated_accounts: list[dict] = []
+    for token in global_runtime_tokens():
+        try:
+            accounts = load_options_accounts(token)
+        except requests.RequestException:
+            continue
+        matched = next(
+            (account for account in accounts if account.get("account_type") == runtime_mode_value),
+            accounts[0] if accounts else None,
+        )
+        if not matched:
+            continue
+        account_id = str(matched.get("account_id", "")).strip()
+        if not account_id:
+            continue
+        try:
+            REPOSITORY.update_account_balance(
+                account_id=account_id,
+                balance=float(matched.get("balance", 0.0)),
+                currency=str(matched.get("currency", "USD")),
+                status=str(matched.get("status", "active")),
+            )
+            updated_accounts.append(REPOSITORY.account_summary(account_id))
+        except (TypeError, ValueError):
+            continue
+
+    GLOBAL_ACCOUNT_REFRESH["last"] = now
+    GLOBAL_ACCOUNT_REFRESH["accounts"] = updated_accounts
+    return updated_accounts
 
 app = FastAPI(
     title="Underdog Legacy Model",
@@ -598,7 +681,13 @@ def logout(request: Request) -> JSONResponse:
 
 @app.get("/metrics/summary")
 def metrics_summary() -> dict:
-    return REPOSITORY.summary()
+    summary = REPOSITORY.summary()
+    if not summary.get("accounts") or float(summary.get("account_balance_total") or 0.0) <= 0:
+        refresh_global_account_snapshots(force=True)
+        summary = REPOSITORY.summary()
+    else:
+        refresh_global_account_snapshots()
+    return summary
 
 
 @app.get("/metrics/recent-trades")
