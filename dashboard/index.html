@@ -388,6 +388,7 @@
     </div>
     <div class="auth-controls">
       <div id="user-info" style="display: none; font-size: 0.85rem; font-weight: bold;"></div>
+      <div id="oauth-error" style="display: none; color: var(--red); font-size: 0.9rem; margin-left: 12px; padding: 4px 12px; background: rgba(170,52,52,.1); border-radius: 8px; font-weight: 500;"></div>
       <a href="/oauth/start" id="btn-login" class="btn-login">Login with Deriv</a>
       <button id="btn-logout" class="btn-logout" style="display: none;">Logout</button>
       <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false" style="min-width: 44px; padding: 0 12px;">
@@ -736,15 +737,37 @@
     window.addEventListener("keydown", replayPendingRobotMessage, { once: true });
     pickRobotVoice();
   }
-  async function initialize() {
-    try {
-      const runtime = await api("/runtime");
-      localControl = Boolean(runtime.local_control);
-      readOnlyDashboard = Boolean(runtime.read_only_dashboard);
-      if (localControl && keyInput) {
-        keyInput.style.display = "none";
-        keyInput.value = "";
-      }
+async function initialize() {
+  try {
+    const runtime = await api("/runtime");
+    localControl = Boolean(runtime.local_control);
+    readOnlyDashboard = Boolean(runtime.read_only_dashboard);
+    if (localControl && keyInput) {
+      keyInput.style.display = "none";
+      keyInput.value = "";
+    }
+    applyReadOnlyMode();
+  } catch (_) {
+    localControl = false;
+  }
+  await refresh();
+  setInterval(refresh, 5000);
+}
+
+// Parse URL parameters for OAuth errors
+document.addEventListener('DOMContentLoaded', () => {
+  const params = new URLSearchParams(window.location.search);
+  const oauthError = params.get('oauth_error');
+  const errorElement = $("oauth-error");
+  if (oauthError && errorElement) {
+    errorElement.textContent = oauthError;
+    errorElement.style.display = "block";
+    // Clear the error from URL to prevent re-showing
+    const url = new URL(window.location);
+    url.searchParams.delete('oauth_error');
+    window.history.replaceState({}, document.title, url.toString());
+  }
+});
       applyReadOnlyMode();
     } catch (_) {
       localControl = false;

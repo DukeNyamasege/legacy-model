@@ -4,7 +4,9 @@ export default async (request, context) => {
   try {
     const backendUrl = getBackendUrl();
     const url = new URL(request.url);
-    const targetUrl = new URL(`/oauth/callback${url.search}`, backendUrl);
+    const targetUrl = new URL(`/oauth/callback`, backendUrl);
+    // Forward all query parameters to the backend endpoint
+    url.searchParams.forEach((value, key) => targetUrl.searchParams.append(key, value));
     
     // We need to forward the cookies from the request (OAuth state and verifier)
     const requestHeaders = new Headers();

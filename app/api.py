@@ -250,16 +250,13 @@ def oauth_callback(
     error_description: str = "",
 ) -> HTMLResponse:
     if error:
-        raise HTTPException(
-            status_code=400,
-            detail=error_description or error,
-        )
+        return RedirectResponse(url=f"/?oauth_error={error_description or error}", status_code=303)
     expected_state = request.cookies.get(OAUTH_STATE_COOKIE, "")
     code_verifier = request.cookies.get(OAUTH_VERIFIER_COOKIE, "")
     if not code or not expected_state or not code_verifier:
-        raise HTTPException(status_code=400, detail="OAuth session is incomplete or expired")
+        return RedirectResponse(url="/?oauth_error=OAuth session is incomplete or expired", status_code=303)
     if state != expected_state:
-        raise HTTPException(status_code=400, detail="OAuth state validation failed")
+        return RedirectResponse(url="/?oauth_error=OAuth state validation failed", status_code=303)
 
     try:
         token_payload = exchange_code_for_tokens(
@@ -271,7 +268,7 @@ def oauth_callback(
         accounts = load_options_accounts(token_payload["access_token"])
     except requests.HTTPError as exc:
         detail = exc.response.text if exc.response is not None else str(exc)
-        raise HTTPException(status_code=400, detail=f"OAuth token exchange failed: {detail}") from exc
+        return RedirectResponse(url=f"/?oauth_error=OAuth token exchange failed: {detail}", status_code=303)
 
     runtime_mode_value = REPOSITORY.runtime_mode()
     matched = next(
