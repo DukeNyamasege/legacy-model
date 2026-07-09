@@ -472,6 +472,11 @@
     ? ""
     : configuredApiBase.replace(/\/+$/, "");
   const apiUrl = path => `${apiBase}${path}`;
+  function noCacheUrl(url) {
+    const nextUrl = new URL(url, window.location.origin);
+    nextUrl.searchParams.set("_ts", Date.now().toString());
+    return apiBase ? nextUrl.toString() : `${nextUrl.pathname}${nextUrl.search}`;
+  }
   const keyInput = $("api-key");
   if (keyInput) {
     keyInput.value = sessionStorage.getItem("control-key") || "";
@@ -514,8 +519,16 @@
     return Number(value || 0).toLocaleString(undefined, {minimumFractionDigits: digits, maximumFractionDigits: digits});
   }
   async function api(path, options = {}) {
-    const response = await fetch(apiUrl(path), {
+    const method = String(options.method || "GET").toUpperCase();
+    const headers = {
+      ...(method === "GET" ? { "Cache-Control": "no-cache" } : {}),
+      ...(options.headers || {})
+    };
+    const response = await fetch(method === "GET" ? noCacheUrl(apiUrl(path)) : apiUrl(path), {
       ...options,
+      method,
+      headers,
+      cache: method === "GET" ? "no-store" : "default",
       credentials: options.credentials || "include"
     });
     const data = await response.json().catch(() => ({}));

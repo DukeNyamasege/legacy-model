@@ -686,7 +686,8 @@ def metrics_summary() -> dict:
         refresh_global_account_snapshots(force=True)
         summary = REPOSITORY.summary()
     else:
-        refresh_global_account_snapshots()
+        if refresh_global_account_snapshots():
+            summary = REPOSITORY.summary()
     return summary
 
 

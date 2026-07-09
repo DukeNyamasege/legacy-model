@@ -88,6 +88,7 @@ export function cloneResponseHeaders(response) {
       headers.append("set-cookie", cookie);
     }
   }
+  headers.set("cache-control", "no-store");
   return headers;
 }
 
