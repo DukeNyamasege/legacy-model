@@ -101,6 +101,36 @@ def session_cookie_domain() -> str | None:
     return os.getenv("CLIENT_SESSION_COOKIE_DOMAIN", "").strip() or None
 
 
+def public_request_url_without_query(request: Request) -> str:
+    forwarded_proto = request.headers.get("x-forwarded-proto", "")
+    scheme = (
+        forwarded_proto.split(",", 1)[0].strip()
+        if forwarded_proto
+        else request.url.scheme
+    )
+    forwarded_host = request.headers.get("x-forwarded-host", "")
+    host = (
+        forwarded_host.split(",", 1)[0].strip()
+        if forwarded_host
+        else request.headers.get("host", "")
+    )
+    if not host:
+        host = request.url.netloc
+    return f"{scheme}://{host}{request.url.path}"
+
+
+def oauth_redirect_candidates(request: Request) -> list[str]:
+    candidates: list[str] = []
+    configured = oauth_redirect_url()
+    actual = public_request_url_without_query(request)
+    ordered = (actual, configured) if actual != configured else (configured,)
+    for value in ordered:
+        normalized = str(value or "").strip()
+        if normalized and normalized not in candidates:
+            candidates.append(normalized)
+    return candidates
+
+
 def load_options_accounts(access_token: str) -> list[dict]:
     response = requests.get(
         f"{CONFIG.deriv.rest_base_url.rstrip('/')}/trading/v1/options/accounts",
@@ -178,7 +208,21 @@ def enforce_control_rate_limit(request: Request) -> None:
 
 
 @app.get("/")
-def dashboard() -> FileResponse:
+def dashboard(
+    request: Request,
+    code: str = "",
+    state: str = "",
+    error: str = "",
+    error_description: str = "",
+):
+    if code or error:
+        return oauth_callback(
+            request,
+            code=code,
+            state=state,
+            error=error,
+            error_description=error_description,
+        )
     return FileResponse(ROOT / "dashboard" / "index.html")
 
 
@@ -292,17 +336,26 @@ def oauth_callback(
     if state != expected_state:
         return redirect_with_oauth_error("OAuth state validation failed")
 
+    token_payload = None
+    exchange_error = ""
+    for redirect_uri in oauth_redirect_candidates(request):
+        try:
+            token_payload = exchange_code_for_tokens(
+                client_id=oauth_client_id(),
+                redirect_uri=redirect_uri,
+                code=code,
+                code_verifier=code_verifier,
+            )
+            break
+        except requests.HTTPError as exc:
+            exchange_error = exc.response.text if exc.response is not None else str(exc)
+    if token_payload is None:
+        return redirect_with_oauth_error(f"OAuth token exchange failed: {exchange_error}")
     try:
-        token_payload = exchange_code_for_tokens(
-            client_id=oauth_client_id(),
-            redirect_uri=oauth_redirect_url(),
-            code=code,
-            code_verifier=code_verifier,
-        )
         accounts = load_options_accounts(token_payload["access_token"])
     except requests.HTTPError as exc:
         detail = exc.response.text if exc.response is not None else str(exc)
-        return redirect_with_oauth_error(f"OAuth token exchange failed: {detail}")
+        return redirect_with_oauth_error(f"OAuth account lookup failed: {detail}")
 
     runtime_mode_value = REPOSITORY.runtime_mode()
     matched = next(
