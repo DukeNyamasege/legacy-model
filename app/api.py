@@ -28,7 +28,9 @@ from app.oauth_client import build_authorization_url, exchange_code_for_tokens
 from app.repositories.test2_repository import Test2Repository, mask_account_id
 from app.token_store import (
     decrypt_auth_payload,
+    decrypt_token,
     encrypt_auth_payload,
+    encrypt_token,
     has_encryption_key,
     parse_token_lines,
 )
@@ -299,6 +301,12 @@ def oauth_start(request: Request) -> RedirectResponse:
         redirect_uri=oauth_redirect_url(),
         state=state,
     )
+    REPOSITORY.create_oauth_login_state(
+        state_hash=session_hash(state),
+        code_verifier_secret=encrypt_token(code_verifier, CONFIG.deriv.token_encryption_key),
+        redirect_uri=oauth_redirect_url(),
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=15),
+    )
     response = RedirectResponse(url=authorization_url, status_code=302)
     secure = oauth_cookie_secure(request)
     response.set_cookie(
@@ -333,10 +341,21 @@ def oauth_callback(
         return redirect_with_oauth_error(error_description or error)
     expected_state = request.cookies.get(OAUTH_STATE_COOKIE, "")
     code_verifier = request.cookies.get(OAUTH_VERIFIER_COOKIE, "")
-    if not code or not expected_state or not code_verifier:
+    stored_state = REPOSITORY.oauth_login_state(session_hash(state)) if state else None
+    if not code or not state:
         return redirect_with_oauth_error("OAuth session is incomplete or expired")
-    if state != expected_state:
+    if expected_state and state != expected_state:
         return redirect_with_oauth_error("OAuth state validation failed")
+    if not code_verifier and stored_state:
+        try:
+            code_verifier = decrypt_token(
+                stored_state["code_verifier_secret"],
+                CONFIG.deriv.token_encryption_key,
+            )
+        except Exception:
+            code_verifier = ""
+    if not code_verifier:
+        return redirect_with_oauth_error("OAuth session is incomplete or expired")
 
     token_payload = None
     exchange_error = ""
@@ -351,6 +370,8 @@ def oauth_callback(
             break
         except requests.HTTPError as exc:
             exchange_error = exc.response.text if exc.response is not None else str(exc)
+    if state:
+        REPOSITORY.delete_oauth_login_state(session_hash(state))
     if token_payload is None:
         return redirect_with_oauth_error(f"OAuth token exchange failed: {exchange_error}")
     try:
@@ -467,8 +488,6 @@ def get_current_account(request: Request) -> dict | None:
     # Backward-compatible fallback for browsers that received the previous
     # encrypted account-id cookie before server-side sessions existed.
     try:
-        from app.token_store import decrypt_token
-
         decrypted = decrypt_token(session_token, CONFIG.deriv.token_encryption_key)
         payload = json.loads(decrypted)
         account_id = payload.get("account_id")
@@ -500,10 +519,11 @@ class AutoTradeRequest(BaseModel):
 def get_me(request: Request) -> dict:
     account = get_current_account(request)
     if not account:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+        return {"authenticated": False}
     personal = REPOSITORY.account_summary(account["account_id"])
             
     return {
+        "authenticated": True,
         "account_id": personal["account"],
         "label": account["label"],
         "enabled": account["enabled"],

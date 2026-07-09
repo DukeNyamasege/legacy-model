@@ -1,6 +1,10 @@
-import { readSnapshot, json } from "./shared.mjs";
+import { readSnapshot, json, proxyBackend } from "./shared.mjs";
 
-export default async () => {
-  const snapshot = await readSnapshot();
-  return json(snapshot.summary || {});
+export default async (request) => {
+  try {
+    return await proxyBackend(request, "/metrics/summary");
+  } catch (_) {
+    const snapshot = await readSnapshot();
+    return json(snapshot.summary || {});
+  }
 };

@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 const root = resolve(import.meta.dirname, "..");
 const source = resolve(root, "dashboard");
 const output = resolve(root, "dist");
-const rawApiBase = (process.env.API_BASE_URL || "").trim().replace(/\/+$/, "");
+const rawApiBase = (process.env.DASHBOARD_API_BASE_URL || "").trim().replace(/\/+$/, "");
 const hasExternalApiBase = Boolean(rawApiBase);
 let apiUrl = null;
 if (hasExternalApiBase) {

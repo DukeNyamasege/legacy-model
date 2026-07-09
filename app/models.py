@@ -271,6 +271,16 @@ class ClientSession(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
 
+class OAuthLoginState(Base):
+    __tablename__ = "oauth_login_states"
+
+    state_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    code_verifier_secret: Mapped[str] = mapped_column(Text)
+    redirect_uri: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
 class RuntimePreference(Base):
     __tablename__ = "runtime_preferences"
 

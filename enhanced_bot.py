@@ -928,10 +928,39 @@ class TradingBot:
                 self._set_regime_guard(False, "SHADOW_SIGNAL_HEALTH_RECOVERED_ON_STARTUP")
         self._save_state()
 
+    def _load_global_token_accounts(self) -> Tuple[List[str], Dict[str, Dict[str, Any]]]:
+        tokens_file = self.cfg["files"]["tokens"]
+        tokens_file = os.getenv("DERIV_TOKENS_FILE", tokens_file)
+        raw_tokens = load_tokens(tokens_file)
+        tokens = decrypt_tokens(raw_tokens, self.encryption_key)
+        users_file = self.cfg["files"].get("users", "users.json")
+        users_file = os.getenv("DERIV_USER_FILE", users_file)
+        profiles = load_user_profiles(users_file)
+        for token in tokens:
+            profile = profiles.setdefault(
+                token,
+                {
+                    "id": token_tag(token),
+                    "name": "Global bot account",
+                    "enabled": True,
+                    "account_id": "",
+                },
+            )
+            profile.setdefault("auth_type", "global_token")
+            profile.setdefault("source", "global")
+        return tokens, profiles
+
     def _load_runtime_accounts(self) -> Tuple[List[str], Dict[str, Dict[str, Any]]]:
         managed_accounts = self.repository.list_managed_accounts()
-        tokens: List[str] = []
-        profiles: Dict[str, Dict[str, Any]] = {}
+        tokens, profiles = self._load_global_token_accounts()
+
+        def add_runtime_token(token: str, profile: Dict[str, Any]) -> None:
+            if token in profiles:
+                profiles[token].update({k: v for k, v in profile.items() if v not in {"", None}})
+                return
+            tokens.append(token)
+            profiles[token] = profile
+
         if managed_accounts:
             for row in managed_accounts:
                 if not row.enabled:
@@ -982,14 +1011,17 @@ class TradingBot:
                 if not token:
                     self.logger.error("Managed account %s is missing an access token", row.id)
                     continue
-                tokens.append(token)
-                profiles[token] = {
-                    "id": str(row.id),
-                    "name": row.label or f"Account {row.id}",
-                    "enabled": True,
-                    "account_id": str(payload.get("account_id", "")).strip(),
-                    "auth_type": auth_type,
-                }
+                add_runtime_token(
+                    token,
+                    {
+                        "id": str(row.id),
+                        "name": row.label or f"Account {row.id}",
+                        "enabled": True,
+                        "account_id": str(payload.get("account_id", "")).strip(),
+                        "auth_type": auth_type,
+                        "source": "private",
+                    },
+                )
             if tokens:
                 return tokens, profiles
             self.logger.warning(
@@ -998,13 +1030,6 @@ class TradingBot:
             )
             return [], {}
 
-        tokens_file = self.cfg["files"]["tokens"]
-        tokens_file = os.getenv("DERIV_TOKENS_FILE", tokens_file)
-        raw_tokens = load_tokens(tokens_file)
-        tokens = decrypt_tokens(raw_tokens, self.encryption_key)
-        users_file = self.cfg["files"].get("users", "users.json")
-        users_file = os.getenv("DERIV_USER_FILE", users_file)
-        profiles = load_user_profiles(users_file)
         return tokens, profiles
 
     def _persist_hmm_metadata(self) -> None:

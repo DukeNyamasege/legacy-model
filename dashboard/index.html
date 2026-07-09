@@ -699,6 +699,9 @@
       // Fetch personal metrics
       try {
         const me = await api("/me");
+        if (!me.authenticated) {
+          throw new Error("Not authenticated");
+        }
         $("personal-section").style.display = "block";
         $("btn-login").style.display = "none";
         $("btn-logout").style.display = "inline-flex";

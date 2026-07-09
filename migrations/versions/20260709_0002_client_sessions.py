@@ -11,8 +11,11 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.create_table(
+    bind = op.get_bind()
+    metadata = sa.MetaData()
+    table = sa.Table(
         "client_sessions",
+        metadata,
         sa.Column("session_hash", sa.String(length=64), primary_key=True),
         sa.Column(
             "managed_account_id",
@@ -24,15 +27,19 @@ def upgrade() -> None:
         sa.Column("last_seen_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
     )
-    op.create_index(
+    table.create(bind, checkfirst=True)
+    sa.Index(
         "ix_client_sessions_managed_account_id",
-        "client_sessions",
-        ["managed_account_id"],
+        table.c.managed_account_id,
+    ).create(bind, checkfirst=True)
+    sa.Index("ix_client_sessions_expires_at", table.c.expires_at).create(
+        bind,
+        checkfirst=True,
     )
-    op.create_index("ix_client_sessions_expires_at", "client_sessions", ["expires_at"])
 
 
 def downgrade() -> None:
-    op.drop_index("ix_client_sessions_expires_at", table_name="client_sessions")
-    op.drop_index("ix_client_sessions_managed_account_id", table_name="client_sessions")
-    op.drop_table("client_sessions")
+    bind = op.get_bind()
+    metadata = sa.MetaData()
+    table = sa.Table("client_sessions", metadata)
+    table.drop(bind, checkfirst=True)

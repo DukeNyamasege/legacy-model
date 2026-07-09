@@ -21,6 +21,7 @@ from app.models import (
     ManagedAccount,
     ModelArtifact,
     ModelDecisionRecord,
+    OAuthLoginState,
     ProposalRecord,
     RuntimePreference,
     TestRun,
@@ -213,6 +214,53 @@ class Test2Repository:
     def delete_client_session(self, session_hash: str) -> None:
         with self.database.session() as session:
             row = session.get(ClientSession, str(session_hash))
+            if row is not None:
+                session.delete(row)
+
+    def create_oauth_login_state(
+        self,
+        *,
+        state_hash: str,
+        code_verifier_secret: str,
+        redirect_uri: str,
+        expires_at: datetime,
+    ) -> None:
+        with self.database.session() as session:
+            now = utc_now()
+            session.query(OAuthLoginState).filter(
+                OAuthLoginState.expires_at <= now
+            ).delete()
+            session.merge(
+                OAuthLoginState(
+                    state_hash=str(state_hash),
+                    code_verifier_secret=str(code_verifier_secret),
+                    redirect_uri=str(redirect_uri or ""),
+                    expires_at=expires_at,
+                )
+            )
+
+    def oauth_login_state(self, state_hash: str) -> dict[str, Any] | None:
+        with self.database.session() as session:
+            row = session.get(OAuthLoginState, str(state_hash))
+            now = utc_now()
+            if row is None:
+                return None
+            expires_at = row.expires_at
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if expires_at <= now:
+                session.delete(row)
+                return None
+            return {
+                "state_hash": row.state_hash,
+                "code_verifier_secret": row.code_verifier_secret,
+                "redirect_uri": row.redirect_uri,
+                "expires_at": row.expires_at,
+            }
+
+    def delete_oauth_login_state(self, state_hash: str) -> None:
+        with self.database.session() as session:
+            row = session.get(OAuthLoginState, str(state_hash))
             if row is not None:
                 session.delete(row)
 
@@ -717,7 +765,7 @@ class Test2Repository:
                 ),
                 "net_profit": state.total_profit if state else 0.0,
                 "maximum_drawdown": state.current_drawdown if state else 0.0,
-                "total_traders": int(total_managed_accounts or len(accounts)),
+                "total_traders": int(len(accounts) or total_managed_accounts or 0),
                 "accounts": [
                     {
                         "account": account.account_id_masked,
