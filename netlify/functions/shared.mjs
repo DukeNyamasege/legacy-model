@@ -70,6 +70,15 @@ export function getBackendUrl() {
 
 export function cloneResponseHeaders(response) {
   const headers = new Headers(response.headers);
+  for (const header of [
+    "content-encoding",
+    "content-length",
+    "transfer-encoding",
+    "connection",
+    "keep-alive",
+  ]) {
+    headers.delete(header);
+  }
   const getSetCookie = response.headers.getSetCookie;
   const setCookies =
     typeof getSetCookie === "function" ? getSetCookie.call(response.headers) : [];

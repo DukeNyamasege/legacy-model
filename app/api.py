@@ -24,7 +24,7 @@ import json
 
 from app.config import load_test2_config
 from app.database import Database
-from app.oauth_client import build_authorization_url, exchange_code_for_tokens
+from app.oauth_client import build_authorization_url, build_pkce_pair, exchange_code_for_tokens
 from app.repositories.test2_repository import Test2Repository, mask_account_id
 from app.token_store import (
     decrypt_auth_payload,
@@ -132,6 +132,31 @@ def oauth_redirect_candidates(request: Request, landed_redirect_uri: str = "") -
         if normalized and normalized not in candidates:
             candidates.append(normalized)
     return candidates
+
+
+def build_oauth_state(code_verifier: str) -> str:
+    payload = {
+        "n": secrets.token_urlsafe(16),
+        "v": code_verifier,
+        "t": int(time.time()),
+    }
+    return encrypt_token(
+        json.dumps(payload, separators=(",", ":")),
+        CONFIG.deriv.token_encryption_key,
+    )
+
+
+def code_verifier_from_state(state: str) -> str:
+    try:
+        payload = json.loads(decrypt_token(state, CONFIG.deriv.token_encryption_key))
+    except Exception:
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    issued_at = int(payload.get("t", 0) or 0)
+    if not issued_at or time.time() - issued_at > 900:
+        return ""
+    return str(payload.get("v", "")).strip()
 
 
 def load_options_accounts(access_token: str) -> list[dict]:
@@ -295,11 +320,13 @@ def oauth_start(request: Request) -> RedirectResponse:
             status_code=409,
             detail="Set DERIV_TOKEN_ENCRYPTION_KEY before linking OAuth accounts.",
         )
-    state = os.urandom(16).hex()
+    code_verifier, _ = build_pkce_pair()
+    state = build_oauth_state(code_verifier)
     authorization_url, code_verifier = build_authorization_url(
         client_id=oauth_client_id(),
         redirect_uri=oauth_redirect_url(),
         state=state,
+        code_verifier=code_verifier,
     )
     REPOSITORY.create_oauth_login_state(
         state_hash=session_hash(state),
@@ -342,9 +369,10 @@ def oauth_callback(
     expected_state = request.cookies.get(OAUTH_STATE_COOKIE, "")
     code_verifier = request.cookies.get(OAUTH_VERIFIER_COOKIE, "")
     stored_state = REPOSITORY.oauth_login_state(session_hash(state)) if state else None
+    state_code_verifier = code_verifier_from_state(state) if state else ""
     if not code or not state:
         return redirect_with_oauth_error("OAuth session is incomplete or expired")
-    if expected_state and state != expected_state:
+    if expected_state and state != expected_state and not state_code_verifier:
         return redirect_with_oauth_error("OAuth state validation failed")
     if not code_verifier and stored_state:
         try:
@@ -354,6 +382,8 @@ def oauth_callback(
             )
         except Exception:
             code_verifier = ""
+    if not code_verifier:
+        code_verifier = state_code_verifier
     if not code_verifier:
         return redirect_with_oauth_error("OAuth session is incomplete or expired")
 

@@ -14,15 +14,28 @@ AUTH_BASE_URL = "https://auth.deriv.com/oauth2"
 DEFAULT_SCOPES = ("trade", "application_read", "account_manage")
 
 
+def build_code_challenge(code_verifier: str) -> str:
+    digest = hashlib.sha256(code_verifier.encode("utf-8")).digest()
+    return base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
+
+
 def build_pkce_pair() -> tuple[str, str]:
     code_verifier = secrets.token_urlsafe(64)
-    digest = hashlib.sha256(code_verifier.encode("utf-8")).digest()
-    code_challenge = base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
+    code_challenge = build_code_challenge(code_verifier)
     return code_verifier, code_challenge
 
 
-def build_authorization_url(*, client_id: str, redirect_uri: str, state: str) -> tuple[str, str]:
-    code_verifier, code_challenge = build_pkce_pair()
+def build_authorization_url(
+    *,
+    client_id: str,
+    redirect_uri: str,
+    state: str,
+    code_verifier: str | None = None,
+) -> tuple[str, str]:
+    if code_verifier:
+        code_challenge = build_code_challenge(code_verifier)
+    else:
+        code_verifier, code_challenge = build_pkce_pair()
     query = urlencode(
         {
             "response_type": "code",
