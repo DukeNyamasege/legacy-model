@@ -25,3 +25,13 @@
   from = "/settings/accounts"
   to = "/.netlify/functions/settings-accounts"
   status = 200
+
+[[redirects]]
+  from = "/oauth/start"
+  to = "/.netlify/functions/oauth-start"
+  status = 200
+
+[[redirects]]
+  from = "/oauth/callback"
+  to = "/.netlify/functions/oauth-callback"
+  status = 200

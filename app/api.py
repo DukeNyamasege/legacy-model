@@ -98,7 +98,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=frontend_origins,
     allow_origin_regex=frontend_origin_regex,
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-API-Key"],
 )
@@ -311,9 +311,10 @@ def oauth_callback(
     )
 
     response = HTMLResponse(
-        "<html><body><h2>Deriv account linked</h2>"
+        "<html><head><meta http-equiv=\"refresh\" content=\"2;url=/\"></head>"
+        "<body><h2>Deriv account linked</h2>"
         "<p>Your OAuth account has been stored for the bot.</p>"
-        "<p>You can close this tab and return to your dashboard.</p></body></html>"
+        "<p>Redirecting you back to the dashboard...</p></body></html>"
     )
     response.delete_cookie(OAUTH_STATE_COOKIE)
     response.delete_cookie(OAUTH_VERIFIER_COOKIE)
