@@ -768,14 +768,6 @@ document.addEventListener('DOMContentLoaded', () => {
     window.history.replaceState({}, document.title, url.toString());
   }
 });
-      applyReadOnlyMode();
-    } catch (_) {
-      localControl = false;
-    }
-    await refresh();
-  }
-  initialize();
-  setInterval(refresh, 5000);
 </script>
 </body>
 </html>
