@@ -1,13 +1,13 @@
 deriv:
-  app_id: 33cCr2bWsByPgLlormNFw
+  app_id: 33MmAtDICSKcC7LAZj7JO
   environment: demo
   public_ws_url: wss://api.derivws.com/trading/v1/options/ws/public
   rest_base_url: https://api.derivws.com
   trading_enabled: true
   allow_real_trading: false
   production_acknowledgement: ''
-  oauth_client_id: 33cCr2bWsByPgLlormNFw
-  oauth_redirect_url: https://localhost/oauth/callback
+  oauth_client_id: 33MmAtDICSKcC7LAZj7JO
+  oauth_redirect_url: https://derivadmin.site/oauth/callback
   token_encryption_key: ''
 model:
   name: The Underdog Legacy Model

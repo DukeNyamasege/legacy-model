@@ -123,6 +123,25 @@ class Test2Repository:
                 "updated_at": row.updated_at.isoformat(),
             }
 
+    def update_managed_account(
+        self, account_id: int, *, label: str, token_secret: str, enabled: bool = True
+    ) -> dict[str, Any]:
+        with self.database.session() as session:
+            row = session.get(ManagedAccount, int(account_id))
+            if row is None:
+                raise ValueError(f"Managed account {account_id} not found")
+            row.label = str(label or row.label or "").strip()[:120]
+            row.token_secret = str(token_secret)
+            row.enabled = bool(enabled)
+            row.updated_at = utc_now()
+            return {
+                "id": int(row.id),
+                "label": row.label,
+                "enabled": bool(row.enabled),
+                "created_at": row.created_at.isoformat(),
+                "updated_at": row.updated_at.isoformat(),
+            }
+
     def record_tick(
         self,
         *,

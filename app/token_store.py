@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Iterable
 
 from cryptography.fernet import Fernet
@@ -19,6 +20,14 @@ def encrypt_token(token: str, key: str) -> str:
     return Fernet(secret.encode("utf-8")).encrypt(value.encode("utf-8")).decode("utf-8")
 
 
+def encrypt_auth_payload(payload: dict, key: str) -> str:
+    secret = str(key or "").strip()
+    if not secret:
+        raise ValueError("DERIV_TOKEN_ENCRYPTION_KEY is required for dashboard token storage")
+    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return Fernet(secret.encode("utf-8")).encrypt(serialized.encode("utf-8")).decode("utf-8")
+
+
 def decrypt_token(token_secret: str, key: str) -> str:
     secret = str(key or "").strip()
     if not secret:
@@ -26,6 +35,23 @@ def decrypt_token(token_secret: str, key: str) -> str:
     return Fernet(secret.encode("utf-8")).decrypt(
         str(token_secret).encode("utf-8")
     ).decode("utf-8")
+
+
+def decrypt_auth_payload(token_secret: str, key: str) -> dict:
+    decrypted = decrypt_token(token_secret, key)
+    try:
+        payload = json.loads(decrypted)
+    except json.JSONDecodeError:
+        return {
+            "auth_type": "pat",
+            "access_token": decrypted,
+        }
+    if not isinstance(payload, dict):
+        raise ValueError("Stored token payload must be a JSON object")
+    if "access_token" not in payload:
+        raise ValueError("Stored token payload is missing access_token")
+    payload.setdefault("auth_type", "oauth")
+    return payload
 
 
 def parse_token_lines(raw_text: str) -> list[str]:

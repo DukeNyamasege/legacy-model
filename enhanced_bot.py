@@ -34,6 +34,7 @@ from typing import Any, Dict, List, Optional, Tuple, Set
 import aiohttp
 import websockets
 from websockets.exceptions import ConnectionClosed, ConnectionClosedError
+from dotenv import load_dotenv
 
 from app.config import load_test2_config
 from app.database import Database
@@ -41,6 +42,7 @@ from app.model.bayesian_probability import BayesianProbability
 from app.model.feature_builder import build_features
 from app.model.hmm_regime import ThreeStateHmm
 from app.model.model_store import persist_model_metadata
+from app.oauth_client import refresh_access_token, token_is_expiring
 from app.repositories.test2_repository import Test2Repository
 from app.netlify_sync import NetlifyDashboardSync
 from app.strategy.cooldown import AdaptiveCooldown
@@ -52,7 +54,7 @@ from app.strategy.over3_strategy import (
     validate_contract_parameters,
 )
 from app.strategy.signal_detector import CandidateSignal, Over3SignalDetector
-from app.token_store import decrypt_token
+from app.token_store import decrypt_auth_payload, decrypt_token, encrypt_auth_payload
 
 try:
     from cryptography.fernet import Fernet
@@ -766,6 +768,7 @@ class ClientSession:
 class TradingBot:
     def __init__(self, config_path: Optional[str] = None):
         self.config_path = config_path or os.getenv("DERIV_BOT_CONFIG", "config.yaml")
+        load_dotenv(Path(self.config_path).resolve().parent / ".env")
         scan_source_for_hardcoded_tokens(Path(self.config_path).resolve().parent)
         self.test2_config = load_test2_config(self.config_path)
         self.cfg = self.test2_config.model_dump()
@@ -934,16 +937,58 @@ class TradingBot:
                 if not row.enabled:
                     continue
                 try:
-                    token = decrypt_token(row.token_secret, self.encryption_key)
+                    payload = decrypt_auth_payload(row.token_secret, self.encryption_key)
                 except Exception as exc:
                     self.logger.error("Managed token %s could not be decrypted: %s", row.id, exc)
+                    continue
+                auth_type = str(payload.get("auth_type", "pat")).strip() or "pat"
+                if auth_type == "oauth" and token_is_expiring(payload):
+                    refresh_token_value = str(payload.get("refresh_token", "")).strip()
+                    if not refresh_token_value:
+                        self.logger.error(
+                            "Managed OAuth account %s is missing a refresh token",
+                            row.id,
+                        )
+                        continue
+                    try:
+                        refreshed = refresh_access_token(
+                            client_id=str(self.test2_config.deriv.oauth_client_id or self.app_id),
+                            refresh_token=refresh_token_value,
+                        )
+                    except Exception as exc:
+                        self.logger.error(
+                            "Managed OAuth account %s could not refresh its token: %s",
+                            row.id,
+                            exc,
+                        )
+                        continue
+                    payload.update(refreshed)
+                    token_secret = encrypt_auth_payload(payload, self.encryption_key)
+                    try:
+                        self.repository.update_managed_account(
+                            int(row.id),
+                            label=row.label or f"Account {row.id}",
+                            token_secret=token_secret,
+                            enabled=bool(row.enabled),
+                        )
+                    except Exception as exc:
+                        self.logger.error(
+                            "Managed OAuth account %s could not persist refreshed token: %s",
+                            row.id,
+                            exc,
+                        )
+                        continue
+                token = str(payload.get("access_token", "")).strip()
+                if not token:
+                    self.logger.error("Managed account %s is missing an access token", row.id)
                     continue
                 tokens.append(token)
                 profiles[token] = {
                     "id": str(row.id),
                     "name": row.label or f"Account {row.id}",
                     "enabled": True,
-                    "account_id": "",
+                    "account_id": str(payload.get("account_id", "")).strip(),
+                    "auth_type": auth_type,
                 }
             if tokens:
                 return tokens, profiles

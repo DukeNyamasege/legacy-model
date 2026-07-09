@@ -8,20 +8,32 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from pydantic import BaseModel
+import requests
+from dotenv import load_dotenv
 
 from app.config import load_test2_config
 from app.database import Database
+from app.oauth_client import build_authorization_url, exchange_code_for_tokens
 from app.repositories.test2_repository import Test2Repository
-from app.token_store import encrypt_token, has_encryption_key, parse_token_lines
+from app.token_store import (
+    decrypt_auth_payload,
+    encrypt_auth_payload,
+    encrypt_token,
+    has_encryption_key,
+    parse_token_lines,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(ROOT / ".env")
 CONFIG = load_test2_config(os.getenv("DERIV_BOT_CONFIG", ROOT / "config.yaml"))
 DATABASE = Database(CONFIG.database_url)
 DATABASE.create_schema()
 REPOSITORY = Test2Repository(DATABASE, CONFIG)
 CONTROL_RATE: dict[str, deque[float]] = defaultdict(deque)
+OAUTH_STATE_COOKIE = "deriv_oauth_state"
+OAUTH_VERIFIER_COOKIE = "deriv_oauth_code_verifier"
 
 
 class ModeUpdateRequest(BaseModel):
@@ -31,6 +43,41 @@ class ModeUpdateRequest(BaseModel):
 class TokenImportRequest(BaseModel):
     tokens_text: str
     label_prefix: str = "Account"
+
+
+def oauth_client_id() -> str:
+    value = str(CONFIG.deriv.oauth_client_id or CONFIG.deriv.app_id).strip()
+    if not value:
+        raise HTTPException(status_code=500, detail="OAuth client ID is not configured")
+    return value
+
+
+def oauth_redirect_url() -> str:
+    value = str(CONFIG.deriv.oauth_redirect_url or "").strip()
+    if not value:
+        raise HTTPException(status_code=500, detail="OAuth redirect URL is not configured")
+    return value
+
+
+def oauth_cookie_secure(request: Request) -> bool:
+    forwarded = request.headers.get("x-forwarded-proto", "").lower()
+    if forwarded:
+        return forwarded == "https"
+    return request.url.scheme == "https"
+
+
+def load_options_accounts(access_token: str) -> list[dict]:
+    response = requests.get(
+        f"{CONFIG.deriv.rest_base_url.rstrip('/')}/trading/v1/options/accounts",
+        headers={
+            "Deriv-App-ID": str(CONFIG.deriv.app_id),
+            "Authorization": f"Bearer {access_token}",
+        },
+        timeout=30,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    return payload.get("data", [])
 
 app = FastAPI(
     title="Underdog Legacy Model",
@@ -42,7 +89,7 @@ frontend_origins = [
     origin.strip().rstrip("/")
     for origin in os.getenv(
         "FRONTEND_ORIGINS",
-        "http://127.0.0.1:8080,http://localhost:8080",
+        "http://127.0.0.1:8080,http://localhost:8080,https://derivadmin.site",
     ).split(",")
     if origin.strip()
 ]
@@ -159,6 +206,120 @@ def runtime_mode(request: Request) -> dict:
     }
 
 
+@app.get("/oauth/start")
+def oauth_start(request: Request) -> RedirectResponse:
+    if not has_encryption_key(CONFIG.deriv.token_encryption_key):
+        raise HTTPException(
+            status_code=409,
+            detail="Set DERIV_TOKEN_ENCRYPTION_KEY before linking OAuth accounts.",
+        )
+    state = os.urandom(16).hex()
+    authorization_url, code_verifier = build_authorization_url(
+        client_id=oauth_client_id(),
+        redirect_uri=oauth_redirect_url(),
+        state=state,
+    )
+    response = RedirectResponse(url=authorization_url, status_code=302)
+    secure = oauth_cookie_secure(request)
+    response.set_cookie(
+        OAUTH_STATE_COOKIE,
+        state,
+        httponly=True,
+        secure=secure,
+        samesite="lax",
+        max_age=900,
+    )
+    response.set_cookie(
+        OAUTH_VERIFIER_COOKIE,
+        code_verifier,
+        httponly=True,
+        secure=secure,
+        samesite="lax",
+        max_age=900,
+    )
+    return response
+
+
+@app.get("/oauth/callback")
+def oauth_callback(
+    request: Request,
+    code: str = "",
+    state: str = "",
+    error: str = "",
+    error_description: str = "",
+) -> HTMLResponse:
+    if error:
+        raise HTTPException(
+            status_code=400,
+            detail=error_description or error,
+        )
+    expected_state = request.cookies.get(OAUTH_STATE_COOKIE, "")
+    code_verifier = request.cookies.get(OAUTH_VERIFIER_COOKIE, "")
+    if not code or not expected_state or not code_verifier:
+        raise HTTPException(status_code=400, detail="OAuth session is incomplete or expired")
+    if state != expected_state:
+        raise HTTPException(status_code=400, detail="OAuth state validation failed")
+
+    try:
+        token_payload = exchange_code_for_tokens(
+            client_id=oauth_client_id(),
+            redirect_uri=oauth_redirect_url(),
+            code=code,
+            code_verifier=code_verifier,
+        )
+        accounts = load_options_accounts(token_payload["access_token"])
+    except requests.HTTPError as exc:
+        detail = exc.response.text if exc.response is not None else str(exc)
+        raise HTTPException(status_code=400, detail=f"OAuth token exchange failed: {detail}") from exc
+
+    runtime_mode_value = REPOSITORY.runtime_mode()
+    matched = next(
+        (account for account in accounts if account.get("account_type") == runtime_mode_value),
+        accounts[0] if accounts else None,
+    )
+    if not matched:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No Options account is available for runtime mode {runtime_mode_value}",
+        )
+
+    account_id = str(matched.get("account_id", "")).strip()
+    label = f"OAuth {account_id[:3]}***{account_id[-3:]}" if len(account_id) > 6 else "OAuth Account"
+    token_payload["account_id"] = account_id
+    token_payload["auth_source"] = "deriv_oauth"
+    token_secret = encrypt_auth_payload(token_payload, CONFIG.deriv.token_encryption_key)
+
+    existing_id = None
+    for row in REPOSITORY.list_managed_accounts():
+        try:
+            stored = decrypt_auth_payload(row.token_secret, CONFIG.deriv.token_encryption_key)
+        except Exception:
+            continue
+        if str(stored.get("account_id", "")).strip() == account_id:
+            existing_id = int(row.id)
+            break
+    if existing_id is None:
+        REPOSITORY.add_managed_account(label=label, token_secret=token_secret)
+    else:
+        REPOSITORY.update_managed_account(existing_id, label=label, token_secret=token_secret)
+
+    REPOSITORY.audit(
+        "OAUTH_ACCOUNT_LINKED",
+        "oauth-callback",
+        request.client.host if request.client else "unknown",
+        {"account_id_masked": label, "mode": runtime_mode_value},
+    )
+
+    response = HTMLResponse(
+        "<html><body><h2>Deriv account linked</h2>"
+        "<p>Your OAuth account has been stored for the bot.</p>"
+        "<p>You can close this tab and return to your dashboard.</p></body></html>"
+    )
+    response.delete_cookie(OAUTH_STATE_COOKIE)
+    response.delete_cookie(OAUTH_VERIFIER_COOKIE)
+    return response
+
+
 @app.get("/metrics/summary")
 def metrics_summary() -> dict:
     return REPOSITORY.summary()
@@ -250,21 +411,36 @@ def emergency_stop(
 
 @app.get("/settings/accounts")
 def settings_accounts() -> dict:
-    accounts = [
-        {
-            "id": row.id,
-            "label": row.label or f"Account {row.id}",
-            "enabled": row.enabled,
-            "token_masked": "Stored securely",
-            "created_at": row.created_at.isoformat(),
-            "updated_at": row.updated_at.isoformat(),
-        }
-        for row in REPOSITORY.list_managed_accounts()
-    ]
+    accounts = []
+    for row in REPOSITORY.list_managed_accounts():
+        auth_type = "pat"
+        account_id_masked = ""
+        try:
+            payload = decrypt_auth_payload(row.token_secret, CONFIG.deriv.token_encryption_key)
+            auth_type = str(payload.get("auth_type", "pat")).strip() or "pat"
+            account_id = str(payload.get("account_id", "")).strip()
+            if len(account_id) > 6:
+                account_id_masked = f"{account_id[:3]}***{account_id[-3:]}"
+        except Exception:
+            pass
+        accounts.append(
+            {
+                "id": row.id,
+                "label": row.label or f"Account {row.id}",
+                "enabled": row.enabled,
+                "token_masked": "Stored securely",
+                "auth_type": auth_type,
+                "account_id_masked": account_id_masked,
+                "created_at": row.created_at.isoformat(),
+                "updated_at": row.updated_at.isoformat(),
+            }
+        )
     return {
         "mode": REPOSITORY.runtime_mode(),
         "accounts": accounts,
         "token_storage_secure": has_encryption_key(CONFIG.deriv.token_encryption_key),
+        "oauth_client_id": oauth_client_id(),
+        "oauth_redirect_url": oauth_redirect_url(),
         "read_only_dashboard": False,
     }
 
