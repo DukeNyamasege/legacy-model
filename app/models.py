@@ -261,6 +261,16 @@ class ManagedAccount(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class ClientSession(Base):
+    __tablename__ = "client_sessions"
+
+    session_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    managed_account_id: Mapped[int] = mapped_column(ForeignKey("managed_accounts.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
 class RuntimePreference(Base):
     __tablename__ = "runtime_preferences"
 

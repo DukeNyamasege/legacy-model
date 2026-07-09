@@ -992,6 +992,11 @@ class TradingBot:
                 }
             if tokens:
                 return tokens, profiles
+            self.logger.warning(
+                "Managed accounts are configured, but none are enabled and valid; "
+                "staying in watch mode until a user joins auto trading."
+            )
+            return [], {}
 
         tokens_file = self.cfg["files"]["tokens"]
         tokens_file = os.getenv("DERIV_TOKENS_FILE", tokens_file)
@@ -1571,7 +1576,10 @@ class TradingBot:
 
         self.valid_clients = valid
         if not self.valid_clients:
-            raise SystemExit(f"No valid Options accounts matched the configured environment: {self.environment}")
+            self.logger.warning(
+                "No valid Options %s accounts are currently enabled; worker will keep watching.",
+                self.environment,
+            )
 
     async def _ensure_sessions_for_valid_clients(self) -> None:
         for token, account_id in self.valid_clients:
@@ -1924,6 +1932,13 @@ class TradingBot:
             signal.consumed = True
 
             eligible_accounts = list(self.valid_clients)
+            if not eligible_accounts:
+                self.repository.mark_signal(signal.signal_id, status="SKIP_NO_ENABLED_ACCOUNTS")
+                self.logger.info(
+                    "Skipping purchase for signal %s because no accounts have joined auto trading.",
+                    signal.signal_id,
+                )
+                return
             stake_amount = round(float(economics.stake), 2)
             profit_ratio = economics.potential_profit / economics.stake
             bulk_path = f"/trading/v1/options/contracts/bulk-purchase/{self.environment}"

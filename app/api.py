@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import os
+import secrets
 import time
 from collections import defaultdict, deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlencode
 
 try:
     from dotenv import load_dotenv
@@ -14,7 +17,7 @@ except Exception:
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import FileResponse, RedirectResponse, JSONResponse
 from pydantic import BaseModel
 import requests
 import json
@@ -22,12 +25,10 @@ import json
 from app.config import load_test2_config
 from app.database import Database
 from app.oauth_client import build_authorization_url, exchange_code_for_tokens
-from app.repositories.test2_repository import Test2Repository
+from app.repositories.test2_repository import Test2Repository, mask_account_id
 from app.token_store import (
     decrypt_auth_payload,
     encrypt_auth_payload,
-    encrypt_token,
-    decrypt_token,
     has_encryption_key,
     parse_token_lines,
 )
@@ -41,6 +42,8 @@ REPOSITORY = Test2Repository(DATABASE, CONFIG)
 CONTROL_RATE: dict[str, deque[float]] = defaultdict(deque)
 OAUTH_STATE_COOKIE = "deriv_oauth_state"
 OAUTH_VERIFIER_COOKIE = "deriv_oauth_code_verifier"
+CLIENT_SESSION_COOKIE = "client_session"
+CLIENT_SESSION_DAYS = int(os.getenv("CLIENT_SESSION_DAYS", "30"))
 
 
 class ModeUpdateRequest(BaseModel):
@@ -69,8 +72,33 @@ def oauth_redirect_url() -> str:
 def oauth_cookie_secure(request: Request) -> bool:
     forwarded = request.headers.get("x-forwarded-proto", "").lower()
     if forwarded:
-        return forwarded == "https"
-    return request.url.scheme == "https"
+        return forwarded.split(",", 1)[0].strip() == "https"
+    host = (request.url.hostname or "").lower()
+    if host in {"localhost", "127.0.0.1", "::1"}:
+        return request.url.scheme == "https"
+    # Render/custom-domain traffic can arrive at the app over an internal HTTP hop.
+    # For public hosts we still need Secure cookies so browsers keep the session.
+    return True
+
+
+def session_hash(session_token: str) -> str:
+    return hashlib.sha256(str(session_token).encode("utf-8")).hexdigest()
+
+
+def redirect_with_oauth_error(message: str) -> RedirectResponse:
+    return RedirectResponse(
+        url="/?" + urlencode({"oauth_error": str(message or "OAuth failed")[:700]}),
+        status_code=303,
+    )
+
+
+def session_cookie_samesite() -> str:
+    value = os.getenv("CLIENT_SESSION_SAMESITE", "lax").strip().lower()
+    return value if value in {"lax", "strict", "none"} else "lax"
+
+
+def session_cookie_domain() -> str | None:
+    return os.getenv("CLIENT_SESSION_COOKIE_DOMAIN", "").strip() or None
 
 
 def load_options_accounts(access_token: str) -> list[dict]:
@@ -254,15 +282,15 @@ def oauth_callback(
     state: str = "",
     error: str = "",
     error_description: str = "",
-) -> HTMLResponse:
+) -> RedirectResponse:
     if error:
-        return RedirectResponse(url=f"/?oauth_error={error_description or error}", status_code=303)
+        return redirect_with_oauth_error(error_description or error)
     expected_state = request.cookies.get(OAUTH_STATE_COOKIE, "")
     code_verifier = request.cookies.get(OAUTH_VERIFIER_COOKIE, "")
     if not code or not expected_state or not code_verifier:
-        return RedirectResponse(url="/?oauth_error=OAuth session is incomplete or expired", status_code=303)
+        return redirect_with_oauth_error("OAuth session is incomplete or expired")
     if state != expected_state:
-        return RedirectResponse(url="/?oauth_error=OAuth state validation failed", status_code=303)
+        return redirect_with_oauth_error("OAuth state validation failed")
 
     try:
         token_payload = exchange_code_for_tokens(
@@ -274,7 +302,7 @@ def oauth_callback(
         accounts = load_options_accounts(token_payload["access_token"])
     except requests.HTTPError as exc:
         detail = exc.response.text if exc.response is not None else str(exc)
-        return RedirectResponse(url=f"/?oauth_error=OAuth token exchange failed: {detail}", status_code=303)
+        return redirect_with_oauth_error(f"OAuth token exchange failed: {detail}")
 
     runtime_mode_value = REPOSITORY.runtime_mode()
     matched = next(
@@ -294,6 +322,7 @@ def oauth_callback(
     token_secret = encrypt_auth_payload(token_payload, CONFIG.deriv.token_encryption_key)
 
     existing_id = None
+    existing_enabled = None
     for row in REPOSITORY.list_managed_accounts():
         try:
             stored = decrypt_auth_payload(row.token_secret, CONFIG.deriv.token_encryption_key)
@@ -301,11 +330,31 @@ def oauth_callback(
             continue
         if str(stored.get("account_id", "")).strip() == account_id:
             existing_id = int(row.id)
+            existing_enabled = bool(row.enabled)
             break
     if existing_id is None:
-        REPOSITORY.add_managed_account(label=label, token_secret=token_secret)
+        account_row = REPOSITORY.add_managed_account(
+            label=label,
+            token_secret=token_secret,
+            enabled=False,
+        )
     else:
-        REPOSITORY.update_managed_account(existing_id, label=label, token_secret=token_secret)
+        account_row = REPOSITORY.update_managed_account(
+            existing_id,
+            label=label,
+            token_secret=token_secret,
+            enabled=existing_enabled,
+        )
+
+    try:
+        REPOSITORY.update_account_balance(
+            account_id=account_id,
+            balance=float(matched.get("balance", 0.0)),
+            currency=str(matched.get("currency", "USD")),
+            status=str(matched.get("status", "active")),
+        )
+    except (TypeError, ValueError):
+        pass
 
     REPOSITORY.audit(
         "OAUTH_ACCOUNT_LINKED",
@@ -314,27 +363,57 @@ def oauth_callback(
         {"account_id_masked": label, "mode": runtime_mode_value},
     )
 
-    session_payload = json.dumps({"account_id": account_id})
-    session_token = encrypt_token(session_payload, CONFIG.deriv.token_encryption_key)
+    raw_session_token = secrets.token_urlsafe(48)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=CLIENT_SESSION_DAYS)
+    REPOSITORY.create_client_session(
+        session_hash=session_hash(raw_session_token),
+        managed_account_id=int(account_row["id"]),
+        expires_at=expires_at,
+    )
 
     response = RedirectResponse(url="/", status_code=303)
+    secure = oauth_cookie_secure(request)
+    same_site = session_cookie_samesite()
     response.set_cookie(
-        key="client_session",
-        value=session_token,
+        key=CLIENT_SESSION_COOKIE,
+        value=raw_session_token,
         httponly=True,
-        secure=True,
-        samesite="lax",
-        max_age=86400 * 30  # 30 days
+        secure=True if same_site == "none" else secure,
+        samesite=same_site,
+        max_age=86400 * CLIENT_SESSION_DAYS,
+        domain=session_cookie_domain(),
     )
     response.delete_cookie(OAUTH_STATE_COOKIE)
     response.delete_cookie(OAUTH_VERIFIER_COOKIE)
     return response
 
 def get_current_account(request: Request) -> dict | None:
-    session_token = request.cookies.get("client_session")
+    session_token = request.cookies.get(CLIENT_SESSION_COOKIE)
     if not session_token:
         return None
+    account = REPOSITORY.client_session_account(session_hash(session_token))
+    if account:
+        try:
+            stored = decrypt_auth_payload(account["token_secret"], CONFIG.deriv.token_encryption_key)
+        except Exception:
+            return None
+        account_id = str(stored.get("account_id", "")).strip()
+        if not account_id:
+            return None
+        return {
+            "id": account["id"],
+            "account_id": account_id,
+            "account_id_masked": mask_account_id(account_id),
+            "label": account["label"],
+            "enabled": account["enabled"],
+            "created_at": account["created_at"],
+        }
+
+    # Backward-compatible fallback for browsers that received the previous
+    # encrypted account-id cookie before server-side sessions existed.
     try:
+        from app.token_store import decrypt_token
+
         decrypted = decrypt_token(session_token, CONFIG.deriv.token_encryption_key)
         payload = json.loads(decrypted)
         account_id = payload.get("account_id")
@@ -350,6 +429,7 @@ def get_current_account(request: Request) -> dict | None:
                 return {
                     "id": row.id,
                     "account_id": account_id,
+                    "account_id_masked": mask_account_id(account_id),
                     "label": row.label,
                     "enabled": row.enabled,
                     "created_at": row.created_at,
@@ -366,25 +446,21 @@ def get_me(request: Request) -> dict:
     account = get_current_account(request)
     if not account:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    
-    # We fetch their live stats based on their account ID
-    summary = REPOSITORY.summary()
-    personal_stats = {"trades": 0, "wins": 0, "losses": 0}
-    personal_balance = 0.0
-    for acct in summary.get("accounts", []):
-        if account["account_id"].endswith(acct["account"].replace("*", "")):
-            personal_balance = acct.get("balance", 0.0)
-            personal_stats["trades"] = acct.get("trades", 0)
-            personal_stats["wins"] = acct.get("wins", 0)
-            personal_stats["losses"] = acct.get("losses", 0)
-            break
+    personal = REPOSITORY.account_summary(account["account_id"])
             
     return {
-        "account_id": account["account_id"],
+        "account_id": personal["account"],
         "label": account["label"],
         "enabled": account["enabled"],
-        "balance": personal_balance,
-        "stats": personal_stats
+        "balance": personal["balance"],
+        "currency": personal["currency"],
+        "status": personal["status"],
+        "stats": {
+            "trades": personal["trades"],
+            "wins": personal["wins"],
+            "losses": personal["losses"],
+            "profit": personal["profit"],
+        },
     }
 
 @app.post("/me/auto-trade")
@@ -393,18 +469,16 @@ def toggle_auto_trade(request: Request, body: AutoTradeRequest) -> dict:
     if not account:
         raise HTTPException(status_code=401, detail="Not authenticated")
     
-    REPOSITORY.update_managed_account(
-        account["id"],
-        label=account["label"],
-        token_secret=next(r.token_secret for r in REPOSITORY.list_managed_accounts() if r.id == account["id"]),
-        enabled=body.enabled
-    )
+    REPOSITORY.set_managed_account_enabled(account["id"], body.enabled)
     return {"success": True, "enabled": body.enabled}
 
 @app.post("/me/logout")
-def logout() -> dict:
+def logout(request: Request) -> JSONResponse:
+    session_token = request.cookies.get(CLIENT_SESSION_COOKIE)
+    if session_token:
+        REPOSITORY.delete_client_session(session_hash(session_token))
     response = JSONResponse({"success": True})
-    response.delete_cookie("client_session")
+    response.delete_cookie(CLIENT_SESSION_COOKIE, domain=session_cookie_domain())
     return response
 
 

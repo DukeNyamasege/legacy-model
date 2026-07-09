@@ -514,7 +514,10 @@
     return Number(value || 0).toLocaleString(undefined, {minimumFractionDigits: digits, maximumFractionDigits: digits});
   }
   async function api(path, options = {}) {
-    const response = await fetch(apiUrl(path), options);
+    const response = await fetch(apiUrl(path), {
+      ...options,
+      credentials: options.credentials || "include"
+    });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.detail || `Request failed (${response.status})`);
     return data;
@@ -702,7 +705,7 @@
         $("user-info").style.display = "block";
         $("user-info").textContent = me.label;
         
-        $("personal-balance").textContent = number(me.balance, 2);
+        $("personal-balance").textContent = `${number(me.balance, 2)} ${me.currency || "USD"}`;
         $("personal-trades").textContent = number(me.stats.trades);
         $("personal-wins").textContent = number(me.stats.wins);
         $("personal-losses").textContent = number(me.stats.losses);
@@ -767,6 +770,7 @@ document.addEventListener('DOMContentLoaded', () => {
     url.searchParams.delete('oauth_error');
     window.history.replaceState({}, document.title, url.toString());
   }
+  initialize();
 });
 </script>
 </body>

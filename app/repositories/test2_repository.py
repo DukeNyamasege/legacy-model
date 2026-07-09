@@ -17,6 +17,7 @@ from app.models import (
     AuditEvent,
     BotState,
     CandidateSignalRecord,
+    ClientSession,
     ManagedAccount,
     ModelArtifact,
     ModelDecisionRecord,
@@ -106,12 +107,14 @@ class Test2Repository:
                 ).all()
             )
 
-    def add_managed_account(self, *, label: str, token_secret: str) -> dict[str, Any]:
+    def add_managed_account(
+        self, *, label: str, token_secret: str, enabled: bool = True
+    ) -> dict[str, Any]:
         with self.database.session() as session:
             row = ManagedAccount(
                 label=str(label or "").strip()[:120],
                 token_secret=str(token_secret),
-                enabled=True,
+                enabled=bool(enabled),
             )
             session.add(row)
             session.flush()
@@ -124,15 +127,23 @@ class Test2Repository:
             }
 
     def update_managed_account(
-        self, account_id: int, *, label: str, token_secret: str, enabled: bool = True
+        self,
+        account_id: int,
+        *,
+        label: str | None = None,
+        token_secret: str | None = None,
+        enabled: bool | None = None,
     ) -> dict[str, Any]:
         with self.database.session() as session:
             row = session.get(ManagedAccount, int(account_id))
             if row is None:
                 raise ValueError(f"Managed account {account_id} not found")
-            row.label = str(label or row.label or "").strip()[:120]
-            row.token_secret = str(token_secret)
-            row.enabled = bool(enabled)
+            if label is not None:
+                row.label = str(label or row.label or "").strip()[:120]
+            if token_secret is not None:
+                row.token_secret = str(token_secret)
+            if enabled is not None:
+                row.enabled = bool(enabled)
             row.updated_at = utc_now()
             return {
                 "id": int(row.id),
@@ -140,6 +151,98 @@ class Test2Repository:
                 "enabled": bool(row.enabled),
                 "created_at": row.created_at.isoformat(),
                 "updated_at": row.updated_at.isoformat(),
+            }
+
+    def managed_account(self, account_id: int) -> dict[str, Any] | None:
+        with self.database.session() as session:
+            row = session.get(ManagedAccount, int(account_id))
+            if row is None:
+                return None
+            return {
+                "id": int(row.id),
+                "label": row.label,
+                "token_secret": row.token_secret,
+                "enabled": bool(row.enabled),
+                "created_at": row.created_at,
+                "updated_at": row.updated_at,
+            }
+
+    def set_managed_account_enabled(self, account_id: int, enabled: bool) -> dict[str, Any]:
+        return self.update_managed_account(account_id, enabled=bool(enabled))
+
+    def create_client_session(
+        self, *, session_hash: str, managed_account_id: int, expires_at: datetime
+    ) -> None:
+        with self.database.session() as session:
+            now = utc_now()
+            session.query(ClientSession).filter(ClientSession.expires_at <= now).delete()
+            row = ClientSession(
+                session_hash=str(session_hash),
+                managed_account_id=int(managed_account_id),
+                expires_at=expires_at,
+            )
+            session.merge(row)
+
+    def client_session_account(self, session_hash: str) -> dict[str, Any] | None:
+        with self.database.session() as session:
+            row = session.get(ClientSession, str(session_hash))
+            now = utc_now()
+            if row is None:
+                return None
+            expires_at = row.expires_at
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if expires_at <= now:
+                session.delete(row)
+                return None
+            account = session.get(ManagedAccount, int(row.managed_account_id))
+            if account is None:
+                session.delete(row)
+                return None
+            row.last_seen_at = now
+            return {
+                "id": int(account.id),
+                "label": account.label,
+                "token_secret": account.token_secret,
+                "enabled": bool(account.enabled),
+                "created_at": account.created_at,
+                "updated_at": account.updated_at,
+                "expires_at": row.expires_at,
+            }
+
+    def delete_client_session(self, session_hash: str) -> None:
+        with self.database.session() as session:
+            row = session.get(ClientSession, str(session_hash))
+            if row is not None:
+                session.delete(row)
+
+    def account_summary(self, account_id: str) -> dict[str, Any]:
+        masked = mask_account_id(account_id)
+        with self.database.session() as session:
+            snapshot = session.scalar(
+                select(AccountSnapshot).where(
+                    AccountSnapshot.run_id == self.run_id,
+                    AccountSnapshot.account_id_masked == masked,
+                )
+            )
+            trade_row = session.execute(
+                select(
+                    func.count().label("trades"),
+                    func.sum(case((Trade.outcome == "WIN", 1), else_=0)).label("wins"),
+                    func.sum(case((Trade.outcome == "LOSS", 1), else_=0)).label("losses"),
+                    func.sum(Trade.profit).label("profit"),
+                ).where(Trade.account_id_masked == masked)
+            ).one()
+            return {
+                "account": masked,
+                "balance": float(snapshot.balance if snapshot else 0.0),
+                "currency": str(snapshot.currency if snapshot else "USD"),
+                "status": str(snapshot.status if snapshot else "linked"),
+                "updated_at": snapshot.updated_at.isoformat() if snapshot else None,
+                "trades": int(trade_row.trades or 0),
+                "wins": int(trade_row.wins or 0),
+                "losses": int(trade_row.losses or 0),
+                "profit": float(trade_row.profit or 0.0),
             }
 
     def record_tick(

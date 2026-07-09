@@ -21,12 +21,20 @@ services:
           property: connectionString
       - key: DERIV_APP_ID
         sync: false
+      - key: DERIV_OAUTH_CLIENT_ID
+        value: 33MmAtDICSKcC7LAZj7JO
+      - key: DERIV_OAUTH_REDIRECT_URL
+        value: https://derivadmin.site/oauth/callback
       - key: CONTROL_API_KEY
         generateValue: true
       - key: DERIV_TOKEN_ENCRYPTION_KEY
         sync: false
+      - key: FRONTEND_ORIGINS
+        value: https://derivadmin.site,https://www.derivadmin.site
       - key: FRONTEND_ORIGIN_REGEX
         value: '^https://[a-z0-9-]+(?:--[a-z0-9-]+)?\.netlify\.app$'
+      - key: CLIENT_SESSION_SAMESITE
+        value: lax
       - key: TRADING_MODE
         value: demo
       - key: DERIV_ENVIRONMENT
@@ -52,6 +60,8 @@ services:
           property: connectionString
       - key: DERIV_APP_ID
         sync: false
+      - key: DERIV_OAUTH_CLIENT_ID
+        value: 33MmAtDICSKcC7LAZj7JO
       - key: DERIV_TOKEN
         sync: false
       - key: DERIV_TOKEN_ENCRYPTION_KEY

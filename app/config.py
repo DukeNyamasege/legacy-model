@@ -203,6 +203,14 @@ def load_test2_config(path: str | Path = "config.yaml") -> Test2Config:
     raw = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
     if os.getenv("DERIV_APP_ID"):
         raw.setdefault("deriv", {})["app_id"] = os.environ["DERIV_APP_ID"]
+    if os.getenv("DERIV_OAUTH_CLIENT_ID"):
+        raw.setdefault("deriv", {})["oauth_client_id"] = os.environ[
+            "DERIV_OAUTH_CLIENT_ID"
+        ]
+    if os.getenv("DERIV_OAUTH_REDIRECT_URL"):
+        raw.setdefault("deriv", {})["oauth_redirect_url"] = os.environ[
+            "DERIV_OAUTH_REDIRECT_URL"
+        ]
     if os.getenv("DERIV_ENVIRONMENT"):
         raw.setdefault("deriv", {})["environment"] = os.environ["DERIV_ENVIRONMENT"].lower()
     if os.getenv("DERIV_PUBLIC_WS_URL"):
