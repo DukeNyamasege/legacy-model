@@ -382,6 +382,17 @@
     <article class="panel metric"><span>Default stake</span><strong>0.50</strong></article>
   </section>
 
+  <section class="lower">
+    <section class="panel section">
+      <div class="section-head">
+        <h2>Recent Contracts</h2>
+      </div>
+      <div id="recent-trades" class="trades">
+        <div class="empty">Waiting for contract history.</div>
+      </div>
+    </section>
+  </section>
+
 </main>
 <script>
   const $ = id => document.getElementById(id);
@@ -541,6 +552,49 @@
     $("balance").textContent = `${number(data.account_balance_total, 2)} ${currency}`;
     renderAiActivity(data);
   }
+  function renderRecentTrades(trades) {
+    const container = $("recent-trades");
+    if (!container) return;
+    if (!trades?.length) {
+      container.innerHTML = '<div class="empty">Waiting for contract history.</div>';
+      return;
+    }
+    container.innerHTML = trades.map(trade => {
+      const profit = Number(trade.profit || 0);
+      const profitClass = profit < 0 ? "negative" : profit > 0 ? "positive" : "";
+      const settledAt = trade.settlement_time
+        ? new Date(trade.settlement_time).toLocaleTimeString()
+        : "Pending";
+      const boughtAt = trade.purchase_time
+        ? new Date(trade.purchase_time).toLocaleTimeString()
+        : "Unknown";
+      const exitTick = trade.exit_tick == null ? "N/A" : number(trade.exit_tick, 2);
+      return `
+        <article class="trade">
+          <div>
+            <small>Contract</small>
+            <strong>${escapeHtml(trade.contract_id || "-")}</strong>
+            <small>${escapeHtml(trade.closure_summary || "Awaiting settlement")}</small>
+          </div>
+          <div>
+            <small>Result</small>
+            <strong class="${profitClass}">${escapeHtml(trade.outcome || "OPEN")}</strong>
+            <small>${escapeHtml(settledAt)}</small>
+          </div>
+          <div>
+            <small>Profit</small>
+            <strong class="${profitClass}">${number(profit, 2)}</strong>
+            <small>Exit tick ${escapeHtml(exitTick)}</small>
+          </div>
+          <div>
+            <small>Bought</small>
+            <strong>${escapeHtml(boughtAt)}</strong>
+            <small>${escapeHtml(trade.account || "-")}</small>
+          </div>
+        </article>
+      `;
+    }).join("");
+  }
   function applyReadOnlyMode() {
     const controls = ["toggle", "save-mode", "import-tokens", "emergency"];
     for (const id of controls) {
@@ -558,12 +612,14 @@
   async function refresh() {
     if ($("error")) $("error").textContent = "";
     try {
-      const [summary, settings] = await Promise.all([
+      const [summary, settings, recentTrades] = await Promise.all([
         api("/metrics/summary"),
-        api("/settings/accounts")
+        api("/settings/accounts"),
+        api("/metrics/recent-trades?limit=12")
       ]);
       readOnlyDashboard = Boolean(settings.read_only_dashboard);
       renderStatus(summary);
+      renderRecentTrades(recentTrades.trades || []);
       applyReadOnlyMode();
     } catch (error) {
       if ($("error")) $("error").textContent = error.message || "Unable to reach the service.";

@@ -554,7 +554,10 @@ class ClientSession:
         self.is_connected = False
         self.active_subscriptions: Dict[int, str] = {}  # contract_id -> subscription_id
         self.pending_contracts: Set[int] = set()       # contract_ids being monitored
+        self.pending_requests: Dict[int, asyncio.Future] = {}
+        self.next_req_id = 910000
         self.task: Optional[asyncio.Task] = None
+        self.reconcile_task: Optional[asyncio.Task] = None
 
     async def get_otp_url(self) -> Optional[str]:
         app_id = self.bot.app_id
@@ -587,6 +590,7 @@ class ClientSession:
                 async with websockets.connect(url) as ws:
                     self.ws = ws
                     self.is_connected = True
+                    self.pending_requests.clear()
                     attempt = 0
                     self.bot.logger.info(
                         "Private WebSocket connected for account %s",
@@ -606,10 +610,16 @@ class ClientSession:
 
                     # Start ping keep-alive
                     ping_task = asyncio.create_task(self._ping_loop())
+                    self.reconcile_task = asyncio.create_task(self._reconcile_contracts_loop())
                     try:
                         async for msg in ws:
                             await self._on_message(msg)
                     finally:
+                        if self.reconcile_task:
+                            self.reconcile_task.cancel()
+                            with suppress(asyncio.CancelledError):
+                                await self.reconcile_task
+                            self.reconcile_task = None
                         ping_task.cancel()
                         with suppress(asyncio.CancelledError):
                             await ping_task
@@ -637,6 +647,52 @@ class ClientSession:
             except Exception:
                 break
             await asyncio.sleep(30)
+
+    async def send_request(self, req: Dict[str, Any]) -> Dict[str, Any]:
+        if not self.ws or not self.is_connected:
+            return {"error": {"message": "Private WebSocket is not connected", "code": "NOT_CONNECTED"}}
+
+        req_id = self.next_req_id
+        self.next_req_id += 1
+        req["req_id"] = req_id
+        fut = asyncio.get_running_loop().create_future()
+        self.pending_requests[req_id] = fut
+        try:
+            await self.ws.send(json.dumps(req))
+            return await asyncio.wait_for(fut, timeout=10.0)
+        except asyncio.TimeoutError:
+            return {"error": {"message": "Request timed out", "code": "TIMEOUT"}}
+        except Exception as e:
+            return {"error": {"message": str(e), "code": "ERROR"}}
+        finally:
+            self.pending_requests.pop(req_id, None)
+
+    async def request_contract_snapshot(self, contract_id: int) -> Dict[str, Any]:
+        return await self.send_request(
+            {
+                "proposal_open_contract": 1,
+                "contract_id": int(contract_id),
+            }
+        )
+
+    async def _reconcile_contracts_loop(self) -> None:
+        await asyncio.sleep(max(5, self.bot.settle_wait_seconds))
+        while self.ws and self.is_connected and self.bot.is_running:
+            for cid in list(self.pending_contracts):
+                snapshot = await self.request_contract_snapshot(cid)
+                if "error" in snapshot:
+                    self.bot.logger.warning(
+                        "Contract reconciliation request failed for %s: %s",
+                        cid,
+                        snapshot["error"].get("message"),
+                        extra={"token_tag": self.token_tag, "contract_id": str(cid)},
+                    )
+                    continue
+                contract = snapshot.get("proposal_open_contract")
+                if not contract:
+                    continue
+                await self.bot.handle_contract_update(self.token, int(cid), contract)
+            await asyncio.sleep(15)
 
     async def subscribe_contract(self, contract_id: int) -> None:
         if not self.ws or not self.is_connected:
@@ -666,6 +722,12 @@ class ClientSession:
             data = json.loads(msg_str)
         except Exception:
             return
+
+        req_id = data.get("req_id")
+        if req_id and req_id in self.pending_requests:
+            future = self.pending_requests[req_id]
+            if not future.done():
+                future.set_result(data)
 
         msg_type = data.get("msg_type")
         if msg_type == "balance":

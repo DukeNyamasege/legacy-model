@@ -608,6 +608,15 @@ class Test2Repository:
                     "entry_tick": trade.entry_tick,
                     "exit_tick": trade.exit_tick,
                     "exit_digit": trade.exit_digit,
+                    "closure_summary": (
+                        f"{trade.outcome} exit digit {trade.exit_digit}"
+                        if trade.settlement_time is not None and trade.exit_digit is not None
+                        else (
+                            f"{trade.outcome} settled"
+                            if trade.settlement_time is not None
+                            else "Awaiting settlement"
+                        )
+                    ),
                     "aligned_with_signal": trade.aligned_with_signal,
                 }
                 for trade in trades
