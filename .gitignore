@@ -5,6 +5,7 @@ __pycache__/
 
 # Python virtual environment
 .venv/
+venv/
 
 # Environment files with real secrets
 .env
@@ -24,6 +25,8 @@ secrets/
 # Temp files
 *.tmp
 *.pyc
+*.log
+node_modules/
 
 # Test 2 runtime data
 data/
