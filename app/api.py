@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import os
 import re
@@ -16,7 +17,7 @@ except Exception:
     def load_dotenv(*args, **kwargs):
         return False
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse, JSONResponse
 from pydantic import BaseModel
@@ -56,6 +57,36 @@ CLIENT_SESSION_COOKIE = "client_session"
 CLIENT_SESSION_DAYS = int(os.getenv("CLIENT_SESSION_DAYS", "30"))
 
 
+class DashboardBroadcaster:
+    """Tracks WebSocket dashboard clients and pushes snapshots to all of them."""
+
+    def __init__(self) -> None:
+        self._clients: list[WebSocket] = []
+        self._lock = asyncio.Lock()
+
+    async def connect(self, ws: WebSocket) -> None:
+        await ws.accept()
+        async with self._lock:
+            self._clients.append(ws)
+
+    async def disconnect(self, ws: WebSocket) -> None:
+        async with self._lock:
+            if ws in self._clients:
+                self._clients.remove(ws)
+
+    async def broadcast(self, payload: dict) -> None:
+        async with self._lock:
+            clients = list(self._clients)
+        for ws in clients:
+            try:
+                await ws.send_json(payload)
+            except Exception:
+                await self.disconnect(ws)
+
+
+BROADCASTER = DashboardBroadcaster()
+
+
 class ModeUpdateRequest(BaseModel):
     mode: str
 
@@ -86,7 +117,7 @@ def oauth_cookie_secure(request: Request) -> bool:
     host = (request.url.hostname or "").lower()
     if host in {"localhost", "127.0.0.1", "::1"}:
         return request.url.scheme == "https"
-    # Render/custom-domain traffic can arrive at the app over an internal HTTP hop.
+    # VPS/custom-domain traffic can arrive at the app over an internal HTTP hop.
     # For public hosts we still need Secure cookies so browsers keep the session.
     return True
 
@@ -928,3 +959,31 @@ def import_accounts(
         **settings_accounts(),
         "imported_count": len(imported),
     }
+
+
+@app.get("/ws/dashboard")
+async def ws_dashboard(ws: WebSocket) -> None:
+    await BROADCASTER.connect(ws)
+    try:
+        await ws.send_json({"type": "snapshot", "data": REPOSITORY.summary()})
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await BROADCASTER.disconnect(ws)
+
+
+@app.on_event("startup")
+async def _start_broadcaster_loop() -> None:
+    async def loop() -> None:
+        interval = max(2, float(os.getenv("WS_BROADCAST_INTERVAL_SECONDS", "3")))
+        while True:
+            try:
+                summary = REPOSITORY.summary()
+                await BROADCASTER.broadcast({"type": "snapshot", "data": summary})
+            except Exception:
+                pass
+            await asyncio.sleep(interval)
+
+    asyncio.create_task(loop())

@@ -55,9 +55,8 @@ checked through Deriv.
 
 ## Deployment
 
-Netlify mirror instructions are in [README_NETLIFY_RENDER_DEPLOYMENT.md](README_NETLIFY_RENDER_DEPLOYMENT.md).
-Render instructions are in [README_TEST2_DEPLOYMENT.md](README_TEST2_DEPLOYMENT.md).
-Ubuntu VPS instructions are in [README_VPS_DEPLOYMENT.md](README_VPS_DEPLOYMENT.md).
+- **Frontend**: hosted on Netlify. Instructions are in [README_NETLIFY_DEPLOYMENT.md](README_NETLIFY_DEPLOYMENT.md).
+- **Backend, bot, and APIs**: run continuously on an Ubuntu VPS. Instructions are in [README_VPS_DEPLOYMENT.md](README_VPS_DEPLOYMENT.md).
 
 Real trading remains locked unless `TRADING_MODE=real`,
 `DERIV_ENVIRONMENT=real`, `ALLOW_REAL_TRADING=true`, and

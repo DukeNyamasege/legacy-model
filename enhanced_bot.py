@@ -815,8 +815,9 @@ class TradingBot:
         self.environment = self.repository.runtime_mode()
         self.tokens, self.user_profiles = self._load_runtime_accounts()
         if not self.tokens:
-            raise SystemExit(
-                "No tokens found. Add tokens in the dashboard or provide tokens.txt / DERIV_TOKEN."
+            self.logger.warning(
+                "No accounts have joined auto trading yet. Bot will start in watch mode "
+                "and will begin trading when a user joins from the dashboard."
             )
 
         self.is_running = True
@@ -2228,11 +2229,20 @@ class TradingBot:
 
     async def _watchdog_loop(self) -> None:
         await asyncio.sleep(min(self.max_tick_silence_seconds, self.watchdog_poll_interval_seconds))
+        refresh_interval = max(5, int(os.getenv("ACCOUNT_REFRESH_INTERVAL_SECONDS", "10")))
+        refresh_timer = 0
         while self.is_running:
             if self.last_tick_received_at > 0:
                 silence = time.monotonic() - self.last_tick_received_at
                 if silence > self.max_tick_silence_seconds:
                     raise ConnectionStaleError(f"No tick received for {silence:.1f} seconds")
+            refresh_timer += self.watchdog_poll_interval_seconds
+            if refresh_timer >= refresh_interval:
+                refresh_timer = 0
+                try:
+                    await self._refresh_runtime_accounts_if_needed()
+                except Exception as exc:
+                    self.logger.warning("Account refresh failed: %s", exc)
             await asyncio.sleep(self.watchdog_poll_interval_seconds)
 
     async def _lease_heartbeat_loop(self) -> None:

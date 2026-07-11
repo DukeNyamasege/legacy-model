@@ -36,7 +36,9 @@ if (builtHtml === sourceHtml) {
 }
 await writeFile(indexPath, builtHtml, "utf8");
 
-const connectSrc = hasExternalApiBase ? `'self' ${apiUrl.origin}` : "'self'";
+const connectSrc = hasExternalApiBase
+  ? `'self' ${apiUrl.origin} ${apiUrl.origin.replace(/^https?:/, "wss:")} ${apiUrl.origin.replace(/^https?:/, "ws:")}`
+  : "'self'";
 const headers = `/*
   Content-Security-Policy: default-src 'self'; connect-src ${connectSrc}; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
