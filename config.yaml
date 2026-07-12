@@ -54,7 +54,7 @@ bayesian:
   minimum_probability_edge_confidence: 0.95
 hmm:
   enabled: true
-  mode: gate
+  mode: shadow
   minimum_training_ticks: 5000
   retrain_every_ticks: 1000
   favourable_state: MEAN_REVERSION
