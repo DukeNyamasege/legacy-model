@@ -2113,13 +2113,13 @@ class TradingBot:
                 self.logger.error("REST Bulk Purchase request failed: %s", resp["error"].get("message"))
                 self.repository.mark_signal(signal.signal_id, status="PURCHASE_FAILED")
                 return
+            transactions = resp.get("data", {}).get("transactions", [])
             if resp.get("errors"):
                 messages = "; ".join(err.get("message", "Unknown bulk-purchase error") for err in resp.get("errors", []))
                 self.logger.error("REST Bulk Purchase validation failed: %s", messages)
-                self.repository.mark_signal(signal.signal_id, status="PURCHASE_FAILED")
-                return
-
-            transactions = resp.get("data", {}).get("transactions", [])
+                if not transactions:
+                    self.repository.mark_signal(signal.signal_id, status="PURCHASE_FAILED")
+                    return
             signal_contracts: Set[int] = set()
             self.outcomes_by_signal[signal.signal_id] = []
 
