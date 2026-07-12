@@ -1034,20 +1034,24 @@ class TradingBot:
     def _persist_hmm_metadata(self) -> None:
         model_id = f"hmm-{self.test2_config.model.run_id}-{self.tick_sequence}"
         first_sequence = max(1, self.tick_sequence - len(self.raw_tick_digits) + 1)
-        metadata = persist_model_metadata(
-            "model_artifacts",
-            model_id=model_id,
-            model_version=self.test2_config.model.version,
-            training_run_id=self.test2_config.model.run_id,
-            training_tick_range=(first_sequence, self.tick_sequence),
-            observation_count=len(self.raw_tick_digits),
-            state_mappings={
-                "0": "MEAN_REVERSION",
-                "1": "NEUTRAL_RANDOM",
-                "2": "CONTINUATION",
-            },
-            validation_metrics={"framework_ready": True},
-        )
+        try:
+            metadata = persist_model_metadata(
+                "model_artifacts",
+                model_id=model_id,
+                model_version=self.test2_config.model.version,
+                training_run_id=self.test2_config.model.run_id,
+                training_tick_range=(first_sequence, self.tick_sequence),
+                observation_count=len(self.raw_tick_digits),
+                state_mappings={
+                    "0": "MEAN_REVERSION",
+                    "1": "NEUTRAL_RANDOM",
+                    "2": "CONTINUATION",
+                },
+                validation_metrics={"framework_ready": True},
+            )
+        except OSError as exc:
+            self.logger.warning("HMM metadata persistence skipped: %s", exc)
+            return
         self.repository.record_model_artifact(
             model_type="HMM",
             model_version=self.test2_config.model.version,
