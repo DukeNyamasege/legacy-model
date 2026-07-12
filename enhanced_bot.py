@@ -1654,6 +1654,7 @@ class TradingBot:
         self.environment = self.repository.runtime_mode()
         self.tokens, self.user_profiles = self._load_runtime_accounts()
         valid = []
+        seen_account_ids: Set[str] = set()
         for token in self.tokens:
             tag = token_tag(token)
             profile = self.user_profiles.get(token, {})
@@ -1690,6 +1691,17 @@ class TradingBot:
                 continue
 
             account_id = matched["account_id"]
+            if account_id in seen_account_ids:
+                self.logger.warning(
+                    "Duplicate login/token for account %s ignored; account already has one trading slot",
+                    mask_account_id(account_id),
+                    extra={
+                        "token_tag": tag,
+                        "masked_account_id": mask_account_id(account_id),
+                    },
+                )
+                continue
+            seen_account_ids.add(account_id)
             profile["account_id"] = account_id
             self.repository.update_account_balance(
                 account_id=account_id,
@@ -1715,7 +1727,17 @@ class TradingBot:
                 self.environment,
             )
             return
-        status, _ = self.repository.control_state()
+        self._sync_running_status_after_validation()
+
+    def _sync_running_status_after_validation(self) -> None:
+        status, pause_reason = self.repository.control_state()
+        if status == "MANUAL_PAUSE" and pause_reason == "BULK_PURCHASE_REQUIRED":
+            self.logger.warning(
+                "Clearing stale BULK_PURCHASE_REQUIRED pause; no contract was opened, "
+                "so copy-trade consistency is intact."
+            )
+            self.repository.set_status("RUNNING")
+            return
         if status not in {"MANUAL_PAUSE", "EMERGENCY_STOP"}:
             self.repository.set_status("RUNNING")
 
@@ -2133,13 +2155,10 @@ class TradingBot:
                 self.logger.error("REST Bulk Purchase request failed: %s", resp["error"].get("message"))
                 self.repository.mark_signal(signal.signal_id, status="PURCHASE_FAILED_BULK_REQUIRED")
                 if not self._sequential_private_fallback_allowed(len(eligible_accounts)):
-                    self.repository.set_status(
-                        "MANUAL_PAUSE",
-                        "BULK_PURCHASE_REQUIRED",
-                    )
-                    self.logger.critical(
-                        "COPY_TRADING_PAUSED signal_id=%s reason=BULK_PURCHASE_REQUEST_FAILED "
-                        "account_count=%s; sequential private fallback is disabled. error=%s",
+                    self.logger.error(
+                        "BULK_PURCHASE_FAILED_NO_CONTRACTS signal_id=%s account_count=%s; "
+                        "bot remains RUNNING because no contract was opened and copy-trade "
+                        "consistency is intact. error=%s",
                         signal.signal_id,
                         len(eligible_accounts),
                         resp["error"].get("message"),
@@ -2155,14 +2174,11 @@ class TradingBot:
                             signal.signal_id,
                             status="PURCHASE_FAILED_BULK_REQUIRED",
                         )
-                        self.repository.set_status(
-                            "MANUAL_PAUSE",
-                            "BULK_PURCHASE_REQUIRED",
-                        )
-                        self.logger.critical(
-                            "COPY_TRADING_PAUSED signal_id=%s reason=BULK_PURCHASE_REQUIRED "
-                            "account_count=%s; sequential private fallback is disabled to avoid "
-                            "mismatched 1-tick outcomes. errors=%s",
+                        self.logger.error(
+                            "BULK_PURCHASE_FAILED_NO_CONTRACTS signal_id=%s account_count=%s; "
+                            "sequential private fallback is disabled to avoid mismatched 1-tick "
+                            "outcomes, but bot remains RUNNING because no contract was opened. "
+                            "errors=%s",
                             signal.signal_id,
                             len(eligible_accounts),
                             messages,
@@ -2444,6 +2460,22 @@ class TradingBot:
 
     def _eligible_purchase_accounts(self) -> List[Tuple[str, str]]:
         accounts = list(self.valid_clients)
+        unique_accounts: List[Tuple[str, str]] = []
+        seen_account_ids: Set[str] = set()
+        for token, account_id in accounts:
+            if account_id in seen_account_ids:
+                self.logger.warning(
+                    "Duplicate eligible account %s removed before purchase",
+                    mask_account_id(account_id),
+                    extra={
+                        "token_tag": token_tag(token),
+                        "masked_account_id": mask_account_id(account_id),
+                    },
+                )
+                continue
+            seen_account_ids.add(account_id)
+            unique_accounts.append((token, account_id))
+        accounts = unique_accounts
         include_master = os.getenv("COPYTRADING_INCLUDE_MASTER", "true").lower() in {
             "1",
             "true",

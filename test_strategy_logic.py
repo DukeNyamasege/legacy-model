@@ -1,4 +1,5 @@
 import asyncio
+import os
 import time
 import unittest
 from datetime import datetime, timezone
@@ -355,6 +356,84 @@ class TimingAndModelTests(unittest.TestCase):
                 self.assertEqual(state["loss_streak"], 5)
                 self.assertEqual(state["recovery_loss_pool"], 9.99)
                 self.assertEqual(state["current_stake"], 11.10)
+            finally:
+                bot.database.engine.dispose()
+                for handler in list(bot.logger.handlers):
+                    handler.close()
+                bot.logger.handlers.clear()
+
+    def test_duplicate_account_only_gets_one_purchase_slot(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            raw = yaml.safe_load(Path("config.yaml").read_text(encoding="utf-8"))
+            token_path = root / "tokens.txt"
+            token_path.write_text("test-token\n", encoding="utf-8")
+            raw["files"] = {
+                "tokens": token_path.as_posix(),
+                "state": (root / "state.json").as_posix(),
+                "users": (root / "users.json").as_posix(),
+            }
+            raw["logging"]["file"] = (root / "bot.log").as_posix()
+            raw["storage"]["local_database_url"] = (
+                "sqlite:///" + (root / "test2.db").as_posix()
+            )
+            path = root / "config.yaml"
+            path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+            bot = enhanced_bot.TradingBot(str(path))
+            old_include_master = os.environ.get("COPYTRADING_INCLUDE_MASTER")
+            os.environ["COPYTRADING_INCLUDE_MASTER"] = "true"
+            try:
+                bot.valid_clients = [
+                    ("token-a", "DOT90000001"),
+                    ("token-b", "DOT90000001"),
+                    ("token-c", "DOT90000002"),
+                ]
+                self.assertEqual(
+                    bot._eligible_purchase_accounts(),
+                    [
+                        ("token-a", "DOT90000001"),
+                        ("token-c", "DOT90000002"),
+                    ],
+                )
+            finally:
+                bot.database.engine.dispose()
+                for handler in list(bot.logger.handlers):
+                    handler.close()
+                bot.logger.handlers.clear()
+                if old_include_master is None:
+                    os.environ.pop("COPYTRADING_INCLUDE_MASTER", None)
+                else:
+                    os.environ["COPYTRADING_INCLUDE_MASTER"] = old_include_master
+
+    def test_stale_bulk_purchase_pause_is_cleared_but_partial_pause_remains(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            raw = yaml.safe_load(Path("config.yaml").read_text(encoding="utf-8"))
+            token_path = root / "tokens.txt"
+            token_path.write_text("test-token\n", encoding="utf-8")
+            raw["files"] = {
+                "tokens": token_path.as_posix(),
+                "state": (root / "state.json").as_posix(),
+                "users": (root / "users.json").as_posix(),
+            }
+            raw["logging"]["file"] = (root / "bot.log").as_posix()
+            raw["storage"]["local_database_url"] = (
+                "sqlite:///" + (root / "test2.db").as_posix()
+            )
+            path = root / "config.yaml"
+            path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+            bot = enhanced_bot.TradingBot(str(path))
+            try:
+                bot.repository.set_status("MANUAL_PAUSE", "BULK_PURCHASE_REQUIRED")
+                bot._sync_running_status_after_validation()
+                self.assertEqual(bot.repository.control_state(), ("RUNNING", ""))
+
+                bot.repository.set_status("MANUAL_PAUSE", "COPY_PURCHASE_PARTIAL")
+                bot._sync_running_status_after_validation()
+                self.assertEqual(
+                    bot.repository.control_state(),
+                    ("MANUAL_PAUSE", "COPY_PURCHASE_PARTIAL"),
+                )
             finally:
                 bot.database.engine.dispose()
                 for handler in list(bot.logger.handlers):
