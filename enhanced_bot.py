@@ -1856,7 +1856,7 @@ class TradingBot:
         if signal is None:
             return
 
-        if not self._last_three_ticks_rising():
+        if self.test2_config.execution.require_rising_ticks and not self._last_three_ticks_rising():
             self._record_blocked_signal(
                 signal,
                 status="SKIP_NOT_RISING",
@@ -2067,11 +2067,11 @@ class TradingBot:
                 return
             signal.consumed = True
 
-            eligible_accounts = list(self.valid_clients)
+            eligible_accounts = self._eligible_purchase_accounts()
             if not eligible_accounts:
                 self.repository.mark_signal(signal.signal_id, status="SKIP_NO_ENABLED_ACCOUNTS")
                 self.logger.info(
-                    "Skipping purchase for signal %s because no accounts have joined auto trading.",
+                    "Skipping purchase for signal %s because no copier accounts are enabled.",
                     signal.signal_id,
                 )
                 return
@@ -2245,10 +2245,46 @@ class TradingBot:
                 continue
 
             response = await session.send_request(
+                self._proposal_request(signal, stake_amount)
+            )
+            if "error" in response:
+                message = response["error"].get("message", "Unknown proposal error")
+                self.logger.error(
+                    "Private proposal failed for account %s: %s",
+                    mask_account_id(account_id),
+                    message,
+                    extra=extra,
+                )
+                transactions.append(
+                    {"account_id": account_id, "error": {"message": message}}
+                )
+                continue
+
+            try:
+                private_economics = parse_proposal_economics(
+                    response,
+                    stake=stake_amount,
+                    predicted_probability=economics.predicted_win_probability,
+                    requested_monotonic=time.monotonic(),
+                    received_monotonic=time.monotonic(),
+                )
+            except Exception as exc:
+                message = str(exc)
+                self.logger.error(
+                    "Private proposal failed for account %s: %s",
+                    mask_account_id(account_id),
+                    message,
+                    extra=extra,
+                )
+                transactions.append(
+                    {"account_id": account_id, "error": {"message": message}}
+                )
+                continue
+
+            response = await session.send_request(
                 {
-                    "buy": economics.proposal_id,
+                    "buy": private_economics.proposal_id,
                     "price": stake_amount,
-                    "subscribe": 1,
                 }
             )
             if "error" in response:
@@ -2290,6 +2326,42 @@ class TradingBot:
                 }
             )
         return transactions
+
+    def _proposal_request(self, signal: CandidateSignal, stake_amount: float) -> Dict[str, Any]:
+        return {
+            "proposal": 1,
+            "amount": stake_amount,
+            "basis": "stake",
+            "contract_type": signal.contract_type,
+            "currency": self.currency,
+            "duration": self.duration,
+            "duration_unit": self.duration_unit,
+            "barrier": signal.barrier,
+            "underlying_symbol": signal.symbol,
+        }
+
+    def _copytrading_master_account_id(self) -> str:
+        configured = os.getenv("COPYTRADING_MASTER_ACCOUNT_ID", "").strip()
+        if configured:
+            return configured
+        return self.valid_clients[0][1] if self.valid_clients else ""
+
+    def _eligible_purchase_accounts(self) -> List[Tuple[str, str]]:
+        accounts = list(self.valid_clients)
+        include_master = os.getenv("COPYTRADING_INCLUDE_MASTER", "false").lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        if include_master or len(accounts) <= 1:
+            return accounts
+        master_account_id = self._copytrading_master_account_id()
+        copiers = [
+            (token, account_id)
+            for token, account_id in accounts
+            if account_id != master_account_id
+        ]
+        return copiers or accounts
 
     async def _cycle_timeout_watchdog(
         self, signal_id: str, contract_ids: List[int]

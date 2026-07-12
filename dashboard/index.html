@@ -673,8 +673,8 @@
     const profit = Number(data.net_profit || 0);
     $("profit").textContent = number(profit, 2);
     $("profit").className = profit < 0 ? "negative" : profit > 0 ? "positive" : "";
-    const currency = data.accounts?.[0]?.currency || "USD";
-    $("balance").textContent = `${number(data.account_balance_total, 2)} ${currency}`;
+    const currency = data.primary_account_currency || data.accounts?.[0]?.currency || "USD";
+    $("balance").textContent = `${number(data.primary_account_balance, 2)} ${currency}`;
     renderAiActivity(data);
   }
   function applyReadOnlyMode() {

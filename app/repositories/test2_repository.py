@@ -741,6 +741,7 @@ class Test2Repository:
                     (now - trade.purchase_time).total_seconds() > max_open_trade_seconds
                     for trade in open_trade_rows
                 )
+            primary_account = accounts[0] if accounts else None
             return {
                 "run_id": self.config.model.run_id,
                 "status": status,
@@ -780,6 +781,9 @@ class Test2Repository:
                     }
                     for account in accounts
                 ],
+                "primary_account": primary_account.account_id_masked if primary_account else "",
+                "primary_account_balance": primary_account.balance if primary_account else 0.0,
+                "primary_account_currency": primary_account.currency if primary_account else "USD",
                 "account_balance_total": sum(account.balance for account in accounts),
                 "last_heartbeat": (
                     state.last_heartbeat.isoformat() if state and state.last_heartbeat else None

@@ -69,6 +69,7 @@ class SignalSettings(StrictModel):
 
 class ExecutionSettings(StrictModel):
     reject_if_new_tick_arrives: bool = False
+    require_rising_ticks: bool = False
     maximum_signal_age_ms: int = Field(default=2500, gt=0)
     maximum_proposal_age_ms: int = Field(default=900, gt=0)
 
@@ -235,4 +236,8 @@ def load_test2_config(path: str | Path = "config.yaml") -> Test2Config:
         ]
     if os.getenv("TEST_RUN_ID"):
         raw.setdefault("model", {})["run_id"] = os.environ["TEST_RUN_ID"]
+    if os.getenv("REQUIRE_RISING_TICKS"):
+        raw.setdefault("execution", {})["require_rising_ticks"] = os.environ[
+            "REQUIRE_RISING_TICKS"
+        ].lower() in {"1", "true", "yes"}
     return Test2Config.model_validate(raw)
