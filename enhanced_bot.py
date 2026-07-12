@@ -2118,8 +2118,16 @@ class TradingBot:
                 messages = "; ".join(err.get("message", "Unknown bulk-purchase error") for err in resp.get("errors", []))
                 self.logger.error("REST Bulk Purchase validation failed: %s", messages)
                 if not transactions:
-                    self.repository.mark_signal(signal.signal_id, status="PURCHASE_FAILED")
-                    return
+                    self.logger.info(
+                        "Falling back to private WebSocket buy for signal_id=%s",
+                        signal.signal_id,
+                    )
+                    transactions = await self._purchase_via_private_sessions(
+                        signal=signal,
+                        economics=economics,
+                        eligible_accounts=eligible_accounts,
+                        stake_amount=stake_amount,
+                    )
             signal_contracts: Set[int] = set()
             self.outcomes_by_signal[signal.signal_id] = []
 
@@ -2205,6 +2213,83 @@ class TradingBot:
         finally:
             self.is_trading_locked = False
             self.pending_signal = None
+
+    async def _purchase_via_private_sessions(
+        self,
+        *,
+        signal: CandidateSignal,
+        economics: Any,
+        eligible_accounts: List[Tuple[str, str]],
+        stake_amount: float,
+    ) -> List[Dict[str, Any]]:
+        transactions: List[Dict[str, Any]] = []
+        for token, account_id in eligible_accounts:
+            session = self.sessions.get(token)
+            st = self._client_state_for_token(token, account_id=account_id)
+            extra = {
+                "token_tag": st["token_tag"],
+                "masked_account_id": mask_account_id(account_id),
+                "stake": f"{stake_amount:.2f}",
+            }
+            if not session or not session.is_connected:
+                message = "Private WebSocket is not connected"
+                self.logger.error(
+                    "Private buy skipped for account %s: %s",
+                    mask_account_id(account_id),
+                    message,
+                    extra=extra,
+                )
+                transactions.append(
+                    {"account_id": account_id, "error": {"message": message}}
+                )
+                continue
+
+            response = await session.send_request(
+                {
+                    "buy": economics.proposal_id,
+                    "price": stake_amount,
+                    "subscribe": 1,
+                }
+            )
+            if "error" in response:
+                message = response["error"].get("message", "Unknown buy error")
+                self.logger.error(
+                    "Private buy failed for account %s: %s",
+                    mask_account_id(account_id),
+                    message,
+                    extra=extra,
+                )
+                transactions.append(
+                    {"account_id": account_id, "error": {"message": message}}
+                )
+                continue
+
+            buy = response.get("buy", {})
+            contract_id = buy.get("contract_id")
+            transaction_id = buy.get("transaction_id") or buy.get(
+                "transaction_ids", {}
+            ).get("buy")
+            if not contract_id:
+                message = "Buy response did not include a contract_id"
+                self.logger.error(
+                    "Private buy failed for account %s: %s",
+                    mask_account_id(account_id),
+                    message,
+                    extra=extra,
+                )
+                transactions.append(
+                    {"account_id": account_id, "error": {"message": message}}
+                )
+                continue
+
+            transactions.append(
+                {
+                    "account_id": account_id,
+                    "contract_id": contract_id,
+                    "transaction_id": transaction_id or contract_id,
+                }
+            )
+        return transactions
 
     async def _cycle_timeout_watchdog(
         self, signal_id: str, contract_ids: List[int]
