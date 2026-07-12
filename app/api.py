@@ -435,6 +435,11 @@ def health_live() -> dict:
     return {"status": "live", "service": "test2-api"}
 
 
+@app.get("/health")
+def health() -> dict:
+    return health_live()
+
+
 @app.get("/health/ready")
 def health_ready() -> dict:
     if not DATABASE.ping():

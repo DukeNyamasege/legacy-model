@@ -55,8 +55,8 @@ checked through Deriv.
 
 ## Deployment
 
-- **Frontend**: hosted on Netlify. Instructions are in [README_NETLIFY_DEPLOYMENT.md](README_NETLIFY_DEPLOYMENT.md).
-- **Backend, bot, and APIs**: run continuously on an Ubuntu VPS. Instructions are in [README_VPS_DEPLOYMENT.md](README_VPS_DEPLOYMENT.md).
+Run the dashboard, API, and worker together on an Ubuntu VPS behind Caddy.
+Instructions are in [README_VPS_DEPLOYMENT.md](README_VPS_DEPLOYMENT.md).
 
 Real trading remains locked unless `TRADING_MODE=real`,
 `DERIV_ENVIRONMENT=real`, `ALLOW_REAL_TRADING=true`, and

@@ -1,29 +1,20 @@
-# Caddyfile — HTTPS reverse proxy for the Deriv bot API
+# Caddyfile - HTTPS reverse proxy for the Deriv bot dashboard and API
 #
 # Install Caddy on Ubuntu:
 #   sudo apt install -y caddy
 #
 # Copy this file to /etc/caddy/Caddyfile, then:
-#   sudo systemctl reload caddy
+#   sudo systemctl restart caddy
 #
 # Caddy automatically provisions and renews Let's Encrypt certificates.
 
 derivadmin.site {
-	reverse_proxy 127.0.0.1:8080
+    reverse_proxy 127.0.0.1:8080
 
-	# Pass real client IP and protocol to the API
-	header_up X-Real-IP {remote_host}
-	header_up X-Forwarded-For {remote_host}
-	header_up X-Forwarded-Proto {scheme}
-
-	# WebSocket support (Caddy handles this automatically, but explicit is safe)
-	encode gzip
-
-	# Security headers
-	header {
-		Strict-Transport-Security "max-age=31536000; includeSubDomains"
-		X-Content-Type-Options nosniff
-		X-Frame-Options DENY
-		Referrer-Policy strict-origin-when-cross-origin
-	}
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy strict-origin-when-cross-origin
+    }
 }

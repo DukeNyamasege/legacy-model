@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="api-base-url" content="__API_BASE_URL__">
+  <meta name="api-base-url" content="">
   <title>Underdog Legacy Model</title>
   <script>
     (() => {
@@ -471,9 +471,7 @@
 <script>
   const $ = id => document.getElementById(id);
   const configuredApiBase = document.querySelector('meta[name="api-base-url"]').content.trim();
-  const apiBase = configuredApiBase.startsWith("__")
-    ? ""
-    : configuredApiBase.replace(/\/+$/, "");
+  const apiBase = configuredApiBase.replace(/\/+$/, "");
   const apiUrl = path => `${apiBase}${path}`;
   function noCacheUrl(url) {
     const nextUrl = new URL(url, window.location.origin);

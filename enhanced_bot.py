@@ -44,7 +44,6 @@ from app.model.hmm_regime import ThreeStateHmm
 from app.model.model_store import persist_model_metadata
 from app.oauth_client import refresh_access_token, token_is_expiring
 from app.repositories.test2_repository import Test2Repository
-from app.netlify_sync import NetlifyDashboardSync
 from app.strategy.cooldown import AdaptiveCooldown
 from app.strategy.decision_engine import DecisionEngine, parse_proposal_economics
 from app.strategy.over3_strategy import (
@@ -811,7 +810,6 @@ class TradingBot:
         self.database = Database(self.test2_config.database_url)
         self.database.create_schema()
         self.repository = Test2Repository(self.database, self.test2_config)
-        self.netlify_sync = NetlifyDashboardSync(self.repository)
         self.environment = self.repository.runtime_mode()
         self.tokens, self.user_profiles = self._load_runtime_accounts()
         if not self.tokens:
@@ -2262,9 +2260,6 @@ class TradingBot:
             self.repository.heartbeat(self.connection_session_id)
             await asyncio.sleep(10)
 
-    async def _netlify_sync_loop(self) -> None:
-        await self.netlify_sync.loop(self.logger)
-
     async def _stop_watchdog(self) -> None:
         task = self._watchdog_task
         self._watchdog_task = None
@@ -2349,12 +2344,6 @@ class TradingBot:
 
                 # Start watchdog
                 self._watchdog_task = asyncio.create_task(self._watchdog_loop())
-                if self.netlify_sync.enabled:
-                    self._spawn_background_task(
-                        self._netlify_sync_loop(),
-                        name="netlify_sync",
-                    )
-
                 # Keep loop alive running watchdog
                 await self._watchdog_task
 
