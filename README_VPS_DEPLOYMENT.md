@@ -16,9 +16,9 @@ docker compose logs -f worker
 ```
 
 Set every placeholder in `.env`. Keep `TRADING_MODE=demo`,
-`DERIV_ENVIRONMENT=demo`, and `ALLOW_REAL_TRADING=false`. The stack exposes the
-dashboard and API only on `127.0.0.1` through `docker-compose.vps.yml`; place an
-HTTPS reverse proxy such as Caddy in front of it so the public site is served at
+`DERIV_ENVIRONMENT=demo`, and `ALLOW_REAL_TRADING=false`. The stack keeps the
+API on the internal Docker bridge with a fixed address, and Caddy on the host
+reverse proxies traffic to it so the public site is served at
 `https://derivadmin.site`.
 
 Required variables are `DERIV_APP_ID`, `DERIV_TOKEN`, `DERIV_ENVIRONMENT`,
@@ -32,7 +32,7 @@ Point `derivadmin.site` at your VPS IP, then use a Caddyfile like this:
 
 ```caddy
 derivadmin.site {
-    reverse_proxy 127.0.0.1:8080
+    reverse_proxy 10.89.0.10:8080
 
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains"

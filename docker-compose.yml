@@ -13,7 +13,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
-    networks: [test2]
+    networks:
+      test2: {}
 
   api:
     build: .
@@ -23,12 +24,13 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-underdog}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB:-underdog_test2}
       DEPLOYMENT_ID: vps-api
-    ports:
-      - "${PORT:-8080}:8080"
     depends_on:
       database:
         condition: service_healthy
-    networks: [test2]
+    expose:
+      - "8080"
+    networks:
+      test2: {}
 
   worker:
     build: .
@@ -43,7 +45,8 @@ services:
     depends_on:
       database:
         condition: service_healthy
-    networks: [test2]
+    networks:
+      test2: {}
 
 volumes:
   test2_database:
