@@ -2078,6 +2078,23 @@ class TradingBot:
                     signal.signal_id,
                 )
                 return
+            enabled_managed_accounts = self._enabled_managed_account_ids()
+            eligible_account_ids = {account_id for _, account_id in eligible_accounts}
+            missing_enabled_accounts = sorted(enabled_managed_accounts - eligible_account_ids)
+            if missing_enabled_accounts:
+                self.repository.mark_signal(signal.signal_id, status="SKIP_COPY_GROUP_INCOMPLETE")
+                self.repository.set_status(
+                    "MANUAL_PAUSE",
+                    "COPY_GROUP_INCOMPLETE",
+                )
+                self.logger.critical(
+                    "COPY_GROUP_INCOMPLETE enabled_accounts=%s eligible_accounts=%s missing=%s; "
+                    "pausing before purchase.",
+                    len(enabled_managed_accounts),
+                    len(eligible_account_ids),
+                    [mask_account_id(account_id) for account_id in missing_enabled_accounts],
+                )
+                return
             stake_amount = round(float(economics.stake), 2)
             profit_ratio = economics.potential_profit / economics.stake
             bulk_path = f"/trading/v1/options/contracts/bulk-purchase/{self.environment}"
@@ -2114,13 +2131,43 @@ class TradingBot:
 
             if "error" in resp:
                 self.logger.error("REST Bulk Purchase request failed: %s", resp["error"].get("message"))
-                self.repository.mark_signal(signal.signal_id, status="PURCHASE_FAILED")
+                self.repository.mark_signal(signal.signal_id, status="PURCHASE_FAILED_BULK_REQUIRED")
+                if not self._sequential_private_fallback_allowed(len(eligible_accounts)):
+                    self.repository.set_status(
+                        "MANUAL_PAUSE",
+                        "BULK_PURCHASE_REQUIRED",
+                    )
+                    self.logger.critical(
+                        "COPY_TRADING_PAUSED signal_id=%s reason=BULK_PURCHASE_REQUEST_FAILED "
+                        "account_count=%s; sequential private fallback is disabled. error=%s",
+                        signal.signal_id,
+                        len(eligible_accounts),
+                        resp["error"].get("message"),
+                    )
                 return
             transactions = resp.get("data", {}).get("transactions", [])
             if resp.get("errors"):
                 messages = "; ".join(err.get("message", "Unknown bulk-purchase error") for err in resp.get("errors", []))
                 self.logger.error("REST Bulk Purchase validation failed: %s", messages)
                 if not transactions:
+                    if not self._sequential_private_fallback_allowed(len(eligible_accounts)):
+                        self.repository.mark_signal(
+                            signal.signal_id,
+                            status="PURCHASE_FAILED_BULK_REQUIRED",
+                        )
+                        self.repository.set_status(
+                            "MANUAL_PAUSE",
+                            "BULK_PURCHASE_REQUIRED",
+                        )
+                        self.logger.critical(
+                            "COPY_TRADING_PAUSED signal_id=%s reason=BULK_PURCHASE_REQUIRED "
+                            "account_count=%s; sequential private fallback is disabled to avoid "
+                            "mismatched 1-tick outcomes. errors=%s",
+                            signal.signal_id,
+                            len(eligible_accounts),
+                            messages,
+                        )
+                        return
                     self.logger.info(
                         "Falling back to private WebSocket buy for signal_id=%s",
                         signal.signal_id,
@@ -2201,11 +2248,42 @@ class TradingBot:
                 self.logger.warning("No contracts were purchased successfully")
                 return
 
-            self.repository.mark_signal(
-                signal.signal_id,
-                status="PURCHASE_CONFIRMED",
-                purchase_confirmed=True,
-            )
+            purchased_account_ids = {
+                str(tx.get("account_id", "")).strip()
+                for tx in transactions
+                if tx.get("contract_id") and "error" not in tx
+            }
+            missing_purchases = sorted(eligible_account_ids - purchased_account_ids)
+            if missing_purchases:
+                self.repository.mark_signal(
+                    signal.signal_id,
+                    status="PURCHASE_PARTIAL",
+                    purchase_confirmed=True,
+                )
+                self.repository.set_status(
+                    "MANUAL_PAUSE",
+                    "COPY_PURCHASE_PARTIAL",
+                )
+                self.logger.critical(
+                    "COPY_PURCHASE_PARTIAL signal_id=%s purchased=%s expected=%s missing=%s; "
+                    "pausing to prevent further inconsistent copy trading.",
+                    signal.signal_id,
+                    len(purchased_account_ids),
+                    len(eligible_account_ids),
+                    [mask_account_id(account_id) for account_id in missing_purchases],
+                )
+            else:
+                self.repository.mark_signal(
+                    signal.signal_id,
+                    status="PURCHASE_CONFIRMED",
+                    purchase_confirmed=True,
+                )
+            if missing_purchases:
+                asyncio.create_task(
+                    self._cycle_timeout_watchdog(signal.signal_id, list(signal_contracts))
+                )
+                return
+
             asyncio.create_task(
                 self._cycle_timeout_watchdog(signal.signal_id, list(signal_contracts))
             )
@@ -2350,6 +2428,20 @@ class TradingBot:
             return configured
         return self.valid_clients[0][1] if self.valid_clients else ""
 
+    def _enabled_managed_account_ids(self) -> Set[str]:
+        account_ids: Set[str] = set()
+        for row in self.repository.list_managed_accounts():
+            if not row.enabled:
+                continue
+            try:
+                payload = decrypt_auth_payload(row.token_secret, self.encryption_key)
+            except Exception:
+                continue
+            account_id = str(payload.get("account_id", "")).strip()
+            if account_id:
+                account_ids.add(account_id)
+        return account_ids
+
     def _eligible_purchase_accounts(self) -> List[Tuple[str, str]]:
         accounts = list(self.valid_clients)
         include_master = os.getenv("COPYTRADING_INCLUDE_MASTER", "true").lower() in {
@@ -2366,6 +2458,15 @@ class TradingBot:
             if account_id != master_account_id
         ]
         return copiers or accounts
+
+    def _sequential_private_fallback_allowed(self, account_count: int) -> bool:
+        if account_count <= 1:
+            return True
+        return os.getenv("COPYTRADING_ALLOW_SEQUENTIAL_PRIVATE_FALLBACK", "false").lower() in {
+            "1",
+            "true",
+            "yes",
+        }
 
     def _store_account_balance_payload(
         self,

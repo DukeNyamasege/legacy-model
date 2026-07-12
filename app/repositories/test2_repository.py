@@ -802,7 +802,7 @@ class Test2Repository:
                         "updated_at": account.updated_at.isoformat(),
                         **trade_stats_by_account.get(
                             account.account_id_masked,
-                            {"trades": 0, "wins": 0, "losses": 0},
+                            {"trades": 0, "wins": 0, "losses": 0, "profit": 0.0},
                         ),
                     }
                     for account in accounts
