@@ -737,15 +737,11 @@ class ClientSession:
 
         msg_type = data.get("msg_type")
         if msg_type == "balance":
-            balance = data.get("balance", {})
-            try:
-                self.bot.repository.update_account_balance(
-                    account_id=self.account_id,
-                    balance=float(balance["balance"]),
-                    currency=str(balance.get("currency", "USD")),
-                    status="active",
-                )
-            except (KeyError, TypeError, ValueError):
+            if not self.bot._store_account_balance_payload(
+                self.account_id,
+                data.get("balance", {}),
+                token=self.token,
+            ):
                 self.bot.logger.warning(
                     "Ignored malformed balance update",
                     extra={"token_tag": self.token_tag},
@@ -2371,6 +2367,32 @@ class TradingBot:
         ]
         return copiers or accounts
 
+    def _store_account_balance_payload(
+        self,
+        account_id: str,
+        balance_payload: Dict[str, Any],
+        *,
+        token: str = "",
+    ) -> bool:
+        matched_account_id = str(account_id or "").strip()
+        if not matched_account_id:
+            return False
+        try:
+            self.repository.update_account_balance(
+                account_id=matched_account_id,
+                balance=float(balance_payload["balance"]),
+                currency=str(balance_payload.get("currency", self.currency)),
+                status=str(balance_payload.get("status", "active")),
+            )
+            return True
+        except (AttributeError, KeyError, TypeError, ValueError):
+            self.logger.warning(
+                "Ignored malformed balance snapshot for account %s",
+                mask_account_id(matched_account_id),
+                extra={"token_tag": token_tag(token)},
+            )
+            return False
+
     async def _refresh_account_balance_snapshot(
         self,
         token: str,
@@ -2384,7 +2406,12 @@ class TradingBot:
         if session and session.is_connected:
             response = await session.refresh_balance_snapshot()
             if "error" not in response:
-                return
+                if self._store_account_balance_payload(
+                    matched_account_id,
+                    response.get("balance", {}),
+                    token=token,
+                ):
+                    return
 
         response = await _rest_request(
             "GET",
@@ -2414,19 +2441,11 @@ class TradingBot:
         if not matched:
             return
 
-        try:
-            self.repository.update_account_balance(
-                account_id=matched_account_id,
-                balance=float(matched.get("balance", 0.0)),
-                currency=str(matched.get("currency", self.currency)),
-                status=str(matched.get("status", "active")),
-            )
-        except (TypeError, ValueError):
-            self.logger.warning(
-                "Ignored malformed balance snapshot for account %s",
-                mask_account_id(matched_account_id),
-                extra={"token_tag": token_tag(token)},
-            )
+        self._store_account_balance_payload(
+            matched_account_id,
+            matched,
+            token=token,
+        )
 
     async def _cycle_timeout_watchdog(
         self, signal_id: str, contract_ids: List[int]

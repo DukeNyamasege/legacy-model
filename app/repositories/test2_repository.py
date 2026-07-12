@@ -691,6 +691,7 @@ class Test2Repository:
                     func.count().label("trades"),
                     func.sum(case((Trade.outcome == "WIN", 1), else_=0)).label("wins"),
                     func.sum(case((Trade.outcome == "LOSS", 1), else_=0)).label("losses"),
+                    func.sum(Trade.profit).label("profit"),
                 )
                 .group_by(Trade.account_id_masked)
                 .order_by(Trade.account_id_masked)
@@ -700,6 +701,7 @@ class Test2Repository:
                     "trades": int(row.trades or 0),
                     "wins": int(row.wins or 0),
                     "losses": int(row.losses or 0),
+                    "profit": float(row.profit or 0.0),
                 }
                 for row in account_trade_rows
             }
@@ -712,8 +714,17 @@ class Test2Repository:
             longest_loss_streak = 0
             current_outcome = ""
             current_length = 0
+            computed_net_profit = 0.0
+            computed_high_water_mark = 0.0
+            computed_max_drawdown = 0.0
             for trade in settled_trades:
                 outcome = str(trade.outcome or "").upper()
+                computed_net_profit += float(trade.profit or 0.0)
+                computed_high_water_mark = max(computed_high_water_mark, computed_net_profit)
+                computed_max_drawdown = max(
+                    computed_max_drawdown,
+                    computed_high_water_mark - computed_net_profit,
+                )
                 if outcome == current_outcome:
                     current_length += 1
                 else:
@@ -779,8 +790,8 @@ class Test2Repository:
                     if int(wins or 0) + int(losses or 0)
                     else 0.0
                 ),
-                "net_profit": state.total_profit if state else 0.0,
-                "maximum_drawdown": state.current_drawdown if state else 0.0,
+                "net_profit": computed_net_profit,
+                "maximum_drawdown": computed_max_drawdown,
                 "total_traders": int(len(accounts) or total_managed_accounts or 0),
                 "accounts": [
                     {
