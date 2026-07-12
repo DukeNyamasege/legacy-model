@@ -676,6 +676,9 @@ class ClientSession:
             }
         )
 
+    async def refresh_balance_snapshot(self) -> Dict[str, Any]:
+        return await self.send_request({"balance": 1})
+
     async def _reconcile_contracts_loop(self) -> None:
         await asyncio.sleep(max(1, self.bot.settle_wait_seconds))
         while self.ws and self.is_connected and self.bot.is_running:
@@ -2192,6 +2195,7 @@ class TradingBot:
                         extra={"token_tag": tag, "contract_id": str(contract_id), "stake": f"{stake_amount:.2f}"}
                     )
                     await session.subscribe_contract(contract_id)
+                    await self._refresh_account_balance_snapshot(token, str(account_id))
 
             self.pending_by_signal[signal.signal_id] = signal_contracts
             self._save_state()
@@ -2367,6 +2371,63 @@ class TradingBot:
         ]
         return copiers or accounts
 
+    async def _refresh_account_balance_snapshot(
+        self,
+        token: str,
+        account_id: str,
+    ) -> None:
+        matched_account_id = str(account_id or "").strip()
+        if not matched_account_id:
+            return
+
+        session = self.sessions.get(token)
+        if session and session.is_connected:
+            response = await session.refresh_balance_snapshot()
+            if "error" not in response:
+                return
+
+        response = await _rest_request(
+            "GET",
+            "/trading/v1/options/accounts",
+            self.app_id,
+            self.rest_base_url,
+            token=token,
+        )
+        if "error" in response:
+            self.logger.warning(
+                "Balance refresh failed for account %s: %s",
+                mask_account_id(matched_account_id),
+                response["error"].get("message"),
+                extra={"token_tag": token_tag(token)},
+            )
+            return
+
+        accounts = response.get("data", [])
+        matched = next(
+            (
+                row
+                for row in accounts
+                if str(row.get("account_id", "")).strip() == matched_account_id
+            ),
+            None,
+        )
+        if not matched:
+            return
+
+        try:
+            self.repository.update_account_balance(
+                account_id=matched_account_id,
+                balance=float(matched.get("balance", 0.0)),
+                currency=str(matched.get("currency", self.currency)),
+                status=str(matched.get("status", "active")),
+            )
+        except (TypeError, ValueError):
+            self.logger.warning(
+                "Ignored malformed balance snapshot for account %s",
+                mask_account_id(matched_account_id),
+                extra={"token_tag": token_tag(token)},
+            )
+
     async def _cycle_timeout_watchdog(
         self, signal_id: str, contract_ids: List[int]
     ) -> None:
@@ -2469,6 +2530,7 @@ class TradingBot:
             if sub_id:
                 await session.unsubscribe_contract(sub_id)
             session.pending_contracts.discard(contract_id)
+            await self._refresh_account_balance_snapshot(token, session.account_id)
 
         self.unresolved_contracts_from_state.discard(contract_id)
         self.pending_contracts_for_current_cycle.discard(contract_id)

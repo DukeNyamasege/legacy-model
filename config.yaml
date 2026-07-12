@@ -40,7 +40,7 @@ signal:
   require_pattern_reset: true
 execution:
   reject_if_new_tick_arrives: false
-  require_rising_ticks: false
+  require_rising_ticks: true
   maximum_signal_age_ms: 2500
   maximum_proposal_age_ms: 900
 bayesian:
@@ -54,7 +54,7 @@ bayesian:
   minimum_probability_edge_confidence: 0.95
 hmm:
   enabled: true
-  mode: shadow
+  mode: gate
   minimum_training_ticks: 5000
   retrain_every_ticks: 1000
   favourable_state: MEAN_REVERSION

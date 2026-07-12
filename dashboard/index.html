@@ -421,6 +421,10 @@
             <span style="display: block; font-size: 0.75rem; opacity: 0.8;">Losses</span>
             <strong id="personal-losses" class="negative" style="font-size: 1.4rem;">0</strong>
           </div>
+          <div>
+            <span style="display: block; font-size: 0.75rem; opacity: 0.8;">Total Profit</span>
+            <strong id="personal-profit" style="font-size: 1.4rem;">0.00</strong>
+          </div>
         </div>
         <div>
           <button id="btn-toggle-auto" style="min-height: 54px; font-size: 1.1rem; border-radius: 16px; min-width: 220px;">
@@ -460,11 +464,11 @@
   <section class="metrics">
     <article class="panel metric"><span>Longest win streak</span><strong id="longest-win">0</strong></article>
     <article class="panel metric"><span>Longest loss streak</span><strong id="longest-loss">0</strong></article>
-    <article class="panel metric"><span>Account balance</span><strong id="balance">0.00</strong></article>
+    <article class="panel metric"><span>Total account balance</span><strong id="balance">0.00</strong></article>
+    <article class="panel metric"><span>Total profit</span><strong id="global-profit">0.00</strong></article>
     <article class="panel metric"><span>Open trades</span><strong id="open-trades">0</strong></article>
     <article class="panel metric"><span>Open trade age</span><strong id="open-trade-age">0s</strong></article>
     <article class="panel metric"><span>Skipped</span><strong id="skipped">0</strong></article>
-    <article class="panel metric"><span>Default stake</span><strong>0.50</strong></article>
   </section>
 
 </main>
@@ -673,8 +677,10 @@
     const profit = Number(data.net_profit || 0);
     $("profit").textContent = number(profit, 2);
     $("profit").className = profit < 0 ? "negative" : profit > 0 ? "positive" : "";
+    $("global-profit").textContent = number(profit, 2);
+    $("global-profit").className = profit < 0 ? "negative" : profit > 0 ? "positive" : "";
     const currency = data.primary_account_currency || data.accounts?.[0]?.currency || "USD";
-    $("balance").textContent = `${number(data.primary_account_balance, 2)} ${currency}`;
+    $("balance").textContent = `${number(data.account_balance_total || 0, 2)} ${currency}`;
     renderAiActivity(data);
   }
   function applyReadOnlyMode() {
@@ -766,6 +772,8 @@
         $("personal-trades").textContent = number(me.stats.trades);
         $("personal-wins").textContent = number(me.stats.wins);
         $("personal-losses").textContent = number(me.stats.losses);
+        $("personal-profit").textContent = number(me.stats.profit || 0, 2);
+        $("personal-profit").className = Number(me.stats.profit || 0) < 0 ? "negative" : Number(me.stats.profit || 0) > 0 ? "positive" : "";
         
         isAutoTrading = Boolean(me.enabled);
         updateAutoTradeBtn();

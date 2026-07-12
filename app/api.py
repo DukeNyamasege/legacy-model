@@ -348,6 +348,72 @@ def refresh_global_account_snapshots(*, force: bool = False) -> list[dict]:
     GLOBAL_ACCOUNT_REFRESH["accounts"] = updated_accounts
     return updated_accounts
 
+
+def refresh_account_snapshot(
+    access_token: str,
+    *,
+    preferred_account_id: str = "",
+) -> dict | None:
+    runtime_mode_value = REPOSITORY.runtime_mode()
+    try:
+        accounts = load_options_accounts(access_token)
+    except requests.RequestException:
+        return None
+
+    matched = None
+    if preferred_account_id:
+        matched = next(
+            (
+                account
+                for account in accounts
+                if str(account.get("account_id", "")).strip() == preferred_account_id
+            ),
+            None,
+        )
+    if matched is None:
+        matched = next(
+            (account for account in accounts if account.get("account_type") == runtime_mode_value),
+            accounts[0] if accounts else None,
+        )
+    if not matched:
+        return None
+
+    account_id = str(matched.get("account_id", "")).strip()
+    if not account_id:
+        return None
+    try:
+        REPOSITORY.update_account_balance(
+            account_id=account_id,
+            balance=float(matched.get("balance", 0.0)),
+            currency=str(matched.get("currency", "USD")),
+            status=str(matched.get("status", "active")),
+        )
+    except (TypeError, ValueError):
+        return None
+    return REPOSITORY.account_summary(account_id)
+
+
+def refresh_personal_account_snapshot(account: dict) -> dict | None:
+    try:
+        row = REPOSITORY.managed_account(int(account["id"]))
+    except Exception:
+        return None
+    if not row:
+        return None
+    try:
+        payload = decrypt_auth_payload(row.token_secret, CONFIG.deriv.token_encryption_key)
+    except Exception:
+        return None
+    access_token = str(payload.get("access_token", "")).strip()
+    if not access_token:
+        access_token = str(payload.get("token", "")).strip()
+    if not access_token:
+        return None
+    return refresh_account_snapshot(
+        access_token,
+        preferred_account_id=str(account.get("account_id", "")).strip(),
+    )
+
 app = FastAPI(
     title="Underdog Legacy Model",
     version=CONFIG.model.version,
@@ -733,6 +799,7 @@ def get_me(request: Request) -> dict:
     account = get_current_account(request)
     if not account:
         return {"authenticated": False}
+    refresh_personal_account_snapshot(account)
     personal = REPOSITORY.account_summary(account["account_id"])
             
     return {
