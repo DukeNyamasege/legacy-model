@@ -1060,47 +1060,152 @@ class TradingBot:
         today = today_local_iso()
         clients_doc = self.state_doc.get("clients", {})
         base_stake = float(self.cfg["strategy"]["initial_stake"])
+        clients_doc_by_user_id: Dict[str, Dict[str, Any]] = {}
+        clients_doc_by_account_id: Dict[str, Dict[str, Any]] = {}
+
+        for value in clients_doc.values():
+            if not isinstance(value, dict):
+                continue
+            user_id = str(value.get("user_id", "")).strip()
+            account_id = str(value.get("account_id", "")).strip()
+            if user_id and user_id not in clients_doc_by_user_id:
+                clients_doc_by_user_id[user_id] = value
+            if account_id and account_id not in clients_doc_by_account_id:
+                clients_doc_by_account_id[account_id] = value
 
         clients: Dict[str, Dict[str, Any]] = {}
         for token in self.tokens:
             tag = token_tag(token)
-            existing = clients_doc.get(tag, {})
             profile = self.user_profiles.get(token, {})
-            st = {
-                "token_tag": tag,
-                "user_id": str(profile.get("id", tag)),
-                "name": str(profile.get("name", tag)),
-                "total_profit": float(existing.get("total_profit", 0.0)),
-                "profit_today": float(existing.get("profit_today", 0.0)),
-                "current_stake": float(existing.get("current_stake", base_stake)),
-                "day": str(existing.get("day", today)),
-                "total_trades": int(existing.get("total_trades", 0)),
-                "wins": int(existing.get("wins", 0)),
-                "losses": int(existing.get("losses", 0)),
-                "last_result": str(existing.get("last_result", "idle")),
-                "last_profit": float(existing.get("last_profit", 0.0)),
-                "loss_streak": int(existing.get("loss_streak", 0)),
-                "recovery_loss_pool": float(existing.get("recovery_loss_pool", 0.0)),
-                "last_profit_ratio": float(existing.get("last_profit_ratio", 0.0)),
-                "oscar_debt": float(
-                    existing.get(
-                        "oscar_debt",
-                        existing.get("recovery_loss_pool", 0.0),
-                    )
-                ),
-                "oscar_win_streak": int(existing.get("oscar_win_streak", 0)),
-                "single_recovery_pending": bool(
-                    existing.get("single_recovery_pending", False)
-                ),
-                "single_recovery_active": bool(
-                    existing.get("single_recovery_active", False)
-                ),
-            }
-            if st["day"] != today:
-                st["profit_today"] = 0.0
-                st["day"] = today
-            clients[token] = st
+            user_id = str(profile.get("id", tag)).strip() or tag
+            account_id = str(profile.get("account_id", "")).strip()
+            existing = (
+                clients_doc.get(tag)
+                or clients_doc_by_user_id.get(user_id)
+                or clients_doc_by_account_id.get(account_id)
+                or {}
+            )
+            clients[token] = self._build_client_state(
+                token=token,
+                profile=profile,
+                existing=existing,
+                today=today,
+                base_stake=base_stake,
+            )
         return clients
+
+    def _build_client_state(
+        self,
+        *,
+        token: str,
+        profile: Dict[str, Any],
+        existing: Dict[str, Any],
+        today: str,
+        base_stake: float,
+    ) -> Dict[str, Any]:
+        tag = token_tag(token)
+        user_id = str(profile.get("id", tag)).strip() or tag
+        account_id = str(profile.get("account_id", existing.get("account_id", ""))).strip()
+        st = {
+            "token_tag": tag,
+            "user_id": user_id,
+            "name": str(profile.get("name", existing.get("name", tag))),
+            "account_id": account_id,
+            "total_profit": float(existing.get("total_profit", 0.0)),
+            "profit_today": float(existing.get("profit_today", 0.0)),
+            "current_stake": float(existing.get("current_stake", base_stake)),
+            "day": str(existing.get("day", today)),
+            "total_trades": int(existing.get("total_trades", 0)),
+            "wins": int(existing.get("wins", 0)),
+            "losses": int(existing.get("losses", 0)),
+            "last_result": str(existing.get("last_result", "idle")),
+            "last_profit": float(existing.get("last_profit", 0.0)),
+            "loss_streak": int(existing.get("loss_streak", 0)),
+            "recovery_loss_pool": float(existing.get("recovery_loss_pool", 0.0)),
+            "last_profit_ratio": float(existing.get("last_profit_ratio", 0.0)),
+            "oscar_debt": float(
+                existing.get(
+                    "oscar_debt",
+                    existing.get("recovery_loss_pool", 0.0),
+                )
+            ),
+            "oscar_win_streak": int(existing.get("oscar_win_streak", 0)),
+            "single_recovery_pending": bool(
+                existing.get("single_recovery_pending", False)
+            ),
+            "single_recovery_active": bool(
+                existing.get("single_recovery_active", False)
+            ),
+        }
+        if st["day"] != today:
+            st["profit_today"] = 0.0
+            st["day"] = today
+        return st
+
+    def _sync_clients_with_runtime_accounts(self) -> None:
+        today = today_local_iso()
+        base_stake = float(self.cfg["strategy"]["initial_stake"])
+        existing_by_user_id: Dict[str, Dict[str, Any]] = {}
+        existing_by_account_id: Dict[str, Dict[str, Any]] = {}
+        existing_by_tag: Dict[str, Dict[str, Any]] = {}
+
+        for state in self.clients.values():
+            user_id = str(state.get("user_id", "")).strip()
+            account_id = str(state.get("account_id", "")).strip()
+            tag = str(state.get("token_tag", "")).strip()
+            if user_id and user_id not in existing_by_user_id:
+                existing_by_user_id[user_id] = state
+            if account_id and account_id not in existing_by_account_id:
+                existing_by_account_id[account_id] = state
+            if tag and tag not in existing_by_tag:
+                existing_by_tag[tag] = state
+
+        next_clients: Dict[str, Dict[str, Any]] = {}
+        for token in self.tokens:
+            profile = self.user_profiles.get(token, {})
+            tag = token_tag(token)
+            user_id = str(profile.get("id", tag)).strip() or tag
+            account_id = str(profile.get("account_id", "")).strip()
+            existing = (
+                self.clients.get(token)
+                or existing_by_user_id.get(user_id)
+                or existing_by_account_id.get(account_id)
+                or existing_by_tag.get(tag)
+                or {}
+            )
+            next_clients[token] = self._build_client_state(
+                token=token,
+                profile=profile,
+                existing=existing,
+                today=today,
+                base_stake=base_stake,
+            )
+        self.clients = next_clients
+
+    def _client_state_for_token(
+        self,
+        token: str,
+        *,
+        account_id: str = "",
+    ) -> Dict[str, Any]:
+        state = self.clients.get(token)
+        if state is not None:
+            return state
+
+        profile = self.user_profiles.get(token, {})
+        user_id = str(profile.get("id", "")).strip()
+        if user_id:
+            for existing in self.clients.values():
+                if str(existing.get("user_id", "")).strip() == user_id:
+                    return existing
+
+        account_id = str(account_id or profile.get("account_id", "")).strip()
+        if account_id:
+            for existing in self.clients.values():
+                if str(existing.get("account_id", "")).strip() == account_id:
+                    return existing
+
+        raise KeyError(token)
 
     def _save_state(self) -> None:
         doc = {
@@ -1128,6 +1233,7 @@ class TradingBot:
             doc["clients"][st["token_tag"]] = {
                 "user_id": st["user_id"],
                 "name": st["name"],
+                "account_id": st.get("account_id", ""),
                 "total_profit": st["total_profit"],
                 "profit_today": st["profit_today"],
                 "current_stake": st["current_stake"],
@@ -1210,8 +1316,8 @@ class TradingBot:
 
     def _planned_stake_for_accounts(self, profit_ratio: float) -> float:
         required = self.base_stake
-        for token, _account_id in self.valid_clients:
-            state = self.clients[token]
+        for token, account_id in self.valid_clients:
+            state = self._client_state_for_token(token, account_id=account_id)
             debt = max(
                 0.0,
                 float(state.get("recovery_loss_pool", state.get("oscar_debt", 0.0))),
@@ -1581,6 +1687,7 @@ class TradingBot:
                 continue
 
             account_id = matched["account_id"]
+            profile["account_id"] = account_id
             self.repository.update_account_balance(
                 account_id=account_id,
                 balance=float(matched.get("balance", 0.0)),
@@ -1628,6 +1735,7 @@ class TradingBot:
         self._managed_accounts_revision = current_revision
         self._runtime_mode_cache = current_mode
         await self.validate_accounts()
+        self._sync_clients_with_runtime_accounts()
         await self._ensure_sessions_for_valid_clients()
 
     async def _on_tick(self, tick_data: Dict[str, Any]) -> None:
@@ -2021,7 +2129,7 @@ class TradingBot:
                 if not token:
                     continue
 
-                st = self.clients[token]
+                st = self._client_state_for_token(token, account_id=str(account_id or ""))
                 tag = st["token_tag"]
 
                 if "error" in tx:
@@ -2120,7 +2228,9 @@ class TradingBot:
         if status not in {"won", "lost", "sold", "cancelled"}:
             return # not settled
 
-        st = self.clients[token]
+        session = self.sessions.get(token)
+        account_id = session.account_id if session else ""
+        st = self._client_state_for_token(token, account_id=account_id)
         tag = st["token_tag"]
         extra = {"token_tag": tag, "contract_id": str(contract_id), "stake": f"{st['current_stake']:.2f}"}
 
