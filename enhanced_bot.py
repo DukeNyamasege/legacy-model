@@ -2356,7 +2356,7 @@ class TradingBot:
 
     def _eligible_purchase_accounts(self) -> List[Tuple[str, str]]:
         accounts = list(self.valid_clients)
-        include_master = os.getenv("COPYTRADING_INCLUDE_MASTER", "false").lower() in {
+        include_master = os.getenv("COPYTRADING_INCLUDE_MASTER", "true").lower() in {
             "1",
             "true",
             "yes",

@@ -464,8 +464,8 @@
   <section class="metrics">
     <article class="panel metric"><span>Longest win streak</span><strong id="longest-win">0</strong></article>
     <article class="panel metric"><span>Longest loss streak</span><strong id="longest-loss">0</strong></article>
-    <article class="panel metric"><span>Total account balance</span><strong id="balance">0.00</strong></article>
-    <article class="panel metric"><span>Total profit</span><strong id="global-profit">0.00</strong></article>
+    <article class="panel metric"><span>Master account balance</span><strong id="balance">0.00</strong></article>
+    <article class="panel metric"><span>All accounts P/L</span><strong id="global-profit">0.00</strong></article>
     <article class="panel metric"><span>Open trades</span><strong id="open-trades">0</strong></article>
     <article class="panel metric"><span>Open trade age</span><strong id="open-trade-age">0s</strong></article>
     <article class="panel metric"><span>Skipped</span><strong id="skipped">0</strong></article>
@@ -680,7 +680,7 @@
     $("global-profit").textContent = number(profit, 2);
     $("global-profit").className = profit < 0 ? "negative" : profit > 0 ? "positive" : "";
     const currency = data.primary_account_currency || data.accounts?.[0]?.currency || "USD";
-    $("balance").textContent = `${number(data.account_balance_total || 0, 2)} ${currency}`;
+    $("balance").textContent = `${number(data.primary_account_balance || 0, 2)} ${currency}`;
     renderAiActivity(data);
   }
   function applyReadOnlyMode() {

@@ -741,7 +741,22 @@ class Test2Repository:
                     (now - trade.purchase_time).total_seconds() > max_open_trade_seconds
                     for trade in open_trade_rows
                 )
-            primary_account = accounts[0] if accounts else None
+            master_account_id = os.getenv("COPYTRADING_MASTER_ACCOUNT_ID", "").strip()
+            master_account_masked = mask_account_id(master_account_id) if master_account_id else ""
+            primary_account = (
+                next(
+                    (
+                        account
+                        for account in accounts
+                        if account.account_id_masked == master_account_masked
+                    ),
+                    None,
+                )
+                if master_account_masked
+                else None
+            )
+            if primary_account is None:
+                primary_account = accounts[0] if accounts else None
             return {
                 "run_id": self.config.model.run_id,
                 "status": status,
