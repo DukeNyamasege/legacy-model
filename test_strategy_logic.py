@@ -405,6 +405,59 @@ class TimingAndModelTests(unittest.TestCase):
                 else:
                     os.environ["COPYTRADING_INCLUDE_MASTER"] = old_include_master
 
+    def test_oauth_accounts_are_not_bulk_purchase_capable(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            raw = yaml.safe_load(Path("config.yaml").read_text(encoding="utf-8"))
+            token_path = root / "tokens.txt"
+            token_path.write_text("test-token\n", encoding="utf-8")
+            raw["files"] = {
+                "tokens": token_path.as_posix(),
+                "state": (root / "state.json").as_posix(),
+                "users": (root / "users.json").as_posix(),
+            }
+            raw["logging"]["file"] = (root / "bot.log").as_posix()
+            raw["storage"]["local_database_url"] = (
+                "sqlite:///" + (root / "test2.db").as_posix()
+            )
+            path = root / "config.yaml"
+            path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+            bot = enhanced_bot.TradingBot(str(path))
+            try:
+                bot.user_profiles = {
+                    "oauth-token": {"auth_type": "oauth"},
+                    "pat-token": {"auth_type": "pat"},
+                    "global-token": {"auth_type": "global_token"},
+                }
+                self.assertFalse(bot._bulk_purchase_token_capable("oauth-token"))
+                self.assertTrue(bot._bulk_purchase_token_capable("pat-token"))
+                self.assertTrue(bot._bulk_purchase_token_capable("global-token"))
+                self.assertEqual(
+                    bot._bulk_purchase_incompatible_accounts(
+                        [
+                            ("oauth-token", "DOT90000001"),
+                            ("pat-token", "DOT90000002"),
+                        ]
+                    ),
+                    ["DOT90000001"],
+                )
+            finally:
+                bot.database.engine.dispose()
+                for handler in list(bot.logger.handlers):
+                    handler.close()
+                bot.logger.handlers.clear()
+
+    def test_sanitize_account_ids_masks_provider_errors(self) -> None:
+        message = (
+            'Token or account validation failed for account "DOT91317422"; '
+            "account CR123456 failed"
+        )
+        sanitized = enhanced_bot.sanitize_account_ids(message)
+        self.assertNotIn("DOT91317422", sanitized)
+        self.assertNotIn("CR123456", sanitized)
+        self.assertIn("DOT***422", sanitized)
+        self.assertIn("CR1***456", sanitized)
+
     def test_stale_bulk_purchase_pause_is_cleared_but_partial_pause_remains(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)

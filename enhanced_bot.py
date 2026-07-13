@@ -156,6 +156,14 @@ def mask_account_id(account_id: str) -> str:
     return f"{value[:3]}***{value[-3:]}" if len(value) > 6 else "***"
 
 
+ACCOUNT_ID_PATTERN = re.compile(r"\b[A-Z]{2,6}\d{3,}\b")
+
+
+def sanitize_account_ids(message: Any) -> str:
+    value = str(message or "")
+    return ACCOUNT_ID_PATTERN.sub(lambda match: mask_account_id(match.group(0)), value)
+
+
 def today_local_iso() -> str:
     return datetime.now().date().isoformat()
 
@@ -1654,7 +1662,7 @@ class TradingBot:
         self.environment = self.repository.runtime_mode()
         self.tokens, self.user_profiles = self._load_runtime_accounts()
         valid = []
-        seen_account_ids: Set[str] = set()
+        account_indexes: Dict[str, int] = {}
         for token in self.tokens:
             tag = token_tag(token)
             profile = self.user_profiles.get(token, {})
@@ -1691,18 +1699,34 @@ class TradingBot:
                 continue
 
             account_id = matched["account_id"]
-            if account_id in seen_account_ids:
-                self.logger.warning(
-                    "Duplicate login/token for account %s ignored; account already has one trading slot",
-                    mask_account_id(account_id),
-                    extra={
-                        "token_tag": tag,
-                        "masked_account_id": mask_account_id(account_id),
-                    },
-                )
-                continue
-            seen_account_ids.add(account_id)
             profile["account_id"] = account_id
+            existing_index = account_indexes.get(account_id)
+            if existing_index is not None:
+                existing_token, _ = valid[existing_index]
+                if (
+                    not self._bulk_purchase_token_capable(existing_token)
+                    and self._bulk_purchase_token_capable(token)
+                ):
+                    valid[existing_index] = (token, account_id)
+                    self.logger.warning(
+                        "Duplicate login/token for account %s replaced with bulk-capable token",
+                        mask_account_id(account_id),
+                        extra={
+                            "token_tag": tag,
+                            "masked_account_id": mask_account_id(account_id),
+                        },
+                    )
+                else:
+                    self.logger.warning(
+                        "Duplicate login/token for account %s ignored; account already has one trading slot",
+                        mask_account_id(account_id),
+                        extra={
+                            "token_tag": tag,
+                            "masked_account_id": mask_account_id(account_id),
+                        },
+                    )
+                continue
+            account_indexes[account_id] = len(valid)
             self.repository.update_account_balance(
                 account_id=account_id,
                 balance=float(matched.get("balance", 0.0)),
@@ -2119,22 +2143,27 @@ class TradingBot:
                 return
             stake_amount = round(float(economics.stake), 2)
             profit_ratio = economics.potential_profit / economics.stake
-            bulk_path = f"/trading/v1/options/contracts/bulk-purchase/{self.environment}"
-            req_body = {
-                "contract_parameters": {
-                    "contract_type": signal.contract_type,
-                    "underlying_symbol": signal.symbol,
-                    "amount": stake_amount,
-                    "duration": self.duration,
-                    "duration_unit": self.duration_unit,
-                    "barrier": signal.barrier,
-                    "basis": "stake",
-                    "currency": self.currency,
-                },
-                "accounts": [
-                    {"token": token, "account_id": account_id} for token, account_id in eligible_accounts
-                ]
-            }
+            bulk_incompatible_accounts = self._bulk_purchase_incompatible_accounts(
+                eligible_accounts
+            )
+            if (
+                bulk_incompatible_accounts
+                and not self._sequential_private_fallback_allowed(len(eligible_accounts))
+            ):
+                self.repository.mark_signal(
+                    signal.signal_id,
+                    status="SKIP_BULK_REQUIRES_PAT",
+                )
+                self.logger.error(
+                    "BULK_PURCHASE_REQUIRES_PAT signal_id=%s account_count=%s "
+                    "oauth_accounts=%s; Deriv REST bulk-purchase requires end-user "
+                    "PAT tokens for copied accounts. Bot remains RUNNING and no "
+                    "contract was opened.",
+                    signal.signal_id,
+                    len(eligible_accounts),
+                    [mask_account_id(account_id) for account_id in bulk_incompatible_accounts],
+                )
+                return
 
             purchase_requested_at = datetime.now(timezone.utc)
             self.repository.mark_signal(
@@ -2149,51 +2178,96 @@ class TradingBot:
                 len(eligible_accounts),
                 economics.proposal_id,
             )
-            resp = await _rest_request("POST", bulk_path, self.app_id, self.rest_base_url, token=None, json_data=req_body)
+            transactions: List[Dict[str, Any]] = []
+            if bulk_incompatible_accounts:
+                self.logger.warning(
+                    "Using private WebSocket fallback for bulk-incompatible account_count=%s "
+                    "signal_id=%s",
+                    len(eligible_accounts),
+                    signal.signal_id,
+                )
+                transactions = await self._purchase_via_private_sessions(
+                    signal=signal,
+                    economics=economics,
+                    eligible_accounts=eligible_accounts,
+                    stake_amount=stake_amount,
+                )
+            else:
+                bulk_path = f"/trading/v1/options/contracts/bulk-purchase/{self.environment}"
+                req_body = {
+                    "contract_parameters": {
+                        "contract_type": signal.contract_type,
+                        "underlying_symbol": signal.symbol,
+                        "amount": stake_amount,
+                        "duration": self.duration,
+                        "duration_unit": self.duration_unit,
+                        "barrier": signal.barrier,
+                        "basis": "stake",
+                        "currency": self.currency,
+                    },
+                    "accounts": [
+                        {"token": token, "account_id": account_id}
+                        for token, account_id in eligible_accounts
+                    ],
+                }
+                resp = await _rest_request(
+                    "POST",
+                    bulk_path,
+                    self.app_id,
+                    self.rest_base_url,
+                    token=None,
+                    json_data=req_body,
+                )
 
-            if "error" in resp:
-                self.logger.error("REST Bulk Purchase request failed: %s", resp["error"].get("message"))
-                self.repository.mark_signal(signal.signal_id, status="PURCHASE_FAILED_BULK_REQUIRED")
-                if not self._sequential_private_fallback_allowed(len(eligible_accounts)):
-                    self.logger.error(
-                        "BULK_PURCHASE_FAILED_NO_CONTRACTS signal_id=%s account_count=%s; "
-                        "bot remains RUNNING because no contract was opened and copy-trade "
-                        "consistency is intact. error=%s",
-                        signal.signal_id,
-                        len(eligible_accounts),
-                        resp["error"].get("message"),
-                    )
-                return
-            transactions = resp.get("data", {}).get("transactions", [])
-            if resp.get("errors"):
-                messages = "; ".join(err.get("message", "Unknown bulk-purchase error") for err in resp.get("errors", []))
-                self.logger.error("REST Bulk Purchase validation failed: %s", messages)
-                if not transactions:
+                if "error" in resp:
+                    error_message = sanitize_account_ids(resp["error"].get("message"))
+                    self.logger.error("REST Bulk Purchase request failed: %s", error_message)
+                    self.repository.mark_signal(signal.signal_id, status="PURCHASE_FAILED_BULK_REQUIRED")
                     if not self._sequential_private_fallback_allowed(len(eligible_accounts)):
-                        self.repository.mark_signal(
-                            signal.signal_id,
-                            status="PURCHASE_FAILED_BULK_REQUIRED",
-                        )
                         self.logger.error(
                             "BULK_PURCHASE_FAILED_NO_CONTRACTS signal_id=%s account_count=%s; "
-                            "sequential private fallback is disabled to avoid mismatched 1-tick "
-                            "outcomes, but bot remains RUNNING because no contract was opened. "
-                            "errors=%s",
+                            "bot remains RUNNING because no contract was opened and copy-trade "
+                            "consistency is intact. error=%s",
                             signal.signal_id,
                             len(eligible_accounts),
-                            messages,
+                            error_message,
                         )
-                        return
-                    self.logger.info(
-                        "Falling back to private WebSocket buy for signal_id=%s",
-                        signal.signal_id,
+                    return
+                transactions = resp.get("data", {}).get("transactions", [])
+                if resp.get("errors"):
+                    messages = "; ".join(
+                        sanitize_account_ids(
+                            err.get("message", "Unknown bulk-purchase error")
+                        )
+                        for err in resp.get("errors", [])
                     )
-                    transactions = await self._purchase_via_private_sessions(
-                        signal=signal,
-                        economics=economics,
-                        eligible_accounts=eligible_accounts,
-                        stake_amount=stake_amount,
-                    )
+                    self.logger.error("REST Bulk Purchase validation failed: %s", messages)
+                    if not transactions:
+                        if not self._sequential_private_fallback_allowed(len(eligible_accounts)):
+                            self.repository.mark_signal(
+                                signal.signal_id,
+                                status="PURCHASE_FAILED_BULK_REQUIRED",
+                            )
+                            self.logger.error(
+                                "BULK_PURCHASE_FAILED_NO_CONTRACTS signal_id=%s account_count=%s; "
+                                "sequential private fallback is disabled to avoid mismatched 1-tick "
+                                "outcomes, but bot remains RUNNING because no contract was opened. "
+                                "errors=%s",
+                                signal.signal_id,
+                                len(eligible_accounts),
+                                messages,
+                            )
+                            return
+                        self.logger.info(
+                            "Falling back to private WebSocket buy for signal_id=%s",
+                            signal.signal_id,
+                        )
+                        transactions = await self._purchase_via_private_sessions(
+                            signal=signal,
+                            economics=economics,
+                            eligible_accounts=eligible_accounts,
+                            stake_amount=stake_amount,
+                        )
             signal_contracts: Set[int] = set()
             self.outcomes_by_signal[signal.signal_id] = []
 
@@ -2457,6 +2531,22 @@ class TradingBot:
             if account_id:
                 account_ids.add(account_id)
         return account_ids
+
+    def _auth_type_for_token(self, token: str) -> str:
+        profile = self.user_profiles.get(token, {})
+        return str(profile.get("auth_type", "pat")).strip().lower() or "pat"
+
+    def _bulk_purchase_token_capable(self, token: str) -> bool:
+        return self._auth_type_for_token(token) != "oauth"
+
+    def _bulk_purchase_incompatible_accounts(
+        self, accounts: List[Tuple[str, str]]
+    ) -> List[str]:
+        return [
+            account_id
+            for token, account_id in accounts
+            if not self._bulk_purchase_token_capable(token)
+        ]
 
     def _eligible_purchase_accounts(self) -> List[Tuple[str, str]]:
         accounts = list(self.valid_clients)
