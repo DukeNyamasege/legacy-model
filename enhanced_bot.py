@@ -1013,9 +1013,13 @@ class TradingBot:
                             exc,
                         )
                         continue
-                token = str(payload.get("access_token", "")).strip()
+                token = self._purchase_token_from_payload(payload)
                 if not token:
-                    self.logger.error("Managed account %s is missing an access token", row.id)
+                    self.logger.error(
+                        "Managed account %s is missing a Deriv API token/PAT required "
+                        "for REST bulk purchase; OAuth login alone cannot execute contracts.",
+                        row.id,
+                    )
                     continue
                 add_runtime_token(
                     token,
@@ -1024,7 +1028,7 @@ class TradingBot:
                         "name": row.label or f"Account {row.id}",
                         "enabled": True,
                         "account_id": str(payload.get("account_id", "")).strip(),
-                        "auth_type": auth_type,
+                        "auth_type": "pat" if auth_type == "oauth" else auth_type,
                         "source": "private",
                     },
                 )
@@ -2527,10 +2531,22 @@ class TradingBot:
                 payload = decrypt_auth_payload(row.token_secret, self.encryption_key)
             except Exception:
                 continue
+            if not self._purchase_token_from_payload(payload):
+                continue
             account_id = str(payload.get("account_id", "")).strip()
             if account_id:
                 account_ids.add(account_id)
         return account_ids
+
+    def _purchase_token_from_payload(self, payload: Dict[str, Any]) -> str:
+        explicit_pat = str(payload.get("pat_token", "")).strip()
+        if explicit_pat:
+            return explicit_pat
+        auth_type = str(payload.get("auth_type", "pat")).strip().lower() or "pat"
+        access_token = str(payload.get("access_token", "")).strip()
+        if auth_type != "oauth":
+            return access_token
+        return ""
 
     def _auth_type_for_token(self, token: str) -> str:
         profile = self.user_profiles.get(token, {})

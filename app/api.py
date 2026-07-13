@@ -96,6 +96,10 @@ class TokenImportRequest(BaseModel):
     label_prefix: str = "Account"
 
 
+class PersonalApiTokenRequest(BaseModel):
+    api_token: str
+
+
 def oauth_client_id() -> str:
     value = str(CONFIG.deriv.oauth_client_id or CONFIG.deriv.app_id).strip()
     if not value:
@@ -217,6 +221,42 @@ def load_options_accounts(access_token: str) -> list[dict]:
     response.raise_for_status()
     payload = response.json()
     return payload.get("data", [])
+
+
+def trading_api_token_from_payload(payload: dict) -> str:
+    explicit_pat = str(payload.get("pat_token", "")).strip()
+    if explicit_pat:
+        return explicit_pat
+    auth_type = str(payload.get("auth_type", "pat")).strip().lower() or "pat"
+    access_token = str(payload.get("access_token", "")).strip()
+    if auth_type != "oauth":
+        return access_token
+    return ""
+
+
+def has_trading_api_token(payload: dict) -> bool:
+    return bool(trading_api_token_from_payload(payload))
+
+
+def merge_oauth_payload(existing: dict, oauth_payload: dict, account_id: str) -> dict:
+    merged = dict(oauth_payload)
+    merged["account_id"] = account_id
+    merged["auth_source"] = "deriv_oauth"
+    trading_token = trading_api_token_from_payload(existing)
+    if trading_token:
+        merged.update(
+            {
+                "auth_type": "pat",
+                "access_token": trading_token,
+                "pat_token_set": True,
+                "pat_verified_at": str(existing.get("pat_verified_at", "")).strip(),
+                "oauth_access_token": str(oauth_payload.get("access_token", "")).strip(),
+                "oauth_refresh_token": str(oauth_payload.get("refresh_token", "")).strip(),
+                "oauth_expires_at": str(oauth_payload.get("expires_at", "")).strip(),
+                "oauth_scope": str(oauth_payload.get("scope", "")).strip(),
+            }
+        )
+    return merged
 
 
 def decrypt_runtime_token(token: str) -> str:
@@ -401,10 +441,12 @@ def refresh_personal_account_snapshot(account: dict) -> dict | None:
     if not row:
         return None
     try:
-        payload = decrypt_auth_payload(row.token_secret, CONFIG.deriv.token_encryption_key)
+        payload = decrypt_auth_payload(row["token_secret"], CONFIG.deriv.token_encryption_key)
     except Exception:
         return None
-    access_token = str(payload.get("access_token", "")).strip()
+    access_token = trading_api_token_from_payload(payload)
+    if not access_token:
+        access_token = str(payload.get("access_token", "")).strip()
     if not access_token:
         access_token = str(payload.get("token", "")).strip()
     if not access_token:
@@ -672,12 +714,10 @@ def oauth_callback(
 
     account_id = str(matched.get("account_id", "")).strip()
     label = f"OAuth {account_id[:3]}***{account_id[-3:]}" if len(account_id) > 6 else "OAuth Account"
-    token_payload["account_id"] = account_id
-    token_payload["auth_source"] = "deriv_oauth"
-    token_secret = encrypt_auth_payload(token_payload, CONFIG.deriv.token_encryption_key)
 
     existing_id = None
     existing_enabled = None
+    existing_payload: dict = {}
     for row in REPOSITORY.list_managed_accounts():
         try:
             stored = decrypt_auth_payload(row.token_secret, CONFIG.deriv.token_encryption_key)
@@ -686,7 +726,12 @@ def oauth_callback(
         if str(stored.get("account_id", "")).strip() == account_id:
             existing_id = int(row.id)
             existing_enabled = bool(row.enabled)
+            existing_payload = stored
             break
+    token_secret = encrypt_auth_payload(
+        merge_oauth_payload(existing_payload, token_payload, account_id),
+        CONFIG.deriv.token_encryption_key,
+    )
     if existing_id is None:
         account_row = REPOSITORY.add_managed_account(
             label=label,
@@ -755,12 +800,15 @@ def get_current_account(request: Request) -> dict | None:
         account_id = str(stored.get("account_id", "")).strip()
         if not account_id:
             return None
+        token_ready = has_trading_api_token(stored)
         return {
             "id": account["id"],
             "account_id": account_id,
             "account_id_masked": mask_account_id(account_id),
             "label": account["label"],
             "enabled": account["enabled"],
+            "has_trading_api_token": token_ready,
+            "requires_api_token": not token_ready,
             "created_at": account["created_at"],
         }
 
@@ -779,12 +827,15 @@ def get_current_account(request: Request) -> dict | None:
             except Exception:
                 continue
             if str(stored.get("account_id", "")).strip() == account_id:
+                token_ready = has_trading_api_token(stored)
                 return {
                     "id": row.id,
                     "account_id": account_id,
                     "account_id_masked": mask_account_id(account_id),
                     "label": row.label,
                     "enabled": row.enabled,
+                    "has_trading_api_token": token_ready,
+                    "requires_api_token": not token_ready,
                     "created_at": row.created_at,
                 }
     except Exception:
@@ -807,6 +858,8 @@ def get_me(request: Request) -> dict:
         "account_id": personal["account"],
         "label": account["label"],
         "enabled": account["enabled"],
+        "has_trading_api_token": account.get("has_trading_api_token", False),
+        "requires_api_token": account.get("requires_api_token", True),
         "balance": personal["balance"],
         "currency": personal["currency"],
         "status": personal["status"],
@@ -823,9 +876,111 @@ def toggle_auto_trade(request: Request, body: AutoTradeRequest) -> dict:
     account = get_current_account(request)
     if not account:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    if body.enabled and not account.get("has_trading_api_token", False):
+        raise HTTPException(
+            status_code=409,
+            detail="Save a Deriv API token for this account before joining auto trading.",
+        )
     
     REPOSITORY.set_managed_account_enabled(account["id"], body.enabled)
     return {"success": True, "enabled": body.enabled}
+
+
+@app.post("/me/api-token")
+def save_personal_api_token(request: Request, body: PersonalApiTokenRequest) -> dict:
+    account = get_current_account(request)
+    if not account:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    api_token = str(body.api_token or "").strip()
+    if not api_token:
+        raise HTTPException(status_code=400, detail="Enter a Deriv API token.")
+    if not has_encryption_key(CONFIG.deriv.token_encryption_key):
+        raise HTTPException(
+            status_code=409,
+            detail="DERIV_TOKEN_ENCRYPTION_KEY is required before storing API tokens.",
+        )
+    try:
+        accounts = load_options_accounts(api_token)
+    except requests.HTTPError as exc:
+        detail = exc.response.text if exc.response is not None else str(exc)
+        raise HTTPException(status_code=400, detail=f"API token verification failed: {detail}")
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=400, detail=f"API token verification failed: {exc}")
+
+    account_id = str(account["account_id"]).strip()
+    runtime_mode_value = REPOSITORY.runtime_mode()
+    matched = next(
+        (
+            item
+            for item in accounts
+            if str(item.get("account_id", "")).strip() == account_id
+            and str(item.get("account_type", "")).strip() == runtime_mode_value
+        ),
+        None,
+    )
+    if not matched:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "This API token does not match the logged-in Options "
+                f"{runtime_mode_value} account."
+            ),
+        )
+
+    row = REPOSITORY.managed_account(int(account["id"]))
+    if not row:
+        raise HTTPException(status_code=404, detail="Managed account was not found.")
+    try:
+        payload = decrypt_auth_payload(row["token_secret"], CONFIG.deriv.token_encryption_key)
+    except Exception:
+        payload = {
+            "auth_type": "oauth",
+            "account_id": account_id,
+        }
+    if str(payload.get("auth_type", "")).strip().lower() == "oauth":
+        payload["oauth_access_token"] = str(payload.get("access_token", "")).strip()
+        payload["oauth_refresh_token"] = str(payload.get("refresh_token", "")).strip()
+        payload["oauth_expires_at"] = str(payload.get("expires_at", "")).strip()
+        payload["oauth_scope"] = str(payload.get("scope", "")).strip()
+    payload.update(
+        {
+            "auth_type": "pat",
+            "access_token": api_token,
+            "account_id": account_id,
+            "auth_source": "deriv_oauth_with_pat",
+            "pat_token_set": True,
+            "pat_verified_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+    token_secret = encrypt_auth_payload(payload, CONFIG.deriv.token_encryption_key)
+    label = f"PAT {account_id[:3]}***{account_id[-3:]}" if len(account_id) > 6 else "PAT Account"
+    REPOSITORY.update_managed_account(
+        int(account["id"]),
+        label=label,
+        token_secret=token_secret,
+        enabled=bool(account.get("enabled", False)),
+    )
+    try:
+        REPOSITORY.update_account_balance(
+            account_id=account_id,
+            balance=float(matched.get("balance", 0.0)),
+            currency=str(matched.get("currency", "USD")),
+            status=str(matched.get("status", "active")),
+        )
+    except (TypeError, ValueError):
+        pass
+    REPOSITORY.audit(
+        "PERSONAL_API_TOKEN_SAVED",
+        "account-dashboard",
+        request.client.host if request.client else "unknown",
+        {"account_id_masked": mask_account_id(account_id), "mode": runtime_mode_value},
+    )
+    return {
+        "success": True,
+        "has_trading_api_token": True,
+        "requires_api_token": False,
+        "account_id": mask_account_id(account_id),
+    }
 
 @app.post("/me/logout")
 def logout(request: Request) -> JSONResponse:

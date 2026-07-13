@@ -343,6 +343,32 @@
     .model-grid { display: grid; gap: 10px; }
     .model-row { border-bottom: 1px solid var(--row-line); padding: 10px 0; }
     .model-row:last-child { border-bottom: 0; }
+    .api-token-panel {
+      flex-basis: 100%;
+      margin-top: 18px;
+      padding-top: 18px;
+      border-top: 1px solid var(--row-line);
+      display: grid;
+      gap: 10px;
+    }
+    .api-token-status {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      color: var(--muted);
+      font-size: .86rem;
+    }
+    .api-token-status strong { color: var(--ink); }
+    .api-token-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; }
+    .api-token-form input {
+      width: 100%;
+      padding: 0 13px;
+      color: var(--ink);
+      background: var(--input-bg);
+      font-weight: 400;
+      font-family: Georgia, serif;
+    }
+    .api-token-message { min-height: 18px; color: var(--muted); font-size: .82rem; }
     .access { margin-top: 14px; display: grid; gap: 10px; }
     .access input, .access textarea, .access select {
       width: 100%;
@@ -379,6 +405,7 @@
       .trade, .account-row { grid-template-columns: 1fr 1fr; }
       .section-head { gap: 10px; }
       .inline-actions { grid-template-columns: 1fr; }
+      .api-token-form { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -433,6 +460,17 @@
           <div style="margin-top: 8px; font-size: 0.75rem; opacity: 0.7; max-width: 220px; text-align: center;">
             When joined, the bot trades for you automatically.
           </div>
+        </div>
+        <div id="api-token-panel" class="api-token-panel" style="display: none;">
+          <div class="api-token-status">
+            <span>Trading API token</span>
+            <strong id="api-token-state">Required</strong>
+          </div>
+          <div class="api-token-form">
+            <input id="api-token-input" type="password" autocomplete="off" placeholder="Deriv API token">
+            <button id="btn-save-api-token" type="button">Save API token</button>
+          </div>
+          <div id="api-token-message" class="api-token-message"></div>
         </div>
       </div>
     </div>
@@ -698,8 +736,17 @@
     if ($("api-key")) $("api-key").style.display = readOnlyDashboard ? "none" : "";
   }
   let isAutoTrading = false;
+  let hasTradingApiToken = false;
 
   async function toggleAutoTrade() {
+    if (!hasTradingApiToken && !isAutoTrading) {
+      const message = $("api-token-message");
+      if (message) {
+        message.textContent = "Save API token first.";
+        message.className = "api-token-message negative";
+      }
+      return;
+    }
     const btn = $("btn-toggle-auto");
     btn.disabled = true;
     try {
@@ -710,13 +757,68 @@
       });
       isAutoTrading = res.enabled;
       updateAutoTradeBtn();
+      updateApiTokenPanel();
     } catch (e) {
       alert("Failed to toggle auto trading: " + e.message);
     }
     btn.disabled = false;
+    updateApiTokenPanel();
+  }
+
+  function updateApiTokenPanel() {
+    const panel = $("api-token-panel");
+    const state = $("api-token-state");
+    const btn = $("btn-toggle-auto");
+    if (!panel || !state || !btn) return;
+    panel.style.display = "grid";
+    state.textContent = hasTradingApiToken ? "Saved" : "Required";
+    state.className = hasTradingApiToken ? "positive" : "negative";
+    btn.disabled = !hasTradingApiToken && !isAutoTrading;
+    btn.title = !hasTradingApiToken && !isAutoTrading ? "Save API token first" : "";
+  }
+
+  async function saveApiToken() {
+    const input = $("api-token-input");
+    const button = $("btn-save-api-token");
+    const message = $("api-token-message");
+    const apiToken = (input?.value || "").trim();
+    if (!apiToken) {
+      if (message) {
+        message.textContent = "Enter API token.";
+        message.className = "api-token-message negative";
+      }
+      return;
+    }
+    if (button) button.disabled = true;
+    if (message) {
+      message.textContent = "Verifying...";
+      message.className = "api-token-message";
+    }
+    try {
+      await api("/me/api-token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ api_token: apiToken })
+      });
+      if (input) input.value = "";
+      hasTradingApiToken = true;
+      updateApiTokenPanel();
+      if (message) {
+        message.textContent = "API token saved.";
+        message.className = "api-token-message positive";
+      }
+      await refresh();
+    } catch (e) {
+      if (message) {
+        message.textContent = e.message || "API token verification failed.";
+        message.className = "api-token-message negative";
+      }
+    }
+    if (button) button.disabled = false;
   }
 
   $("btn-toggle-auto")?.addEventListener("click", toggleAutoTrade);
+  $("btn-save-api-token")?.addEventListener("click", saveApiToken);
   $("btn-logout")?.addEventListener("click", async () => {
     try {
       await api("/me/logout", { method: "POST" });
@@ -776,13 +878,17 @@
         $("personal-profit").className = Number(me.stats.profit || 0) < 0 ? "negative" : Number(me.stats.profit || 0) > 0 ? "positive" : "";
         
         isAutoTrading = Boolean(me.enabled);
+        hasTradingApiToken = Boolean(me.has_trading_api_token);
         updateAutoTradeBtn();
+        updateApiTokenPanel();
       } catch (authError) {
         // Not logged in (401)
         $("personal-section").style.display = "none";
         $("btn-login").style.display = "inline-flex";
         $("btn-logout").style.display = "none";
         $("user-info").style.display = "none";
+        hasTradingApiToken = false;
+        if ($("api-token-panel")) $("api-token-panel").style.display = "none";
       }
       
     } catch (error) {
