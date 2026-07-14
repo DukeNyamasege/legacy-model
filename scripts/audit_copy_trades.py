@@ -61,14 +61,36 @@ def main() -> None:
     with database.session() as session:
         signals = {
             row.signal_id: row
-            for row in session.scalars(select(CandidateSignalRecord)).all()
+            for row in session.scalars(
+                select(CandidateSignalRecord).where(
+                    CandidateSignalRecord.run_id == repository.run_id
+                )
+            ).all()
         }
         decisions = {
             row.signal_id: row
-            for row in session.scalars(select(ModelDecisionRecord)).all()
+            for row in session.scalars(
+                select(ModelDecisionRecord).where(
+                    ModelDecisionRecord.signal_id.in_(
+                        select(CandidateSignalRecord.signal_id).where(
+                            CandidateSignalRecord.run_id == repository.run_id
+                        )
+                    )
+                )
+            ).all()
         }
         trades = list(
-            session.scalars(select(Trade).order_by(Trade.purchase_time.asc())).all()
+            session.scalars(
+                select(Trade)
+                .where(
+                    Trade.signal_id.in_(
+                        select(CandidateSignalRecord.signal_id).where(
+                            CandidateSignalRecord.run_id == repository.run_id
+                        )
+                    )
+                )
+                .order_by(Trade.purchase_time.asc())
+            ).all()
         )
 
     groups: dict[str, list[Trade]] = defaultdict(list)

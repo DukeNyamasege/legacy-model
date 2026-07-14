@@ -42,14 +42,42 @@ def export_test2(database: Database, run_name: str, export_directory: str | Path
         )
         decisions = list(
             session.scalars(
-                select(ModelDecisionRecord).order_by(ModelDecisionRecord.created_at)
+                select(ModelDecisionRecord)
+                .where(
+                    ModelDecisionRecord.signal_id.in_(
+                        select(CandidateSignalRecord.signal_id).where(
+                            CandidateSignalRecord.run_id == run.id
+                        )
+                    )
+                )
+                .order_by(ModelDecisionRecord.created_at)
             ).all()
         )
         proposals = {
             proposal.signal_id: proposal
-            for proposal in session.scalars(select(ProposalRecord)).all()
+            for proposal in session.scalars(
+                select(ProposalRecord).where(
+                    ProposalRecord.signal_id.in_(
+                        select(CandidateSignalRecord.signal_id).where(
+                            CandidateSignalRecord.run_id == run.id
+                        )
+                    )
+                )
+            ).all()
         }
-        trades = list(session.scalars(select(Trade).order_by(Trade.purchase_time)).all())
+        trades = list(
+            session.scalars(
+                select(Trade)
+                .where(
+                    Trade.signal_id.in_(
+                        select(CandidateSignalRecord.signal_id).where(
+                            CandidateSignalRecord.run_id == run.id
+                        )
+                    )
+                )
+                .order_by(Trade.purchase_time)
+            ).all()
+        )
 
         candidate_rows = [
             {

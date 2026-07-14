@@ -76,6 +76,14 @@ class Test2Repository:
                 session.add(BotState(run_id=run.id))
             return int(run.id)
 
+    def _current_run_signal_ids(self):
+        return select(CandidateSignalRecord.signal_id).where(
+            CandidateSignalRecord.run_id == self.run_id
+        )
+
+    def _current_run_trade_filter(self):
+        return Trade.signal_id.in_(self._current_run_signal_ids())
+
     def runtime_mode(self) -> str:
         with self.database.session() as session:
             row = session.get(RuntimePreference, "trading_mode")
@@ -279,7 +287,10 @@ class Test2Repository:
                     func.sum(case((Trade.outcome == "WIN", 1), else_=0)).label("wins"),
                     func.sum(case((Trade.outcome == "LOSS", 1), else_=0)).label("losses"),
                     func.sum(Trade.profit).label("profit"),
-                ).where(Trade.account_id_masked == masked)
+                ).where(
+                    Trade.account_id_masked == masked,
+                    self._current_run_trade_filter(),
+                )
             ).one()
             return {
                 "account": masked,
@@ -485,7 +496,12 @@ class Test2Repository:
     ) -> bool:
         with self.database.session() as session:
             trade = session.scalar(
-                select(Trade).where(Trade.contract_id == str(contract_id)).with_for_update()
+                select(Trade)
+                .where(
+                    Trade.contract_id == str(contract_id),
+                    self._current_run_trade_filter(),
+                )
+                .with_for_update()
             )
             if trade is None or trade.settlement_time is not None:
                 return False
@@ -516,10 +532,16 @@ class Test2Repository:
     def completed_outcomes(self) -> tuple[int, int]:
         with self.database.session() as session:
             wins = session.scalar(
-                select(func.count()).select_from(Trade).where(Trade.outcome == "WIN")
+                select(func.count()).select_from(Trade).where(
+                    Trade.outcome == "WIN",
+                    self._current_run_trade_filter(),
+                )
             )
             losses = session.scalar(
-                select(func.count()).select_from(Trade).where(Trade.outcome == "LOSS")
+                select(func.count()).select_from(Trade).where(
+                    Trade.outcome == "LOSS",
+                    self._current_run_trade_filter(),
+                )
             )
         return int(wins or 0), int(losses or 0)
 
@@ -527,7 +549,10 @@ class Test2Repository:
         with self.database.session() as session:
             return list(
                 session.scalars(
-                    select(Trade).where(Trade.settlement_time.is_(None))
+                    select(Trade).where(
+                        Trade.settlement_time.is_(None),
+                        self._current_run_trade_filter(),
+                    )
                 ).all()
             )
 
@@ -652,21 +677,34 @@ class Test2Repository:
                     CandidateSignalRecord.run_id == self.run_id
                 )
             )
-            purchased = session.scalar(select(func.count()).select_from(Trade))
+            run_trade_filter = self._current_run_trade_filter()
+            purchased = session.scalar(
+                select(func.count()).select_from(Trade).where(run_trade_filter)
+            )
             wins = session.scalar(
-                select(func.count()).select_from(Trade).where(Trade.outcome == "WIN")
+                select(func.count()).select_from(Trade).where(
+                    Trade.outcome == "WIN",
+                    run_trade_filter,
+                )
             )
             losses = session.scalar(
-                select(func.count()).select_from(Trade).where(Trade.outcome == "LOSS")
+                select(func.count()).select_from(Trade).where(
+                    Trade.outcome == "LOSS",
+                    run_trade_filter,
+                )
             )
             open_trades = session.scalar(
                 select(func.count()).select_from(Trade).where(
-                    Trade.settlement_time.is_(None)
+                    Trade.settlement_time.is_(None),
+                    run_trade_filter,
                 )
             )
             open_trade_rows = session.scalars(
                 select(Trade)
-                .where(Trade.settlement_time.is_(None))
+                .where(
+                    Trade.settlement_time.is_(None),
+                    run_trade_filter,
+                )
                 .order_by(Trade.purchase_time.asc())
             ).all()
             skipped = session.scalar(
@@ -693,6 +731,7 @@ class Test2Repository:
                     func.sum(case((Trade.outcome == "LOSS", 1), else_=0)).label("losses"),
                     func.sum(Trade.profit).label("profit"),
                 )
+                .where(run_trade_filter)
                 .group_by(Trade.account_id_masked)
                 .order_by(Trade.account_id_masked)
             ).all()
@@ -707,7 +746,10 @@ class Test2Repository:
             }
             settled_trades = session.scalars(
                 select(Trade)
-                .where(Trade.settlement_time.is_not(None))
+                .where(
+                    Trade.settlement_time.is_not(None),
+                    run_trade_filter,
+                )
                 .order_by(Trade.settlement_time.asc(), Trade.id.asc())
             ).all()
             longest_win_streak = 0
@@ -819,7 +861,10 @@ class Test2Repository:
     def recent_trades(self, limit: int = 50) -> list[dict[str, Any]]:
         with self.database.session() as session:
             trades = session.scalars(
-                select(Trade).order_by(Trade.purchase_time.desc()).limit(limit)
+                select(Trade)
+                .where(self._current_run_trade_filter())
+                .order_by(Trade.purchase_time.desc())
+                .limit(limit)
             ).all()
             return [
                 {
