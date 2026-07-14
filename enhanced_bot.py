@@ -25,6 +25,7 @@ import re
 import socket
 import subprocess
 import math
+from dataclasses import replace
 from contextlib import suppress
 from pathlib import Path
 from collections import deque
@@ -788,6 +789,9 @@ class TradingBot:
         self.cfg = self.test2_config.model_dump()
 
         self.app_id = str(self.cfg["deriv"].get("app_id", "71937"))
+        self.app_markup_percentage = float(
+            self.cfg["deriv"].get("app_markup_percentage", 0.0) or 0.0
+        )
         self.environment = str(self.cfg["deriv"].get("environment", "demo")).lower()
         self.public_ws_url = str(self.cfg["deriv"].get("public_ws_url", "wss://api.derivws.com/trading/v1/options/ws/public"))
         self.rest_base_url = str(self.cfg["deriv"].get("rest_base_url", "https://api.derivws.com"))
@@ -824,6 +828,9 @@ class TradingBot:
             self.cfg["logging"].get("file", "trading_bot.log"),
         )
         self.logger.info("RISING_POLICY_ACTIVE mode=strict_last_three_quotes")
+        self.logger.info(
+            "APP_MARKUP_ACTIVE percentage=%.2f", self.app_markup_percentage
+        )
 
         self.database = Database(self.test2_config.database_url)
         self.database.create_schema()
@@ -2045,19 +2052,12 @@ class TradingBot:
                 status="PROPOSAL_REQUESTED",
                 proposal_requested=True,
             )
-            prop_req = {
-                "proposal": 1,
-                "amount": base_stake,
-                "basis": "stake",
-                "contract_type": signal.contract_type,
-                "currency": self.currency,
-                "duration": self.duration,
-                "duration_unit": self.duration_unit,
-                "barrier": signal.barrier,
-                "underlying_symbol": signal.symbol,
-            }
-            prop_resp = await self.public_client.send_request(prop_req)
-            proposal_received = time.monotonic()
+            (
+                prop_resp,
+                proposal_requested,
+                proposal_received,
+                proposal_markup_applied,
+            ) = await self._send_proposal_request(signal, base_stake)
             if "error" in prop_resp:
                 self.logger.error("Proposal validation rejected: %s", prop_resp["error"].get("message"))
                 self.repository.mark_signal(
@@ -2099,14 +2099,18 @@ class TradingBot:
                 )
                 self.logger.error("Proposal validation rejected: %s", exc)
                 return
+            if not proposal_markup_applied:
+                economics = self._apply_app_markup_to_economics(economics)
 
             profit_ratio = economics.potential_profit / economics.stake
             target_stake = self._planned_stake_for_accounts(profit_ratio)
             if abs(target_stake - base_stake) > 1e-9:
-                proposal_requested = time.monotonic()
-                prop_req["amount"] = target_stake
-                prop_resp = await self.public_client.send_request(prop_req)
-                proposal_received = time.monotonic()
+                (
+                    prop_resp,
+                    proposal_requested,
+                    proposal_received,
+                    proposal_markup_applied,
+                ) = await self._send_proposal_request(signal, target_stake)
                 if "error" in prop_resp:
                     self.logger.error("Proposal validation rejected: %s", prop_resp["error"].get("message"))
                     self.repository.mark_signal(
@@ -2131,6 +2135,8 @@ class TradingBot:
                     )
                     self.logger.error("Proposal validation rejected: %s", exc)
                     return
+                if not proposal_markup_applied:
+                    economics = self._apply_app_markup_to_economics(economics)
             self.repository.record_proposal(signal, economics)
 
             bayesian = self.bayesian.snapshot(
@@ -2286,17 +2292,13 @@ class TradingBot:
                 )
             else:
                 bulk_path = f"/trading/v1/options/contracts/bulk-purchase/{self.environment}"
+                contract_parameters = self._contract_parameters(
+                    signal,
+                    stake_amount,
+                    symbol_key="underlying_symbol",
+                )
                 req_body = {
-                    "contract_parameters": {
-                        "contract_type": signal.contract_type,
-                        "underlying_symbol": signal.symbol,
-                        "amount": stake_amount,
-                        "duration": self.duration,
-                        "duration_unit": self.duration_unit,
-                        "barrier": signal.barrier,
-                        "basis": "stake",
-                        "currency": self.currency,
-                    },
+                    "contract_parameters": contract_parameters,
                     "accounts": [
                         {"token": token, "account_id": account_id}
                         for token, account_id in eligible_accounts
@@ -2509,7 +2511,7 @@ class TradingBot:
                 continue
 
             response = await session.send_request(
-                self._proposal_request(signal, stake_amount)
+                self._proposal_request(signal, stake_amount, include_markup=True)
             )
             if "error" in response:
                 message = response["error"].get("message", "Unknown proposal error")
@@ -2591,9 +2593,57 @@ class TradingBot:
             )
         return transactions
 
-    def _proposal_request(self, signal: CandidateSignal, stake_amount: float) -> Dict[str, Any]:
-        return {
+    async def _send_proposal_request(
+        self,
+        signal: CandidateSignal,
+        stake_amount: float,
+    ) -> Tuple[Dict[str, Any], float, float, bool]:
+        proposal_requested = time.monotonic()
+        prop_resp = await self.public_client.send_request(
+            self._proposal_request(signal, stake_amount, include_markup=True)
+        )
+        proposal_received = time.monotonic()
+        proposal_markup_applied = True
+        if "error" in prop_resp and self.app_markup_percentage > 0:
+            self.logger.warning(
+                "APP_MARKUP_PROPOSAL_REJECTED percentage=%.2f message=%s; "
+                "retrying proposal without markup for validation only.",
+                self.app_markup_percentage,
+                prop_resp["error"].get("message"),
+            )
+            proposal_requested = time.monotonic()
+            prop_resp = await self.public_client.send_request(
+                self._proposal_request(signal, stake_amount, include_markup=False)
+            )
+            proposal_received = time.monotonic()
+            proposal_markup_applied = False
+        return prop_resp, proposal_requested, proposal_received, proposal_markup_applied
+
+    def _proposal_request(
+        self,
+        signal: CandidateSignal,
+        stake_amount: float,
+        *,
+        include_markup: bool,
+    ) -> Dict[str, Any]:
+        return self._contract_parameters(
+            signal,
+            stake_amount,
+            symbol_key="underlying_symbol",
+            include_markup=include_markup,
+        ) | {
             "proposal": 1,
+        }
+
+    def _contract_parameters(
+        self,
+        signal: CandidateSignal,
+        stake_amount: float,
+        *,
+        symbol_key: str,
+        include_markup: bool = True,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {
             "amount": stake_amount,
             "basis": "stake",
             "contract_type": signal.contract_type,
@@ -2601,8 +2651,36 @@ class TradingBot:
             "duration": self.duration,
             "duration_unit": self.duration_unit,
             "barrier": signal.barrier,
-            "underlying_symbol": signal.symbol,
+            symbol_key: signal.symbol,
         }
+        if include_markup and self.app_markup_percentage > 0:
+            params["app_markup_percentage"] = round(self.app_markup_percentage, 2)
+        return params
+
+    def _apply_app_markup_to_economics(self, economics: Any) -> Any:
+        markup_fraction = max(0.0, self.app_markup_percentage) / 100.0
+        if markup_fraction <= 0 or economics.stake <= 0 or economics.payout <= 0:
+            return economics
+        payout_factor = economics.payout / economics.stake
+        adjusted_payout = round(
+            economics.payout / (1.0 + markup_fraction * payout_factor),
+            2,
+        )
+        potential_profit = round(adjusted_payout - economics.stake, 2)
+        if adjusted_payout <= economics.stake or potential_profit <= 0:
+            return economics
+        expected_value = (
+            economics.predicted_win_probability * potential_profit
+            - (1.0 - economics.predicted_win_probability) * economics.stake
+        )
+        return replace(
+            economics,
+            payout=adjusted_payout,
+            potential_profit=potential_profit,
+            break_even_probability=economics.stake / adjusted_payout,
+            expected_value=expected_value,
+            expected_return_on_stake=expected_value / economics.stake,
+        )
 
     def _copytrading_master_account_id(self) -> str:
         configured = os.getenv("COPYTRADING_MASTER_ACCOUNT_ID", "").strip()

@@ -272,6 +272,14 @@ def filter_summary_to_trading_ready_accounts(summary: dict) -> dict:
     filtered["account_balance_total"] = sum(
         float(account.get("balance") or 0.0) for account in accounts
     )
+    trade_counts = [int(account.get("trades") or 0) for account in accounts]
+    copy_trade_gap = (
+        max(trade_counts) - min(trade_counts)
+        if len(trade_counts) > 1
+        else 0
+    )
+    filtered["copy_trade_gap"] = copy_trade_gap
+    filtered["copy_consistency_ok"] = copy_trade_gap == 0
 
     primary = None
     current_primary = str(summary.get("primary_account", "")).strip()

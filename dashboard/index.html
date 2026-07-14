@@ -507,6 +507,7 @@
     <article class="panel metric"><span>Open trades</span><strong id="open-trades">0</strong></article>
     <article class="panel metric"><span>Open trade age</span><strong id="open-trade-age">0s</strong></article>
     <article class="panel metric"><span>Skipped</span><strong id="skipped">0</strong></article>
+    <article class="panel metric"><span>Copy trade gap</span><strong id="copy-gap">0</strong></article>
   </section>
 
 </main>
@@ -712,6 +713,9 @@
     const maxOpenTradeSeconds = Number(data.max_open_trade_seconds || 6);
     $("open-trade-age").textContent = `${number(oldestOpenTradeSeconds)}s`;
     $("open-trade-age").className = staleOpenTrades > 0 || oldestOpenTradeSeconds > maxOpenTradeSeconds ? "negative" : "";
+    const copyGap = Number(data.copy_trade_gap || 0);
+    $("copy-gap").textContent = number(copyGap);
+    $("copy-gap").className = copyGap > 0 ? "negative" : "";
     const profit = Number(data.net_profit || 0);
     $("profit").textContent = number(profit, 2);
     $("profit").className = profit < 0 ? "negative" : profit > 0 ? "positive" : "";

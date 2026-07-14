@@ -21,6 +21,7 @@ class ModelIdentity(StrictModel):
 
 class DerivSettings(StrictModel):
     app_id: str
+    app_markup_percentage: float = Field(default=3.0, ge=0, le=3)
     environment: Literal["demo", "real"] = "demo"
     public_ws_url: str
     rest_base_url: str
@@ -205,6 +206,10 @@ def load_test2_config(path: str | Path = "config.yaml") -> Test2Config:
     raw = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
     if os.getenv("DERIV_APP_ID"):
         raw.setdefault("deriv", {})["app_id"] = os.environ["DERIV_APP_ID"]
+    if os.getenv("DERIV_APP_MARKUP_PERCENTAGE"):
+        raw.setdefault("deriv", {})["app_markup_percentage"] = float(
+            os.environ["DERIV_APP_MARKUP_PERCENTAGE"]
+        )
     if os.getenv("DERIV_OAUTH_CLIENT_ID"):
         raw.setdefault("deriv", {})["oauth_client_id"] = os.environ[
             "DERIV_OAUTH_CLIENT_ID"

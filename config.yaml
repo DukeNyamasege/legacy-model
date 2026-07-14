@@ -1,5 +1,6 @@
 deriv:
   app_id: 33MmAtDICSKcC7LAZj7JO
+  app_markup_percentage: 3.0
   environment: demo
   public_ws_url: wss://api.derivws.com/trading/v1/options/ws/public
   rest_base_url: https://api.derivws.com
