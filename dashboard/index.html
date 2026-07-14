@@ -332,6 +332,72 @@
       font-size: .88rem;
     }
     .trade small, .model-row small, .account-row small { display: block; color: var(--muted); margin-bottom: 4px; }
+    .contract-history {
+      margin-top: 28px;
+      overflow: hidden;
+    }
+    .contract-history .section-head {
+      gap: 14px;
+      align-items: flex-start;
+    }
+    .contract-history .section-head p {
+      color: var(--muted);
+      font-size: .82rem;
+      margin-top: 5px;
+      max-width: 620px;
+    }
+    .contract-table-wrap {
+      width: 100%;
+      overflow-x: auto;
+      border-radius: 16px;
+      border: 1px solid var(--row-line);
+      background: var(--row-bg);
+    }
+    .contract-table {
+      width: 100%;
+      min-width: 980px;
+      border-collapse: collapse;
+      font-size: .84rem;
+    }
+    .contract-table th,
+    .contract-table td {
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--row-line);
+      text-align: left;
+      vertical-align: top;
+    }
+    .contract-table th {
+      color: var(--muted);
+      font-size: .7rem;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      background: var(--empty-bg);
+      white-space: nowrap;
+    }
+    .contract-table tr:last-child td { border-bottom: 0; }
+    .contract-id {
+      max-width: 170px;
+      overflow-wrap: anywhere;
+      font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+      font-size: .78rem;
+    }
+    .contract-status {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 64px;
+      padding: 4px 9px;
+      border-radius: 999px;
+      border: 1px solid var(--row-line);
+      background: var(--glass-bg);
+      font-weight: 700;
+      text-transform: uppercase;
+      font-size: .72rem;
+    }
+    .contract-status.win { color: var(--green); }
+    .contract-status.loss { color: var(--red); }
+    .contract-status.open { color: var(--gold); }
+    .contract-subtle { display: block; color: var(--muted); font-size: .74rem; margin-top: 3px; }
     .empty {
       color: var(--muted);
       padding: 48px 15px;
@@ -510,6 +576,36 @@
     <article class="panel metric"><span>Copy trade gap</span><strong id="copy-gap">0</strong></article>
   </section>
 
+  <section class="panel section contract-history">
+    <div class="section-head">
+      <div>
+        <h2>Recent Contracts</h2>
+        <p>Latest 50 execution records only. Strategy internals, trigger logic, and signal details are intentionally hidden.</p>
+      </div>
+      <span id="contracts-count" class="version"><strong>Contracts</strong>0 shown</span>
+    </div>
+    <div class="contract-table-wrap">
+      <table class="contract-table">
+        <thead>
+          <tr>
+            <th>Contract ID</th>
+            <th>Account</th>
+            <th>Status</th>
+            <th>Profit</th>
+            <th>Entry</th>
+            <th>Exit</th>
+            <th>Opened</th>
+            <th>Settled</th>
+            <th>Age</th>
+          </tr>
+        </thead>
+        <tbody id="contracts-body">
+          <tr><td colspan="9"><div class="empty">No contracts yet.</div></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
 </main>
 <script>
   const $ = id => document.getElementById(id);
@@ -589,6 +685,67 @@
       '"': "&quot;",
       "'": "&#39;"
     })[character]);
+  }
+  function formatDateTime(value) {
+    if (!value) return "-";
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return String(value);
+    return parsed.toLocaleString(undefined, {
+      month: "short",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit"
+    });
+  }
+  function formatContractStatus(outcome) {
+    const normalized = String(outcome || "OPEN").toUpperCase();
+    if (normalized === "WIN") return { label: "Win", className: "win" };
+    if (normalized === "LOSS") return { label: "Loss", className: "loss" };
+    return { label: "Open", className: "open" };
+  }
+  function renderContracts(trades) {
+    const body = $("contracts-body");
+    const count = $("contracts-count");
+    if (!body) return;
+    const rows = Array.isArray(trades) ? trades.slice(0, 50) : [];
+    if (count) count.innerHTML = `<strong>Contracts</strong>${number(rows.length)} shown`;
+    if (!rows.length) {
+      body.innerHTML = '<tr><td colspan="9"><div class="empty">No contracts yet.</div></td></tr>';
+      return;
+    }
+    body.innerHTML = rows.map(trade => {
+      const status = formatContractStatus(trade.outcome);
+      const profit = Number(trade.profit || 0);
+      const isOpen = !trade.settlement_time;
+      return `
+        <tr>
+          <td class="contract-id">${escapeHtml(trade.contract_id || "-")}</td>
+          <td>${escapeHtml(trade.account || "-")}</td>
+          <td>
+            <span class="contract-status ${status.className}">${status.label}</span>
+            <span class="contract-subtle">${escapeHtml(trade.closure_summary || (isOpen ? "Awaiting settlement" : "Settled"))}</span>
+          </td>
+          <td class="${profit < 0 ? "negative" : profit > 0 ? "positive" : ""}">${isOpen ? "-" : number(profit, 2)}</td>
+          <td>${trade.entry_tick == null ? "-" : number(trade.entry_tick, 2)}</td>
+          <td>
+            ${trade.exit_tick == null ? "-" : number(trade.exit_tick, 2)}
+            <span class="contract-subtle">Digit: ${trade.exit_digit == null ? "-" : escapeHtml(trade.exit_digit)}</span>
+          </td>
+          <td>${formatDateTime(trade.purchase_time)}</td>
+          <td>${formatDateTime(trade.settlement_time)}</td>
+          <td>${number(trade.age_seconds || 0)}s</td>
+        </tr>
+      `;
+    }).join("");
+  }
+  async function loadRecentContracts() {
+    try {
+      const data = await api("/metrics/recent-trades?limit=50");
+      renderContracts(data.trades || []);
+    } catch (_) {
+      renderContracts([]);
+    }
   }
   function pickRobotVoice() {
     if (!("speechSynthesis" in window)) return null;
@@ -862,6 +1019,7 @@
       readOnlyDashboard = Boolean(settings.read_only_dashboard);
       renderStatus(summary);
       applyReadOnlyMode();
+      await loadRecentContracts();
 
       // Fetch personal metrics
       try {
