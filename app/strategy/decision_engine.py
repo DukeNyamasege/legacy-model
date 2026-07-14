@@ -57,6 +57,7 @@ def parse_proposal_economics(
     predicted_probability: float,
     requested_monotonic: float,
     received_monotonic: float,
+    app_markup_percentage: float = 0.0,
 ) -> ProposalEconomics:
     proposal = response.get("proposal")
     if not isinstance(proposal, dict):
@@ -66,24 +67,32 @@ def parse_proposal_economics(
         raise ValueError("Proposal response is missing its ID")
     try:
         ask_price = float(proposal["ask_price"])
-        payout = float(proposal["payout"])
+        gross_payout = float(proposal["payout"])
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("Proposal is missing valid ask_price or payout") from exc
     if abs(ask_price - stake) > 0.011:
         raise ValueError(f"Proposal ask price {ask_price} does not match stake {stake}")
-    potential_profit = payout - stake
+    markup_rate = min(3.0, max(0.0, float(app_markup_percentage))) / 100.0
+    try:
+        reported_commission = float(proposal.get("commission") or 0.0)
+    except (TypeError, ValueError):
+        reported_commission = 0.0
+    expected_markup = max(0.0, reported_commission, gross_payout * markup_rate)
+    payout = gross_payout
+    potential_profit = payout - stake - expected_markup
+    potential_loss = stake + expected_markup
     if payout <= stake or potential_profit <= 0:
         raise ValueError("Proposal payout does not provide positive potential profit")
-    break_even = stake / payout
+    break_even = potential_loss / payout
     expected_value = predicted_probability * potential_profit - (
         1.0 - predicted_probability
-    ) * stake
+    ) * potential_loss
     return ProposalEconomics(
         proposal_id=proposal_id,
         stake=stake,
         payout=payout,
         potential_profit=potential_profit,
-        potential_loss=stake,
+        potential_loss=potential_loss,
         break_even_probability=break_even,
         predicted_win_probability=predicted_probability,
         expected_value=expected_value,

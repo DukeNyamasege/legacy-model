@@ -470,6 +470,8 @@ class Test2Repository:
         account_id: str,
         purchase_time: datetime,
         aligned_with_signal: bool,
+        buy_price: float | None = None,
+        payout: float | None = None,
     ) -> None:
         with self.database.session() as session:
             session.add(
@@ -479,6 +481,8 @@ class Test2Repository:
                     contract_id=contract_id,
                     account_id_masked=mask_account_id(account_id),
                     purchase_time=purchase_time,
+                    buy_price=buy_price,
+                    payout=payout,
                     aligned_with_signal=aligned_with_signal,
                     model_version=self.config.model.version,
                 )
@@ -493,6 +497,10 @@ class Test2Repository:
         entry_tick: float | None,
         exit_tick: float | None,
         exit_digit: int | None,
+        buy_price: float | None = None,
+        payout: float | None = None,
+        app_markup_amount: float | None = None,
+        commission: float | None = None,
     ) -> bool:
         with self.database.session() as session:
             trade = session.scalar(
@@ -525,25 +533,44 @@ class Test2Repository:
             trade.entry_tick = entry_tick
             trade.exit_tick = exit_tick
             trade.exit_digit = exit_digit
+            if buy_price is not None:
+                trade.buy_price = buy_price
+            if payout is not None:
+                trade.payout = payout
+            trade.app_markup_amount = app_markup_amount
+            trade.commission = commission
             trade.cumulative_profit = state.total_profit
             trade.drawdown = state.current_drawdown
             return True
 
     def completed_outcomes(self) -> tuple[int, int]:
+        """Return one outcome per fully settled copy-trade signal."""
         with self.database.session() as session:
-            wins = session.scalar(
-                select(func.count()).select_from(Trade).where(
-                    Trade.outcome == "WIN",
-                    self._current_run_trade_filter(),
+            rows = session.execute(
+                select(
+                    Trade.signal_id,
+                    func.sum(
+                        case((Trade.settlement_time.is_(None), 1), else_=0)
+                    ).label("open_count"),
+                    func.sum(
+                        case((Trade.outcome == "LOSS", 1), else_=0)
+                    ).label("loss_count"),
                 )
-            )
-            losses = session.scalar(
-                select(func.count()).select_from(Trade).where(
-                    Trade.outcome == "LOSS",
+                .where(
                     self._current_run_trade_filter(),
+                    Trade.model_version == self.config.model.version,
                 )
-            )
-        return int(wins or 0), int(losses or 0)
+                .group_by(Trade.signal_id)
+            ).all()
+        wins = sum(
+            int(row.open_count or 0) == 0 and int(row.loss_count or 0) == 0
+            for row in rows
+        )
+        losses = sum(
+            int(row.open_count or 0) == 0 and int(row.loss_count or 0) > 0
+            for row in rows
+        )
+        return int(wins), int(losses)
 
     def unresolved_contracts(self) -> list[Trade]:
         with self.database.session() as session:
@@ -858,11 +885,19 @@ class Test2Repository:
                 ),
             }
 
-    def recent_trades(self, limit: int = 50) -> list[dict[str, Any]]:
+    def recent_trades(
+        self,
+        limit: int = 50,
+        *,
+        account_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        account_masked = mask_account_id(account_id) if account_id else ""
         with self.database.session() as session:
+            query = select(Trade).where(self._current_run_trade_filter())
+            if account_masked:
+                query = query.where(Trade.account_id_masked == account_masked)
             trades = session.scalars(
-                select(Trade)
-                .where(self._current_run_trade_filter())
+                query
                 .order_by(Trade.purchase_time.desc())
                 .limit(limit)
             ).all()
@@ -876,6 +911,10 @@ class Test2Repository:
                     ),
                     "outcome": trade.outcome,
                     "profit": trade.profit,
+                    "buy_price": trade.buy_price,
+                    "payout": trade.payout,
+                    "app_markup_amount": trade.app_markup_amount,
+                    "commission": trade.commission,
                     "entry_tick": trade.entry_tick,
                     "exit_tick": trade.exit_tick,
                     "exit_digit": trade.exit_digit,
@@ -900,6 +939,27 @@ class Test2Repository:
                 }
                 for trade in trades
             ]
+
+    def markup_summary(self, *, account_id: str) -> dict[str, Any]:
+        account_masked = mask_account_id(account_id)
+        with self.database.session() as session:
+            row = session.execute(
+                select(
+                    func.count().label("contract_count"),
+                    func.sum(Trade.app_markup_amount).label("app_markup_total"),
+                    func.sum(Trade.commission).label("commission_total"),
+                ).where(
+                    Trade.account_id_masked == account_masked,
+                    Trade.settlement_time.is_not(None),
+                    self._current_run_trade_filter(),
+                )
+            ).one()
+        return {
+            "account": account_masked,
+            "contract_count": int(row.contract_count or 0),
+            "app_markup_total": float(row.app_markup_total or 0.0),
+            "commission_total": float(row.commission_total or 0.0),
+        }
 
     def recent_signals(self, limit: int = 50) -> list[dict[str, Any]]:
         with self.database.session() as session:

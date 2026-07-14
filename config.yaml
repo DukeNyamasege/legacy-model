@@ -12,7 +12,7 @@ deriv:
   token_encryption_key: ''
 model:
   name: The Underdog Legacy Model
-  version: 2.1.0-bin22001
+  version: 2.2.0-over2-rising-22001
   brand: Father of Automation Series
   run_id: bin22001
 files:
@@ -28,14 +28,16 @@ strategy:
   prediction: 2
   duration: 1
   duration_unit: t
-  pattern_length: 3
+  pattern_length: 5
   currency: USD
   initial_stake: 0.50
 signal:
-  trigger_name: BIN201x3
+  trigger_name: BIN22001x5
   pattern_ranges:
     - [6, 9]
-    - [1, 2]
+    - [6, 9]
+    - [0, 2]
+    - [0, 2]
     - [3, 5]
   overlapping_signals_allowed: false
   require_pattern_reset: true
@@ -46,12 +48,12 @@ execution:
   maximum_proposal_age_ms: 900
 bayesian:
   enabled: true
-  mode: shadow
-  prior_alpha: 3.0
-  prior_beta: 2.0
+  mode: gate
+  prior_alpha: 108.0
+  prior_beta: 19.0
   credible_interval: 0.95
   safety_margin_probability: 0.02
-  minimum_completed_trades: 300
+  minimum_completed_trades: 0
   minimum_probability_edge_confidence: 0.95
 hmm:
   enabled: true

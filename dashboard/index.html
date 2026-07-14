@@ -355,7 +355,7 @@
     }
     .contract-table {
       width: 100%;
-      min-width: 980px;
+      min-width: 1280px;
       border-collapse: collapse;
       font-size: .84rem;
     }
@@ -580,7 +580,7 @@
     <div class="section-head">
       <div>
         <h2>Recent Contracts</h2>
-        <p>Latest 50 execution records only. Strategy internals, trigger logic, and signal details are intentionally hidden.</p>
+        <p>Your latest 50 contracts when signed in, or the master account's contracts when signed out. Strategy internals remain hidden.</p>
       </div>
       <span id="contracts-count" class="version"><strong>Contracts</strong>0 shown</span>
     </div>
@@ -591,6 +591,10 @@
             <th>Contract ID</th>
             <th>Account</th>
             <th>Status</th>
+            <th>Buy price</th>
+            <th>Payout</th>
+            <th>Markup</th>
+            <th>Commission</th>
             <th>Profit</th>
             <th>Entry</th>
             <th>Exit</th>
@@ -600,7 +604,7 @@
           </tr>
         </thead>
         <tbody id="contracts-body">
-          <tr><td colspan="9"><div class="empty">No contracts yet.</div></td></tr>
+          <tr><td colspan="13"><div class="empty">No contracts yet.</div></td></tr>
         </tbody>
       </table>
     </div>
@@ -704,14 +708,18 @@
     if (normalized === "LOSS") return { label: "Loss", className: "loss" };
     return { label: "Open", className: "open" };
   }
-  function renderContracts(trades) {
+  function renderContracts(trades, account = "", viewer = "master", markup = {}) {
     const body = $("contracts-body");
     const count = $("contracts-count");
     if (!body) return;
     const rows = Array.isArray(trades) ? trades.slice(0, 50) : [];
-    if (count) count.innerHTML = `<strong>Contracts</strong>${number(rows.length)} shown`;
+    if (count) {
+      const label = viewer === "personal" ? "Personal" : "Master";
+      const totalMarkup = Number(markup.app_markup_total || 0);
+      count.innerHTML = `<strong>${label} ${escapeHtml(account || "")}</strong>${number(rows.length)} shown | markup ${number(totalMarkup, 4)}`;
+    }
     if (!rows.length) {
-      body.innerHTML = '<tr><td colspan="9"><div class="empty">No contracts yet.</div></td></tr>';
+      body.innerHTML = '<tr><td colspan="13"><div class="empty">No contracts yet.</div></td></tr>';
       return;
     }
     body.innerHTML = rows.map(trade => {
@@ -726,6 +734,10 @@
             <span class="contract-status ${status.className}">${status.label}</span>
             <span class="contract-subtle">${escapeHtml(trade.closure_summary || (isOpen ? "Awaiting settlement" : "Settled"))}</span>
           </td>
+          <td>${trade.buy_price == null ? "-" : number(trade.buy_price, 2)}</td>
+          <td>${trade.payout == null ? "-" : number(trade.payout, 2)}</td>
+          <td>${trade.app_markup_amount == null ? "-" : number(trade.app_markup_amount, 4)}</td>
+          <td>${trade.commission == null ? "-" : number(trade.commission, 4)}</td>
           <td class="${profit < 0 ? "negative" : profit > 0 ? "positive" : ""}">${isOpen ? "-" : number(profit, 2)}</td>
           <td>${trade.entry_tick == null ? "-" : number(trade.entry_tick, 2)}</td>
           <td>
@@ -742,7 +754,7 @@
   async function loadRecentContracts() {
     try {
       const data = await api("/metrics/recent-trades?limit=50");
-      renderContracts(data.trades || []);
+      renderContracts(data.trades || [], data.account || "", data.viewer || "master", data.markup || {});
     } catch (_) {
       renderContracts([]);
     }

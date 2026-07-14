@@ -8,7 +8,7 @@
 - Monitores open contracts via proposal_open_contract subscriptions (no polling).
 - Exposes OAuth 2.0 PKCE helper flow on the command-line (--login).
 - Daily risk management, stop-loss, and take-profit per copier.
-- Fixed stake trading (no martingale).
+- Configurable two-run recovery sizing with a hard maximum stake.
 - Tick-based cooldown and global locking.
 """
 
@@ -46,13 +46,13 @@ from app.oauth_client import refresh_access_token, token_is_expiring
 from app.repositories.test2_repository import Test2Repository
 from app.strategy.cooldown import AdaptiveCooldown
 from app.strategy.decision_engine import DecisionEngine, parse_proposal_economics
-from app.strategy.over3_strategy import (
+from app.strategy.over2_strategy import (
     TEST2_BARRIER,
     TEST2_PATTERN_RANGES,
     TEST2_TRIGGER,
     validate_contract_parameters,
 )
-from app.strategy.signal_detector import CandidateSignal, Over3SignalDetector
+from app.strategy.signal_detector import CandidateSignal, Over2SignalDetector
 from app.token_store import decrypt_auth_payload, decrypt_token, encrypt_auth_payload
 
 try:
@@ -215,7 +215,7 @@ def detect_digit_streak_signal(
     last_digits: List[str],
     streak_length: int,
     ) -> Optional[Tuple[str, str, str]]:
-    """Compatibility helper for the three-digit BIN201 Over-only signal."""
+    """Compatibility helper for the five-digit BIN22001 Over-2 signal."""
     required = len(TEST2_PATTERN_RANGES)
     if len(last_digits) < required:
         return None
@@ -229,6 +229,13 @@ def detect_digit_streak_signal(
     ):
         return "DIGITOVER", TEST2_BARRIER, TEST2_TRIGGER
     return None
+
+
+def optional_float(value: Any) -> Optional[float]:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 async def _rest_request(
@@ -355,8 +362,8 @@ class JsonLogFormatter(logging.Formatter):
             "proposal_id": getattr(record, "proposal_id", "-"),
             "contract_id": getattr(record, "contract_id", "-"),
             "event_type": getattr(record, "event_type", first_word),
-            "strategy_version": "2.1.0-bin22001",
-            "model_version": "2.1.0-bin22001",
+            "strategy_version": "2.2.0-over2-rising-22001",
+            "model_version": "2.2.0-over2-rising-22001",
             "masked_account_id": getattr(record, "masked_account_id", "-"),
             "token_tag": getattr(record, "token_tag", "-"),
             "stake": getattr(record, "stake", "-"),
@@ -828,7 +835,8 @@ class TradingBot:
         )
         self.logger.info("RISING_POLICY_ACTIVE mode=strict_last_three_quotes")
         self.logger.info(
-            "APP_MARKUP_EXPECTED percentage=%.2f source=deriv_application_settings",
+            "APP_MARKUP_EXPECTED percentage=%.2f source=developer_dashboard "
+            "verification=settled_contract_and_markup_statistics",
             self.app_markup_percentage,
         )
 
@@ -857,7 +865,7 @@ class TradingBot:
         self.raw_tick_digits = deque(historical_digits, maxlen=10000)
 
         signal_cfg = self.test2_config.signal
-        self.signal_detector = Over3SignalDetector(
+        self.signal_detector = Over2SignalDetector(
             run_id=self.test2_config.model.run_id,
             trigger_name=signal_cfg.trigger_name,
             pattern_ranges=signal_cfg.pattern_ranges,
@@ -2089,6 +2097,7 @@ class TradingBot:
                     predicted_probability=preliminary.posterior_mean,
                     requested_monotonic=proposal_requested,
                     received_monotonic=proposal_received,
+                    app_markup_percentage=self.app_markup_percentage,
                 )
             except Exception as exc:
                 self.repository.mark_signal(
@@ -2121,6 +2130,7 @@ class TradingBot:
                         predicted_probability=preliminary.posterior_mean,
                         requested_monotonic=proposal_requested,
                         received_monotonic=proposal_received,
+                        app_markup_percentage=self.app_markup_percentage,
                     )
                 except Exception as exc:
                     self.repository.mark_signal(
@@ -2404,6 +2414,8 @@ class TradingBot:
                         account_id=str(account_id),
                         purchase_time=purchase_requested_at,
                         aligned_with_signal=True,
+                        buy_price=optional_float(tx.get("buy_price")),
+                        payout=optional_float(tx.get("payout")),
                     )
 
                     self.logger.info(
@@ -2582,6 +2594,8 @@ class TradingBot:
                     "account_id": account_id,
                     "contract_id": contract_id,
                     "transaction_id": transaction_id or contract_id,
+                    "buy_price": buy.get("buy_price"),
+                    "payout": buy.get("payout"),
                 }
             )
         return transactions
@@ -2832,6 +2846,10 @@ class TradingBot:
             return
 
         profit = float(contract.get("profit", 0.0))
+        buy_price = optional_float(contract.get("buy_price"))
+        payout = optional_float(contract.get("payout"))
+        app_markup_amount = optional_float(contract.get("app_markup_amount"))
+        commission = optional_float(contract.get("commission"))
         entry_value = contract.get("entry_tick", contract.get("entry_spot"))
         exit_value = contract.get("exit_tick", contract.get("exit_spot"))
         try:
@@ -2859,8 +2877,43 @@ class TradingBot:
             entry_tick=entry_tick,
             exit_tick=exit_tick,
             exit_digit=exit_digit,
+            buy_price=buy_price,
+            payout=payout,
+            app_markup_amount=app_markup_amount,
+            commission=commission,
         ):
             return
+
+        self.logger.info(
+            "CONTRACT_ECONOMICS account=%s buy_price=%s payout=%s profit=%.2f "
+            "app_markup_amount=%s commission=%s",
+            mask_account_id(account_id),
+            f"{buy_price:.2f}" if buy_price is not None else "unavailable",
+            f"{payout:.2f}" if payout is not None else "unavailable",
+            profit,
+            f"{app_markup_amount:.4f}" if app_markup_amount is not None else "unavailable",
+            f"{commission:.4f}" if commission is not None else "unavailable",
+            extra=extra,
+        )
+        if self.app_markup_percentage > 0 and not (app_markup_amount and app_markup_amount > 0):
+            self.logger.warning(
+                "APP_MARKUP_NOT_CONFIRMED account=%s contract_id=%s expected_percentage=%.2f "
+                "reported_app_markup_amount=%s; verify Registered Apps markup and "
+                "/control/markup-statistics",
+                mask_account_id(account_id),
+                contract_id,
+                self.app_markup_percentage,
+                "unavailable" if app_markup_amount is None else f"{app_markup_amount:.4f}",
+                extra=extra,
+            )
+        elif app_markup_amount is not None:
+            self.logger.info(
+                "APP_MARKUP_CONFIRMED account=%s contract_id=%s amount=%.4f",
+                mask_account_id(account_id),
+                contract_id,
+                app_markup_amount,
+                extra=extra,
+            )
 
         st["total_profit"] = float(st["total_profit"]) + profit
         st["profit_today"] = float(st["profit_today"]) + profit

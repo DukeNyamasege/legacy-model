@@ -22,8 +22,8 @@ from app.strategy.decision_engine import (
     ProposalEconomics,
     parse_proposal_economics,
 )
-from app.strategy.over3_strategy import validate_contract_parameters
-from app.strategy.signal_detector import Over3SignalDetector
+from app.strategy.over2_strategy import validate_contract_parameters
+from app.strategy.signal_detector import Over2SignalDetector
 
 os.environ.setdefault("COPYTRADING_ALLOW_LEGACY_GLOBAL_TOKENS", "true")
 
@@ -38,7 +38,10 @@ def tick(digit: int, sequence: int) -> dict:
     }
 
 
-def pattern_ticks(offset: int = 0, digits: tuple[int, ...] = (6, 1, 4)) -> list[dict]:
+def pattern_ticks(
+    offset: int = 0,
+    digits: tuple[int, ...] = (6, 8, 0, 2, 4),
+) -> list[dict]:
     return [
         tick(digit, offset + sequence)
         for sequence, digit in enumerate(digits, start=1)
@@ -57,38 +60,39 @@ def live_tick_payload(sequence: int, quote: float) -> dict:
 
 
 class SignalTests(unittest.TestCase):
-    def make_detector(self) -> Over3SignalDetector:
-        return Over3SignalDetector(
+    def make_detector(self) -> Over2SignalDetector:
+        return Over2SignalDetector(
             run_id="test2",
             overlapping_signals_allowed=False,
             require_pattern_reset=True,
         )
 
-    def test_bin_201_pattern_creates_over_candidate(self) -> None:
+    def test_bin_22001_pattern_creates_over2_candidate(self) -> None:
         valid_patterns = (
-            (6, 1, 3),
-            (9, 2, 5),
-            (7, 1, 4),
+            (6, 6, 0, 0, 3),
+            (9, 8, 2, 1, 5),
+            (7, 9, 1, 2, 4),
         )
         for digits in valid_patterns:
             detector = self.make_detector()
             signal = detector.observe(
                 pattern_ticks(digits=digits),
                 connection_session_id="connection-1",
-                tick_sequence=3,
+                tick_sequence=5,
             )
             self.assertIsNotNone(signal)
             self.assertEqual(signal.contract_type, "DIGITOVER")
             self.assertEqual(signal.barrier, "2")
-            self.assertEqual(signal.trigger_name, "BIN201x3")
+            self.assertEqual(signal.trigger_name, "BIN22001x5")
             self.assertEqual(signal.trigger_digits, digits)
 
     def test_near_miss_patterns_never_signal(self) -> None:
         invalid_patterns = (
-            (6, 0, 3),
-            (5, 1, 3),
-            (6, 3, 3),
-            (6, 1, 6),
+            (5, 8, 0, 2, 4),
+            (6, 5, 0, 2, 4),
+            (6, 8, 3, 2, 4),
+            (6, 8, 0, 3, 4),
+            (6, 8, 0, 2, 6),
         )
         for digits in invalid_patterns:
             detector = self.make_detector()
@@ -96,7 +100,7 @@ class SignalTests(unittest.TestCase):
                 detector.observe(
                     pattern_ticks(digits=digits),
                     connection_session_id="connection-1",
-                    tick_sequence=3,
+                    tick_sequence=5,
                 )
             )
 
@@ -105,29 +109,32 @@ class SignalTests(unittest.TestCase):
         history = pattern_ticks()
         self.assertIsNotNone(
             detector.observe(
-                history, connection_session_id="connection-1", tick_sequence=3
+                history, connection_session_id="connection-1", tick_sequence=5
             )
         )
         self.assertIsNone(
             detector.observe(
-                history, connection_session_id="connection-1", tick_sequence=3
+                history, connection_session_id="connection-1", tick_sequence=5
             )
         )
 
-        history.append(tick(7, 4))
+        history.append(tick(7, 6))
         self.assertIsNone(
             detector.observe(
-                history, connection_session_id="connection-1", tick_sequence=4
+                history, connection_session_id="connection-1", tick_sequence=6
             )
         )
-        for sequence, digit in enumerate((8, 1, 4), start=5):
+        for sequence, digit in enumerate((8, 9, 1, 2, 4), start=7):
             history.append(tick(digit, sequence))
             signal = detector.observe(
                 history,
                 connection_session_id="connection-1",
                 tick_sequence=sequence,
             )
-        self.assertEqual([int(item["last_digit"]) for item in history[-3:]], [8, 1, 4])
+        self.assertEqual(
+            [int(item["last_digit"]) for item in history[-5:]],
+            [8, 9, 1, 2, 4],
+        )
         self.assertIsNotNone(signal)
 
 
@@ -185,6 +192,30 @@ class ContractTests(unittest.TestCase):
         )
         self.assertAlmostEqual(economics.break_even_probability, 0.50 / 0.95)
 
+    def test_public_proposal_economics_reserve_expected_app_markup(self) -> None:
+        economics = parse_proposal_economics(
+            {
+                "proposal": {
+                    "id": "p-marked",
+                    "ask_price": "0.50",
+                    "payout": "0.69",
+                }
+            },
+            stake=0.50,
+            predicted_probability=0.85,
+            requested_monotonic=time.monotonic(),
+            received_monotonic=time.monotonic(),
+            app_markup_percentage=3.0,
+        )
+        expected_markup = 0.69 * 0.03
+        self.assertAlmostEqual(economics.payout, 0.69)
+        self.assertAlmostEqual(economics.potential_profit, 0.69 - 0.50 - expected_markup)
+        self.assertAlmostEqual(economics.potential_loss, 0.50 + expected_markup)
+        self.assertAlmostEqual(
+            economics.break_even_probability,
+            (0.50 + expected_markup) / 0.69,
+        )
+
     def test_security_scan_ignores_runtime_secret_store(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
@@ -203,7 +234,7 @@ class ContractTests(unittest.TestCase):
 
 class TimingAndModelTests(unittest.TestCase):
     def test_new_tick_makes_candidate_stale(self) -> None:
-        detector = Over3SignalDetector(
+        detector = Over2SignalDetector(
             run_id="test2",
             overlapping_signals_allowed=False,
             require_pattern_reset=True,
@@ -211,7 +242,7 @@ class TimingAndModelTests(unittest.TestCase):
         signal = detector.observe(
             pattern_ticks(),
             connection_session_id="connection-1",
-            tick_sequence=3,
+            tick_sequence=5,
         )
         bayesian_model = BayesianProbability(
             prior_alpha=3,
@@ -248,7 +279,7 @@ class TimingAndModelTests(unittest.TestCase):
             economics=economics,
             bayesian=bayesian,
             hmm=HmmInference(False, "NOT_READY", {}, 0),
-            current_tick_sequence=4,
+            current_tick_sequence=6,
             connection_session_id="connection-1",
             connection_healthy=True,
             pattern_reset_required=False,
@@ -265,6 +296,51 @@ class TimingAndModelTests(unittest.TestCase):
             ).snapshot(0.64, 0.02).posterior_mean,
             0,
         )
+
+    def test_calibrated_gate_accepts_positive_markup_adjusted_entry(self) -> None:
+        detector = Over2SignalDetector(run_id="test2")
+        signal = detector.observe(
+            pattern_ticks(),
+            connection_session_id="connection-1",
+            tick_sequence=5,
+        )
+        model = BayesianProbability(
+            prior_alpha=108,
+            prior_beta=19,
+            credible_interval=0.95,
+            minimum_completed_trades=0,
+        )
+        preliminary = model.snapshot(0.75, 0.02)
+        economics = parse_proposal_economics(
+            {"proposal": {"id": "p-gated", "ask_price": 0.50, "payout": 0.69}},
+            stake=0.50,
+            predicted_probability=preliminary.posterior_mean,
+            requested_monotonic=time.monotonic(),
+            received_monotonic=time.monotonic(),
+            app_markup_percentage=3.0,
+        )
+        bayesian = model.snapshot(economics.break_even_probability, 0.02)
+        decision = DecisionEngine(
+            reject_if_new_tick_arrives=False,
+            maximum_signal_age_ms=900,
+            maximum_proposal_age_ms=900,
+            bayesian_mode="gate",
+            bayesian_confidence_threshold=0.95,
+            hmm_mode="shadow",
+            favourable_state="MEAN_REVERSION",
+            favourable_state_threshold=0.70,
+        ).decide(
+            signal=signal,
+            economics=economics,
+            bayesian=bayesian,
+            hmm=HmmInference(False, "NOT_READY", {}, 0),
+            current_tick_sequence=5,
+            connection_session_id="connection-1",
+            connection_healthy=True,
+            pattern_reset_required=False,
+        )
+        self.assertEqual(decision.final_action, "PURCHASE")
+        self.assertGreater(decision.expected_value, 0)
 
     def test_adaptive_cooldown_has_no_hard_session_stop(self) -> None:
         cooldown = AdaptiveCooldown(
@@ -522,7 +598,7 @@ class PersistenceTests(unittest.TestCase):
         self.temp.cleanup()
 
     def test_signal_can_only_be_consumed_once(self) -> None:
-        detector = Over3SignalDetector(
+        detector = Over2SignalDetector(
             run_id="test2",
             overlapping_signals_allowed=False,
             require_pattern_reset=True,
@@ -530,7 +606,7 @@ class PersistenceTests(unittest.TestCase):
         signal = detector.observe(
             pattern_ticks(),
             connection_session_id="connection-1",
-            tick_sequence=3,
+            tick_sequence=5,
         )
         self.repository.record_candidate(signal)
         self.assertTrue(self.repository.consume_signal(signal.signal_id))
@@ -559,7 +635,7 @@ class PersistenceTests(unittest.TestCase):
     def test_deriv_may_reuse_proposal_id_for_identical_terms(self) -> None:
         signals = []
         for offset in (0, 10):
-            detector = Over3SignalDetector(
+            detector = Over2SignalDetector(
                 run_id="test2",
                 overlapping_signals_allowed=False,
                 require_pattern_reset=True,
@@ -567,7 +643,7 @@ class PersistenceTests(unittest.TestCase):
             signal = detector.observe(
                 pattern_ticks(offset=offset),
                 connection_session_id=f"connection-{offset}",
-                tick_sequence=3 + offset,
+                tick_sequence=5 + offset,
             )
             self.repository.record_candidate(signal)
             signals.append(signal)
@@ -595,7 +671,7 @@ class PersistenceTests(unittest.TestCase):
         self.assertEqual(count, 2)
 
     def test_settlement_is_atomic_and_idempotent(self) -> None:
-        detector = Over3SignalDetector(
+        detector = Over2SignalDetector(
             run_id="test2",
             overlapping_signals_allowed=False,
             require_pattern_reset=True,
@@ -603,7 +679,7 @@ class PersistenceTests(unittest.TestCase):
         signal = detector.observe(
             pattern_ticks(),
             connection_session_id="connection-1",
-            tick_sequence=3,
+            tick_sequence=5,
         )
         self.repository.record_candidate(signal)
         self.repository.consume_signal(signal.signal_id)
@@ -614,6 +690,18 @@ class PersistenceTests(unittest.TestCase):
             account_id="DOT90000001",
             purchase_time=datetime.now(timezone.utc),
             aligned_with_signal=True,
+            buy_price=0.50,
+            payout=0.67,
+        )
+        self.repository.register_purchase(
+            signal_id=signal.signal_id,
+            contract_id="12346",
+            transaction_id="67891",
+            account_id="DOT90000002",
+            purchase_time=datetime.now(timezone.utc),
+            aligned_with_signal=True,
+            buy_price=0.50,
+            payout=0.67,
         )
         self.assertTrue(
             self.repository.settle_trade(
@@ -623,6 +711,10 @@ class PersistenceTests(unittest.TestCase):
                 entry_tick=100.04,
                 exit_tick=100.08,
                 exit_digit=8,
+                buy_price=0.50,
+                payout=0.67,
+                app_markup_amount=0.02,
+                commission=0.02,
             )
         )
         self.assertFalse(
@@ -633,15 +725,46 @@ class PersistenceTests(unittest.TestCase):
                 entry_tick=100.04,
                 exit_tick=100.08,
                 exit_digit=8,
+                buy_price=0.50,
+                payout=0.67,
+                app_markup_amount=0.02,
+                commission=0.02,
+            )
+        )
+        self.assertTrue(
+            self.repository.settle_trade(
+                contract_id="12346",
+                profit=0.20,
+                outcome="win",
+                entry_tick=100.04,
+                exit_tick=100.08,
+                exit_digit=8,
+                buy_price=0.50,
+                payout=0.67,
+                app_markup_amount=0.02,
+                commission=0.02,
             )
         )
         summary = self.repository.summary()
-        self.assertEqual(summary["wins"], 1)
-        self.assertAlmostEqual(summary["net_profit"], 0.20)
+        self.assertEqual(summary["wins"], 2)
+        self.assertAlmostEqual(summary["net_profit"], 0.40)
+        self.assertEqual(self.repository.completed_outcomes(), (1, 0))
+
+        personal = self.repository.recent_trades(account_id="DOT90000001")
+        self.assertEqual(len(personal), 1)
+        self.assertEqual(personal[0]["contract_id"], "12345")
+        self.assertAlmostEqual(personal[0]["app_markup_amount"], 0.02)
+        self.assertEqual(
+            self.repository.recent_trades(account_id="DOT90000999"),
+            [],
+        )
+        markup = self.repository.markup_summary(account_id="DOT90000001")
+        self.assertEqual(markup["contract_count"], 1)
+        self.assertAlmostEqual(markup["app_markup_total"], 0.02)
 
 
 class BotSignalIntegrationTests(unittest.IsolatedAsyncioTestCase):
-    async def test_bot_schedules_only_the_exact_bin_201_pattern(self) -> None:
+    async def test_bot_schedules_only_the_exact_bin_22001_rising_pattern(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
             raw = yaml.safe_load(Path("config.yaml").read_text(encoding="utf-8"))
@@ -670,11 +793,15 @@ class BotSignalIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 coroutine.close()
 
             bot._spawn_background_task = capture_task
-            for sequence, quote in enumerate([100.08, 100.09, 100.03], start=1):
+            for sequence, quote in enumerate(
+                [100.01, 100.01, 100.01, 100.01, 100.01], start=1
+            ):
                 await bot._on_tick(live_tick_payload(sequence, quote))
             self.assertEqual(spawned, [])
 
-            for sequence, quote in enumerate([101.06, 102.01, 103.04], start=4):
+            for sequence, quote in enumerate(
+                [100.06, 100.08, 101.00, 102.02, 103.04], start=6
+            ):
                 await bot._on_tick(live_tick_payload(sequence, quote))
             self.assertEqual(len(spawned), 1)
             self.assertIn("purchase_", spawned[0])
@@ -711,21 +838,23 @@ class BotSignalIntegrationTests(unittest.IsolatedAsyncioTestCase):
                     consecutive_wins=0,
                     consecutive_losses=1,
                 )
-                bot.tick_sequence = 2
+                bot.tick_sequence = 4
                 bot.ticks_history.extend(
                     [
                         {"quote": 101.06, "display": "101.06", "last_digit": "6", "epoch": 1_700_000_001, "tick_id": "tick-1"},
-                        {"quote": 102.01, "display": "102.01", "last_digit": "1", "epoch": 1_700_000_002, "tick_id": "tick-2"},
+                        {"quote": 101.08, "display": "101.08", "last_digit": "8", "epoch": 1_700_000_002, "tick_id": "tick-2"},
+                        {"quote": 102.00, "display": "102.00", "last_digit": "0", "epoch": 1_700_000_003, "tick_id": "tick-3"},
+                        {"quote": 103.02, "display": "103.02", "last_digit": "2", "epoch": 1_700_000_004, "tick_id": "tick-4"},
                     ]
                 )
-                bot.raw_tick_digits.extend([6, 1])
+                bot.raw_tick_digits.extend([6, 8, 0, 2])
 
-                await bot._on_tick(live_tick_payload(3, 103.04))
+                await bot._on_tick(live_tick_payload(5, 104.04))
 
                 recent = bot.repository.recent_signals(1)
                 self.assertEqual(len(recent), 1)
                 self.assertEqual(recent[0]["final_status"], "SKIP_COOLDOWN")
-                self.assertEqual(recent[0]["trigger_digits"], [6, 1, 4])
+                self.assertEqual(recent[0]["trigger_digits"], [6, 8, 0, 2, 4])
             finally:
                 bot.database.engine.dispose()
                 for handler in list(bot.logger.handlers):
@@ -764,12 +893,14 @@ class BotSignalIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 bot._spawn_background_task = capture_task
                 bot.signal_detector.observe = lambda *args, **kwargs: None
 
-                for sequence, quote in enumerate([101.06, 102.01, 103.04], start=1):
+                for sequence, quote in enumerate(
+                    [100.06, 100.08, 101.00, 102.02, 103.04], start=1
+                ):
                     await bot._on_tick(live_tick_payload(sequence, quote))
 
                 self.assertEqual(len(spawned), 1)
                 recent = bot.repository.recent_signals(1)
-                self.assertEqual(recent[0]["trigger_digits"], [6, 1, 4])
+                self.assertEqual(recent[0]["trigger_digits"], [6, 8, 0, 2, 4])
             finally:
                 bot.database.engine.dispose()
                 for handler in list(bot.logger.handlers):
@@ -807,7 +938,9 @@ class BotSignalIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
                 bot._spawn_background_task = capture_task
 
-                for sequence, quote in enumerate([103.06, 102.01, 101.04], start=1):
+                for sequence, quote in enumerate(
+                    [105.06, 104.08, 103.00, 102.02, 101.04], start=1
+                ):
                     await bot._on_tick(live_tick_payload(sequence, quote))
 
                 self.assertEqual(spawned, [])

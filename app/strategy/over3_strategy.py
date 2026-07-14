@@ -1,38 +1,25 @@
-from __future__ import annotations
+"""Compatibility exports for the renamed Over-2 strategy module."""
 
-TEST2_SYMBOL = "1HZ100V"
-TEST2_CONTRACT_TYPE = "DIGITOVER"
-TEST2_BARRIER = "2"
-TEST2_STAKE = 0.50
-TEST2_DURATION = 1
-TEST2_DURATION_UNIT = "t"
-TEST2_TRIGGER = "BIN201x3"
-TEST2_PATTERN_RANGES = (
-    (6, 9),
-    (1, 2),
-    (3, 5),
+from app.strategy.over2_strategy import (
+    TEST2_BARRIER,
+    TEST2_CONTRACT_TYPE,
+    TEST2_DURATION,
+    TEST2_DURATION_UNIT,
+    TEST2_PATTERN_RANGES,
+    TEST2_STAKE,
+    TEST2_SYMBOL,
+    TEST2_TRIGGER,
+    validate_contract_parameters,
 )
 
-
-def validate_contract_parameters(
-    *,
-    contract_type: str,
-    barrier: str,
-    symbol: str,
-    stake: float,
-    duration: int,
-    duration_unit: str,
-) -> None:
-    if (
-        contract_type != TEST2_CONTRACT_TYPE
-        or str(barrier) != TEST2_BARRIER
-        or symbol != TEST2_SYMBOL
-        or int(duration) != TEST2_DURATION
-        or duration_unit != TEST2_DURATION_UNIT
-    ):
-        raise ValueError(
-            "Rejected non-Test-2 contract parameters: "
-            f"{(contract_type, str(barrier), symbol, int(duration), duration_unit)!r}"
-        )
-    if round(float(stake), 2) < TEST2_STAKE:
-        raise ValueError(f"Rejected stake below Test-2 base stake: {stake!r}")
+__all__ = [
+    "TEST2_BARRIER",
+    "TEST2_CONTRACT_TYPE",
+    "TEST2_DURATION",
+    "TEST2_DURATION_UNIT",
+    "TEST2_PATTERN_RANGES",
+    "TEST2_STAKE",
+    "TEST2_SYMBOL",
+    "TEST2_TRIGGER",
+    "validate_contract_parameters",
+]

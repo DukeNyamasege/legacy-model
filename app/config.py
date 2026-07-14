@@ -39,7 +39,7 @@ class StrategySettings(StrictModel):
     prediction: Literal[2] = 2
     duration: Literal[1] = 1
     duration_unit: Literal["t"] = "t"
-    pattern_length: Literal[3] = 3
+    pattern_length: Literal[5] = 5
     currency: Literal["USD"] = "USD"
     initial_stake: float = 0.50
 
@@ -51,10 +51,12 @@ class StrategySettings(StrictModel):
 
 
 class SignalSettings(StrictModel):
-    trigger_name: Literal["BIN201x3"] = "BIN201x3"
+    trigger_name: Literal["BIN22001x5"] = "BIN22001x5"
     pattern_ranges: tuple[tuple[int, int], ...] = (
         (6, 9),
-        (1, 2),
+        (6, 9),
+        (0, 2),
+        (0, 2),
         (3, 5),
     )
     overlapping_signals_allowed: bool = False
@@ -62,7 +64,7 @@ class SignalSettings(StrictModel):
 
     @model_validator(mode="after")
     def enforce_purchase_pattern(self) -> "SignalSettings":
-        required = ((6, 9), (1, 2), (3, 5))
+        required = ((6, 9), (6, 9), (0, 2), (0, 2), (3, 5))
         if self.pattern_ranges != required:
             raise ValueError(f"Purchase pattern must be exactly {required!r}")
         return self
@@ -77,12 +79,12 @@ class ExecutionSettings(StrictModel):
 
 class BayesianSettings(StrictModel):
     enabled: bool = True
-    mode: Literal["shadow", "gate"] = "shadow"
-    prior_alpha: float = Field(default=3.0, gt=0)
-    prior_beta: float = Field(default=2.0, gt=0)
+    mode: Literal["shadow", "gate"] = "gate"
+    prior_alpha: float = Field(default=108.0, gt=0)
+    prior_beta: float = Field(default=19.0, gt=0)
     credible_interval: float = Field(default=0.95, gt=0, lt=1)
     safety_margin_probability: float = Field(default=0.02, ge=0, lt=1)
-    minimum_completed_trades: int = Field(default=300, ge=1)
+    minimum_completed_trades: int = Field(default=0, ge=0)
     minimum_probability_edge_confidence: float = Field(default=0.95, gt=0, le=1)
 
 

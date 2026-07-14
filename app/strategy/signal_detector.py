@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Sequence
 
-from app.strategy.over3_strategy import TEST2_BARRIER, TEST2_PATTERN_RANGES, TEST2_TRIGGER
+from app.strategy.over2_strategy import TEST2_BARRIER, TEST2_PATTERN_RANGES, TEST2_TRIGGER
 
 
 @dataclass(slots=True)
@@ -33,7 +33,7 @@ class CandidateSignal:
         return value
 
 
-class Over3SignalDetector:
+class Over2SignalDetector:
     def __init__(
         self,
         *,
@@ -109,3 +109,7 @@ class Over3SignalDetector:
 
     def rearm(self) -> None:
         self.last_emitted_tick_id = None
+
+
+# Preserve imports used by older integrations while the deployment moves to Over-2 naming.
+Over3SignalDetector = Over2SignalDetector

@@ -1,21 +1,32 @@
-# The Underdog Legacy Model - Pattern 201
+# The Underdog Legacy Model - Rising Over 2
 
 Father of Automation Series.
 
-Pattern 201 is an Over-only Deriv digit strategy using the current APIs documented at
+The bot is an Over-2 Deriv digit strategy using the current APIs documented at
 <https://developers.deriv.com/docs/>:
 
-- Signal: the latest three completed digits match
-  `[6-9], [1-2], [3-5]` (`BIN201x3`); middle digit `0` is blocked.
-- Contract: `DIGITOVER`, barrier `4`, symbol `1HZ100V`.
+- Signal: the latest five completed digit bins match
+  `[6-9], [6-9], [0-2], [0-2], [3-5]` (`BIN22001x5`) and the latest
+  three quotes are strictly rising.
+- Contract: `DIGITOVER`, barrier `2`, symbol `1HZ100V`.
 - Base stake: `$0.50 USD`.
-- Recovery sizing: cumulative martingale recovery. Every loss is added to the
-  recovery pool, the next stake is calculated to recover the full pool in one
-  win, and any win resets the stake to `$0.50 USD`.
+- Recovery sizing: configured two-run recovery, capped by `maximum_stake`.
 - Duration: one tick.
-- HMM and Bayesian layers: shadow mode until deliberately changed.
+- Bayesian layer: active gate using a locked historical calibration and the
+  markup-adjusted break-even payout. HMM remains observation-only.
 - No session stop, drawdown stop, hourly cap, trade-count cap, open-contract cap,
   or consecutive-loss hard stop.
+
+The locked 60,000/40,000 chronological research split produced `51/58` wins in
+development and `56/67` on the untouched holdout. This is a small historical
+sample, not a profit guarantee; live outcomes update the Bayesian gate once per
+copy-trade signal rather than once per copied account.
+
+Deriv app markup is configured on the Registered App, not in proposal or
+bulk-purchase request bodies. `DERIV_APP_MARKUP_PERCENTAGE` is only the expected
+rate used for conservative calculations and verification. The worker records
+settled `app_markup_amount`, and administrators can compare it with Deriv using
+`GET /control/markup-statistics`.
 
 ## Local Run
 

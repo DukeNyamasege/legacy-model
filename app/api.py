@@ -259,6 +259,93 @@ def trading_ready_account_masks() -> set[str]:
     return {mask_account_id(account_id) for account_id in trading_ready_account_ids()}
 
 
+def master_account_context() -> tuple[object | None, dict, str]:
+    rows = REPOSITORY.list_managed_accounts()
+    configured = os.getenv("COPYTRADING_MASTER_ACCOUNT_ID", "").strip()
+    fallback: tuple[object | None, dict, str] = (None, {}, "")
+    for row in rows:
+        try:
+            payload = decrypt_auth_payload(row.token_secret, CONFIG.deriv.token_encryption_key)
+        except Exception:
+            continue
+        account_id = str(payload.get("account_id", "")).strip()
+        if not account_id:
+            continue
+        context = (row, payload, account_id)
+        if configured and account_id == configured:
+            return context
+        fallback_row = fallback[0]
+        if fallback_row is None or (
+            row.enabled and not bool(getattr(fallback_row, "enabled", False))
+        ):
+            fallback = context
+    return fallback
+
+
+def application_oauth_token() -> tuple[str, str]:
+    row, payload, _ = master_account_context()
+    if row is None:
+        raise HTTPException(status_code=409, detail="Master account is not configured")
+
+    is_pat = str(payload.get("auth_type", "")).strip().lower() == "pat"
+    prefix = "oauth_" if is_pat else ""
+    access_token = str(payload.get(f"{prefix}access_token", "")).strip()
+    refresh_token_value = str(payload.get(f"{prefix}refresh_token", "")).strip()
+    expires_at = str(payload.get(f"{prefix}expires_at", "")).strip()
+    scope = str(payload.get(f"{prefix}scope", "")).strip()
+    if not access_token:
+        raise HTTPException(
+            status_code=409,
+            detail="Master account OAuth application credential is unavailable",
+        )
+    if "application_read" not in set(scope.split()):
+        raise HTTPException(
+            status_code=409,
+            detail="Master OAuth credential requires the application_read scope",
+        )
+
+    if token_is_expiring({"expires_at": expires_at}):
+        if not refresh_token_value:
+            raise HTTPException(
+                status_code=409,
+                detail="Master OAuth application credential has expired",
+            )
+        try:
+            refreshed = refresh_access_token(
+                client_id=oauth_client_id(),
+                refresh_token=refresh_token_value,
+            )
+        except requests.RequestException as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Could not refresh the Deriv application credential: {exc}",
+            ) from exc
+        access_token = str(refreshed.get("access_token", "")).strip()
+        scope = str(refreshed.get("scope") or scope).strip()
+        if is_pat:
+            payload.update(
+                {
+                    "oauth_access_token": access_token,
+                    "oauth_refresh_token": str(
+                        refreshed.get("refresh_token") or refresh_token_value
+                    ).strip(),
+                    "oauth_expires_at": str(refreshed.get("expires_at", "")).strip(),
+                    "oauth_scope": scope,
+                }
+            )
+        else:
+            payload.update(refreshed)
+        REPOSITORY.update_managed_account(
+            int(row.id),
+            token_secret=encrypt_auth_payload(
+                payload,
+                CONFIG.deriv.token_encryption_key,
+            ),
+            enabled=bool(row.enabled),
+        )
+    return access_token, scope
+
+
 def filter_summary_to_trading_ready_accounts(summary: dict) -> dict:
     ready_masks = trading_ready_account_masks()
     filtered = dict(summary)
@@ -1091,8 +1178,25 @@ def metrics_summary() -> dict:
 
 
 @app.get("/metrics/recent-trades")
-def recent_trades(limit: int = 50) -> dict:
-    return {"trades": REPOSITORY.recent_trades(max(1, min(limit, 200)))}
+def recent_trades(request: Request, limit: int = 50) -> dict:
+    current = get_current_account(request)
+    if current:
+        account_id = str(current["account_id"])
+        viewer = "personal"
+    else:
+        _, _, account_id = master_account_context()
+        viewer = "master"
+    if not account_id:
+        return {"viewer": viewer, "account": "", "trades": [], "markup": {}}
+    return {
+        "viewer": viewer,
+        "account": mask_account_id(account_id),
+        "trades": REPOSITORY.recent_trades(
+            max(1, min(limit, 50)),
+            account_id=account_id,
+        ),
+        "markup": REPOSITORY.markup_summary(account_id=account_id),
+    }
 
 
 @app.get("/metrics/recent-signals")
@@ -1116,6 +1220,90 @@ def model_metrics() -> dict:
             "minimum_training_ticks": CONFIG.hmm.minimum_training_ticks,
             "ready": REPOSITORY.current_tick_sequence()
             >= CONFIG.hmm.minimum_training_ticks,
+        },
+    }
+
+
+@app.get("/control/markup-statistics")
+def markup_statistics(
+    date_from: str | None = None,
+    date_to: str | None = None,
+    _: str = Depends(require_control_auth),
+) -> dict:
+    today = datetime.now(timezone.utc).date()
+    try:
+        start = datetime.strptime(date_from, "%Y-%m-%d").date() if date_from else today
+        end = datetime.strptime(date_to, "%Y-%m-%d").date() if date_to else today
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Dates must use YYYY-MM-DD") from exc
+    if end < start or (end - start).days > 183:
+        raise HTTPException(status_code=400, detail="Date range must be 0 to 183 days")
+
+    access_token, _scope = application_oauth_token()
+    try:
+        response = requests.get(
+            f"{CONFIG.deriv.rest_base_url.rstrip('/')}/applications/v1/markup-statistics",
+            params={"date_from": start.isoformat(), "date_to": end.isoformat()},
+            headers={
+                "Deriv-App-ID": str(CONFIG.deriv.app_id),
+                "Authorization": f"Bearer {access_token}",
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        detail = exc.response.text[:700] if exc.response is not None else str(exc)
+        raise HTTPException(
+            status_code=502,
+            detail=f"Deriv markup-statistics request failed: {detail}",
+        ) from exc
+    except requests.RequestException as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Deriv markup-statistics request failed: {exc}",
+        ) from exc
+
+    try:
+        payload = response.json()
+    except requests.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Deriv markup-statistics returned invalid JSON",
+        ) from exc
+    data = payload.get("data", payload) if isinstance(payload, dict) else {}
+    breakdown = list(data.get("breakdown") or [])
+    app_row = next(
+        (
+            item
+            for item in breakdown
+            if str(item.get("app_id", "")).strip() == str(CONFIG.deriv.app_id)
+        ),
+        breakdown[0] if len(breakdown) == 1 else {},
+    )
+    app_markup_usd = float(app_row.get("app_markup_usd") or 0.0)
+    contract_count = int(
+        app_row.get("contract_count") or data.get("total_contract_count") or 0
+    )
+    if contract_count == 0:
+        collection_status = "no_contracts_in_period"
+    elif app_markup_usd > 0:
+        collection_status = "collecting"
+    else:
+        collection_status = "not_collecting"
+    return {
+        "source": "deriv_markup_statistics",
+        "date_from": start.isoformat(),
+        "date_to": end.isoformat(),
+        "app_id": str(CONFIG.deriv.app_id),
+        "expected_markup_percentage": float(CONFIG.deriv.app_markup_percentage),
+        "collection_status": collection_status,
+        "app": app_row,
+        "totals": {
+            "app_markup_usd": float(data.get("total_app_markup_usd") or 0.0),
+            "volume_usd": float(data.get("total_volume_usd") or 0.0),
+            "payout_usd": float(data.get("total_payout_usd") or 0.0),
+            "contract_count": int(data.get("total_contract_count") or 0),
+            "client_count": int(data.get("total_client_count") or 0),
         },
     }
 
