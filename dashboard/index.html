@@ -600,11 +600,13 @@
             <th>Exit</th>
             <th>Opened</th>
             <th>Settled</th>
-            <th>Age</th>
+            <th>Duration</th>
+            <th>Lifecycle</th>
+            <th>2s SLA</th>
           </tr>
         </thead>
         <tbody id="contracts-body">
-          <tr><td colspan="13"><div class="empty">No contracts yet.</div></td></tr>
+          <tr><td colspan="15"><div class="empty">No contracts yet.</div></td></tr>
         </tbody>
       </table>
     </div>
@@ -716,16 +718,19 @@
     if (count) {
       const label = viewer === "personal" ? "Personal" : "Master";
       const totalMarkup = Number(markup.app_markup_total || 0);
-      count.innerHTML = `<strong>${label} ${escapeHtml(account || "")}</strong>${number(rows.length)} shown | markup ${number(totalMarkup, 4)}`;
+      const markupStatus = String(markup.status || "AWAITING_CONTRACT").replaceAll("_", " ");
+      count.innerHTML = `<strong>${label} ${escapeHtml(account || "")}</strong>${number(rows.length)} shown | markup ${number(totalMarkup, 4)} | ${escapeHtml(markupStatus)}`;
     }
     if (!rows.length) {
-      body.innerHTML = '<tr><td colspan="13"><div class="empty">No contracts yet.</div></td></tr>';
+      body.innerHTML = '<tr><td colspan="15"><div class="empty">No contracts yet.</div></td></tr>';
       return;
     }
     body.innerHTML = rows.map(trade => {
       const status = formatContractStatus(trade.outcome);
       const profit = Number(trade.profit || 0);
       const isOpen = !trade.settlement_time;
+      const lifecycle = Number(trade.lifecycle_seconds ?? trade.age_seconds ?? 0);
+      const slaStatus = String(trade.settlement_sla_status || (isOpen ? "OPEN" : "UNKNOWN"));
       return `
         <tr>
           <td class="contract-id">${escapeHtml(trade.contract_id || "-")}</td>
@@ -746,7 +751,9 @@
           </td>
           <td>${formatDateTime(trade.purchase_time)}</td>
           <td>${formatDateTime(trade.settlement_time)}</td>
-          <td>${number(trade.age_seconds || 0)}s</td>
+          <td>${escapeHtml(trade.duration_label || "1 tick")}</td>
+          <td>${number(lifecycle, 3)}s</td>
+          <td class="${slaStatus === "LATE" ? "negative" : slaStatus === "MET" ? "positive" : ""}">${escapeHtml(slaStatus)}</td>
         </tr>
       `;
     }).join("");

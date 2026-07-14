@@ -22,11 +22,20 @@ development and `56/67` on the untouched holdout. This is a small historical
 sample, not a profit guarantee; live outcomes update the Bayesian gate once per
 copy-trade signal rather than once per copied account.
 
-Deriv app markup is configured on the Registered App, not in proposal or
-bulk-purchase request bodies. `DERIV_APP_MARKUP_PERCENTAGE` is only the expected
-rate used for conservative calculations and verification. The worker records
-settled `app_markup_amount`, and administrators can compare it with Deriv using
-`GET /control/markup-statistics`.
+Deriv app markup must be configured on the Registered App. Public proposal and
+REST bulk-purchase contract parameters do not accept a markup field; bulk
+purchases are attributed through the `Deriv-App-ID` header. Authenticated direct
+buys additionally send the documented `parameters.app_markup_percentage` field.
+`DERIV_APP_MARKUP_PERCENTAGE` is used for that direct-buy request, conservative
+economics, and verification. The worker records settled `app_markup_amount`, and
+administrators can compare it with Deriv using `GET /control/markup-statistics`.
+Paid markup revenue requires the application owner to satisfy Deriv's real-account
+eligibility requirements; demo trading is for integration testing.
+
+Contract duration and reporting latency are deliberately separate. The contract
+is always `1 tick`; the operational settlement SLA is 2 seconds. The worker starts
+reconciliation at 2 seconds, while the dashboard reports the truthful lifecycle
+and flags late delivery instead of changing every row to a fabricated duration.
 
 ## Local Run
 

@@ -216,6 +216,40 @@ class ContractTests(unittest.TestCase):
             (0.50 + expected_markup) / 0.69,
         )
 
+    def test_direct_buy_places_markup_only_in_documented_parameters(self) -> None:
+        signal = Over2SignalDetector(run_id="test2").observe(
+            pattern_ticks(),
+            connection_session_id="connection-1",
+            tick_sequence=5,
+        )
+        economics = ProposalEconomics(
+            proposal_id="public-proposal",
+            stake=0.50,
+            payout=0.69,
+            potential_profit=0.1693,
+            potential_loss=0.5207,
+            break_even_probability=0.5207 / 0.69,
+            predicted_win_probability=0.85,
+            expected_value=0.06,
+            expected_return_on_stake=0.12,
+            requested_monotonic=time.monotonic(),
+            received_monotonic=time.monotonic(),
+        )
+        bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
+        bot.currency = "USD"
+        bot.duration = 1
+        bot.duration_unit = "t"
+        bot.app_markup_percentage = 3.0
+
+        request = bot._direct_buy_request(signal, 0.50, economics)
+
+        self.assertEqual(request["buy"], "1")
+        self.assertEqual(request["price"], 0.53)
+        self.assertNotIn("app_markup_percentage", request)
+        self.assertEqual(request["parameters"]["app_markup_percentage"], 3.0)
+        self.assertEqual(request["parameters"]["duration"], 1)
+        self.assertEqual(request["parameters"]["duration_unit"], "t")
+
     def test_security_scan_ignores_runtime_secret_store(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
@@ -683,6 +717,11 @@ class PersistenceTests(unittest.TestCase):
         )
         self.repository.record_candidate(signal)
         self.repository.consume_signal(signal.signal_id)
+        provider_purchase_time = datetime.now(timezone.utc)
+        provider_settlement_time = datetime.fromtimestamp(
+            provider_purchase_time.timestamp() + 1,
+            timezone.utc,
+        )
         self.repository.register_purchase(
             signal_id=signal.signal_id,
             contract_id="12345",
@@ -692,6 +731,10 @@ class PersistenceTests(unittest.TestCase):
             aligned_with_signal=True,
             buy_price=0.50,
             payout=0.67,
+            provider_purchase_time=provider_purchase_time,
+            provider_start_time=provider_purchase_time,
+            contract_duration=1,
+            contract_duration_unit="t",
         )
         self.repository.register_purchase(
             signal_id=signal.signal_id,
@@ -715,6 +758,10 @@ class PersistenceTests(unittest.TestCase):
                 payout=0.67,
                 app_markup_amount=0.02,
                 commission=0.02,
+                provider_purchase_time=provider_purchase_time,
+                provider_start_time=provider_purchase_time,
+                provider_expiry_time=provider_settlement_time,
+                provider_settlement_time=provider_settlement_time,
             )
         )
         self.assertFalse(
@@ -754,12 +801,19 @@ class PersistenceTests(unittest.TestCase):
         self.assertEqual(len(personal), 1)
         self.assertEqual(personal[0]["contract_id"], "12345")
         self.assertAlmostEqual(personal[0]["app_markup_amount"], 0.02)
+        self.assertEqual(personal[0]["duration_label"], "1 tick")
+        self.assertEqual(personal[0]["provider_lifecycle_seconds"], 1.0)
+        self.assertEqual(personal[0]["settlement_sla_seconds"], 2.0)
+        self.assertEqual(personal[0]["settlement_sla_status"], "MET")
         self.assertEqual(
             self.repository.recent_trades(account_id="DOT90000999"),
             [],
         )
         markup = self.repository.markup_summary(account_id="DOT90000001")
         self.assertEqual(markup["contract_count"], 1)
+        self.assertEqual(markup["confirmed_contract_count"], 1)
+        self.assertEqual(markup["unconfirmed_contract_count"], 0)
+        self.assertEqual(markup["status"], "CONFIRMED")
         self.assertAlmostEqual(markup["app_markup_total"], 0.02)
 
 

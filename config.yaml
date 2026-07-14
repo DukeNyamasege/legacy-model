@@ -88,6 +88,9 @@ storage:
   export_directory: exports/bin22001
   database_required: true
 trade:
-  settle_wait_seconds: 3
+  settlement_sla_seconds: 2.0
+  settle_wait_seconds: 2
   max_tick_silence_seconds: 45
   reconnect_delay_seconds: 10
+  max_open_trade_seconds: 6
+  reconciliation_poll_seconds: 1

@@ -156,11 +156,14 @@ class LoggingSettings(StrictModel):
 
 
 class TradeSettings(StrictModel):
-    settle_wait_seconds: int = 3
+    # One-tick contracts are provider-timed. This is the operational target for
+    # receiving their final status, not a promise about market tick timing.
+    settlement_sla_seconds: float = Field(default=2.0, gt=0)
+    settle_wait_seconds: int = 2
     max_tick_silence_seconds: int = 45
     reconnect_delay_seconds: int = 10
     max_open_trade_seconds: int = 6
-    reconciliation_poll_seconds: int = 2
+    reconciliation_poll_seconds: int = 1
 
 
 class Test2Config(StrictModel):

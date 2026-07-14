@@ -472,6 +472,10 @@ class Test2Repository:
         aligned_with_signal: bool,
         buy_price: float | None = None,
         payout: float | None = None,
+        provider_purchase_time: datetime | None = None,
+        provider_start_time: datetime | None = None,
+        contract_duration: int = 1,
+        contract_duration_unit: str = "t",
     ) -> None:
         with self.database.session() as session:
             session.add(
@@ -481,6 +485,10 @@ class Test2Repository:
                     contract_id=contract_id,
                     account_id_masked=mask_account_id(account_id),
                     purchase_time=purchase_time,
+                    provider_purchase_time=provider_purchase_time,
+                    provider_start_time=provider_start_time,
+                    contract_duration=int(contract_duration),
+                    contract_duration_unit=str(contract_duration_unit),
                     buy_price=buy_price,
                     payout=payout,
                     aligned_with_signal=aligned_with_signal,
@@ -501,6 +509,10 @@ class Test2Repository:
         payout: float | None = None,
         app_markup_amount: float | None = None,
         commission: float | None = None,
+        provider_purchase_time: datetime | None = None,
+        provider_start_time: datetime | None = None,
+        provider_expiry_time: datetime | None = None,
+        provider_settlement_time: datetime | None = None,
     ) -> bool:
         with self.database.session() as session:
             trade = session.scalar(
@@ -528,6 +540,14 @@ class Test2Repository:
                 state.consecutive_wins = 0
             state.last_heartbeat = utc_now()
             trade.settlement_time = utc_now()
+            if provider_purchase_time is not None:
+                trade.provider_purchase_time = provider_purchase_time
+            if provider_start_time is not None:
+                trade.provider_start_time = provider_start_time
+            if provider_expiry_time is not None:
+                trade.provider_expiry_time = provider_expiry_time
+            if provider_settlement_time is not None:
+                trade.provider_settlement_time = provider_settlement_time
             trade.profit = profit
             trade.outcome = outcome.upper()
             trade.entry_tick = entry_tick
@@ -901,14 +921,67 @@ class Test2Repository:
                 .order_by(Trade.purchase_time.desc())
                 .limit(limit)
             ).all()
-            return [
-                {
+            settlement_sla = float(self.config.trade.settlement_sla_seconds)
+            results: list[dict[str, Any]] = []
+            for trade in trades:
+                lifecycle_seconds = max(
+                    0.0,
+                    ((trade.settlement_time or utc_now()) - trade.purchase_time).total_seconds(),
+                )
+                provider_lifecycle_seconds = None
+                if trade.provider_purchase_time and trade.provider_settlement_time:
+                    provider_lifecycle_seconds = max(
+                        0.0,
+                        (
+                            trade.provider_settlement_time
+                            - trade.provider_purchase_time
+                        ).total_seconds(),
+                    )
+                settlement_delivery_seconds = None
+                if trade.settlement_time and trade.provider_settlement_time:
+                    settlement_delivery_seconds = max(
+                        0.0,
+                        (
+                            trade.settlement_time - trade.provider_settlement_time
+                        ).total_seconds(),
+                    )
+                duration_value = max(1, int(trade.contract_duration or 1))
+                duration_unit = str(trade.contract_duration_unit or "t")
+                duration_label = (
+                    f"{duration_value} tick{'s' if duration_value != 1 else ''}"
+                    if duration_unit == "t"
+                    else f"{duration_value}{duration_unit}"
+                )
+                results.append({
                     "contract_id": trade.contract_id,
                     "account": trade.account_id_masked,
                     "purchase_time": trade.purchase_time.isoformat(),
                     "settlement_time": (
                         trade.settlement_time.isoformat() if trade.settlement_time else None
                     ),
+                    "provider_purchase_time": (
+                        trade.provider_purchase_time.isoformat()
+                        if trade.provider_purchase_time
+                        else None
+                    ),
+                    "provider_start_time": (
+                        trade.provider_start_time.isoformat()
+                        if trade.provider_start_time
+                        else None
+                    ),
+                    "provider_expiry_time": (
+                        trade.provider_expiry_time.isoformat()
+                        if trade.provider_expiry_time
+                        else None
+                    ),
+                    "provider_settlement_time": (
+                        trade.provider_settlement_time.isoformat()
+                        if trade.provider_settlement_time
+                        else None
+                    ),
+                    "contract_duration": duration_value,
+                    "contract_duration_unit": duration_unit,
+                    "duration_label": duration_label,
                     "outcome": trade.outcome,
                     "profit": trade.profit,
                     "buy_price": trade.buy_price,
@@ -927,18 +1000,31 @@ class Test2Repository:
                             else "Awaiting settlement"
                         )
                     ),
-                    "age_seconds": max(
-                        0,
-                        int(
-                            (
-                                (trade.settlement_time or utc_now()) - trade.purchase_time
-                            ).total_seconds()
-                        ),
+                    # Retain age_seconds for API compatibility, but no longer
+                    # truncate it or present it as contractual duration.
+                    "age_seconds": round(lifecycle_seconds, 3),
+                    "lifecycle_seconds": round(lifecycle_seconds, 3),
+                    "provider_lifecycle_seconds": (
+                        round(provider_lifecycle_seconds, 3)
+                        if provider_lifecycle_seconds is not None
+                        else None
+                    ),
+                    "settlement_delivery_seconds": (
+                        round(settlement_delivery_seconds, 3)
+                        if settlement_delivery_seconds is not None
+                        else None
+                    ),
+                    "settlement_sla_seconds": settlement_sla,
+                    "settlement_sla_status": (
+                        "OPEN"
+                        if trade.settlement_time is None
+                        else "MET"
+                        if lifecycle_seconds <= settlement_sla
+                        else "LATE"
                     ),
                     "aligned_with_signal": trade.aligned_with_signal,
-                }
-                for trade in trades
-            ]
+                })
+            return results
 
     def markup_summary(self, *, account_id: str) -> dict[str, Any]:
         account_masked = mask_account_id(account_id)
@@ -946,6 +1032,12 @@ class Test2Repository:
             row = session.execute(
                 select(
                     func.count().label("contract_count"),
+                    func.sum(
+                        case(
+                            (Trade.app_markup_amount > 0, 1),
+                            else_=0,
+                        )
+                    ).label("confirmed_contract_count"),
                     func.sum(Trade.app_markup_amount).label("app_markup_total"),
                     func.sum(Trade.commission).label("commission_total"),
                 ).where(
@@ -954,9 +1046,23 @@ class Test2Repository:
                     self._current_run_trade_filter(),
                 )
             ).one()
+        contract_count = int(row.contract_count or 0)
+        confirmed_contract_count = int(row.confirmed_contract_count or 0)
+        if contract_count == 0:
+            status = "AWAITING_CONTRACT"
+        elif confirmed_contract_count == contract_count:
+            status = "CONFIRMED"
+        elif confirmed_contract_count > 0:
+            status = "PARTIAL"
+        else:
+            status = "NOT_CONFIRMED"
         return {
             "account": account_masked,
-            "contract_count": int(row.contract_count or 0),
+            "contract_count": contract_count,
+            "confirmed_contract_count": confirmed_contract_count,
+            "unconfirmed_contract_count": contract_count - confirmed_contract_count,
+            "status": status,
+            "expected_percentage": float(self.config.deriv.app_markup_percentage),
             "app_markup_total": float(row.app_markup_total or 0.0),
             "commission_total": float(row.commission_total or 0.0),
         }

@@ -238,6 +238,19 @@ def optional_float(value: Any) -> Optional[float]:
         return None
 
 
+def optional_epoch_datetime(value: Any) -> Optional[datetime]:
+    try:
+        epoch = float(value)
+    except (TypeError, ValueError):
+        return None
+    if epoch <= 0:
+        return None
+    try:
+        return datetime.fromtimestamp(epoch, timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
 async def _rest_request(
     method: str,
     path: str,
@@ -813,7 +826,11 @@ class TradingBot:
         self.pattern_length = int(self.cfg["strategy"].get("pattern_length", 3))
         self.max_tick_silence_seconds = max(5, int(self.cfg["trade"].get("max_tick_silence_seconds", 45)))
         self.reconnect_delay_seconds = max(1, int(self.cfg["trade"].get("reconnect_delay_seconds", 10)))
-        self.settle_wait_seconds = max(1, int(self.cfg["trade"].get("settle_wait_seconds", 3)))
+        self.settle_wait_seconds = max(1, int(self.cfg["trade"].get("settle_wait_seconds", 2)))
+        self.settlement_sla_seconds = max(
+            0.1,
+            float(self.cfg["trade"].get("settlement_sla_seconds", 2.0)),
+        )
         self.max_open_trade_seconds = max(2, int(self.cfg["trade"].get("max_open_trade_seconds", 6)))
         self.reconciliation_poll_seconds = max(1, int(self.cfg["trade"].get("reconciliation_poll_seconds", 2)))
         self.watchdog_poll_interval_seconds = 5.0
@@ -835,10 +852,23 @@ class TradingBot:
         )
         self.logger.info("RISING_POLICY_ACTIVE mode=strict_last_three_quotes")
         self.logger.info(
-            "APP_MARKUP_EXPECTED percentage=%.2f source=developer_dashboard "
+            "CONTRACT_TIMING_STANDARD duration=1_tick settlement_sla_seconds=%.1f "
+            "reconciliation_after_seconds=%s",
+            self.settlement_sla_seconds,
+            self.settle_wait_seconds,
+        )
+        self.logger.info(
+            "APP_MARKUP_EXPECTED percentage=%.2f source=registered_app_or_direct_buy "
             "verification=settled_contract_and_markup_statistics",
             self.app_markup_percentage,
         )
+        if self.environment == "demo" and self.app_markup_percentage > 0:
+            self.logger.warning(
+                "APP_MARKUP_DEMO_MODE percentage=%.2f; demo contracts can validate "
+                "integration fields, but paid markup revenue requires Deriv real-account "
+                "eligibility.",
+                self.app_markup_percentage,
+            )
 
         self.database = Database(self.test2_config.database_url)
         self.database.create_schema()
@@ -2416,6 +2446,14 @@ class TradingBot:
                         aligned_with_signal=True,
                         buy_price=optional_float(tx.get("buy_price")),
                         payout=optional_float(tx.get("payout")),
+                        provider_purchase_time=optional_epoch_datetime(
+                            tx.get("purchase_time")
+                        ),
+                        provider_start_time=optional_epoch_datetime(
+                            tx.get("start_time")
+                        ),
+                        contract_duration=self.duration,
+                        contract_duration_unit=self.duration_unit,
                     )
 
                     self.logger.info(
@@ -2516,47 +2554,7 @@ class TradingBot:
                 continue
 
             response = await session.send_request(
-                self._proposal_request(signal, stake_amount)
-            )
-            if "error" in response:
-                message = response["error"].get("message", "Unknown proposal error")
-                self.logger.error(
-                    "Private proposal failed for account %s: %s",
-                    mask_account_id(account_id),
-                    message,
-                    extra=extra,
-                )
-                transactions.append(
-                    {"account_id": account_id, "error": {"message": message}}
-                )
-                continue
-
-            try:
-                private_economics = parse_proposal_economics(
-                    response,
-                    stake=stake_amount,
-                    predicted_probability=economics.predicted_win_probability,
-                    requested_monotonic=time.monotonic(),
-                    received_monotonic=time.monotonic(),
-                )
-            except Exception as exc:
-                message = str(exc)
-                self.logger.error(
-                    "Private proposal failed for account %s: %s",
-                    mask_account_id(account_id),
-                    message,
-                    extra=extra,
-                )
-                transactions.append(
-                    {"account_id": account_id, "error": {"message": message}}
-                )
-                continue
-
-            response = await session.send_request(
-                {
-                    "buy": private_economics.proposal_id,
-                    "price": stake_amount,
-                }
+                self._direct_buy_request(signal, stake_amount, economics)
             )
             if "error" in response:
                 message = response["error"].get("message", "Unknown buy error")
@@ -2596,6 +2594,8 @@ class TradingBot:
                     "transaction_id": transaction_id or contract_id,
                     "buy_price": buy.get("buy_price"),
                     "payout": buy.get("payout"),
+                    "purchase_time": buy.get("purchase_time"),
+                    "start_time": buy.get("start_time"),
                 }
             )
         return transactions
@@ -2623,6 +2623,39 @@ class TradingBot:
             symbol_key="underlying_symbol",
         ) | {
             "proposal": 1,
+        }
+
+    def _direct_buy_request(
+        self,
+        signal: CandidateSignal,
+        stake_amount: float,
+        economics: Any,
+    ) -> Dict[str, Any]:
+        parameters = self._contract_parameters(
+            signal,
+            stake_amount,
+            symbol_key="underlying_symbol",
+        )
+        if self.app_markup_percentage > 0:
+            parameters["app_markup_percentage"] = round(
+                self.app_markup_percentage,
+                2,
+            )
+        expected_markup = max(
+            0.0,
+            float(economics.payout)
+            * max(0.0, self.app_markup_percentage)
+            / 100.0,
+        )
+        # price is a ceiling, not the requested stake. Round upward so a
+        # fractional-cent payout-based markup cannot reject a valid buy.
+        maximum_price = math.ceil(
+            (float(stake_amount) + expected_markup) * 100.0 - 1e-9
+        ) / 100.0
+        return {
+            "buy": "1",
+            "price": maximum_price,
+            "parameters": parameters,
         }
 
     def _contract_parameters(
@@ -2850,6 +2883,16 @@ class TradingBot:
         payout = optional_float(contract.get("payout"))
         app_markup_amount = optional_float(contract.get("app_markup_amount"))
         commission = optional_float(contract.get("commission"))
+        provider_purchase_time = optional_epoch_datetime(contract.get("purchase_time"))
+        provider_start_time = optional_epoch_datetime(
+            contract.get("date_start") or contract.get("start_time")
+        )
+        provider_expiry_time = optional_epoch_datetime(contract.get("date_expiry"))
+        provider_settlement_time = optional_epoch_datetime(
+            contract.get("sell_time")
+            or contract.get("exit_spot_time")
+            or contract.get("date_expiry")
+        )
         entry_value = contract.get("entry_tick", contract.get("entry_spot"))
         exit_value = contract.get("exit_tick", contract.get("exit_spot"))
         try:
@@ -2881,6 +2924,10 @@ class TradingBot:
             payout=payout,
             app_markup_amount=app_markup_amount,
             commission=commission,
+            provider_purchase_time=provider_purchase_time,
+            provider_start_time=provider_start_time,
+            provider_expiry_time=provider_expiry_time,
+            provider_settlement_time=provider_settlement_time,
         ):
             return
 
@@ -2893,6 +2940,29 @@ class TradingBot:
             profit,
             f"{app_markup_amount:.4f}" if app_markup_amount is not None else "unavailable",
             f"{commission:.4f}" if commission is not None else "unavailable",
+            extra=extra,
+        )
+        lifecycle_seconds = self._contract_age_seconds(contract_id)
+        provider_lifecycle_seconds = None
+        if provider_purchase_time and provider_settlement_time:
+            provider_lifecycle_seconds = max(
+                0.0,
+                (provider_settlement_time - provider_purchase_time).total_seconds(),
+            )
+        self.logger.info(
+            "CONTRACT_TIMING account=%s contract_id=%s duration=1_tick "
+            "lifecycle_seconds=%.3f provider_lifecycle_seconds=%s sla_seconds=%.1f "
+            "sla_status=%s",
+            mask_account_id(account_id),
+            contract_id,
+            lifecycle_seconds,
+            (
+                f"{provider_lifecycle_seconds:.3f}"
+                if provider_lifecycle_seconds is not None
+                else "unavailable"
+            ),
+            self.settlement_sla_seconds,
+            "MET" if lifecycle_seconds <= self.settlement_sla_seconds else "LATE",
             extra=extra,
         )
         if self.app_markup_percentage > 0 and not (app_markup_amount and app_markup_amount > 0):
