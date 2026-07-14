@@ -238,6 +238,63 @@ def has_trading_api_token(payload: dict) -> bool:
     return bool(trading_api_token_from_payload(payload))
 
 
+def trading_ready_account_ids() -> set[str]:
+    account_ids: set[str] = set()
+    for row in REPOSITORY.list_managed_accounts():
+        if not row.enabled:
+            continue
+        try:
+            payload = decrypt_auth_payload(row.token_secret, CONFIG.deriv.token_encryption_key)
+        except Exception:
+            continue
+        if not has_trading_api_token(payload):
+            continue
+        account_id = str(payload.get("account_id", "")).strip()
+        if account_id:
+            account_ids.add(account_id)
+    return account_ids
+
+
+def trading_ready_account_masks() -> set[str]:
+    return {mask_account_id(account_id) for account_id in trading_ready_account_ids()}
+
+
+def filter_summary_to_trading_ready_accounts(summary: dict) -> dict:
+    ready_masks = trading_ready_account_masks()
+    filtered = dict(summary)
+    accounts = [
+        account
+        for account in list(summary.get("accounts") or [])
+        if str(account.get("account", "")).strip() in ready_masks
+    ]
+    filtered["accounts"] = accounts
+    filtered["total_traders"] = len(ready_masks)
+    filtered["account_balance_total"] = sum(
+        float(account.get("balance") or 0.0) for account in accounts
+    )
+
+    primary = None
+    current_primary = str(summary.get("primary_account", "")).strip()
+    if current_primary:
+        primary = next(
+            (account for account in accounts if account.get("account") == current_primary),
+            None,
+        )
+    if primary is None:
+        primary = accounts[0] if accounts else None
+
+    if primary:
+        filtered["primary_account"] = primary.get("account", "")
+        filtered["primary_account_balance"] = float(primary.get("balance") or 0.0)
+        filtered["primary_account_currency"] = primary.get("currency", "USD")
+    else:
+        filtered["primary_account"] = ""
+        filtered["primary_account_balance"] = 0.0
+        filtered["primary_account_currency"] = "USD"
+
+    return filtered
+
+
 def merge_oauth_payload(existing: dict, oauth_payload: dict, account_id: str) -> dict:
     merged = dict(oauth_payload)
     merged["account_id"] = account_id
@@ -349,10 +406,14 @@ def refresh_global_account_snapshots(*, force: bool = False) -> list[dict]:
         except (TypeError, ValueError):
             return
 
-    for token in global_runtime_tokens():
-        refresh_from_token(token)
+    managed_accounts = REPOSITORY.list_managed_accounts()
+    if not managed_accounts:
+        for token in global_runtime_tokens():
+            refresh_from_token(token)
 
-    for row in REPOSITORY.list_managed_accounts():
+    for row in managed_accounts:
+        if not row.enabled:
+            continue
         try:
             payload = decrypt_auth_payload(row.token_secret, CONFIG.deriv.token_encryption_key)
         except Exception:
@@ -377,7 +438,7 @@ def refresh_global_account_snapshots(*, force: bool = False) -> list[dict]:
                     )
                 except Exception:
                     pass
-        token = str(payload.get("access_token", "")).strip()
+        token = trading_api_token_from_payload(payload)
         if token:
             refresh_from_token(
                 token,
@@ -1006,7 +1067,7 @@ def metrics_summary() -> dict:
     else:
         if refresh_global_account_snapshots():
             summary = REPOSITORY.summary()
-    return summary
+    return filter_summary_to_trading_ready_accounts(summary)
 
 
 @app.get("/metrics/recent-trades")
@@ -1102,11 +1163,12 @@ def settings_accounts() -> dict:
         try:
             payload = decrypt_auth_payload(row.token_secret, CONFIG.deriv.token_encryption_key)
             auth_type = str(payload.get("auth_type", "pat")).strip() or "pat"
+            token_ready = has_trading_api_token(payload)
             account_id = str(payload.get("account_id", "")).strip()
             if len(account_id) > 6:
                 account_id_masked = f"{account_id[:3]}***{account_id[-3:]}"
         except Exception:
-            pass
+            token_ready = False
         accounts.append(
             {
                 "id": row.id,
@@ -1114,6 +1176,8 @@ def settings_accounts() -> dict:
                 "enabled": row.enabled,
                 "token_masked": "Stored securely",
                 "auth_type": auth_type,
+                "has_trading_api_token": token_ready,
+                "can_receive_trades": bool(row.enabled and token_ready),
                 "account_id_masked": account_id_masked,
                 "created_at": row.created_at.isoformat(),
                 "updated_at": row.updated_at.isoformat(),

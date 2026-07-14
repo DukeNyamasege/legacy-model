@@ -24,7 +24,7 @@ logging:
 strategy:
   symbol: 1HZ100V
   contract_type: DIGITOVER
-  prediction: 4
+  prediction: 2
   duration: 1
   duration_unit: t
   pattern_length: 3
@@ -66,7 +66,8 @@ cooldown:
   after_five_consecutive_losses_ticks: 50
   require_pattern_reset: true
 recovery:
-  mode: single_step
+  mode: two_run
+  recovery_runs: 2
   debt_threshold: 0.50
   deep_debt_threshold: 2.00
   ladder_stakes: [0.50]

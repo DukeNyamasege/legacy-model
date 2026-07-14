@@ -35,7 +35,7 @@ class DerivSettings(StrictModel):
 class StrategySettings(StrictModel):
     symbol: Literal["1HZ100V"] = "1HZ100V"
     contract_type: Literal["DIGITOVER"] = "DIGITOVER"
-    prediction: Literal[4] = 4
+    prediction: Literal[2] = 2
     duration: Literal[1] = 1
     duration_unit: Literal["t"] = "t"
     pattern_length: Literal[3] = 3
@@ -45,7 +45,7 @@ class StrategySettings(StrictModel):
     @model_validator(mode="after")
     def enforce_test2_contract(self) -> "StrategySettings":
         if abs(self.initial_stake - 0.50) > 1e-9:
-            raise ValueError("Over 4 recovery requires a base stake of exactly 0.50 USD")
+            raise ValueError("Over 2 recovery requires a base stake of exactly 0.50 USD")
         return self
 
 
@@ -103,7 +103,8 @@ class CooldownSettings(StrictModel):
 
 
 class RecoverySettings(StrictModel):
-    mode: Literal["single_step"] = "single_step"
+    mode: Literal["single_step", "two_run"] = "two_run"
+    recovery_runs: int = Field(default=2, ge=1, le=10)
     debt_threshold: float = Field(default=0.50, ge=0)
     deep_debt_threshold: float = Field(default=2.00, ge=0)
     ladder_stakes: tuple[float, ...] = (0.50,)

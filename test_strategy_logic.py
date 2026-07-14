@@ -77,7 +77,7 @@ class SignalTests(unittest.TestCase):
             )
             self.assertIsNotNone(signal)
             self.assertEqual(signal.contract_type, "DIGITOVER")
-            self.assertEqual(signal.barrier, "4")
+            self.assertEqual(signal.barrier, "2")
             self.assertEqual(signal.trigger_name, "BIN201x3")
             self.assertEqual(signal.trigger_digits, digits)
 
@@ -133,7 +133,7 @@ class ContractTests(unittest.TestCase):
     def test_only_exact_test2_contract_is_accepted(self) -> None:
         validate_contract_parameters(
             contract_type="DIGITOVER",
-            barrier="4",
+            barrier="2",
             symbol="1HZ100V",
             stake=0.50,
             duration=1,
@@ -149,7 +149,7 @@ class ContractTests(unittest.TestCase):
         ]
         base = {
             "contract_type": "DIGITOVER",
-            "barrier": "4",
+            "barrier": "2",
             "symbol": "1HZ100V",
             "stake": 0.50,
             "duration": 1,
@@ -302,16 +302,17 @@ class TimingAndModelTests(unittest.TestCase):
                 bot._update_client_recovery_state(state, outcome="loss", profit=-0.50)
                 self.assertTrue(state["single_recovery_pending"])
                 self.assertFalse(state["single_recovery_active"])
-                self.assertEqual(state["current_stake"], 0.56)
+                self.assertEqual(state["current_stake"], 0.50)
                 self.assertAlmostEqual(state["oscar_debt"], 0.50)
+                self.assertEqual(state["recovery_wins_remaining"], 2)
 
-                self.assertEqual(bot._planned_stake_for_accounts(0.45 / 0.50), 0.56)
-                bot._update_client_recovery_state(state, outcome="loss", profit=-0.56)
+                self.assertEqual(bot._planned_stake_for_accounts(0.45 / 0.50), 0.50)
+                bot._update_client_recovery_state(state, outcome="loss", profit=-0.50)
                 self.assertTrue(state["single_recovery_pending"])
                 self.assertFalse(state["single_recovery_active"])
-                self.assertEqual(state["current_stake"], 1.18)
+                self.assertEqual(state["current_stake"], 0.56)
                 self.assertEqual(state["loss_streak"], 2)
-                self.assertEqual(state["recovery_loss_pool"], 1.06)
+                self.assertEqual(state["recovery_loss_pool"], 1.00)
 
                 bot._update_client_recovery_state(state, outcome="win", profit=1.06)
                 self.assertEqual(state["current_stake"], 0.50)
@@ -324,7 +325,7 @@ class TimingAndModelTests(unittest.TestCase):
                     handler.close()
                 bot.logger.handlers.clear()
 
-    def test_fifth_loss_plans_sixth_stake_to_recover_full_pool(self) -> None:
+    def test_fifth_loss_plans_two_win_recovery_stake(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
             raw = yaml.safe_load(Path("config.yaml").read_text(encoding="utf-8"))
@@ -354,8 +355,9 @@ class TimingAndModelTests(unittest.TestCase):
                     )
 
                 self.assertEqual(state["loss_streak"], 5)
-                self.assertEqual(state["recovery_loss_pool"], 9.99)
-                self.assertEqual(state["current_stake"], 11.10)
+                self.assertEqual(state["recovery_loss_pool"], 3.78)
+                self.assertEqual(state["current_stake"], 2.10)
+                self.assertEqual(state["recovery_wins_remaining"], 2)
             finally:
                 bot.database.engine.dispose()
                 for handler in list(bot.logger.handlers):

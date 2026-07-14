@@ -958,7 +958,11 @@ class TradingBot:
 
     def _load_runtime_accounts(self) -> Tuple[List[str], Dict[str, Dict[str, Any]]]:
         managed_accounts = self.repository.list_managed_accounts()
-        tokens, profiles = self._load_global_token_accounts()
+        if managed_accounts:
+            tokens: List[str] = []
+            profiles: Dict[str, Dict[str, Any]] = {}
+        else:
+            tokens, profiles = self._load_global_token_accounts()
 
         def add_runtime_token(token: str, profile: Dict[str, Any]) -> None:
             if token in profiles:
@@ -1137,6 +1141,10 @@ class TradingBot:
             "last_profit": float(existing.get("last_profit", 0.0)),
             "loss_streak": int(existing.get("loss_streak", 0)),
             "recovery_loss_pool": float(existing.get("recovery_loss_pool", 0.0)),
+            "recovery_wins_remaining": max(
+                1,
+                int(existing.get("recovery_wins_remaining", self.recovery_runs)),
+            ),
             "last_profit_ratio": float(existing.get("last_profit_ratio", 0.0)),
             "oscar_debt": float(
                 existing.get(
@@ -1260,6 +1268,7 @@ class TradingBot:
                 "last_profit": st["last_profit"],
                 "loss_streak": st["loss_streak"],
                 "recovery_loss_pool": st["recovery_loss_pool"],
+                "recovery_wins_remaining": st["recovery_wins_remaining"],
                 "last_profit_ratio": st["last_profit_ratio"],
                 "oscar_debt": st["oscar_debt"],
                 "oscar_win_streak": st["oscar_win_streak"],
@@ -1317,16 +1326,26 @@ class TradingBot:
     def recovery_stake_cap(self) -> float:
         return float(self.recovery_cfg.maximum_stake)
 
+    @property
+    def recovery_runs(self) -> int:
+        return max(1, int(getattr(self.recovery_cfg, "recovery_runs", 2)))
+
     def _round_stake_up(self, value: float) -> float:
         return math.ceil(max(self.base_stake, value) * 100.0 - 1e-9) / 100.0
 
-    def _single_step_recovery_stake(self, debt: float, profit_ratio: float) -> float:
+    def _recovery_stake_for_debt(
+        self,
+        debt: float,
+        profit_ratio: float,
+        wins_remaining: int | None = None,
+    ) -> float:
         debt = max(0.0, float(debt))
         ratio = max(0.0, float(profit_ratio))
         if debt <= 1e-9 or ratio <= 1e-9:
             return self.base_stake
 
-        stake = self._round_stake_up(debt / ratio)
+        remaining = max(1, int(wins_remaining or self.recovery_runs))
+        stake = self._round_stake_up((debt / remaining) / ratio)
         return min(self.recovery_stake_cap, stake)
 
     def _planned_stake_for_accounts(self, profit_ratio: float) -> float:
@@ -1340,7 +1359,11 @@ class TradingBot:
             if state.get("single_recovery_pending") or debt > 0:
                 required = max(
                     required,
-                    self._single_step_recovery_stake(debt, profit_ratio),
+                    self._recovery_stake_for_debt(
+                        debt,
+                        profit_ratio,
+                        int(state.get("recovery_wins_remaining", self.recovery_runs)),
+                    ),
                 )
         return round(required, 2)
 
@@ -1355,11 +1378,42 @@ class TradingBot:
         if outcome == "win":
             state["loss_streak"] = 0
             state["oscar_win_streak"] = 0
-            state["oscar_debt"] = 0.0
-            state["recovery_loss_pool"] = 0.0
-            state["single_recovery_pending"] = False
             state["single_recovery_active"] = False
-            state["current_stake"] = self.base_stake
+            prior_debt = max(
+                0.0,
+                float(state.get("recovery_loss_pool", state.get("oscar_debt", 0.0))),
+            )
+            if prior_debt <= 1e-9:
+                state["oscar_debt"] = 0.0
+                state["recovery_loss_pool"] = 0.0
+                state["recovery_wins_remaining"] = self.recovery_runs
+                state["single_recovery_pending"] = False
+                state["current_stake"] = self.base_stake
+                return
+
+            recovered = max(0.0, float(profit))
+            remaining_debt = round(max(0.0, prior_debt - recovered), 2)
+            remaining_wins = max(
+                0,
+                int(state.get("recovery_wins_remaining", self.recovery_runs)) - 1,
+            )
+            if remaining_debt <= 0.01:
+                state["oscar_debt"] = 0.0
+                state["recovery_loss_pool"] = 0.0
+                state["recovery_wins_remaining"] = self.recovery_runs
+                state["single_recovery_pending"] = False
+                state["current_stake"] = self.base_stake
+                return
+
+            state["oscar_debt"] = remaining_debt
+            state["recovery_loss_pool"] = remaining_debt
+            state["recovery_wins_remaining"] = max(1, remaining_wins)
+            state["single_recovery_pending"] = True
+            state["current_stake"] = self._recovery_stake_for_debt(
+                remaining_debt,
+                float(state.get("last_profit_ratio", 0.0)),
+                state["recovery_wins_remaining"],
+            )
             return
 
         state["loss_streak"] = int(state.get("loss_streak", 0)) + 1
@@ -1373,10 +1427,12 @@ class TradingBot:
         debt = round(prior_debt + loss_amount, 2)
         state["oscar_debt"] = round(debt, 2)
         state["recovery_loss_pool"] = round(debt, 2)
+        state["recovery_wins_remaining"] = self.recovery_runs
         state["single_recovery_pending"] = True
-        state["current_stake"] = self._single_step_recovery_stake(
+        state["current_stake"] = self._recovery_stake_for_debt(
             debt,
             float(state.get("last_profit_ratio", 0.0)),
+            state["recovery_wins_remaining"],
         )
 
     def _win_rate(self, outcomes: deque) -> float:
