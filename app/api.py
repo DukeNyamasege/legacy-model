@@ -1123,7 +1123,7 @@ def apply_control(
         request.client.host if request.client else "unknown",
         {"reason": reason},
     )
-    return REPOSITORY.summary()
+    return filter_summary_to_trading_ready_accounts(REPOSITORY.summary())
 
 
 @app.post("/control/pause")
@@ -1265,11 +1265,14 @@ def import_accounts(
     }
 
 
-@app.get("/ws/dashboard")
+@app.websocket("/ws/dashboard")
 async def ws_dashboard(ws: WebSocket) -> None:
     await BROADCASTER.connect(ws)
     try:
-        await ws.send_json({"type": "snapshot", "data": REPOSITORY.summary()})
+        await ws.send_json({
+            "type": "snapshot",
+            "data": filter_summary_to_trading_ready_accounts(REPOSITORY.summary()),
+        })
         while True:
             await ws.receive_text()
     except WebSocketDisconnect:
@@ -1284,7 +1287,7 @@ async def _start_broadcaster_loop() -> None:
         interval = max(2, float(os.getenv("WS_BROADCAST_INTERVAL_SECONDS", "3")))
         while True:
             try:
-                summary = REPOSITORY.summary()
+                summary = filter_summary_to_trading_ready_accounts(REPOSITORY.summary())
                 await BROADCASTER.broadcast({"type": "snapshot", "data": summary})
             except Exception:
                 pass
