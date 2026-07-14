@@ -816,11 +816,14 @@ class TradingBot:
             duration=self.duration,
             duration_unit=self.duration_unit,
         )
+        if not self.test2_config.execution.require_rising_ticks:
+            raise RuntimeError("Rising-only entry policy must remain enabled.")
 
         self.logger = setup_logging(
             self.cfg["logging"].get("level", "INFO"),
             self.cfg["logging"].get("file", "trading_bot.log"),
         )
+        self.logger.info("RISING_POLICY_ACTIVE mode=strict_last_three_quotes")
 
         self.database = Database(self.test2_config.database_url)
         self.database.create_schema()

@@ -69,7 +69,7 @@ class SignalSettings(StrictModel):
 
 class ExecutionSettings(StrictModel):
     reject_if_new_tick_arrives: bool = False
-    require_rising_ticks: bool = False
+    require_rising_ticks: Literal[True] = True
     maximum_signal_age_ms: int = Field(default=2500, gt=0)
     maximum_proposal_age_ms: int = Field(default=900, gt=0)
 
