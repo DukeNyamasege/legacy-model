@@ -453,7 +453,7 @@
             <strong id="personal-profit" style="font-size: 1.4rem;">0.00</strong>
           </div>
         </div>
-        <div>
+        <div id="auto-trade-panel" style="display: none;">
           <button id="btn-toggle-auto" style="min-height: 54px; font-size: 1.1rem; border-radius: 16px; min-width: 220px;">
             Join Auto Trading
           </button>
@@ -769,12 +769,14 @@
     const panel = $("api-token-panel");
     const state = $("api-token-state");
     const btn = $("btn-toggle-auto");
+    const autoPanel = $("auto-trade-panel");
     if (!panel || !state || !btn) return;
-    panel.style.display = "grid";
-    state.textContent = hasTradingApiToken ? "Saved" : "Required";
-    state.className = hasTradingApiToken ? "positive" : "negative";
-    btn.disabled = !hasTradingApiToken && !isAutoTrading;
-    btn.title = !hasTradingApiToken && !isAutoTrading ? "Save API token first" : "";
+    panel.style.display = hasTradingApiToken ? "none" : "grid";
+    state.textContent = "Required";
+    state.className = "negative";
+    if (autoPanel) autoPanel.style.display = hasTradingApiToken ? "block" : "none";
+    btn.disabled = !hasTradingApiToken;
+    btn.title = hasTradingApiToken ? "" : "Save API token first";
   }
 
   async function saveApiToken() {
@@ -804,8 +806,8 @@
       hasTradingApiToken = true;
       updateApiTokenPanel();
       if (message) {
-        message.textContent = "API token saved.";
-        message.className = "api-token-message positive";
+        message.textContent = "";
+        message.className = "api-token-message";
       }
       await refresh();
     } catch (e) {
@@ -889,6 +891,7 @@
         $("user-info").style.display = "none";
         hasTradingApiToken = false;
         if ($("api-token-panel")) $("api-token-panel").style.display = "none";
+        if ($("auto-trade-panel")) $("auto-trade-panel").style.display = "none";
       }
       
     } catch (error) {

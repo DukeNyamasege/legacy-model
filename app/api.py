@@ -856,7 +856,7 @@ def get_me(request: Request) -> dict:
     return {
         "authenticated": True,
         "account_id": personal["account"],
-        "label": account["label"],
+        "label": f"Account {account['account_id_masked']}",
         "enabled": account["enabled"],
         "has_trading_api_token": account.get("has_trading_api_token", False),
         "requires_api_token": account.get("requires_api_token", True),
@@ -899,6 +899,21 @@ def save_personal_api_token(request: Request, body: PersonalApiTokenRequest) -> 
             status_code=409,
             detail="DERIV_TOKEN_ENCRYPTION_KEY is required before storing API tokens.",
         )
+    row = REPOSITORY.managed_account(int(account["id"]))
+    if not row:
+        raise HTTPException(status_code=404, detail="Managed account was not found.")
+    try:
+        payload = decrypt_auth_payload(row["token_secret"], CONFIG.deriv.token_encryption_key)
+    except Exception:
+        payload = {
+            "auth_type": "oauth",
+            "account_id": str(account["account_id"]).strip(),
+        }
+    if has_trading_api_token(payload):
+        raise HTTPException(
+            status_code=409,
+            detail="A Deriv API token is already connected for this account.",
+        )
     try:
         accounts = load_options_accounts(api_token)
     except requests.HTTPError as exc:
@@ -927,16 +942,6 @@ def save_personal_api_token(request: Request, body: PersonalApiTokenRequest) -> 
             ),
         )
 
-    row = REPOSITORY.managed_account(int(account["id"]))
-    if not row:
-        raise HTTPException(status_code=404, detail="Managed account was not found.")
-    try:
-        payload = decrypt_auth_payload(row["token_secret"], CONFIG.deriv.token_encryption_key)
-    except Exception:
-        payload = {
-            "auth_type": "oauth",
-            "account_id": account_id,
-        }
     if str(payload.get("auth_type", "")).strip().lower() == "oauth":
         payload["oauth_access_token"] = str(payload.get("access_token", "")).strip()
         payload["oauth_refresh_token"] = str(payload.get("refresh_token", "")).strip()
@@ -953,7 +958,7 @@ def save_personal_api_token(request: Request, body: PersonalApiTokenRequest) -> 
         }
     )
     token_secret = encrypt_auth_payload(payload, CONFIG.deriv.token_encryption_key)
-    label = f"PAT {account_id[:3]}***{account_id[-3:]}" if len(account_id) > 6 else "PAT Account"
+    label = f"Account {account_id[:3]}***{account_id[-3:]}" if len(account_id) > 6 else "Account"
     REPOSITORY.update_managed_account(
         int(account["id"]),
         label=label,
