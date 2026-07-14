@@ -25,6 +25,8 @@ from app.strategy.decision_engine import (
 from app.strategy.over3_strategy import validate_contract_parameters
 from app.strategy.signal_detector import Over3SignalDetector
 
+os.environ.setdefault("COPYTRADING_ALLOW_LEGACY_GLOBAL_TOKENS", "true")
+
 
 def tick(digit: int, sequence: int) -> dict:
     return {

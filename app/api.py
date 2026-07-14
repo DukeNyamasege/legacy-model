@@ -356,6 +356,14 @@ def global_runtime_tokens() -> list[str]:
     return tokens
 
 
+def legacy_global_tokens_enabled() -> bool:
+    return os.getenv("COPYTRADING_ALLOW_LEGACY_GLOBAL_TOKENS", "false").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
 def refresh_global_account_snapshots(*, force: bool = False) -> list[dict]:
     ttl_seconds = max(5, int(os.getenv("GLOBAL_ACCOUNT_REFRESH_SECONDS", "30")))
     now = time.monotonic()
@@ -407,7 +415,7 @@ def refresh_global_account_snapshots(*, force: bool = False) -> list[dict]:
             return
 
     managed_accounts = REPOSITORY.list_managed_accounts()
-    if not managed_accounts:
+    if not managed_accounts and legacy_global_tokens_enabled():
         for token in global_runtime_tokens():
             refresh_from_token(token)
 

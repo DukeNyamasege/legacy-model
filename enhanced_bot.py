@@ -120,6 +120,14 @@ def load_tokens(tokens_path: str) -> List[str]:
     return uniq
 
 
+def legacy_global_tokens_enabled() -> bool:
+    return os.getenv("COPYTRADING_ALLOW_LEGACY_GLOBAL_TOKENS", "false").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
 def load_user_profiles(users_path: str) -> Dict[str, Dict[str, Any]]:
     path = Path(users_path)
     if not path.exists():
@@ -958,11 +966,11 @@ class TradingBot:
 
     def _load_runtime_accounts(self) -> Tuple[List[str], Dict[str, Dict[str, Any]]]:
         managed_accounts = self.repository.list_managed_accounts()
-        if managed_accounts:
-            tokens: List[str] = []
-            profiles: Dict[str, Dict[str, Any]] = {}
-        else:
+        if not managed_accounts and legacy_global_tokens_enabled():
             tokens, profiles = self._load_global_token_accounts()
+        else:
+            tokens = []
+            profiles = {}
 
         def add_runtime_token(token: str, profile: Dict[str, Any]) -> None:
             if token in profiles:
@@ -1041,6 +1049,12 @@ class TradingBot:
             self.logger.warning(
                 "Managed accounts are configured, but none are enabled and valid; "
                 "staying in watch mode until a user joins auto trading."
+            )
+            return [], {}
+
+        if not legacy_global_tokens_enabled():
+            self.logger.warning(
+                "No managed PAT accounts are enabled; legacy token-file trading is disabled."
             )
             return [], {}
 
