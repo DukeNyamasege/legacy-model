@@ -952,6 +952,10 @@ def toggle_auto_trade(request: Request, body: AutoTradeRequest) -> dict:
         )
     
     REPOSITORY.set_managed_account_enabled(account["id"], body.enabled)
+    if body.enabled:
+        REPOSITORY.set_status("RUNNING", "")
+    elif not trading_ready_account_ids():
+        REPOSITORY.set_status("STOPPED", "")
     return {"success": True, "enabled": body.enabled}
 
 

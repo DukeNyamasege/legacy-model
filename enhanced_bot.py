@@ -1829,10 +1829,10 @@ class TradingBot:
 
     def _sync_running_status_after_validation(self) -> None:
         status, pause_reason = self.repository.control_state()
-        if status == "MANUAL_PAUSE" and pause_reason == "BULK_PURCHASE_REQUIRED":
+        if status == "MANUAL_PAUSE" and pause_reason != "COPY_PURCHASE_PARTIAL":
             self.logger.warning(
-                "Clearing stale BULK_PURCHASE_REQUIRED pause; no contract was opened, "
-                "so copy-trade consistency is intact."
+                "Clearing stale MANUAL_PAUSE status reason=%s after validating PAT-ready accounts.",
+                pause_reason or "none",
             )
             self.repository.set_status("RUNNING")
             return
@@ -1959,6 +1959,13 @@ class TradingBot:
             return
 
         status, pause_reason = self.repository.control_state()
+        if status == "MANUAL_PAUSE" and pause_reason != "COPY_PURCHASE_PARTIAL":
+            self.logger.warning(
+                "Clearing stale MANUAL_PAUSE status reason=%s before evaluating signal.",
+                pause_reason or "none",
+            )
+            self.repository.set_status("RUNNING")
+            status = "RUNNING"
         if status in {"STOPPED", "MANUAL_PAUSE", "EMERGENCY_STOP"}:
             if signal is not None:
                 blocked_status = {
@@ -2181,9 +2188,17 @@ class TradingBot:
                     stale=True,
                 )
                 return
-            status, _ = self.repository.control_state()
+            status, pause_reason = self.repository.control_state()
+            if status == "MANUAL_PAUSE" and pause_reason != "COPY_PURCHASE_PARTIAL":
+                self.logger.warning(
+                    "Clearing stale MANUAL_PAUSE status reason=%s before purchase.",
+                    pause_reason or "none",
+                )
+                self.repository.set_status("RUNNING")
+                status = "RUNNING"
             if status in {"MANUAL_PAUSE", "EMERGENCY_STOP"}:
-                self.repository.mark_signal(signal.signal_id, status="SKIP_MANUAL_PAUSE")
+                skip_status = "SKIP_EMERGENCY_STOP" if status == "EMERGENCY_STOP" else "SKIP_MANUAL_PAUSE"
+                self.repository.mark_signal(signal.signal_id, status=skip_status)
                 return
             if not self.repository.consume_signal(signal.signal_id):
                 self.repository.mark_signal(signal.signal_id, status="SKIP_DUPLICATE")
