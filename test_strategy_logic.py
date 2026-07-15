@@ -223,29 +223,16 @@ class ContractTests(unittest.TestCase):
             connection_session_id="connection-1",
             tick_sequence=5,
         )
-        economics = ProposalEconomics(
-            proposal_id="public-proposal",
-            stake=0.50,
-            payout=0.69,
-            potential_profit=0.1693,
-            potential_loss=0.5207,
-            break_even_probability=0.5207 / 0.69,
-            predicted_win_probability=0.85,
-            expected_value=0.06,
-            expected_return_on_stake=0.12,
-            requested_monotonic=time.monotonic(),
-            received_monotonic=time.monotonic(),
-        )
         bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
         bot.currency = "USD"
         bot.duration = 1
         bot.duration_unit = "t"
         bot.app_markup_percentage = 3.0
 
-        request = bot._direct_buy_request(signal, 0.50, economics)
+        request = bot._direct_buy_request(signal, 0.50)
 
         self.assertEqual(request["buy"], "1")
-        self.assertEqual(request["price"], 0.53)
+        self.assertEqual(request["price"], 0.50)
         self.assertNotIn("app_markup_percentage", request)
         self.assertEqual(request["parameters"]["app_markup_percentage"], 3.0)
         self.assertEqual(request["parameters"]["duration"], 1)
@@ -572,6 +559,28 @@ class TimingAndModelTests(unittest.TestCase):
         self.assertNotIn("CR123456", sanitized)
         self.assertIn("DOT***422", sanitized)
         self.assertIn("CR1***456", sanitized)
+
+    def test_single_account_uses_direct_markup_transport(self) -> None:
+        bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
+
+        self.assertTrue(
+            bot._requires_private_purchase_transport(
+                account_count=1,
+                bulk_incompatible_accounts=[],
+            )
+        )
+        self.assertFalse(
+            bot._requires_private_purchase_transport(
+                account_count=2,
+                bulk_incompatible_accounts=[],
+            )
+        )
+        self.assertTrue(
+            bot._requires_private_purchase_transport(
+                account_count=2,
+                bulk_incompatible_accounts=["DOT90000001"],
+            )
+        )
 
     def test_stale_bulk_purchase_pause_is_cleared_but_partial_pause_remains(self) -> None:
         with TemporaryDirectory() as directory:

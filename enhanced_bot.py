@@ -2311,16 +2311,25 @@ class TradingBot:
                 economics.proposal_id,
             )
             transactions: List[Dict[str, Any]] = []
-            if bulk_incompatible_accounts:
-                self.logger.warning(
-                    "Using private WebSocket fallback for bulk-incompatible account_count=%s "
-                    "signal_id=%s",
+            use_private_purchase = self._requires_private_purchase_transport(
+                account_count=len(eligible_accounts),
+                bulk_incompatible_accounts=bulk_incompatible_accounts,
+            )
+            if use_private_purchase:
+                transport_reason = (
+                    "single_account_markup"
+                    if len(eligible_accounts) == 1
+                    else "bulk_incompatible"
+                )
+                self.logger.info(
+                    "Using authenticated private WebSocket purchase account_count=%s "
+                    "signal_id=%s reason=%s",
                     len(eligible_accounts),
                     signal.signal_id,
+                    transport_reason,
                 )
                 transactions = await self._purchase_via_private_sessions(
                     signal=signal,
-                    economics=economics,
                     eligible_accounts=eligible_accounts,
                     stake_amount=stake_amount,
                 )
@@ -2392,7 +2401,6 @@ class TradingBot:
                         )
                         transactions = await self._purchase_via_private_sessions(
                             signal=signal,
-                            economics=economics,
                             eligible_accounts=eligible_accounts,
                             stake_amount=stake_amount,
                         )
@@ -2528,7 +2536,6 @@ class TradingBot:
         self,
         *,
         signal: CandidateSignal,
-        economics: Any,
         eligible_accounts: List[Tuple[str, str]],
         stake_amount: float,
     ) -> List[Dict[str, Any]]:
@@ -2555,7 +2562,7 @@ class TradingBot:
                 continue
 
             response = await session.send_request(
-                self._direct_buy_request(signal, stake_amount, economics)
+                self._direct_buy_request(signal, stake_amount)
             )
             if "error" in response:
                 message = response["error"].get("message", "Unknown buy error")
@@ -2630,7 +2637,6 @@ class TradingBot:
         self,
         signal: CandidateSignal,
         stake_amount: float,
-        economics: Any,
     ) -> Dict[str, Any]:
         parameters = self._contract_parameters(
             signal,
@@ -2642,20 +2648,9 @@ class TradingBot:
                 self.app_markup_percentage,
                 2,
             )
-        expected_markup = max(
-            0.0,
-            float(economics.payout)
-            * max(0.0, self.app_markup_percentage)
-            / 100.0,
-        )
-        # price is a ceiling, not the requested stake. Round upward so a
-        # fractional-cent payout-based markup cannot reject a valid buy.
-        maximum_price = math.ceil(
-            (float(stake_amount) + expected_markup) * 100.0 - 1e-9
-        ) / 100.0
         return {
             "buy": "1",
-            "price": maximum_price,
+            "price": round(float(stake_amount), 2),
             "parameters": parameters,
         }
 
@@ -2724,6 +2719,14 @@ class TradingBot:
             for token, account_id in accounts
             if not self._bulk_purchase_token_capable(token)
         ]
+
+    @staticmethod
+    def _requires_private_purchase_transport(
+        *,
+        account_count: int,
+        bulk_incompatible_accounts: List[str],
+    ) -> bool:
+        return account_count == 1 or bool(bulk_incompatible_accounts)
 
     def _eligible_purchase_accounts(self) -> List[Tuple[str, str]]:
         accounts = list(self.valid_clients)

@@ -29,6 +29,10 @@ buys additionally send the documented `parameters.app_markup_percentage` field.
 `DERIV_APP_MARKUP_PERCENTAGE` is used for that direct-buy request, conservative
 economics, and verification. The worker records settled `app_markup_amount`, and
 administrators can compare it with Deriv using `GET /control/markup-statistics`.
+The environment value does not configure markup at Deriv, and an application's
+redirect URI or OAuth scopes do not enable it. Markup must be enabled for the
+exact registered App ID sent by the worker; do not substitute a legacy numeric
+App ID into the new REST API.
 Paid markup revenue requires the application owner to satisfy Deriv's real-account
 eligibility requirements; demo trading is for integration testing.
 
