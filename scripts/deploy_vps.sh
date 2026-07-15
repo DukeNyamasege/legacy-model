@@ -7,5 +7,5 @@ docker compose -f docker-compose.yml -f docker-compose.vps.yml build
 # collide with the live API. The worker image has the same migrations and uses a
 # dynamic address, making it safe to run alongside the current deployment.
 docker compose -f docker-compose.yml -f docker-compose.vps.yml run --rm worker alembic upgrade head
-docker compose -f docker-compose.yml -f docker-compose.vps.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.vps.yml up -d --wait --wait-timeout 120
 docker compose -f docker-compose.yml -f docker-compose.vps.yml ps

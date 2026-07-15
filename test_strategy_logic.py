@@ -5,6 +5,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import yaml
 from sqlalchemy import func, select
@@ -606,6 +607,27 @@ class TimingAndModelTests(unittest.TestCase):
                 for handler in list(bot.logger.handlers):
                     handler.close()
                 bot.logger.handlers.clear()
+
+
+class LeaseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_replacement_worker_waits_for_stale_lease(self) -> None:
+        bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
+        bot.is_running = True
+        bot.lease_key = "bin22001:demo:test"
+        bot.worker_id = "replacement-worker"
+        bot._lease_owned = False
+        bot.logger = MagicMock()
+        bot.repository = MagicMock()
+        bot.repository.acquire_lease.side_effect = [False, True]
+
+        with patch("enhanced_bot.asyncio.sleep", new=AsyncMock()) as sleep:
+            acquired = await bot._wait_for_trader_lease(retry_seconds=0.1)
+
+        self.assertTrue(acquired)
+        self.assertTrue(bot._lease_owned)
+        self.assertEqual(bot.repository.acquire_lease.call_count, 2)
+        sleep.assert_awaited_once_with(0.1)
+        bot.logger.warning.assert_called_once()
 
 
 class PersistenceTests(unittest.TestCase):

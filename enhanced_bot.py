@@ -980,6 +980,7 @@ class TradingBot:
         self._background_tasks: Set[asyncio.Task] = set()
         self.worker_id = str(uuid.uuid4())
         self.lease_key = ""
+        self._lease_owned = False
         self.public_client = PublicMarketDataClient(self)
         self._managed_accounts_revision = self.repository.managed_accounts_revision()
         self._runtime_mode_cache = self.environment
@@ -3080,12 +3081,34 @@ class TradingBot:
                 deployment_id=os.getenv("DEPLOYMENT_ID", "local"),
             )
             if not acquired:
+                self._lease_owned = False
                 self.logger.critical("TRADER_LOCK_LOST lease_key=%s", self.lease_key)
                 self.repository.set_status("EMERGENCY_STOP", "TRADER_LOCK_LOST")
                 self.is_running = False
                 return
             self.repository.heartbeat(self.connection_session_id)
             await asyncio.sleep(10)
+
+    async def _wait_for_trader_lease(self, retry_seconds: float = 5.0) -> bool:
+        while self.is_running:
+            acquired = self.repository.acquire_lease(
+                lease_key=self.lease_key,
+                worker_id=self.worker_id,
+                host_name=socket.gethostname(),
+                process_id=os.getpid(),
+                deployment_id=os.getenv("DEPLOYMENT_ID", "local"),
+            )
+            if acquired:
+                self._lease_owned = True
+                return True
+            self.logger.warning(
+                "TRADER_LOCK_WAIT lease_key=%s retry_seconds=%.1f; "
+                "a previous worker still owns an unexpired lease.",
+                self.lease_key,
+                retry_seconds,
+            )
+            await asyncio.sleep(retry_seconds)
+        return False
 
     async def _stop_watchdog(self) -> None:
         task = self._watchdog_task
@@ -3117,17 +3140,10 @@ class TradingBot:
                 self.lease_key = (
                     f"{self.test2_config.model.run_id}:{self.environment}:{account_scope}"
                 )
-                acquired = self.repository.acquire_lease(
-                    lease_key=self.lease_key,
-                    worker_id=self.worker_id,
-                    host_name=socket.gethostname(),
-                    process_id=os.getpid(),
-                    deployment_id=os.getenv("DEPLOYMENT_ID", "local"),
-                )
+                acquired = await self._wait_for_trader_lease()
                 if not acquired:
-                    raise SystemExit(
-                        "Another healthy Test 2 worker already owns the trader lease"
-                    )
+                    should_retry = False
+                    continue
                 if self._lease_task is None or self._lease_task.done():
                     self._lease_task = asyncio.create_task(self._lease_heartbeat_loop())
                     self.logger.info("TRADER_LOCK_ACQUIRED lease_key=%s", self.lease_key)
@@ -3218,9 +3234,10 @@ class TradingBot:
             self._lease_task.cancel()
             with suppress(asyncio.CancelledError):
                 await self._lease_task
-        if self.lease_key:
+        if self._lease_owned and self.lease_key:
             self.repository.release_lease(self.lease_key, self.worker_id)
-        self.repository.set_status("STOPPED")
+            self._lease_owned = False
+            self.repository.set_status("STOPPED")
 
 
 def run_oauth_flow(client_id: str, redirect_uri: str) -> None:
