@@ -435,6 +435,47 @@
       font-family: Georgia, serif;
     }
     .api-token-message { min-height: 18px; color: var(--muted); font-size: .82rem; }
+    .personal-settings {
+      margin-top: 18px;
+      padding-top: 18px;
+      border-top: 1px solid var(--line);
+    }
+    .personal-settings-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .execution-state {
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      font-size: .78rem;
+      text-transform: capitalize;
+    }
+    .personal-settings-form {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(120px, 1fr)) auto;
+      gap: 10px;
+      align-items: end;
+    }
+    .personal-settings-form label {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: .78rem;
+    }
+    .personal-settings-form input {
+      width: 100%;
+      min-height: 44px;
+      padding: 0 12px;
+      color: var(--ink);
+      background: var(--input-bg);
+      font-family: Georgia, serif;
+    }
+    .settings-message { min-height: 18px; margin-top: 8px; color: var(--muted); font-size: .78rem; }
     .access { margin-top: 14px; display: grid; gap: 10px; }
     .access input, .access textarea, .access select {
       width: 100%;
@@ -472,6 +513,7 @@
       .section-head { gap: 10px; }
       .inline-actions { grid-template-columns: 1fr; }
       .api-token-form { grid-template-columns: 1fr; }
+      .personal-settings-form { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -539,6 +581,28 @@
           <div id="api-token-message" class="api-token-message"></div>
         </div>
       </div>
+      <div id="personal-settings-panel" class="personal-settings" style="display: none;">
+        <div class="personal-settings-head">
+          <div>
+            <strong>Personal Trading Controls</strong>
+            <div style="font-size: .78rem; opacity: .7; margin-top: 3px;">Your stake and limits apply only to your account. Use 0 to disable a TP or SL limit.</div>
+          </div>
+          <span id="personal-execution-state" class="execution-state">Inactive</span>
+        </div>
+        <div class="personal-settings-form">
+          <label>Stake amount (USD)
+            <input id="personal-stake" type="number" min="0.50" step="0.01" inputmode="decimal">
+          </label>
+          <label>Take profit (USD)
+            <input id="personal-take-profit" type="number" min="0" step="0.01" inputmode="decimal">
+          </label>
+          <label>Stop loss (USD)
+            <input id="personal-stop-loss" type="number" min="0" step="0.01" inputmode="decimal">
+          </label>
+          <button id="btn-save-trading-settings" type="button">Save Controls</button>
+        </div>
+        <div id="personal-settings-message" class="settings-message"></div>
+      </div>
     </div>
   </section>
 
@@ -558,11 +622,11 @@
 
   <section class="metrics">
     <article class="panel metric"><span>Total traders</span><strong id="traders">0</strong></article>
-    <article class="panel metric"><span>Total trades</span><strong id="trades">0</strong></article>
-    <article class="panel metric"><span>Wins</span><strong id="wins">0</strong></article>
-    <article class="panel metric"><span>Losses</span><strong id="losses">0</strong></article>
-    <article class="panel metric"><span>Strategy win rate</span><strong id="win-rate">0%</strong></article>
-    <article class="panel metric"><span>Strategy P/L</span><strong id="profit">0.00</strong></article>
+    <article class="panel metric"><span>Master trades</span><strong id="trades">0</strong></article>
+    <article class="panel metric"><span>Master wins</span><strong id="wins">0</strong></article>
+    <article class="panel metric"><span>Master losses</span><strong id="losses">0</strong></article>
+    <article class="panel metric"><span>Master win rate</span><strong id="win-rate">0%</strong></article>
+    <article class="panel metric"><span>Master account P/L</span><strong id="profit">0.00</strong></article>
   </section>
 
   <section class="metrics">
@@ -573,7 +637,7 @@
     <article class="panel metric"><span>Open trades</span><strong id="open-trades">0</strong></article>
     <article class="panel metric"><span>Open trade age</span><strong id="open-trade-age">0s</strong></article>
     <article class="panel metric"><span>Skipped</span><strong id="skipped">0</strong></article>
-    <article class="panel metric"><span>Copy trade gap</span><strong id="copy-gap">0</strong></article>
+    <article class="panel metric" title="Difference between the master trade count and the furthest active account. Zero means active accounts have equal completed-trade counts."><span>Copy trade gap</span><strong id="copy-gap">0</strong><small>0 means counts match</small></article>
   </section>
 
   <section class="panel section contract-history">
@@ -895,8 +959,9 @@
     const profit = Number(data.net_profit || 0);
     $("profit").textContent = number(profit, 2);
     $("profit").className = profit < 0 ? "negative" : profit > 0 ? "positive" : "";
-    $("global-profit").textContent = number(profit, 2);
-    $("global-profit").className = profit < 0 ? "negative" : profit > 0 ? "positive" : "";
+    const allAccountsProfit = Number(data.all_accounts_profit || 0);
+    $("global-profit").textContent = number(allAccountsProfit, 2);
+    $("global-profit").className = allAccountsProfit < 0 ? "negative" : allAccountsProfit > 0 ? "positive" : "";
     const currency = data.primary_account_currency || data.accounts?.[0]?.currency || "USD";
     $("balance").textContent = `${number(data.primary_account_balance || 0, 2)} ${currency}`;
     renderAiActivity(data);
@@ -950,11 +1015,13 @@
     const state = $("api-token-state");
     const btn = $("btn-toggle-auto");
     const autoPanel = $("auto-trade-panel");
+    const settingsPanel = $("personal-settings-panel");
     if (!panel || !state || !btn) return;
     panel.style.display = hasTradingApiToken ? "none" : "grid";
     state.textContent = "Required";
     state.className = "negative";
     if (autoPanel) autoPanel.style.display = hasTradingApiToken ? "block" : "none";
+    if (settingsPanel) settingsPanel.style.display = hasTradingApiToken ? "block" : "none";
     btn.disabled = !hasTradingApiToken;
     btn.title = hasTradingApiToken ? "" : "Save API token first";
   }
@@ -999,8 +1066,52 @@
     if (button) button.disabled = false;
   }
 
+  function setPersonalSettingValue(id, value) {
+    const input = $(id);
+    if (input && document.activeElement !== input) {
+      input.value = Number(value || 0).toFixed(2);
+    }
+  }
+
+  async function saveTradingSettings() {
+    const button = $("btn-save-trading-settings");
+    const message = $("personal-settings-message");
+    const payload = {
+      stake_amount: Number($("personal-stake")?.value),
+      take_profit: Number($("personal-take-profit")?.value),
+      stop_loss: Number($("personal-stop-loss")?.value)
+    };
+    if (button) button.disabled = true;
+    if (message) {
+      message.textContent = "Saving controls...";
+      message.className = "settings-message";
+    }
+    try {
+      const response = await api("/me/trading-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const settings = response.settings || payload;
+      setPersonalSettingValue("personal-stake", settings.stake_amount);
+      setPersonalSettingValue("personal-take-profit", settings.take_profit);
+      setPersonalSettingValue("personal-stop-loss", settings.stop_loss);
+      if (message) {
+        message.textContent = "Controls saved. Changes apply from the next contract.";
+        message.className = "settings-message positive";
+      }
+    } catch (error) {
+      if (message) {
+        message.textContent = error.message || "Could not save controls.";
+        message.className = "settings-message negative";
+      }
+    }
+    if (button) button.disabled = false;
+  }
+
   $("btn-toggle-auto")?.addEventListener("click", toggleAutoTrade);
   $("btn-save-api-token")?.addEventListener("click", saveApiToken);
+  $("btn-save-trading-settings")?.addEventListener("click", saveTradingSettings);
   $("btn-logout")?.addEventListener("click", async () => {
     try {
       await api("/me/logout", { method: "POST" });
@@ -1062,6 +1173,16 @@
         
         isAutoTrading = Boolean(me.enabled);
         hasTradingApiToken = Boolean(me.has_trading_api_token);
+        const personalSettings = me.settings || {};
+        setPersonalSettingValue("personal-stake", personalSettings.stake_amount ?? 0.50);
+        setPersonalSettingValue("personal-take-profit", personalSettings.take_profit ?? 0);
+        setPersonalSettingValue("personal-stop-loss", personalSettings.stop_loss ?? 0);
+        const executionState = $("personal-execution-state");
+        if (executionState) {
+          executionState.textContent = String(me.execution_status || "inactive").replaceAll("_", " ");
+          executionState.title = me.execution_status_reason || "";
+          executionState.className = `execution-state ${me.execution_status === "active" ? "positive" : me.execution_status === "error" ? "negative" : ""}`;
+        }
         updateAutoTradeBtn();
         updateApiTokenPanel();
       } catch (authError) {
@@ -1073,6 +1194,7 @@
         hasTradingApiToken = false;
         if ($("api-token-panel")) $("api-token-panel").style.display = "none";
         if ($("auto-trade-panel")) $("auto-trade-panel").style.display = "none";
+        if ($("personal-settings-panel")) $("personal-settings-panel").style.display = "none";
       }
       
     } catch (error) {

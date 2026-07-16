@@ -582,10 +582,17 @@ class PublicMarketDataClient:
 
 class ClientSession:
     """Manages the authenticated WebSocket connection and contract monitoring for a single copier account."""
-    def __init__(self, token: str, account_id: str, bot: 'TradingBot'):
+    def __init__(
+        self,
+        token: str,
+        account_id: str,
+        bot: 'TradingBot',
+        managed_account_id: int | None = None,
+    ):
         self.token = token
         self.account_id = account_id
         self.bot = bot
+        self.managed_account_id = managed_account_id
         self.token_tag = token_tag(token)
         self.ws: Optional[websockets.WebSocketClientProtocol] = None
         self.is_connected = False
@@ -602,7 +609,15 @@ class ClientSession:
         path = f"/trading/v1/options/accounts/{self.account_id}/otp"
         res = await _rest_request("POST", path, app_id, base_url, token=self.token)
         if "error" in res:
-            self.bot.logger.error("Failed to get OTP: %s", res["error"].get("message"), extra={"token_tag": self.token_tag})
+            message = sanitize_account_ids(
+                str(res["error"].get("message") or "OTP request failed")
+            )
+            self.bot._set_account_execution_status(
+                self.managed_account_id,
+                "error",
+                message,
+            )
+            self.bot.logger.error("Failed to get OTP: %s", message, extra={"token_tag": self.token_tag})
             return None
         return res.get("data", {}).get("url")
 
@@ -627,6 +642,11 @@ class ClientSession:
                 async with websockets.connect(url) as ws:
                     self.ws = ws
                     self.is_connected = True
+                    self.bot._set_account_execution_status(
+                        self.managed_account_id,
+                        "active",
+                        "Private trading connection is active",
+                    )
                     self.pending_requests.clear()
                     attempt = 0
                     self.bot.logger.info(
@@ -660,10 +680,26 @@ class ClientSession:
                         ping_task.cancel()
                         with suppress(asyncio.CancelledError):
                             await ping_task
+                        self.is_connected = False
+                        self.ws = None
+                        if any(
+                            token == self.token
+                            for token, _account_id in self.bot.valid_clients
+                        ):
+                            self.bot._set_account_execution_status(
+                                self.managed_account_id,
+                                "reconnecting",
+                                "Private trading connection closed",
+                            )
 
             except (ConnectionClosed, OSError, Exception) as e:
                 self.is_connected = False
                 self.ws = None
+                self.bot._set_account_execution_status(
+                    self.managed_account_id,
+                    "reconnecting",
+                    "Private trading connection interrupted",
+                )
                 attempt += 1
                 self.bot.logger.warning(
                     "Private connection lost for account %s: %s. Reconnecting...",
@@ -733,7 +769,15 @@ class ClientSession:
                 contract = snapshot.get("proposal_open_contract")
                 if not contract:
                     continue
-                await self.bot.handle_contract_update(self.token, int(cid), contract)
+                try:
+                    await self.bot.handle_contract_update(self.token, int(cid), contract)
+                except Exception as exc:
+                    self.bot.logger.error(
+                        "Account contract reconciliation failed for %s: %s",
+                        mask_account_id(self.account_id),
+                        exc,
+                        extra={"token_tag": self.token_tag, "contract_id": str(cid)},
+                    )
             await asyncio.sleep(max(1, self.bot.reconciliation_poll_seconds))
 
     async def subscribe_contract(self, contract_id: int) -> None:
@@ -796,7 +840,18 @@ class ClientSession:
             if sub_id:
                 self.active_subscriptions[int(contract_id)] = sub_id
 
-            await self.bot.handle_contract_update(self.token, int(contract_id), contract)
+            try:
+                await self.bot.handle_contract_update(self.token, int(contract_id), contract)
+            except Exception as exc:
+                self.bot.logger.error(
+                    "Account contract update failed for %s: %s",
+                    mask_account_id(self.account_id),
+                    exc,
+                    extra={
+                        "token_tag": self.token_tag,
+                        "contract_id": str(contract_id),
+                    },
+                )
 
 
 class TradingBot:
@@ -1013,6 +1068,34 @@ class TradingBot:
             profile.setdefault("source", "global")
         return tokens, profiles
 
+    def _set_account_execution_status(
+        self,
+        managed_account_id: int | None,
+        status: str,
+        reason: str = "",
+    ) -> None:
+        if managed_account_id is None:
+            return
+        try:
+            self.repository.set_managed_account_execution_status(
+                int(managed_account_id),
+                status,
+                reason,
+            )
+        except Exception as exc:
+            self.logger.warning(
+                "Could not update account execution status id=%s: %s",
+                managed_account_id,
+                exc,
+            )
+
+    def _managed_account_id_for_token(self, token: str) -> int | None:
+        value = self.user_profiles.get(token, {}).get("managed_account_id")
+        try:
+            return int(value) if value not in {None, ""} else None
+        except (TypeError, ValueError):
+            return None
+
     def _load_runtime_accounts(self) -> Tuple[List[str], Dict[str, Dict[str, Any]]]:
         managed_accounts = self.repository.list_managed_accounts()
         if not managed_accounts and legacy_global_tokens_enabled():
@@ -1031,16 +1114,28 @@ class TradingBot:
         if managed_accounts:
             for row in managed_accounts:
                 if not row.enabled:
+                    if str(row.execution_status) not in {"take_profit", "stop_loss"}:
+                        self._set_account_execution_status(
+                            int(row.id),
+                            "disabled",
+                            "Auto trading is disabled",
+                        )
                     continue
                 try:
                     payload = decrypt_auth_payload(row.token_secret, self.encryption_key)
                 except Exception as exc:
+                    self._set_account_execution_status(int(row.id), "error", str(exc))
                     self.logger.error("Managed token %s could not be decrypted: %s", row.id, exc)
                     continue
                 auth_type = str(payload.get("auth_type", "pat")).strip() or "pat"
                 if auth_type == "oauth" and token_is_expiring(payload):
                     refresh_token_value = str(payload.get("refresh_token", "")).strip()
                     if not refresh_token_value:
+                        self._set_account_execution_status(
+                            int(row.id),
+                            "error",
+                            "OAuth refresh token is missing",
+                        )
                         self.logger.error(
                             "Managed OAuth account %s is missing a refresh token",
                             row.id,
@@ -1052,6 +1147,7 @@ class TradingBot:
                             refresh_token=refresh_token_value,
                         )
                     except Exception as exc:
+                        self._set_account_execution_status(int(row.id), "error", str(exc))
                         self.logger.error(
                             "Managed OAuth account %s could not refresh its token: %s",
                             row.id,
@@ -1068,6 +1164,7 @@ class TradingBot:
                             enabled=bool(row.enabled),
                         )
                     except Exception as exc:
+                        self._set_account_execution_status(int(row.id), "error", str(exc))
                         self.logger.error(
                             "Managed OAuth account %s could not persist refreshed token: %s",
                             row.id,
@@ -1076,6 +1173,11 @@ class TradingBot:
                         continue
                 token = self._purchase_token_from_payload(payload)
                 if not token:
+                    self._set_account_execution_status(
+                        int(row.id),
+                        "token_required",
+                        "A verified Deriv API token is required",
+                    )
                     self.logger.error(
                         "Managed account %s is missing a Deriv API token/PAT required "
                         "for REST bulk purchase; OAuth login alone cannot execute contracts.",
@@ -1091,6 +1193,10 @@ class TradingBot:
                         "account_id": str(payload.get("account_id", "")).strip(),
                         "auth_type": "pat" if auth_type == "oauth" else auth_type,
                         "source": "private",
+                        "managed_account_id": int(row.id),
+                        "stake_amount": float(row.stake_amount),
+                        "take_profit": float(row.take_profit),
+                        "stop_loss": float(row.stop_loss),
                     },
                 )
             if tokens:
@@ -1188,6 +1294,16 @@ class TradingBot:
         tag = token_tag(token)
         user_id = str(profile.get("id", tag)).strip() or tag
         account_id = str(profile.get("account_id", existing.get("account_id", ""))).strip()
+        configured_base_stake = max(
+            self.base_stake,
+            round(float(profile.get("stake_amount", base_stake) or base_stake), 2),
+        )
+        recovery_pending = bool(existing.get("single_recovery_pending", False)) or float(
+            existing.get("recovery_loss_pool", 0.0)
+        ) > 0
+        current_stake = float(existing.get("current_stake", configured_base_stake))
+        if not recovery_pending:
+            current_stake = configured_base_stake
         st = {
             "token_tag": tag,
             "user_id": user_id,
@@ -1195,7 +1311,11 @@ class TradingBot:
             "account_id": account_id,
             "total_profit": float(existing.get("total_profit", 0.0)),
             "profit_today": float(existing.get("profit_today", 0.0)),
-            "current_stake": float(existing.get("current_stake", base_stake)),
+            "base_stake": configured_base_stake,
+            "take_profit": max(0.0, float(profile.get("take_profit", 0.0) or 0.0)),
+            "stop_loss": max(0.0, float(profile.get("stop_loss", 0.0) or 0.0)),
+            "managed_account_id": profile.get("managed_account_id"),
+            "current_stake": current_stake,
             "day": str(existing.get("day", today)),
             "total_trades": int(existing.get("total_trades", 0)),
             "wins": int(existing.get("wins", 0)),
@@ -1320,6 +1440,9 @@ class TradingBot:
                 "user_id": st["user_id"],
                 "name": st["name"],
                 "account_id": st.get("account_id", ""),
+                "base_stake": st["base_stake"],
+                "take_profit": st["take_profit"],
+                "stop_loss": st["stop_loss"],
                 "total_profit": st["total_profit"],
                 "profit_today": st["profit_today"],
                 "current_stake": st["current_stake"],
@@ -1393,41 +1516,58 @@ class TradingBot:
     def recovery_runs(self) -> int:
         return max(1, int(getattr(self.recovery_cfg, "recovery_runs", 2)))
 
-    def _round_stake_up(self, value: float) -> float:
-        return math.ceil(max(self.base_stake, value) * 100.0 - 1e-9) / 100.0
+    def _round_stake_up(self, value: float, base_stake: float | None = None) -> float:
+        minimum = self.base_stake if base_stake is None else float(base_stake)
+        return math.ceil(max(minimum, value) * 100.0 - 1e-9) / 100.0
 
     def _recovery_stake_for_debt(
         self,
         debt: float,
         profit_ratio: float,
         wins_remaining: int | None = None,
+        base_stake: float | None = None,
     ) -> float:
+        minimum = self.base_stake if base_stake is None else float(base_stake)
         debt = max(0.0, float(debt))
         ratio = max(0.0, float(profit_ratio))
         if debt <= 1e-9 or ratio <= 1e-9:
-            return self.base_stake
+            return minimum
 
         remaining = max(1, int(wins_remaining or self.recovery_runs))
-        stake = self._round_stake_up((debt / remaining) / ratio)
+        stake = self._round_stake_up((debt / remaining) / ratio, minimum)
         return min(self.recovery_stake_cap, stake)
+
+    def _planned_stake_for_account(
+        self,
+        token: str,
+        account_id: str,
+        profit_ratio: float,
+    ) -> float:
+        state = self._client_state_for_token(token, account_id=account_id)
+        account_base_stake = float(state.get("base_stake", self.base_stake))
+        debt = max(
+            0.0,
+            float(state.get("recovery_loss_pool", state.get("oscar_debt", 0.0))),
+        )
+        if not state.get("single_recovery_pending") and debt <= 0:
+            return round(account_base_stake, 2)
+        return round(
+            self._recovery_stake_for_debt(
+                debt,
+                profit_ratio,
+                int(state.get("recovery_wins_remaining", self.recovery_runs)),
+                account_base_stake,
+            ),
+            2,
+        )
 
     def _planned_stake_for_accounts(self, profit_ratio: float) -> float:
         required = self.base_stake
         for token, account_id in self.valid_clients:
-            state = self._client_state_for_token(token, account_id=account_id)
-            debt = max(
-                0.0,
-                float(state.get("recovery_loss_pool", state.get("oscar_debt", 0.0))),
+            required = max(
+                required,
+                self._planned_stake_for_account(token, account_id, profit_ratio),
             )
-            if state.get("single_recovery_pending") or debt > 0:
-                required = max(
-                    required,
-                    self._recovery_stake_for_debt(
-                        debt,
-                        profit_ratio,
-                        int(state.get("recovery_wins_remaining", self.recovery_runs)),
-                    ),
-                )
         return round(required, 2)
 
     def _update_client_recovery_state(
@@ -1437,7 +1577,8 @@ class TradingBot:
         outcome: str,
         profit: float,
     ) -> None:
-        settled_stake = float(state.get("current_stake", self.base_stake))
+        account_base_stake = float(state.get("base_stake", self.base_stake))
+        settled_stake = float(state.get("current_stake", account_base_stake))
         if outcome == "win":
             state["loss_streak"] = 0
             state["oscar_win_streak"] = 0
@@ -1451,7 +1592,7 @@ class TradingBot:
                 state["recovery_loss_pool"] = 0.0
                 state["recovery_wins_remaining"] = self.recovery_runs
                 state["single_recovery_pending"] = False
-                state["current_stake"] = self.base_stake
+                state["current_stake"] = account_base_stake
                 return
 
             recovered = max(0.0, float(profit))
@@ -1465,7 +1606,7 @@ class TradingBot:
                 state["recovery_loss_pool"] = 0.0
                 state["recovery_wins_remaining"] = self.recovery_runs
                 state["single_recovery_pending"] = False
-                state["current_stake"] = self.base_stake
+                state["current_stake"] = account_base_stake
                 return
 
             state["oscar_debt"] = remaining_debt
@@ -1476,6 +1617,7 @@ class TradingBot:
                 remaining_debt,
                 float(state.get("last_profit_ratio", 0.0)),
                 state["recovery_wins_remaining"],
+                account_base_stake,
             )
             return
 
@@ -1496,6 +1638,7 @@ class TradingBot:
             debt,
             float(state.get("last_profit_ratio", 0.0)),
             state["recovery_wins_remaining"],
+            account_base_stake,
         )
 
     def _win_rate(self, outcomes: deque) -> float:
@@ -1767,7 +1910,15 @@ class TradingBot:
         if not contract:
             return
         if contract.get("is_sold"):
-            await self.handle_contract_update(token, int(contract_id), contract)
+            try:
+                await self.handle_contract_update(token, int(contract_id), contract)
+            except Exception as exc:
+                self.logger.error(
+                    "Account settlement reconciliation failed for contract %s: %s",
+                    contract_id,
+                    exc,
+                    extra={"token_tag": token_tag(token), "contract_id": str(contract_id)},
+                )
             return
         if contract_id not in self.delayed_contracts_logged:
             self.delayed_contracts_logged.add(contract_id)
@@ -1789,14 +1940,24 @@ class TradingBot:
         for token in self.tokens:
             tag = token_tag(token)
             profile = self.user_profiles.get(token, {})
+            managed_account_id = self._managed_account_id_for_token(token)
             preferred_account_id = str(profile.get("account_id", "")).strip()
+            self._set_account_execution_status(
+                managed_account_id,
+                "validating",
+                "Validating Deriv trading access",
+            )
             self.logger.info("Validating account for token...", extra={"token_tag": tag})
 
             path = "/trading/v1/options/accounts"
             resp = await _rest_request("GET", path, self.app_id, self.rest_base_url, token=token)
 
             if "error" in resp:
-                self.logger.error("Account verification failed: %s", resp["error"].get("message"), extra={"token_tag": tag})
+                message = sanitize_account_ids(
+                    str(resp["error"].get("message") or "Account verification failed")
+                )
+                self._set_account_execution_status(managed_account_id, "error", message)
+                self.logger.error("Account verification failed: %s", message, extra={"token_tag": tag})
                 continue
 
             accounts = resp.get("data", [])
@@ -1804,6 +1965,11 @@ class TradingBot:
             if preferred_account_id:
                 matched = next((acc for acc in accounts if acc.get("account_id") == preferred_account_id), None)
                 if matched and matched.get("account_type") != self.environment:
+                    self._set_account_execution_status(
+                        managed_account_id,
+                        "error",
+                        f"Account does not match {self.environment} mode",
+                    )
                     self.logger.error(
                         "Configured account %s does not match environment %s",
                         mask_account_id(preferred_account_id),
@@ -1818,6 +1984,11 @@ class TradingBot:
                         break
 
             if not matched:
+                self._set_account_execution_status(
+                    managed_account_id,
+                    "error",
+                    f"No Options {self.environment} account was found",
+                )
                 self.logger.error("No valid options %s account found for token", self.environment, extra={"token_tag": tag})
                 continue
 
@@ -1840,6 +2011,11 @@ class TradingBot:
                         },
                     )
                 else:
+                    self._set_account_execution_status(
+                        managed_account_id,
+                        "duplicate",
+                        "Another credential already owns this trading account",
+                    )
                     self.logger.warning(
                         "Duplicate login/token for account %s ignored; account already has one trading slot",
                         mask_account_id(account_id),
@@ -1855,6 +2031,11 @@ class TradingBot:
                 balance=float(matched.get("balance", 0.0)),
                 currency=str(matched.get("currency", "USD")),
                 status=str(matched.get("status", "active")),
+            )
+            self._set_account_execution_status(
+                managed_account_id,
+                "connecting",
+                "Trading access validated; connecting private stream",
             )
             self.logger.info(
                 "Successfully validated %s account: %s",
@@ -1878,9 +2059,14 @@ class TradingBot:
 
     def _sync_running_status_after_validation(self) -> None:
         status, pause_reason = self.repository.control_state()
-        if status == "MANUAL_PAUSE" and pause_reason != "COPY_PURCHASE_PARTIAL":
+        legacy_account_pause_reasons = {
+            "BULK_PURCHASE_REQUIRED",
+            "COPY_GROUP_INCOMPLETE",
+            "COPY_PURCHASE_PARTIAL",
+        }
+        if status == "MANUAL_PAUSE" and pause_reason in legacy_account_pause_reasons:
             self.logger.warning(
-                "Clearing stale MANUAL_PAUSE status reason=%s after validating PAT-ready accounts.",
+                "Clearing obsolete account-wide pause reason=%s; account failures are isolated.",
                 pause_reason or "none",
             )
             self.repository.set_status("RUNNING")
@@ -1889,10 +2075,30 @@ class TradingBot:
             self.repository.set_status("RUNNING")
 
     async def _ensure_sessions_for_valid_clients(self) -> None:
+        desired = {token: account_id for token, account_id in self.valid_clients}
+        for token, session in list(self.sessions.items()):
+            if token in desired and desired[token] == session.account_id:
+                continue
+            if session.task and not session.task.done():
+                session.task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await session.task
+            self.sessions.pop(token, None)
         for token, account_id in self.valid_clients:
             if token in self.sessions:
+                if self.sessions[token].is_connected:
+                    self._set_account_execution_status(
+                        self._managed_account_id_for_token(token),
+                        "active",
+                        "Private trading connection is active",
+                    )
                 continue
-            session = ClientSession(token, account_id, self)
+            session = ClientSession(
+                token,
+                account_id,
+                self,
+                self._managed_account_id_for_token(token),
+            )
             self.sessions[token] = session
             session.task = asyncio.create_task(session.connect_and_run())
 
@@ -2008,9 +2214,13 @@ class TradingBot:
             return
 
         status, pause_reason = self.repository.control_state()
-        if status == "MANUAL_PAUSE" and pause_reason != "COPY_PURCHASE_PARTIAL":
+        if status == "MANUAL_PAUSE" and pause_reason in {
+            "BULK_PURCHASE_REQUIRED",
+            "COPY_GROUP_INCOMPLETE",
+            "COPY_PURCHASE_PARTIAL",
+        }:
             self.logger.warning(
-                "Clearing stale MANUAL_PAUSE status reason=%s before evaluating signal.",
+                "Clearing obsolete account-wide pause reason=%s before evaluating signal.",
                 pause_reason or "none",
             )
             self.repository.set_status("RUNNING")
@@ -2139,38 +2349,6 @@ class TradingBot:
                 self.logger.error("Proposal validation rejected: %s", exc)
                 return
             profit_ratio = economics.potential_profit / economics.stake
-            target_stake = self._planned_stake_for_accounts(profit_ratio)
-            if abs(target_stake - base_stake) > 1e-9:
-                (
-                    prop_resp,
-                    proposal_requested,
-                    proposal_received,
-                ) = await self._send_proposal_request(signal, target_stake)
-                if "error" in prop_resp:
-                    self.logger.error("Proposal validation rejected: %s", prop_resp["error"].get("message"))
-                    self.repository.mark_signal(
-                        signal.signal_id,
-                        status="SKIP_INVALID_PROPOSAL",
-                        proposal_received=True,
-                    )
-                    return
-                try:
-                    economics = parse_proposal_economics(
-                        prop_resp,
-                        stake=target_stake,
-                        predicted_probability=preliminary.posterior_mean,
-                        requested_monotonic=proposal_requested,
-                        received_monotonic=proposal_received,
-                        app_markup_percentage=self.app_markup_percentage,
-                    )
-                except Exception as exc:
-                    self.repository.mark_signal(
-                        signal.signal_id,
-                        status="SKIP_INVALID_PROPOSAL",
-                        proposal_received=True,
-                    )
-                    self.logger.error("Proposal validation rejected: %s", exc)
-                    return
             self.repository.record_proposal(signal, economics)
 
             bayesian = self.bayesian.snapshot(
@@ -2188,8 +2366,7 @@ class TradingBot:
                 connection_session_id=self.connection_session_id,
                 connection_healthy=(
                     self.public_client.is_connected
-                    and bool(self.sessions)
-                    and all(session.is_connected for session in self.sessions.values())
+                    and bool(self._eligible_purchase_accounts())
                 ),
                 pattern_reset_required=False,
             )
@@ -2232,9 +2409,13 @@ class TradingBot:
                 )
                 return
             status, pause_reason = self.repository.control_state()
-            if status == "MANUAL_PAUSE" and pause_reason != "COPY_PURCHASE_PARTIAL":
+            if status == "MANUAL_PAUSE" and pause_reason in {
+                "BULK_PURCHASE_REQUIRED",
+                "COPY_GROUP_INCOMPLETE",
+                "COPY_PURCHASE_PARTIAL",
+            }:
                 self.logger.warning(
-                    "Clearing stale MANUAL_PAUSE status reason=%s before purchase.",
+                    "Clearing obsolete account-wide pause reason=%s before purchase.",
                     pause_reason or "none",
                 )
                 self.repository.set_status("RUNNING")
@@ -2256,46 +2437,12 @@ class TradingBot:
                     signal.signal_id,
                 )
                 return
-            enabled_managed_accounts = self._enabled_managed_account_ids()
             eligible_account_ids = {account_id for _, account_id in eligible_accounts}
-            missing_enabled_accounts = sorted(enabled_managed_accounts - eligible_account_ids)
-            if missing_enabled_accounts:
-                self.repository.mark_signal(signal.signal_id, status="SKIP_COPY_GROUP_INCOMPLETE")
-                self.repository.set_status(
-                    "MANUAL_PAUSE",
-                    "COPY_GROUP_INCOMPLETE",
-                )
-                self.logger.critical(
-                    "COPY_GROUP_INCOMPLETE enabled_accounts=%s eligible_accounts=%s missing=%s; "
-                    "pausing before purchase.",
-                    len(enabled_managed_accounts),
-                    len(eligible_account_ids),
-                    [mask_account_id(account_id) for account_id in missing_enabled_accounts],
-                )
-                return
-            stake_amount = round(float(economics.stake), 2)
             profit_ratio = economics.potential_profit / economics.stake
-            bulk_incompatible_accounts = self._bulk_purchase_incompatible_accounts(
-                eligible_accounts
-            )
-            if (
-                bulk_incompatible_accounts
-                and not self._sequential_private_fallback_allowed(len(eligible_accounts))
-            ):
-                self.repository.mark_signal(
-                    signal.signal_id,
-                    status="SKIP_BULK_REQUIRES_PAT",
-                )
-                self.logger.error(
-                    "BULK_PURCHASE_REQUIRES_PAT signal_id=%s account_count=%s "
-                    "oauth_accounts=%s; Deriv REST bulk-purchase requires end-user "
-                    "PAT tokens for copied accounts. Bot remains RUNNING and no "
-                    "contract was opened.",
-                    signal.signal_id,
-                    len(eligible_accounts),
-                    [mask_account_id(account_id) for account_id in bulk_incompatible_accounts],
-                )
-                return
+            stake_by_token = {
+                token: self._planned_stake_for_account(token, account_id, profit_ratio)
+                for token, account_id in eligible_accounts
+            }
 
             purchase_requested_at = datetime.now(timezone.utc)
             self.repository.mark_signal(
@@ -2310,101 +2457,13 @@ class TradingBot:
                 len(eligible_accounts),
                 economics.proposal_id,
             )
-            transactions: List[Dict[str, Any]] = []
-            use_private_purchase = self._requires_private_purchase_transport(
-                account_count=len(eligible_accounts),
-                bulk_incompatible_accounts=bulk_incompatible_accounts,
+            transactions = await self._purchase_accounts_by_stake(
+                signal=signal,
+                eligible_accounts=eligible_accounts,
+                stake_by_token=stake_by_token,
             )
-            if use_private_purchase:
-                transport_reason = (
-                    "single_account_markup"
-                    if len(eligible_accounts) == 1
-                    else "bulk_incompatible"
-                )
-                self.logger.info(
-                    "Using authenticated private WebSocket purchase account_count=%s "
-                    "signal_id=%s reason=%s",
-                    len(eligible_accounts),
-                    signal.signal_id,
-                    transport_reason,
-                )
-                transactions = await self._purchase_via_private_sessions(
-                    signal=signal,
-                    eligible_accounts=eligible_accounts,
-                    stake_amount=stake_amount,
-                )
-            else:
-                bulk_path = f"/trading/v1/options/contracts/bulk-purchase/{self.environment}"
-                contract_parameters = self._contract_parameters(
-                    signal,
-                    stake_amount,
-                    symbol_key="underlying_symbol",
-                )
-                req_body = {
-                    "contract_parameters": contract_parameters,
-                    "accounts": [
-                        {"token": token, "account_id": account_id}
-                        for token, account_id in eligible_accounts
-                    ],
-                }
-                resp = await _rest_request(
-                    "POST",
-                    bulk_path,
-                    self.app_id,
-                    self.rest_base_url,
-                    token=None,
-                    json_data=req_body,
-                )
-
-                if "error" in resp:
-                    error_message = sanitize_account_ids(resp["error"].get("message"))
-                    self.logger.error("REST Bulk Purchase request failed: %s", error_message)
-                    self.repository.mark_signal(signal.signal_id, status="PURCHASE_FAILED_BULK_REQUIRED")
-                    if not self._sequential_private_fallback_allowed(len(eligible_accounts)):
-                        self.logger.error(
-                            "BULK_PURCHASE_FAILED_NO_CONTRACTS signal_id=%s account_count=%s; "
-                            "bot remains RUNNING because no contract was opened and copy-trade "
-                            "consistency is intact. error=%s",
-                            signal.signal_id,
-                            len(eligible_accounts),
-                            error_message,
-                        )
-                    return
-                transactions = resp.get("data", {}).get("transactions", [])
-                if resp.get("errors"):
-                    messages = "; ".join(
-                        sanitize_account_ids(
-                            err.get("message", "Unknown bulk-purchase error")
-                        )
-                        for err in resp.get("errors", [])
-                    )
-                    self.logger.error("REST Bulk Purchase validation failed: %s", messages)
-                    if not transactions:
-                        if not self._sequential_private_fallback_allowed(len(eligible_accounts)):
-                            self.repository.mark_signal(
-                                signal.signal_id,
-                                status="PURCHASE_FAILED_BULK_REQUIRED",
-                            )
-                            self.logger.error(
-                                "BULK_PURCHASE_FAILED_NO_CONTRACTS signal_id=%s account_count=%s; "
-                                "sequential private fallback is disabled to avoid mismatched 1-tick "
-                                "outcomes, but bot remains RUNNING because no contract was opened. "
-                                "errors=%s",
-                                signal.signal_id,
-                                len(eligible_accounts),
-                                messages,
-                            )
-                            return
-                        self.logger.info(
-                            "Falling back to private WebSocket buy for signal_id=%s",
-                            signal.signal_id,
-                        )
-                        transactions = await self._purchase_via_private_sessions(
-                            signal=signal,
-                            eligible_accounts=eligible_accounts,
-                            stake_amount=stake_amount,
-                        )
             signal_contracts: Set[int] = set()
+            registered_account_ids: Set[str] = set()
             self.outcomes_by_signal[signal.signal_id] = []
 
             for tx in transactions:
@@ -2412,69 +2471,46 @@ class TradingBot:
                 token = next((t for t, acc in eligible_accounts if acc == account_id), None)
                 if not token:
                     continue
-
-                st = self._client_state_for_token(token, account_id=str(account_id or ""))
-                tag = st["token_tag"]
-
+                stake_amount = round(
+                    float(tx.get("stake_amount", stake_by_token.get(token, self.base_stake))),
+                    2,
+                )
                 if "error" in tx:
+                    st = self._client_state_for_token(
+                        token,
+                        account_id=str(account_id or ""),
+                    )
                     self.logger.error(
                         "Purchase failed for account %s: %s",
                         mask_account_id(account_id),
                         tx["error"].get("message"),
                         extra={
-                            "token_tag": tag,
+                            "token_tag": st["token_tag"],
                             "masked_account_id": mask_account_id(account_id),
                         },
                     )
                     continue
-
-                contract_id = tx.get("contract_id")
-                transaction_id = tx.get("transaction_id")
-                if contract_id:
-                    st["current_stake"] = stake_amount
-                    st["last_profit_ratio"] = profit_ratio
-                    st["single_recovery_active"] = (
-                        bool(st.get("single_recovery_pending", False))
-                        or stake_amount > base_stake + 1e-9
+                try:
+                    contract_id = await self._register_account_purchase(
+                        signal=signal,
+                        transaction=tx,
+                        token=token,
+                        account_id=str(account_id or ""),
+                        stake_amount=stake_amount,
+                        profit_ratio=profit_ratio,
+                        purchase_requested_at=purchase_requested_at,
                     )
-                    if st["single_recovery_active"]:
-                        st["single_recovery_pending"] = False
-                    contract_id = int(contract_id)
-                    self.pending_contracts_for_current_cycle.add(contract_id)
+                except Exception as exc:
+                    self.logger.error(
+                        "Account purchase registration failed for %s: %s",
+                        mask_account_id(account_id),
+                        exc,
+                        extra={"token_tag": token_tag(token)},
+                    )
+                    continue
+                if contract_id is not None:
                     signal_contracts.add(contract_id)
-                    self.contract_signal_ids[contract_id] = signal.signal_id
-                    session = self.sessions[token]
-                    session.pending_contracts.add(contract_id)
-                    self.pending_contract_started_at[contract_id] = purchase_requested_at
-                    self.repository.register_purchase(
-                        signal_id=signal.signal_id,
-                        contract_id=str(contract_id),
-                        transaction_id=str(transaction_id or contract_id),
-                        account_id=str(account_id),
-                        purchase_time=purchase_requested_at,
-                        aligned_with_signal=True,
-                        buy_price=optional_float(tx.get("buy_price")),
-                        payout=optional_float(tx.get("payout")),
-                        provider_purchase_time=optional_epoch_datetime(
-                            tx.get("purchase_time")
-                        ),
-                        provider_start_time=optional_epoch_datetime(
-                            tx.get("start_time")
-                        ),
-                        contract_duration=self.duration,
-                        contract_duration_unit=self.duration_unit,
-                    )
-
-                    self.logger.info(
-                        "PURCHASE_CONFIRMED signal_id=%s contract_type=%s barrier=%s trigger=%s",
-                        signal.signal_id,
-                        signal.contract_type,
-                        signal.barrier,
-                        signal.trigger_name,
-                        extra={"token_tag": tag, "contract_id": str(contract_id), "stake": f"{stake_amount:.2f}"}
-                    )
-                    await session.subscribe_contract(contract_id)
-                    await self._refresh_account_balance_snapshot(token, str(account_id))
+                    registered_account_ids.add(str(account_id))
 
             self.pending_by_signal[signal.signal_id] = signal_contracts
             self._save_state()
@@ -2484,11 +2520,7 @@ class TradingBot:
                 self.logger.warning("No contracts were purchased successfully")
                 return
 
-            purchased_account_ids = {
-                str(tx.get("account_id", "")).strip()
-                for tx in transactions
-                if tx.get("contract_id") and "error" not in tx
-            }
+            purchased_account_ids = registered_account_ids
             missing_purchases = sorted(eligible_account_ids - purchased_account_ids)
             if missing_purchases:
                 self.repository.mark_signal(
@@ -2496,13 +2528,9 @@ class TradingBot:
                     status="PURCHASE_PARTIAL",
                     purchase_confirmed=True,
                 )
-                self.repository.set_status(
-                    "MANUAL_PAUSE",
-                    "COPY_PURCHASE_PARTIAL",
-                )
-                self.logger.critical(
+                self.logger.warning(
                     "COPY_PURCHASE_PARTIAL signal_id=%s purchased=%s expected=%s missing=%s; "
-                    "pausing to prevent further inconsistent copy trading.",
+                    "failed accounts were skipped and healthy accounts remain active.",
                     signal.signal_id,
                     len(purchased_account_ids),
                     len(eligible_account_ids),
@@ -2514,12 +2542,6 @@ class TradingBot:
                     status="PURCHASE_CONFIRMED",
                     purchase_confirmed=True,
                 )
-            if missing_purchases:
-                asyncio.create_task(
-                    self._cycle_timeout_watchdog(signal.signal_id, list(signal_contracts))
-                )
-                return
-
             asyncio.create_task(
                 self._cycle_timeout_watchdog(signal.signal_id, list(signal_contracts))
             )
@@ -2532,6 +2554,187 @@ class TradingBot:
             self.is_trading_locked = False
             self.pending_signal = None
 
+    async def _register_account_purchase(
+        self,
+        *,
+        signal: CandidateSignal,
+        transaction: Dict[str, Any],
+        token: str,
+        account_id: str,
+        stake_amount: float,
+        profit_ratio: float,
+        purchase_requested_at: datetime,
+    ) -> int | None:
+        raw_contract_id = transaction.get("contract_id")
+        if not raw_contract_id:
+            return None
+        contract_id = int(raw_contract_id)
+        st = self._client_state_for_token(token, account_id=account_id)
+        tag = st["token_tag"]
+        st["current_stake"] = stake_amount
+        st["last_profit_ratio"] = profit_ratio
+        st["single_recovery_active"] = (
+            bool(st.get("single_recovery_pending", False))
+            or stake_amount > float(st.get("base_stake", self.base_stake)) + 1e-9
+        )
+        if st["single_recovery_active"]:
+            st["single_recovery_pending"] = False
+
+        session = self.sessions.get(token)
+        if session is None:
+            session = ClientSession(
+                token,
+                account_id,
+                self,
+                self._managed_account_id_for_token(token),
+            )
+            self.sessions[token] = session
+            session.task = asyncio.create_task(session.connect_and_run())
+
+        self.pending_contracts_for_current_cycle.add(contract_id)
+        self.contract_signal_ids[contract_id] = signal.signal_id
+        session.pending_contracts.add(contract_id)
+        self.pending_contract_started_at[contract_id] = purchase_requested_at
+        self.repository.register_purchase(
+            signal_id=signal.signal_id,
+            contract_id=str(contract_id),
+            transaction_id=str(transaction.get("transaction_id") or contract_id),
+            account_id=account_id,
+            purchase_time=purchase_requested_at,
+            aligned_with_signal=True,
+            buy_price=optional_float(transaction.get("buy_price")),
+            payout=optional_float(transaction.get("payout")),
+            provider_purchase_time=optional_epoch_datetime(
+                transaction.get("purchase_time")
+            ),
+            provider_start_time=optional_epoch_datetime(transaction.get("start_time")),
+            contract_duration=self.duration,
+            contract_duration_unit=self.duration_unit,
+        )
+        self.logger.info(
+            "PURCHASE_CONFIRMED signal_id=%s contract_type=%s barrier=%s trigger=%s",
+            signal.signal_id,
+            signal.contract_type,
+            signal.barrier,
+            signal.trigger_name,
+            extra={
+                "token_tag": tag,
+                "contract_id": str(contract_id),
+                "stake": f"{stake_amount:.2f}",
+            },
+        )
+        await session.subscribe_contract(contract_id)
+        await self._refresh_account_balance_snapshot(token, account_id)
+        return contract_id
+
+    async def _purchase_accounts_by_stake(
+        self,
+        *,
+        signal: CandidateSignal,
+        eligible_accounts: List[Tuple[str, str]],
+        stake_by_token: Dict[str, float],
+    ) -> List[Dict[str, Any]]:
+        groups: Dict[float, List[Tuple[str, str]]] = {}
+        for token, account_id in eligible_accounts:
+            stake = round(float(stake_by_token[token]), 2)
+            groups.setdefault(stake, []).append((token, account_id))
+
+        tasks = [
+            self._purchase_stake_group(
+                signal=signal,
+                eligible_accounts=accounts,
+                stake_amount=stake,
+            )
+            for stake, accounts in groups.items()
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        transactions: List[Dict[str, Any]] = []
+        for (stake, accounts), result in zip(groups.items(), results):
+            if isinstance(result, Exception):
+                message = sanitize_account_ids(str(result))
+                self.logger.error(
+                    "Purchase group failed signal_id=%s stake=%.2f account_count=%s: %s",
+                    signal.signal_id,
+                    stake,
+                    len(accounts),
+                    message,
+                )
+                transactions.extend(
+                    {
+                        "account_id": account_id,
+                        "stake_amount": stake,
+                        "error": {"message": message},
+                    }
+                    for _token, account_id in accounts
+                )
+                continue
+            for transaction in result:
+                transaction["stake_amount"] = stake
+                transactions.append(transaction)
+        return transactions
+
+    async def _purchase_stake_group(
+        self,
+        *,
+        signal: CandidateSignal,
+        eligible_accounts: List[Tuple[str, str]],
+        stake_amount: float,
+    ) -> List[Dict[str, Any]]:
+        incompatible = self._bulk_purchase_incompatible_accounts(eligible_accounts)
+        if self._requires_private_purchase_transport(
+            account_count=len(eligible_accounts),
+            bulk_incompatible_accounts=incompatible,
+        ):
+            return await self._purchase_via_private_sessions(
+                signal=signal,
+                eligible_accounts=eligible_accounts,
+                stake_amount=stake_amount,
+            )
+
+        bulk_path = f"/trading/v1/options/contracts/bulk-purchase/{self.environment}"
+        response = await _rest_request(
+            "POST",
+            bulk_path,
+            self.app_id,
+            self.rest_base_url,
+            token=None,
+            json_data={
+                "contract_parameters": self._contract_parameters(
+                    signal,
+                    stake_amount,
+                    symbol_key="underlying_symbol",
+                ),
+                "accounts": [
+                    {"token": token, "account_id": account_id}
+                    for token, account_id in eligible_accounts
+                ],
+            },
+        )
+        if "error" in response:
+            message = sanitize_account_ids(
+                response["error"].get("message", "Bulk purchase request failed")
+            )
+            self.logger.error("REST Bulk Purchase request failed: %s", message)
+            return [
+                {"account_id": account_id, "error": {"message": message}}
+                for _token, account_id in eligible_accounts
+            ]
+
+        transactions = list(response.get("data", {}).get("transactions", []))
+        errors = list(response.get("errors") or [])
+        if errors:
+            messages = "; ".join(
+                sanitize_account_ids(
+                    error.get("message", "Unknown bulk-purchase error")
+                )
+                for error in errors
+            )
+            self.logger.error(
+                "REST Bulk Purchase validation failed for one or more accounts: %s",
+                messages,
+            )
+        return transactions
+
     async def _purchase_via_private_sessions(
         self,
         *,
@@ -2539,8 +2742,7 @@ class TradingBot:
         eligible_accounts: List[Tuple[str, str]],
         stake_amount: float,
     ) -> List[Dict[str, Any]]:
-        transactions: List[Dict[str, Any]] = []
-        for token, account_id in eligible_accounts:
+        async def buy_one(token: str, account_id: str) -> Dict[str, Any]:
             session = self.sessions.get(token)
             st = self._client_state_for_token(token, account_id=account_id)
             extra = {
@@ -2556,10 +2758,7 @@ class TradingBot:
                     message,
                     extra=extra,
                 )
-                transactions.append(
-                    {"account_id": account_id, "error": {"message": message}}
-                )
-                continue
+                return {"account_id": account_id, "error": {"message": message}}
 
             response = await session.send_request(
                 self._direct_buy_request(signal, stake_amount)
@@ -2572,10 +2771,7 @@ class TradingBot:
                     message,
                     extra=extra,
                 )
-                transactions.append(
-                    {"account_id": account_id, "error": {"message": message}}
-                )
-                continue
+                return {"account_id": account_id, "error": {"message": message}}
 
             buy = response.get("buy", {})
             contract_id = buy.get("contract_id")
@@ -2590,22 +2786,33 @@ class TradingBot:
                     message,
                     extra=extra,
                 )
-                transactions.append(
-                    {"account_id": account_id, "error": {"message": message}}
-                )
-                continue
+                return {"account_id": account_id, "error": {"message": message}}
 
-            transactions.append(
-                {
-                    "account_id": account_id,
-                    "contract_id": contract_id,
-                    "transaction_id": transaction_id or contract_id,
-                    "buy_price": buy.get("buy_price"),
-                    "payout": buy.get("payout"),
-                    "purchase_time": buy.get("purchase_time"),
-                    "start_time": buy.get("start_time"),
-                }
-            )
+            return {
+                "account_id": account_id,
+                "contract_id": contract_id,
+                "transaction_id": transaction_id or contract_id,
+                "buy_price": buy.get("buy_price"),
+                "payout": buy.get("payout"),
+                "purchase_time": buy.get("purchase_time"),
+                "start_time": buy.get("start_time"),
+            }
+
+        results = await asyncio.gather(
+            *(buy_one(token, account_id) for token, account_id in eligible_accounts),
+            return_exceptions=True,
+        )
+        transactions: List[Dict[str, Any]] = []
+        for (_token, account_id), result in zip(eligible_accounts, results):
+            if isinstance(result, Exception):
+                transactions.append(
+                    {
+                        "account_id": account_id,
+                        "error": {"message": sanitize_account_ids(str(result))},
+                    }
+                )
+            else:
+                transactions.append(result)
         return transactions
 
     async def _send_proposal_request(
@@ -2678,22 +2885,6 @@ class TradingBot:
             return configured
         return self.valid_clients[0][1] if self.valid_clients else ""
 
-    def _enabled_managed_account_ids(self) -> Set[str]:
-        account_ids: Set[str] = set()
-        for row in self.repository.list_managed_accounts():
-            if not row.enabled:
-                continue
-            try:
-                payload = decrypt_auth_payload(row.token_secret, self.encryption_key)
-            except Exception:
-                continue
-            if not self._purchase_token_from_payload(payload):
-                continue
-            account_id = str(payload.get("account_id", "")).strip()
-            if account_id:
-                account_ids.add(account_id)
-        return account_ids
-
     def _purchase_token_from_payload(self, payload: Dict[str, Any]) -> str:
         explicit_pat = str(payload.get("pat_token", "")).strip()
         if explicit_pat:
@@ -2729,7 +2920,11 @@ class TradingBot:
         return account_count == 1 or bool(bulk_incompatible_accounts)
 
     def _eligible_purchase_accounts(self) -> List[Tuple[str, str]]:
-        accounts = list(self.valid_clients)
+        accounts = [
+            (token, account_id)
+            for token, account_id in self.valid_clients
+            if token in self.sessions and self.sessions[token].is_connected
+        ]
         unique_accounts: List[Tuple[str, str]] = []
         seen_account_ids: Set[str] = set()
         for token, account_id in accounts:
@@ -2760,15 +2955,6 @@ class TradingBot:
             if account_id != master_account_id
         ]
         return copiers or accounts
-
-    def _sequential_private_fallback_allowed(self, account_count: int) -> bool:
-        if account_count <= 1:
-            return True
-        return os.getenv("COPYTRADING_ALLOW_SEQUENTIAL_PRIVATE_FALLBACK", "false").lower() in {
-            "1",
-            "true",
-            "yes",
-        }
 
     def _store_account_balance_payload(
         self,
@@ -2866,6 +3052,61 @@ class TradingBot:
             )
             for cid in timed_out:
                 await self._reconcile_pending_contract(cid, "timeout_watchdog")
+
+    def _enforce_account_risk_limit(
+        self,
+        token: str,
+        account_id: str,
+        state: Dict[str, Any],
+    ) -> str:
+        managed_account_id = state.get("managed_account_id")
+        if managed_account_id in {None, ""}:
+            return ""
+        account_profit = float(
+            self.repository.account_summary(account_id).get("profit") or 0.0
+        )
+        take_profit = max(0.0, float(state.get("take_profit", 0.0) or 0.0))
+        stop_loss = max(0.0, float(state.get("stop_loss", 0.0) or 0.0))
+        status = ""
+        reason = ""
+        if take_profit > 0 and account_profit >= take_profit - 0.005:
+            status = "take_profit"
+            reason = f"Take profit reached at {account_profit:.2f} USD"
+        elif stop_loss > 0 and account_profit <= -stop_loss + 0.005:
+            status = "stop_loss"
+            reason = f"Stop loss reached at {account_profit:.2f} USD"
+        if not status:
+            return ""
+
+        self.repository.set_managed_account_enabled(int(managed_account_id), False)
+        self.repository.set_managed_account_execution_status(
+            int(managed_account_id),
+            status,
+            reason,
+        )
+        self.valid_clients = [
+            item for item in self.valid_clients if item[0] != token
+        ]
+        self.repository.audit(
+            "ACCOUNT_RISK_LIMIT_REACHED",
+            "worker",
+            socket.gethostname(),
+            {
+                "account_id_masked": mask_account_id(account_id),
+                "limit": status,
+                "account_profit": round(account_profit, 2),
+                "take_profit": take_profit,
+                "stop_loss": stop_loss,
+            },
+        )
+        self.logger.warning(
+            "ACCOUNT_RISK_LIMIT_REACHED account=%s limit=%s profit=%.2f; "
+            "only this account was removed from execution.",
+            mask_account_id(account_id),
+            status,
+            account_profit,
+        )
+        return status
 
     async def handle_contract_update(self, token: str, contract_id: int, contract: Dict[str, Any]) -> None:
         status = contract.get("status", "unknown")
@@ -3030,6 +3271,8 @@ class TradingBot:
             session.pending_contracts.discard(contract_id)
             await self._refresh_account_balance_snapshot(token, session.account_id)
 
+        self._enforce_account_risk_limit(token, account_id, st)
+
         self.unresolved_contracts_from_state.discard(contract_id)
         self.pending_contracts_for_current_cycle.discard(contract_id)
         self.pending_contract_started_at.pop(contract_id, None)
@@ -3061,6 +3304,13 @@ class TradingBot:
         refresh_interval = max(5, int(os.getenv("ACCOUNT_REFRESH_INTERVAL_SECONDS", "10")))
         refresh_timer = 0
         while self.is_running:
+            self.repository.touch_managed_account_execution(
+                [
+                    int(session.managed_account_id)
+                    for session in self.sessions.values()
+                    if session.is_connected and session.managed_account_id is not None
+                ]
+            )
             if self.last_tick_received_at > 0:
                 silence = time.monotonic() - self.last_tick_received_at
                 if silence > self.max_tick_silence_seconds:
@@ -3153,7 +3403,12 @@ class TradingBot:
 
                 # Initialize private sessions before reconciling unresolved DB trades.
                 for token, account_id in self.valid_clients:
-                    session = ClientSession(token, account_id, self)
+                    session = ClientSession(
+                        token,
+                        account_id,
+                        self,
+                        self._managed_account_id_for_token(token),
+                    )
                     self.sessions[token] = session
 
                 for trade in self.repository.unresolved_contracts():

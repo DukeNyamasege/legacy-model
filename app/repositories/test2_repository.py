@@ -131,6 +131,11 @@ class Test2Repository:
                 "id": int(row.id),
                 "label": row.label,
                 "enabled": bool(row.enabled),
+                "stake_amount": float(row.stake_amount),
+                "take_profit": float(row.take_profit),
+                "stop_loss": float(row.stop_loss),
+                "execution_status": row.execution_status,
+                "execution_status_reason": row.execution_status_reason,
                 "created_at": row.created_at.isoformat(),
                 "updated_at": row.updated_at.isoformat(),
             }
@@ -158,6 +163,11 @@ class Test2Repository:
                 "id": int(row.id),
                 "label": row.label,
                 "enabled": bool(row.enabled),
+                "stake_amount": float(row.stake_amount),
+                "take_profit": float(row.take_profit),
+                "stop_loss": float(row.stop_loss),
+                "execution_status": row.execution_status,
+                "execution_status_reason": row.execution_status_reason,
                 "created_at": row.created_at.isoformat(),
                 "updated_at": row.updated_at.isoformat(),
             }
@@ -172,12 +182,75 @@ class Test2Repository:
                 "label": row.label,
                 "token_secret": row.token_secret,
                 "enabled": bool(row.enabled),
+                "stake_amount": float(row.stake_amount),
+                "take_profit": float(row.take_profit),
+                "stop_loss": float(row.stop_loss),
+                "execution_status": row.execution_status,
+                "execution_status_reason": row.execution_status_reason,
+                "execution_status_updated_at": row.execution_status_updated_at,
                 "created_at": row.created_at,
                 "updated_at": row.updated_at,
             }
 
     def set_managed_account_enabled(self, account_id: int, enabled: bool) -> dict[str, Any]:
-        return self.update_managed_account(account_id, enabled=bool(enabled))
+        result = self.update_managed_account(account_id, enabled=bool(enabled))
+        self.set_managed_account_execution_status(
+            account_id,
+            "connecting" if enabled else "disabled",
+            "Auto trading enabled" if enabled else "Auto trading disabled",
+        )
+        return result
+
+    def update_account_execution_settings(
+        self,
+        account_id: int,
+        *,
+        stake_amount: float,
+        take_profit: float,
+        stop_loss: float,
+    ) -> dict[str, Any]:
+        with self.database.session() as session:
+            row = session.get(ManagedAccount, int(account_id))
+            if row is None:
+                raise ValueError(f"Managed account {account_id} not found")
+            row.stake_amount = float(stake_amount)
+            row.take_profit = float(take_profit)
+            row.stop_loss = float(stop_loss)
+            row.updated_at = utc_now()
+            return {
+                "stake_amount": float(row.stake_amount),
+                "take_profit": float(row.take_profit),
+                "stop_loss": float(row.stop_loss),
+            }
+
+    def set_managed_account_execution_status(
+        self,
+        account_id: int,
+        execution_status: str,
+        reason: str = "",
+    ) -> None:
+        with self.database.session() as session:
+            row = session.get(ManagedAccount, int(account_id))
+            if row is None:
+                return
+            row.execution_status = str(execution_status or "inactive")[:30]
+            row.execution_status_reason = str(reason or "")[:160]
+            row.execution_status_updated_at = utc_now()
+
+    def touch_managed_account_execution(self, account_ids: list[int]) -> None:
+        normalized = sorted({int(account_id) for account_id in account_ids if account_id})
+        if not normalized:
+            return
+        with self.database.session() as session:
+            session.execute(
+                update(ManagedAccount)
+                .where(
+                    ManagedAccount.id.in_(normalized),
+                    ManagedAccount.enabled.is_(True),
+                    ManagedAccount.execution_status == "active",
+                )
+                .values(execution_status_updated_at=utc_now())
+            )
 
     def create_client_session(
         self, *, session_hash: str, managed_account_id: int, expires_at: datetime
@@ -214,6 +287,12 @@ class Test2Repository:
                 "label": account.label,
                 "token_secret": account.token_secret,
                 "enabled": bool(account.enabled),
+                "stake_amount": float(account.stake_amount),
+                "take_profit": float(account.take_profit),
+                "stop_loss": float(account.stop_loss),
+                "execution_status": account.execution_status,
+                "execution_status_reason": account.execution_status_reason,
+                "execution_status_updated_at": account.execution_status_updated_at,
                 "created_at": account.created_at,
                 "updated_at": account.updated_at,
                 "expires_at": row.expires_at,
@@ -292,6 +371,48 @@ class Test2Repository:
                     self._current_run_trade_filter(),
                 )
             ).one()
+            settled_rows = session.execute(
+                select(Trade.outcome, Trade.settlement_time)
+                .where(
+                    Trade.account_id_masked == masked,
+                    Trade.settlement_time.is_not(None),
+                    self._current_run_trade_filter(),
+                )
+                .order_by(Trade.settlement_time.asc(), Trade.id.asc())
+            ).all()
+            longest_win_streak = 0
+            longest_loss_streak = 0
+            current_outcome = ""
+            current_length = 0
+            for settled in settled_rows:
+                outcome = str(settled.outcome or "").upper()
+                if outcome == current_outcome:
+                    current_length += 1
+                else:
+                    current_outcome = outcome
+                    current_length = 1
+                if outcome == "WIN":
+                    longest_win_streak = max(longest_win_streak, current_length)
+                elif outcome == "LOSS":
+                    longest_loss_streak = max(longest_loss_streak, current_length)
+            open_rows = session.scalars(
+                select(Trade)
+                .where(
+                    Trade.account_id_masked == masked,
+                    Trade.settlement_time.is_(None),
+                    self._current_run_trade_filter(),
+                )
+                .order_by(Trade.purchase_time.asc())
+            ).all()
+            oldest_open_trade_seconds = 0
+            if open_rows:
+                now = utc_now()
+                oldest_open_trade_seconds = max(
+                    0,
+                    int(max((now - row.purchase_time).total_seconds() for row in open_rows)),
+                )
+            wins = int(trade_row.wins or 0)
+            losses = int(trade_row.losses or 0)
             return {
                 "account": masked,
                 "balance": float(snapshot.balance if snapshot else 0.0),
@@ -299,9 +420,14 @@ class Test2Repository:
                 "status": str(snapshot.status if snapshot else "linked"),
                 "updated_at": snapshot.updated_at.isoformat() if snapshot else None,
                 "trades": int(trade_row.trades or 0),
-                "wins": int(trade_row.wins or 0),
-                "losses": int(trade_row.losses or 0),
+                "wins": wins,
+                "losses": losses,
                 "profit": float(trade_row.profit or 0.0),
+                "win_rate": wins / (wins + losses) if wins + losses else 0.0,
+                "longest_win_streak": longest_win_streak,
+                "longest_loss_streak": longest_loss_streak,
+                "open_trades": len(open_rows),
+                "oldest_open_trade_seconds": oldest_open_trade_seconds,
             }
 
     def record_tick(

@@ -2,7 +2,7 @@ import asyncio
 import os
 import time
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -13,6 +13,7 @@ from sqlalchemy import func, select
 import enhanced_bot
 from app.config import load_test2_config
 from app.database import Database
+from app.dashboard_metrics import build_execution_summary
 from app.model.bayesian_probability import BayesianProbability
 from app.model.hmm_regime import HmmInference
 from app.models import ProposalRecord
@@ -25,6 +26,7 @@ from app.strategy.decision_engine import (
 )
 from app.strategy.over2_strategy import validate_contract_parameters
 from app.strategy.signal_detector import Over2SignalDetector
+from scripts.reset_test_data import reset_database
 
 os.environ.setdefault("COPYTRADING_ALLOW_LEGACY_GLOBAL_TOKENS", "true")
 
@@ -58,6 +60,48 @@ def live_tick_payload(sequence: int, quote: float) -> dict:
             "symbol": "1HZ100V",
         }
     }
+
+
+class DashboardMetricsTests(unittest.TestCase):
+    def test_global_cards_use_master_stats_and_all_account_profit(self) -> None:
+        master = {
+            "account": "DOT***422",
+            "balance": 389.16,
+            "currency": "USD",
+            "trades": 4,
+            "wins": 3,
+            "losses": 1,
+            "win_rate": 0.75,
+            "profit": 1.25,
+            "longest_win_streak": 3,
+            "longest_loss_streak": 1,
+            "open_trades": 0,
+            "oldest_open_trade_seconds": 0,
+        }
+        copier = {"account": "DOT***967", "trades": 3, "profit": 0.75}
+        stopped = {"account": "DOT***546", "trades": 4, "profit": -0.50}
+
+        result = build_execution_summary(
+            {
+                "purchased_trades": 571,
+                "wins": 437,
+                "losses": 134,
+                "net_profit": 46.17,
+                "max_open_trade_seconds": 6,
+            },
+            active_accounts=[master, copier],
+            linked_accounts=[master, copier, stopped],
+            master=master,
+        )
+
+        self.assertEqual(result["total_traders"], 2)
+        self.assertEqual(result["purchased_trades"], 4)
+        self.assertEqual(result["wins"], 3)
+        self.assertEqual(result["losses"], 1)
+        self.assertEqual(result["longest_win_streak"], 3)
+        self.assertEqual(result["primary_account_balance"], 389.16)
+        self.assertEqual(result["all_accounts_profit"], 1.50)
+        self.assertEqual(result["copy_trade_gap"], 1)
 
 
 class SignalTests(unittest.TestCase):
@@ -490,6 +534,10 @@ class TimingAndModelTests(unittest.TestCase):
                     ("token-b", "DOT90000001"),
                     ("token-c", "DOT90000002"),
                 ]
+                bot.sessions = {
+                    token: MagicMock(is_connected=True)
+                    for token in ("token-a", "token-b", "token-c")
+                }
                 self.assertEqual(
                     bot._eligible_purchase_accounts(),
                     [
@@ -582,7 +630,7 @@ class TimingAndModelTests(unittest.TestCase):
             )
         )
 
-    def test_stale_bulk_purchase_pause_is_cleared_but_partial_pause_remains(self) -> None:
+    def test_all_legacy_copy_failure_pauses_are_cleared(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
             raw = yaml.safe_load(Path("config.yaml").read_text(encoding="utf-8"))
@@ -609,13 +657,124 @@ class TimingAndModelTests(unittest.TestCase):
                 bot._sync_running_status_after_validation()
                 self.assertEqual(
                     bot.repository.control_state(),
-                    ("MANUAL_PAUSE", "COPY_PURCHASE_PARTIAL"),
+                    ("RUNNING", ""),
+                )
+
+                bot.repository.set_status("MANUAL_PAUSE", "ADMIN_REQUEST")
+                bot._sync_running_status_after_validation()
+                self.assertEqual(
+                    bot.repository.control_state(),
+                    ("MANUAL_PAUSE", "ADMIN_REQUEST"),
                 )
             finally:
                 bot.database.engine.dispose()
                 for handler in list(bot.logger.handlers):
                     handler.close()
                 bot.logger.handlers.clear()
+
+
+class AccountIsolationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_each_account_uses_its_own_configured_base_stake(self) -> None:
+        bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
+        bot.cfg = {"strategy": {"initial_stake": 0.50}}
+        bot.recovery_cfg = MagicMock(maximum_stake=1000.0, recovery_runs=2)
+        bot.user_profiles = {}
+        bot.clients = {
+            "token-a": {
+                "account_id": "DOT90000001",
+                "base_stake": 0.50,
+                "recovery_loss_pool": 0.0,
+                "single_recovery_pending": False,
+            },
+            "token-b": {
+                "account_id": "DOT90000002",
+                "base_stake": 2.00,
+                "recovery_loss_pool": 0.0,
+                "single_recovery_pending": False,
+            },
+        }
+
+        self.assertEqual(
+            bot._planned_stake_for_account("token-a", "DOT90000001", 0.40),
+            0.50,
+        )
+        self.assertEqual(
+            bot._planned_stake_for_account("token-b", "DOT90000002", 0.40),
+            2.00,
+        )
+
+    async def test_disconnected_account_is_skipped_without_blocking_healthy_account(self) -> None:
+        bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
+        bot.valid_clients = [
+            ("healthy-token", "DOT90000001"),
+            ("broken-token", "DOT90000002"),
+        ]
+        bot.sessions = {
+            "healthy-token": MagicMock(is_connected=True),
+            "broken-token": MagicMock(is_connected=False),
+        }
+        bot.logger = MagicMock()
+
+        with patch.dict(os.environ, {"COPYTRADING_INCLUDE_MASTER": "true"}):
+            eligible = bot._eligible_purchase_accounts()
+
+        self.assertEqual(eligible, [("healthy-token", "DOT90000001")])
+
+    async def test_stake_group_failure_returns_errors_only_for_that_group(self) -> None:
+        bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
+        bot.logger = MagicMock()
+        signal = MagicMock(signal_id="signal-1")
+
+        async def purchase_group(*, signal, eligible_accounts, stake_amount):
+            if stake_amount == 2.00:
+                raise RuntimeError("isolated account failure")
+            return [
+                {
+                    "account_id": eligible_accounts[0][1],
+                    "contract_id": "123",
+                }
+            ]
+
+        bot._purchase_stake_group = AsyncMock(side_effect=purchase_group)
+        transactions = await bot._purchase_accounts_by_stake(
+            signal=signal,
+            eligible_accounts=[
+                ("token-a", "DOT90000001"),
+                ("token-b", "DOT90000002"),
+            ],
+            stake_by_token={"token-a": 0.50, "token-b": 2.00},
+        )
+
+        self.assertEqual(transactions[0]["contract_id"], "123")
+        self.assertEqual(transactions[0]["stake_amount"], 0.50)
+        self.assertIn("error", transactions[1])
+        self.assertEqual(transactions[1]["account_id"], "DOT90000002")
+
+    async def test_take_profit_disables_only_the_account_that_reached_it(self) -> None:
+        bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
+        bot.repository = MagicMock()
+        bot.repository.account_summary.return_value = {"profit": 5.00}
+        bot.logger = MagicMock()
+        bot.valid_clients = [
+            ("token-a", "DOT90000001"),
+            ("token-b", "DOT90000002"),
+        ]
+        state = {
+            "managed_account_id": 10,
+            "take_profit": 5.00,
+            "stop_loss": 0.00,
+        }
+
+        result = bot._enforce_account_risk_limit(
+            "token-a",
+            "DOT90000001",
+            state,
+        )
+
+        self.assertEqual(result, "take_profit")
+        self.assertEqual(bot.valid_clients, [("token-b", "DOT90000002")])
+        bot.repository.set_managed_account_enabled.assert_called_once_with(10, False)
+        bot.repository.set_status.assert_not_called()
 
 
 class LeaseTests(unittest.IsolatedAsyncioTestCase):
@@ -696,6 +855,56 @@ class PersistenceTests(unittest.TestCase):
         summary = self.repository.summary()
         self.assertEqual(summary["accounts"][0]["account"], "DOT***001")
         self.assertEqual(summary["account_balance_total"], 9999.50)
+
+    def test_personal_controls_persist_without_changing_auto_trade(self) -> None:
+        account = self.repository.add_managed_account(
+            label="Account DOT***001",
+            token_secret="encrypted-token-placeholder",
+            enabled=True,
+        )
+        settings = self.repository.update_account_execution_settings(
+            account["id"],
+            stake_amount=1.25,
+            take_profit=12.50,
+            stop_loss=4.00,
+        )
+        stored = self.repository.managed_account(account["id"])
+
+        self.assertEqual(settings["stake_amount"], 1.25)
+        self.assertEqual(settings["take_profit"], 12.50)
+        self.assertEqual(settings["stop_loss"], 4.00)
+        self.assertTrue(stored["enabled"])
+
+    def test_trade_reset_preserves_credentials_sessions_controls_and_enabled_state(self) -> None:
+        account = self.repository.add_managed_account(
+            label="Account DOT***001",
+            token_secret="encrypted-token-placeholder",
+            enabled=True,
+        )
+        self.repository.update_account_execution_settings(
+            account["id"],
+            stake_amount=1.25,
+            take_profit=12.50,
+            stop_loss=4.00,
+        )
+        self.repository.create_client_session(
+            session_hash="session-hash",
+            managed_account_id=account["id"],
+            expires_at=datetime.now(timezone.utc) + timedelta(days=1),
+        )
+
+        reset_database(self.database, self.config.model.run_id)
+        repository = Test2Repository(self.database, self.config)
+        stored = repository.managed_account(account["id"])
+        session_account = repository.client_session_account("session-hash")
+
+        self.assertEqual(stored["token_secret"], "encrypted-token-placeholder")
+        self.assertTrue(stored["enabled"])
+        self.assertEqual(stored["stake_amount"], 1.25)
+        self.assertEqual(stored["take_profit"], 12.50)
+        self.assertEqual(stored["stop_loss"], 4.00)
+        self.assertIsNotNone(session_account)
+        self.assertEqual(repository.summary()["purchased_trades"], 0)
 
     def test_deriv_may_reuse_proposal_id_for_identical_terms(self) -> None:
         signals = []

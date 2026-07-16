@@ -267,6 +267,14 @@ class ManagedAccount(Base):
     label: Mapped[str] = mapped_column(String(120), default="")
     token_secret: Mapped[str] = mapped_column(Text)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    stake_amount: Mapped[float] = mapped_column(Float, default=0.50)
+    take_profit: Mapped[float] = mapped_column(Float, default=0.0)
+    stop_loss: Mapped[float] = mapped_column(Float, default=0.0)
+    execution_status: Mapped[str] = mapped_column(String(30), default="inactive")
+    execution_status_reason: Mapped[str] = mapped_column(String(160), default="")
+    execution_status_updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 

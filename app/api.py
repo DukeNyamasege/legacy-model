@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import math
 import os
 import re
 import secrets
@@ -25,6 +26,7 @@ import requests
 import json
 
 from app.config import load_test2_config
+from app.dashboard_metrics import build_execution_summary
 from app.database import Database
 from app.oauth_client import (
     build_authorization_url,
@@ -98,6 +100,12 @@ class TokenImportRequest(BaseModel):
 
 class PersonalApiTokenRequest(BaseModel):
     api_token: str
+
+
+class PersonalTradingSettingsRequest(BaseModel):
+    stake_amount: float
+    take_profit: float = 0.0
+    stop_loss: float = 0.0
 
 
 def oauth_client_id() -> str:
@@ -255,8 +263,45 @@ def trading_ready_account_ids() -> set[str]:
     return account_ids
 
 
-def trading_ready_account_masks() -> set[str]:
-    return {mask_account_id(account_id) for account_id in trading_ready_account_ids()}
+def linked_trading_account_ids() -> set[str]:
+    account_ids: set[str] = set()
+    for row in REPOSITORY.list_managed_accounts():
+        try:
+            payload = decrypt_auth_payload(row.token_secret, CONFIG.deriv.token_encryption_key)
+        except Exception:
+            continue
+        if not has_trading_api_token(payload):
+            continue
+        account_id = str(payload.get("account_id", "")).strip()
+        if account_id:
+            account_ids.add(account_id)
+    return account_ids
+
+
+def actively_executing_account_ids() -> set[str]:
+    stale_seconds = max(15, int(os.getenv("ACCOUNT_EXECUTION_STALE_SECONDS", "45")))
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=stale_seconds)
+    account_ids: set[str] = set()
+    for row in REPOSITORY.list_managed_accounts():
+        if not row.enabled or str(row.execution_status) != "active":
+            continue
+        updated_at = row.execution_status_updated_at
+        if updated_at is None:
+            continue
+        if updated_at.tzinfo is None:
+            updated_at = updated_at.replace(tzinfo=timezone.utc)
+        if updated_at < cutoff:
+            continue
+        try:
+            payload = decrypt_auth_payload(row.token_secret, CONFIG.deriv.token_encryption_key)
+        except Exception:
+            continue
+        if not has_trading_api_token(payload):
+            continue
+        account_id = str(payload.get("account_id", "")).strip()
+        if account_id:
+            account_ids.add(account_id)
+    return account_ids
 
 
 def master_account_context() -> tuple[object | None, dict, str]:
@@ -347,47 +392,46 @@ def application_oauth_token() -> tuple[str, str]:
 
 
 def filter_summary_to_trading_ready_accounts(summary: dict) -> dict:
-    ready_masks = trading_ready_account_masks()
-    filtered = dict(summary)
-    accounts = [
-        account
+    active_ids = actively_executing_account_ids()
+    linked_ids = linked_trading_account_ids()
+    summaries_by_mask = {
+        str(account.get("account", "")): dict(account)
         for account in list(summary.get("accounts") or [])
-        if str(account.get("account", "")).strip() in ready_masks
-    ]
-    filtered["accounts"] = accounts
-    filtered["total_traders"] = len(ready_masks)
-    filtered["account_balance_total"] = sum(
-        float(account.get("balance") or 0.0) for account in accounts
-    )
-    trade_counts = [int(account.get("trades") or 0) for account in accounts]
-    copy_trade_gap = (
-        max(trade_counts) - min(trade_counts)
-        if len(trade_counts) > 1
-        else 0
-    )
-    filtered["copy_trade_gap"] = copy_trade_gap
-    filtered["copy_consistency_ok"] = copy_trade_gap == 0
+    }
 
-    primary = None
-    current_primary = str(summary.get("primary_account", "")).strip()
-    if current_primary:
-        primary = next(
-            (account for account in accounts if account.get("account") == current_primary),
-            None,
+    def existing_account_summary(account_id: str) -> dict:
+        masked = mask_account_id(account_id)
+        return summaries_by_mask.get(
+            masked,
+            {
+                "account": masked,
+                "balance": 0.0,
+                "currency": "USD",
+                "status": "linked",
+                "updated_at": None,
+                "trades": 0,
+                "wins": 0,
+                "losses": 0,
+                "profit": 0.0,
+            },
         )
-    if primary is None:
-        primary = accounts[0] if accounts else None
 
-    if primary:
-        filtered["primary_account"] = primary.get("account", "")
-        filtered["primary_account_balance"] = float(primary.get("balance") or 0.0)
-        filtered["primary_account_currency"] = primary.get("currency", "USD")
-    else:
-        filtered["primary_account"] = ""
-        filtered["primary_account_balance"] = 0.0
-        filtered["primary_account_currency"] = "USD"
-
-    return filtered
+    active_accounts = [
+        existing_account_summary(account_id) for account_id in sorted(active_ids)
+    ]
+    all_linked_accounts = [
+        existing_account_summary(account_id) for account_id in sorted(linked_ids)
+    ]
+    _, _, master_account_id = master_account_context()
+    if not master_account_id and linked_ids:
+        master_account_id = sorted(linked_ids)[0]
+    master = REPOSITORY.account_summary(master_account_id) if master_account_id else None
+    return build_execution_summary(
+        summary,
+        active_accounts=active_accounts,
+        linked_accounts=all_linked_accounts,
+        master=master,
+    )
 
 
 def merge_oauth_payload(existing: dict, oauth_payload: dict, account_id: str) -> dict:
@@ -971,6 +1015,13 @@ def get_current_account(request: Request) -> dict | None:
             "account_id_masked": mask_account_id(account_id),
             "label": account["label"],
             "enabled": account["enabled"],
+            "stake_amount": float(account.get("stake_amount", 0.50)),
+            "take_profit": float(account.get("take_profit", 0.0)),
+            "stop_loss": float(account.get("stop_loss", 0.0)),
+            "execution_status": str(account.get("execution_status", "inactive")),
+            "execution_status_reason": str(
+                account.get("execution_status_reason", "")
+            ),
             "has_trading_api_token": token_ready,
             "requires_api_token": not token_ready,
             "created_at": account["created_at"],
@@ -998,6 +1049,11 @@ def get_current_account(request: Request) -> dict | None:
                     "account_id_masked": mask_account_id(account_id),
                     "label": row.label,
                     "enabled": row.enabled,
+                    "stake_amount": float(row.stake_amount),
+                    "take_profit": float(row.take_profit),
+                    "stop_loss": float(row.stop_loss),
+                    "execution_status": str(row.execution_status),
+                    "execution_status_reason": str(row.execution_status_reason),
                     "has_trading_api_token": token_ready,
                     "requires_api_token": not token_ready,
                     "created_at": row.created_at,
@@ -1027,6 +1083,13 @@ def get_me(request: Request) -> dict:
         "balance": personal["balance"],
         "currency": personal["currency"],
         "status": personal["status"],
+        "execution_status": account.get("execution_status", "inactive"),
+        "execution_status_reason": account.get("execution_status_reason", ""),
+        "settings": {
+            "stake_amount": float(account.get("stake_amount", 0.50)),
+            "take_profit": float(account.get("take_profit", 0.0)),
+            "stop_loss": float(account.get("stop_loss", 0.0)),
+        },
         "stats": {
             "trades": personal["trades"],
             "wins": personal["wins"],
@@ -1052,6 +1115,62 @@ def toggle_auto_trade(request: Request, body: AutoTradeRequest) -> dict:
     elif not trading_ready_account_ids():
         REPOSITORY.set_status("STOPPED", "")
     return {"success": True, "enabled": body.enabled}
+
+
+@app.post("/me/trading-settings")
+def update_personal_trading_settings(
+    request: Request,
+    body: PersonalTradingSettingsRequest,
+) -> dict:
+    account = get_current_account(request)
+    if not account:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if not account.get("has_trading_api_token", False):
+        raise HTTPException(
+            status_code=409,
+            detail="Save a Deriv API token before configuring trading controls.",
+        )
+
+    values = (body.stake_amount, body.take_profit, body.stop_loss)
+    if not all(math.isfinite(float(value)) for value in values):
+        raise HTTPException(status_code=400, detail="Trading settings must be finite numbers.")
+    minimum_stake = float(CONFIG.strategy.initial_stake)
+    maximum_stake = float(CONFIG.recovery.maximum_stake)
+    stake_amount = round(float(body.stake_amount), 2)
+    take_profit = round(float(body.take_profit), 2)
+    stop_loss = round(float(body.stop_loss), 2)
+    if not minimum_stake <= stake_amount <= maximum_stake:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Stake must be between {minimum_stake:.2f} and "
+                f"{maximum_stake:.2f} USD."
+            ),
+        )
+    if take_profit < 0 or stop_loss < 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Take profit and stop loss must be 0 or greater.",
+        )
+    if take_profit > 1_000_000 or stop_loss > 1_000_000:
+        raise HTTPException(status_code=400, detail="Risk limits are too large.")
+
+    settings = REPOSITORY.update_account_execution_settings(
+        int(account["id"]),
+        stake_amount=stake_amount,
+        take_profit=take_profit,
+        stop_loss=stop_loss,
+    )
+    REPOSITORY.audit(
+        "PERSONAL_TRADING_SETTINGS_UPDATED",
+        "account-dashboard",
+        request.client.host if request.client else "unknown",
+        {
+            "account_id_masked": account["account_id_masked"],
+            **settings,
+        },
+    )
+    return {"success": True, "settings": settings}
 
 
 @app.post("/me/api-token")
@@ -1132,6 +1251,15 @@ def save_personal_api_token(request: Request, body: PersonalApiTokenRequest) -> 
         label=label,
         token_secret=token_secret,
         enabled=bool(account.get("enabled", False)),
+    )
+    REPOSITORY.set_managed_account_execution_status(
+        int(account["id"]),
+        "connecting" if account.get("enabled", False) else "disabled",
+        (
+            "Trading API token verified"
+            if account.get("enabled", False)
+            else "Trading API token verified; auto trading is disabled"
+        ),
     )
     try:
         REPOSITORY.update_account_balance(
