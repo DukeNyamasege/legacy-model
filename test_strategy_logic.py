@@ -1270,6 +1270,53 @@ class BotSignalIntegrationTests(unittest.IsolatedAsyncioTestCase):
                     handler.close()
                 bot.logger.handlers.clear()
 
+    async def test_soft_rising_momentum_allows_controlled_pullback(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            raw = yaml.safe_load(Path("config.yaml").read_text(encoding="utf-8"))
+            token_path = root / "tokens.txt"
+            token_path.write_text("test-token\n", encoding="utf-8")
+            raw["files"] = {
+                "tokens": token_path.as_posix(),
+                "state": (root / "state.json").as_posix(),
+                "users": (root / "users.json").as_posix(),
+            }
+            raw["logging"]["file"] = (root / "bot.log").as_posix()
+            raw["storage"]["local_database_url"] = (
+                "sqlite:///" + (root / "test2.db").as_posix()
+            )
+            path = root / "config.yaml"
+            path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+            bot = enhanced_bot.TradingBot(str(path))
+            try:
+                bot.connection_session_id = "connection-1"
+                bot.public_client.is_connected = True
+                bot.repository.set_status("RUNNING")
+                bot._render_live_ticks = lambda note="": None
+                spawned: list[str] = []
+
+                def capture_task(coroutine, *, name: str) -> None:
+                    spawned.append(name)
+                    coroutine.close()
+
+                bot._spawn_background_task = capture_task
+
+                for sequence, quote in enumerate(
+                    [100.06, 100.18, 100.30, 100.22, 100.34],
+                    start=1,
+                ):
+                    await bot._on_tick(live_tick_payload(sequence, quote))
+
+                self.assertEqual(len(spawned), 1)
+                self.assertIn("purchase_", spawned[0])
+                self.assertFalse(bot._last_three_ticks_rising())
+                self.assertTrue(bot._soft_rising_momentum())
+            finally:
+                bot.database.engine.dispose()
+                for handler in list(bot.logger.handlers):
+                    handler.close()
+                bot.logger.handlers.clear()
+
 
 if __name__ == "__main__":
     unittest.main()

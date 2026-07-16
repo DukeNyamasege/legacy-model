@@ -44,6 +44,7 @@ signal:
 execution:
   reject_if_new_tick_arrives: false
   require_rising_ticks: true
+  rising_policy: soft_rising_momentum
   maximum_signal_age_ms: 2500
   maximum_proposal_age_ms: 900
 bayesian:

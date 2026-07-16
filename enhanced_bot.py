@@ -900,12 +900,15 @@ class TradingBot:
         )
         if not self.test2_config.execution.require_rising_ticks:
             raise RuntimeError("Rising-only entry policy must remain enabled.")
+        self.rising_policy = str(
+            self.cfg["execution"].get("rising_policy", "soft_rising_momentum")
+        )
 
         self.logger = setup_logging(
             self.cfg["logging"].get("level", "INFO"),
             self.cfg["logging"].get("file", "trading_bot.log"),
         )
-        self.logger.info("RISING_POLICY_ACTIVE mode=strict_last_three_quotes")
+        self.logger.info("RISING_POLICY_ACTIVE mode=%s", self.rising_policy)
         self.logger.info(
             "CONTRACT_TIMING_STANDARD duration=1_tick settlement_sla_seconds=%.1f "
             "reconciliation_after_seconds=%s",
@@ -1507,6 +1510,19 @@ class TradingBot:
             return False
         quotes = [float(item["quote"]) for item in list(self.ticks_history)[-3:]]
         return quotes[0] < quotes[1] < quotes[2]
+
+    def _soft_rising_momentum(self) -> bool:
+        if len(self.ticks_history) < 5:
+            return False
+        quotes = [float(item["quote"]) for item in list(self.ticks_history)[-5:]]
+        moves = [later - earlier for earlier, later in zip(quotes, quotes[1:])]
+        upward_moves = sum(1 for move in moves if move > 0)
+        return quotes[-1] > quotes[-3] and quotes[-1] >= quotes[0] and upward_moves >= 2
+
+    def _rising_policy_allows_entry(self) -> bool:
+        if self.rising_policy == "strict_last_three_quotes":
+            return self._last_three_ticks_rising()
+        return self._soft_rising_momentum()
 
     @property
     def recovery_stake_cap(self) -> float:
@@ -2244,12 +2260,15 @@ class TradingBot:
         if signal is None:
             return
 
-        if self.test2_config.execution.require_rising_ticks and not self._last_three_ticks_rising():
+        if (
+            self.test2_config.execution.require_rising_ticks
+            and not self._rising_policy_allows_entry()
+        ):
             self._record_blocked_signal(
                 signal,
                 status="SKIP_NOT_RISING",
                 digits_display=digits_display,
-                note="trade=NOT_RISING",
+                note=f"trade=NOT_RISING policy={self.rising_policy}",
             )
             return
 
