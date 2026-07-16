@@ -1480,14 +1480,47 @@ def resume(
 
 @app.post("/control/emergency-stop")
 def emergency_stop(
-    request: Request, actor: str = Depends(require_control_auth)
+    request: Request,
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None),
 ) -> dict:
-    return apply_control(
-        request=request,
-        actor=actor,
-        target_status="RUNNING",
-        reason="",
+    account = get_current_account(request)
+    if account:
+        enforce_control_rate_limit(request)
+        REPOSITORY.set_managed_account_enabled(account["id"], False)
+        remaining_accounts = trading_ready_account_ids()
+        current_status, _ = REPOSITORY.control_state()
+        if not remaining_accounts:
+            REPOSITORY.set_status("STOPPED", "")
+        elif current_status != "MANUAL_PAUSE":
+            REPOSITORY.set_status("RUNNING", "")
+        REPOSITORY.audit(
+            "PERSONAL_EMERGENCY_STOP",
+            str(account.get("account_id_masked", "account")),
+            request.client.host if request.client else "unknown",
+            {"managed_account_id": account["id"]},
+        )
+        summary = filter_summary_to_trading_ready_accounts(REPOSITORY.summary())
+        summary["personal_emergency_stop"] = {
+            "success": True,
+            "account": account.get("account_id_masked", ""),
+            "enabled": False,
+        }
+        return summary
+
+    actor = require_control_auth(
+        request,
+        authorization=authorization,
+        x_api_key=x_api_key,
     )
+    REPOSITORY.set_status("RUNNING", "")
+    REPOSITORY.audit(
+        "GLOBAL_EMERGENCY_STOP_IGNORED",
+        actor,
+        request.client.host if request.client else "unknown",
+        {"reason": "Emergency stop is account-scoped"},
+    )
+    return filter_summary_to_trading_ready_accounts(REPOSITORY.summary())
 
 
 @app.get("/settings/accounts")
