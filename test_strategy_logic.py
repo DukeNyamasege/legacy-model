@@ -666,6 +666,10 @@ class TimingAndModelTests(unittest.TestCase):
                     bot.repository.control_state(),
                     ("MANUAL_PAUSE", "ADMIN_REQUEST"),
                 )
+
+                bot.repository.set_status("EMERGENCY_STOP", "ADMIN_REQUEST")
+                bot._sync_running_status_after_validation()
+                self.assertEqual(bot.repository.control_state(), ("RUNNING", ""))
             finally:
                 bot.database.engine.dispose()
                 for handler in list(bot.logger.handlers):
@@ -796,6 +800,26 @@ class LeaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bot.repository.acquire_lease.call_count, 2)
         sleep.assert_awaited_once_with(0.1)
         bot.logger.warning.assert_called_once()
+
+    async def test_lost_heartbeat_uses_reconnecting_not_emergency_stop(self) -> None:
+        bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
+        bot.is_running = True
+        bot.lease_key = "bin22001:demo:test"
+        bot.worker_id = "worker-a"
+        bot.connection_session_id = "connection-1"
+        bot._lease_owned = True
+        bot.logger = MagicMock()
+        bot.repository = MagicMock()
+        bot.repository.acquire_lease.return_value = False
+
+        await bot._lease_heartbeat_loop()
+
+        self.assertFalse(bot.is_running)
+        self.assertFalse(bot._lease_owned)
+        bot.repository.set_status.assert_called_once_with(
+            "RECONNECTING",
+            "TRADER_LOCK_LOST",
+        )
 
 
 class PersistenceTests(unittest.TestCase):

@@ -2071,7 +2071,7 @@ class TradingBot:
             )
             self.repository.set_status("RUNNING")
             return
-        if status not in {"MANUAL_PAUSE", "EMERGENCY_STOP"}:
+        if status not in {"MANUAL_PAUSE"}:
             self.repository.set_status("RUNNING")
 
     async def _ensure_sessions_for_valid_clients(self) -> None:
@@ -2225,12 +2225,11 @@ class TradingBot:
             )
             self.repository.set_status("RUNNING")
             status = "RUNNING"
-        if status in {"STOPPED", "MANUAL_PAUSE", "EMERGENCY_STOP"}:
+        if status in {"STOPPED", "MANUAL_PAUSE"}:
             if signal is not None:
                 blocked_status = {
                     "STOPPED": "SKIP_STOPPED",
                     "MANUAL_PAUSE": "SKIP_MANUAL_PAUSE",
-                    "EMERGENCY_STOP": "SKIP_EMERGENCY_STOP",
                 }[status]
                 self._record_blocked_signal(
                     signal,
@@ -2420,9 +2419,8 @@ class TradingBot:
                 )
                 self.repository.set_status("RUNNING")
                 status = "RUNNING"
-            if status in {"MANUAL_PAUSE", "EMERGENCY_STOP"}:
-                skip_status = "SKIP_EMERGENCY_STOP" if status == "EMERGENCY_STOP" else "SKIP_MANUAL_PAUSE"
-                self.repository.mark_signal(signal.signal_id, status=skip_status)
+            if status == "MANUAL_PAUSE":
+                self.repository.mark_signal(signal.signal_id, status="SKIP_MANUAL_PAUSE")
                 return
             if not self.repository.consume_signal(signal.signal_id):
                 self.repository.mark_signal(signal.signal_id, status="SKIP_DUPLICATE")
@@ -3336,7 +3334,7 @@ class TradingBot:
             if not acquired:
                 self._lease_owned = False
                 self.logger.critical("TRADER_LOCK_LOST lease_key=%s", self.lease_key)
-                self.repository.set_status("EMERGENCY_STOP", "TRADER_LOCK_LOST")
+                self.repository.set_status("RECONNECTING", "TRADER_LOCK_LOST")
                 self.is_running = False
                 return
             self.repository.heartbeat(self.connection_session_id)

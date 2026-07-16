@@ -1485,8 +1485,8 @@ def emergency_stop(
     return apply_control(
         request=request,
         actor=actor,
-        target_status="EMERGENCY_STOP",
-        reason="ADMINISTRATIVE_EMERGENCY_STOP",
+        target_status="RUNNING",
+        reason="",
     )
 
 

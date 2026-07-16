@@ -729,7 +729,14 @@ class Test2Repository:
                 ).all()
             )
 
+    @staticmethod
+    def _normalize_control_status(status: str, pause_reason: str = "") -> tuple[str, str]:
+        if str(status or "").upper() == "EMERGENCY_STOP":
+            return "RUNNING", ""
+        return str(status or "STOPPED"), str(pause_reason or "")
+
     def set_status(self, status: str, pause_reason: str = "") -> None:
+        status, pause_reason = self._normalize_control_status(status, pause_reason)
         with self.database.session() as session:
             state = session.get(BotState, self.run_id)
             if state:
@@ -775,7 +782,9 @@ class Test2Repository:
     def control_state(self) -> tuple[str, str]:
         with self.database.session() as session:
             state = session.get(BotState, self.run_id)
-            return (state.status, state.pause_reason) if state else ("STOPPED", "")
+            if not state:
+                return ("STOPPED", "")
+            return self._normalize_control_status(state.status, state.pause_reason)
 
     def _runtime_guard_state(self, status: str) -> dict[str, Any]:
         guard_paused = False
@@ -843,7 +852,11 @@ class Test2Repository:
     def summary(self) -> dict[str, Any]:
         with self.database.session() as session:
             state = session.get(BotState, self.run_id)
-            status = state.status if state else "UNKNOWN"
+            status, _ = (
+                self._normalize_control_status(state.status, state.pause_reason)
+                if state
+                else ("UNKNOWN", "")
+            )
             runtime_guard_state = self._runtime_guard_state(status)
             candidates = session.scalar(
                 select(func.count()).select_from(CandidateSignalRecord).where(
