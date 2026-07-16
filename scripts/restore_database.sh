@@ -7,8 +7,7 @@ if [ "$#" -ne 1 ]; then
 fi
 
 docker compose stop worker api
-docker compose exec -T database pg_restore \
-  -U "${POSTGRES_USER:-underdog}" \
-  -d "${POSTGRES_DB:-underdog_test2}" \
-  --clean --if-exists < "$1"
+docker compose exec -T database sh -c \
+  'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' \
+  < "$1"
 docker compose up -d api worker
