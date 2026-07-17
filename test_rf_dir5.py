@@ -177,6 +177,81 @@ class RFLiveMarketDisplayTests(unittest.TestCase):
         self.assertIn("state=SCANNING", output)
         self.assertNotIn("strategy=", output)
 
+    def test_history_bootstrap_preloads_rolling_strategy_and_display_windows(self) -> None:
+        bot = object.__new__(RFDir5TradingBot)
+        bot.rf_last_epoch = {}
+        bot.rf_last_tick_id = {}
+        market = SimpleNamespace(
+            symbol="R_25",
+            pip_size=3,
+            ticks_history=deque(maxlen=216),
+            live_ticks_history=deque(maxlen=5),
+        )
+        bot.market_states = {"R_25": market}
+        prices = [Decimal(index) / Decimal("1000") for index in range(1, 202)]
+        times = list(range(1_700_000_001, 1_700_000_202))
+
+        bot._on_public_history(
+            symbol="R_25",
+            prices=prices,
+            times=times,
+            pip_size=3,
+        )
+
+        self.assertEqual(len(market.ticks_history), 201)
+        self.assertEqual(len(market.live_ticks_history), 5)
+        self.assertEqual(
+            [item["quote"] for item in market.live_ticks_history],
+            prices[-5:],
+        )
+        self.assertEqual(bot.rf_last_epoch["R_25"], times[-1])
+
+
+class RFTickStreamTests(unittest.IsolatedAsyncioTestCase):
+    async def test_constant_subscription_id_does_not_reject_new_ticks(self) -> None:
+        bot = object.__new__(RFDir5TradingBot)
+        market = SimpleNamespace(
+            symbol="1HZ100V",
+            pip_size=2,
+            tick_sequence=0,
+            ticks_history=deque(maxlen=216),
+            live_ticks_history=deque(maxlen=5),
+        )
+        bot.symbol = "1HZ100V"
+        bot.market_states = {"1HZ100V": market}
+        bot.rf_last_epoch = {}
+        bot.rf_last_tick_id = {}
+        bot.live_market_symbol = "1HZ100V"
+        bot.tick_sequence = 0
+        bot.connection_session_id = "connection-1"
+        bot.repository = MagicMock()
+        bot.rf_repository = MagicMock()
+        bot.rf_repository.settle_due_shadows.return_value = []
+        bot.rf_supported_contracts = {}
+        bot.logger = MagicMock()
+        bot._mark_tick_received = MagicMock()
+        bot._render_live_ticks = MagicMock()
+
+        for offset in range(6):
+            await bot._on_tick(
+                {
+                    "tick": {
+                        "symbol": "1HZ100V",
+                        "epoch": 1_700_000_001 + offset,
+                        "quote": 100 + offset,
+                        "id": "constant-subscription-id",
+                    }
+                }
+            )
+
+        self.assertEqual(len(market.ticks_history), 6)
+        self.assertEqual(
+            [item["quote"] for item in market.live_ticks_history],
+            [Decimal(value) for value in range(101, 106)],
+        )
+        self.assertEqual(bot.repository.record_tick.call_count, 6)
+        bot.logger.warning.assert_not_called()
+
 class RFRepositoryTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = TemporaryDirectory()

@@ -140,6 +140,45 @@ class RFDir5TradingBot(TradingBot):
         self.rf_last_epoch.clear()
         self.rf_last_tick_id.clear()
 
+    def _public_history_count(self) -> int:
+        return self.rf_config.minimum_history_movements + 1
+
+    @staticmethod
+    def _tick_identity(symbol: str, epoch: int, quote: Decimal) -> str:
+        return f"{symbol}:{epoch}:{quote}"
+
+    def _on_public_history(
+        self,
+        *,
+        symbol: str,
+        prices: list[Any],
+        times: list[Any],
+        pip_size: Any,
+    ) -> None:
+        market = self.market_states.get(symbol)
+        if market is None:
+            return
+        if isinstance(pip_size, int) and pip_size >= 0:
+            market.pip_size = pip_size
+        market.ticks_history.clear()
+        market.live_ticks_history.clear()
+        for raw_price, raw_epoch in zip(prices, times):
+            quote = Decimal(str(raw_price))
+            epoch = int(raw_epoch)
+            snapshot = {
+                "quote": quote,
+                "display": f"{quote:.{market.pip_size}f}",
+                "epoch": epoch,
+                "tick_id": self._tick_identity(symbol, epoch, quote),
+                "last_digit": "-",
+            }
+            market.ticks_history.append(snapshot)
+            market.live_ticks_history.append(snapshot)
+        if market.ticks_history:
+            latest = market.ticks_history[-1]
+            self.rf_last_epoch[symbol] = int(latest["epoch"])
+            self.rf_last_tick_id[symbol] = str(latest["tick_id"])
+
     def _on_public_connection_lost(self, error: Exception) -> None:
         if self.rf_contract_validation_task and not self.rf_contract_validation_task.done():
             self.rf_contract_validation_task.cancel()
@@ -271,7 +310,7 @@ class RFDir5TradingBot(TradingBot):
         required_ticks = self.rf_config.minimum_history_movements + 1
         history_count = len(market.ticks_history)
         state = note or (
-            f"COLLECTING {history_count}/{required_ticks}"
+            f"SYNCING_HISTORY {history_count}/{required_ticks}"
             if history_count < required_ticks
             else "SCANNING"
         )
@@ -286,25 +325,27 @@ class RFDir5TradingBot(TradingBot):
         market = self.market_states.get(symbol)
         if market is None:
             return
+        quote = Decimal(str(tick["quote"]))
         epoch = int(tick.get("epoch") or 0)
-        tick_id = str(tick.get("id") or f"{symbol}:{epoch}:{tick.get('quote')}")
-        if (
-            epoch <= self.rf_last_epoch.get(symbol, -1)
-            or tick_id == self.rf_last_tick_id.get(symbol)
-        ):
+        tick_id = self._tick_identity(symbol, epoch, quote)
+        self.live_market_symbol = symbol
+        self._mark_tick_received(market)
+        previous_epoch = self.rf_last_epoch.get(symbol, -1)
+        out_of_order = epoch > 0 and previous_epoch > 0 and epoch < previous_epoch
+        duplicate = tick_id == self.rf_last_tick_id.get(symbol)
+        if out_of_order or duplicate:
             self.logger.warning(
-                "RF_TICK_REJECTED symbol=%s reason=missing_duplicate_or_out_of_order epoch=%s",
+                "RF_TICK_REJECTED symbol=%s reason=%s epoch=%s",
                 symbol,
+                "out_of_order" if out_of_order else "duplicate",
                 epoch,
             )
             return
-        self.rf_last_epoch[symbol] = epoch
+        if epoch > 0:
+            self.rf_last_epoch[symbol] = epoch
         self.rf_last_tick_id[symbol] = tick_id
 
-        quote = Decimal(str(tick["quote"]))
         display_value = f"{quote:.{market.pip_size}f}"
-        self.live_market_symbol = symbol
-        self._mark_tick_received(market)
         self.tick_sequence += 1
         market.tick_sequence += 1
         snapshot = {

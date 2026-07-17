@@ -335,10 +335,6 @@ async def _rest_request(
         return {"error": {"message": str(e), "code": "CONNECTION_ERROR"}}
 
 
-class ConnectionStaleError(Exception):
-    """Raised when the tick stream goes silent for too long."""
-
-
 def scan_source_for_hardcoded_tokens(root: Path) -> None:
     token_pattern = re.compile(r"\bpat_[A-Za-z0-9_-]{24,}\b")
     source_suffixes = {".py", ".yaml", ".yml", ".json", ".toml", ".md"}
@@ -548,6 +544,9 @@ class PublicMarketDataClient:
                     # Fetch and cache precision for every configured market.
                     await self._fetch_precision()
 
+                    # Warm strategy windows before live subscriptions begin.
+                    await self._fetch_tick_history()
+
                     # Subscribe to every configured market on this connection.
                     await self._subscribe_ticks()
                     self.bot._on_market_subscriptions_ready()
@@ -600,6 +599,23 @@ class PublicMarketDataClient:
                 future.set_result(response)
         self.pending_requests.clear()
         self.bot._on_public_connection_lost(error)
+
+    async def request_reconnect(self, reason: str) -> None:
+        ws = self.ws
+        if ws is None:
+            return
+        self.bot.logger.warning(
+            "PUBLIC_STREAM_RESTART_REQUESTED reason=%s scope=public_only",
+            reason,
+        )
+        try:
+            await ws.close(code=1012, reason=reason[:120])
+        except Exception as exc:
+            self.bot.logger.warning(
+                "PUBLIC_STREAM_CLOSE_FAILED error_type=%s error=%r",
+                type(exc).__name__,
+                exc,
+            )
 
     async def send_request(self, req: Dict[str, Any]) -> Dict[str, Any]:
         """Send a request over the public WebSocket and wait for its response using req_id."""
@@ -678,11 +694,72 @@ class PublicMarketDataClient:
                 ", ".join(missing),
             )
 
+    async def _fetch_tick_history(self) -> None:
+        if not self.ws:
+            return
+        count = int(self.bot._public_history_count())
+        if count <= 0:
+            return
+        for symbol in self.bot.symbols:
+            req_id = self.next_req_id
+            self.next_req_id += 1
+            request = {
+                "ticks_history": symbol,
+                "end": "latest",
+                "count": count,
+                "style": "ticks",
+                "req_id": req_id,
+            }
+            try:
+                await self.ws.send(json.dumps(request))
+                raw = await asyncio.wait_for(self.ws.recv(), timeout=10.0)
+                response = json.loads(raw)
+            except (asyncio.TimeoutError, json.JSONDecodeError) as exc:
+                self.bot.logger.error(
+                    "PUBLIC_HISTORY_SYNC_FAILED symbol=%s error=%s",
+                    symbol,
+                    exc,
+                )
+                continue
+            if "error" in response:
+                self.bot.logger.error(
+                    "PUBLIC_HISTORY_SYNC_FAILED symbol=%s error=%s",
+                    symbol,
+                    response["error"].get("message", "unknown"),
+                )
+                continue
+            history = response.get("history") or {}
+            prices = list(history.get("prices") or [])
+            times = list(history.get("times") or [])
+            if len(prices) != len(times) or not prices:
+                self.bot.logger.error(
+                    "PUBLIC_HISTORY_SYNC_FAILED symbol=%s prices=%s times=%s",
+                    symbol,
+                    len(prices),
+                    len(times),
+                )
+                continue
+            self.bot._on_public_history(
+                symbol=symbol,
+                prices=prices,
+                times=times,
+                pip_size=response.get("pip_size"),
+            )
+            self.bot.logger.info(
+                "PUBLIC_HISTORY_SYNCED symbol=%s ticks=%s",
+                symbol,
+                len(prices),
+            )
+
     async def _subscribe_ticks(self) -> None:
         if not self.ws:
             return
         for symbol in self.bot.symbols:
-            await self.ws.send(json.dumps({"ticks": symbol, "subscribe": 1}))
+            req_id = self.next_req_id
+            self.next_req_id += 1
+            await self.ws.send(
+                json.dumps({"ticks": symbol, "subscribe": 1, "req_id": req_id})
+            )
         self.bot.logger.info(
             "MULTI_MARKET_SUBSCRIBED count=%s symbols=%s",
             len(self.bot.symbols),
@@ -2163,6 +2240,20 @@ class TradingBot:
 
     def _on_market_subscriptions_ready(self) -> None:
         """Hook for strategies that need public requests after the listener starts."""
+        return
+
+    def _public_history_count(self) -> int:
+        return 0
+
+    def _on_public_history(
+        self,
+        *,
+        symbol: str,
+        prices: list[Any],
+        times: list[Any],
+        pip_size: Any,
+    ) -> None:
+        """Hook for strategies that bootstrap rolling windows from tick history."""
         return
 
     def _on_public_connection_lost(self, error: Exception) -> None:
@@ -3734,7 +3825,14 @@ class TradingBot:
             if self.last_tick_received_at > 0:
                 silence = time.monotonic() - self.last_tick_received_at
                 if silence > self.max_tick_silence_seconds:
-                    raise ConnectionStaleError(f"No tick received for {silence:.1f} seconds")
+                    self.logger.warning(
+                        "PUBLIC_STREAM_STALE silence_seconds=%.1f action=restart_public_only",
+                        silence,
+                    )
+                    self._mark_tick_received()
+                    await self.public_client.request_reconnect(
+                        f"No tick received for {silence:.1f} seconds"
+                    )
             refresh_timer += self.watchdog_poll_interval_seconds
             if refresh_timer >= refresh_interval:
                 refresh_timer = 0
@@ -3879,8 +3977,6 @@ class TradingBot:
                 # Keep loop alive running watchdog
                 await self._watchdog_task
 
-            except ConnectionStaleError as e:
-                self.logger.warning("Watchdog alert: %s", e)
             except (ConnectionClosedError, OSError, ConnectionResetError) as e:
                 self.logger.warning("Connection lost: %s", e)
             except KeyboardInterrupt:

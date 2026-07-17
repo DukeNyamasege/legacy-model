@@ -186,6 +186,70 @@ class PublicMarketDataTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.pending_requests, {})
         bot._on_public_connection_lost.assert_called_once()
 
+    async def test_history_bootstrap_fetches_complete_window_without_subscribing(self) -> None:
+        class FakeWebSocket:
+            def __init__(self) -> None:
+                self.sent: list[dict] = []
+
+            async def send(self, payload: str) -> None:
+                self.sent.append(json.loads(payload))
+
+            async def recv(self) -> str:
+                return json.dumps(
+                    {
+                        "msg_type": "history",
+                        "history": {
+                            "prices": [100.01, 100.02, 100.03],
+                            "times": [1, 2, 3],
+                        },
+                        "pip_size": 2,
+                    }
+                )
+
+        bot = MagicMock()
+        bot.symbols = ["1HZ100V"]
+        bot._public_history_count.return_value = 3
+        client = enhanced_bot.PublicMarketDataClient(bot)
+        client.ws = FakeWebSocket()
+
+        await client._fetch_tick_history()
+
+        request = client.ws.sent[0]
+        self.assertEqual(request["ticks_history"], "1HZ100V")
+        self.assertEqual(request["count"], 3)
+        self.assertNotIn("subscribe", request)
+        bot._on_public_history.assert_called_once_with(
+            symbol="1HZ100V",
+            prices=[100.01, 100.02, 100.03],
+            times=[1, 2, 3],
+            pip_size=2,
+        )
+
+    async def test_stale_watchdog_restarts_only_public_stream(self) -> None:
+        bot = object.__new__(enhanced_bot.TradingBot)
+        bot.is_running = True
+        bot.max_tick_silence_seconds = 5
+        bot.watchdog_poll_interval_seconds = 0
+        bot.last_tick_received_at = time.monotonic() - 10
+        bot.sessions = {}
+        bot.repository = MagicMock()
+        bot.logger = MagicMock()
+        bot._mark_tick_received = MagicMock()
+        bot._refresh_runtime_accounts_if_needed = AsyncMock()
+        bot.public_client = MagicMock()
+
+        async def reconnect_public_only(_reason: str) -> None:
+            bot.is_running = False
+
+        bot.public_client.request_reconnect = AsyncMock(
+            side_effect=reconnect_public_only
+        )
+        with patch.object(enhanced_bot.asyncio, "sleep", new=AsyncMock()):
+            await bot._watchdog_loop()
+
+        bot.public_client.request_reconnect.assert_awaited_once()
+        bot._mark_tick_received.assert_called_once()
+
 
 class SignalTests(unittest.TestCase):
     def make_detector(self) -> Over2SignalDetector:
