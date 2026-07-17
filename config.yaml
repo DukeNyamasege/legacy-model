@@ -131,7 +131,7 @@ rf_strategy:
   stale_signal_after_ms: 900
   maximum_open_strategy_contracts: 1
 virtual_guard:
-  enabled: true
+  enabled: false
   scope: global
   activate_after_demo_losses: 1
   virtual_wins_required_to_resume: 1

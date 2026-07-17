@@ -20,11 +20,11 @@ def build_execution_summary(
     if not active_accounts and str(result.get("status", "")) == "RUNNING":
         result.update(
             {
-                "ai_activity_mode": "idle",
-                "ai_activity_label": "Standby",
-                "ai_activity_message": "No active trading accounts",
+                "ai_activity_mode": "watching",
+                "ai_activity_label": "Market watcher online",
+                "ai_activity_message": "Waiting for an active trading account",
                 "ai_activity_detail": (
-                    "The market watcher is online and will resume execution when an "
+                    "Ticks remain online and execution becomes available when an "
                     "enabled account has a healthy private connection."
                 ),
             }

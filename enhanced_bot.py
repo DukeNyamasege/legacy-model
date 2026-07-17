@@ -535,6 +535,7 @@ class PublicMarketDataClient:
         attempt = 0
         url = self.bot.public_ws_url
         while self.bot.is_running:
+            retry_delay = self.bot.reconnect_delay_seconds
             try:
                 self.bot.logger.info("Connecting to public market WebSocket: %s", url)
                 async with websockets.connect(url) as ws:
@@ -557,13 +558,48 @@ class PublicMarketDataClient:
                     async for msg in ws:
                         await self._on_message(msg)
 
-            except (ConnectionClosed, OSError, Exception) as e:
-                self.is_connected = False
-                self.ws = None
+                if self.bot.is_running:
+                    raise ConnectionError("Public WebSocket stream ended unexpectedly")
+            except Exception as e:
                 attempt += 1
-                self.bot.logger.warning("Public WebSocket error: %s. Reconnecting in %ss...", e, self.bot.reconnect_delay_seconds)
+                retry_delay = min(
+                    30,
+                    self.bot.reconnect_delay_seconds * (1.5 ** attempt),
+                )
+                self._handle_disconnect(e)
+                if isinstance(e, (ConnectionClosed, OSError, ConnectionError)):
+                    self.bot.logger.warning(
+                        "PUBLIC_STREAM_RECONNECT error_type=%s error=%r retry_seconds=%.1f",
+                        type(e).__name__,
+                        e,
+                        retry_delay,
+                    )
+                else:
+                    self.bot.logger.exception(
+                        "PUBLIC_STREAM_RECONNECT unexpected_error_type=%s "
+                        "error=%r retry_seconds=%.1f",
+                        type(e).__name__,
+                        e,
+                        retry_delay,
+                    )
 
-            await asyncio.sleep(min(30, self.bot.reconnect_delay_seconds * (1.5 ** attempt)))
+            if self.bot.is_running:
+                await asyncio.sleep(retry_delay)
+
+    def _handle_disconnect(self, error: Exception) -> None:
+        self.is_connected = False
+        self.ws = None
+        response = {
+            "error": {
+                "message": str(error),
+                "code": "PUBLIC_CONNECTION_LOST",
+            }
+        }
+        for future in self.pending_requests.values():
+            if not future.done():
+                future.set_result(response)
+        self.pending_requests.clear()
+        self.bot._on_public_connection_lost(error)
 
     async def send_request(self, req: Dict[str, Any]) -> Dict[str, Any]:
         """Send a request over the public WebSocket and wait for its response using req_id."""
@@ -661,12 +697,23 @@ class PublicMarketDataClient:
 
         req_id = data.get("req_id")
         if req_id and req_id in self.pending_requests:
-            self.pending_requests[req_id].set_result(data)
+            future = self.pending_requests[req_id]
+            if not future.done():
+                future.set_result(data)
             return
 
         msg_type = data.get("msg_type")
         if msg_type == "tick":
-            await self.bot._on_tick(data)
+            try:
+                await self.bot._on_tick(data)
+            except Exception:
+                tick = data.get("tick") or {}
+                self.bot.logger.exception(
+                    "TICK_PROCESSING_FAILED symbol=%s epoch=%s; "
+                    "tick skipped and public stream kept alive",
+                    tick.get("symbol", "unknown"),
+                    tick.get("epoch", "unknown"),
+                )
         elif "error" in data:
             requested_symbol = str(data.get("echo_req", {}).get("ticks") or "unknown")
             self.bot.logger.error(
@@ -2116,6 +2163,10 @@ class TradingBot:
 
     def _on_market_subscriptions_ready(self) -> None:
         """Hook for strategies that need public requests after the listener starts."""
+        return
+
+    def _on_public_connection_lost(self, error: Exception) -> None:
+        """Hook for strategy-specific work that must stop with a public session."""
         return
 
     def _on_private_session_ready(self, session: ClientSession) -> None:

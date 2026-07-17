@@ -109,6 +109,21 @@ class DashboardMetricsTests(unittest.TestCase):
         self.assertEqual(result["all_accounts_profit"], 1.50)
         self.assertEqual(result["copy_trade_gap"], 1)
 
+    def test_running_worker_without_active_accounts_is_watching_not_stopped(self) -> None:
+        result = build_execution_summary(
+            {"status": "RUNNING"},
+            active_accounts=[],
+            linked_accounts=[],
+            master=None,
+        )
+
+        self.assertEqual(result["ai_activity_mode"], "watching")
+        self.assertEqual(result["ai_activity_label"], "Market watcher online")
+        self.assertEqual(
+            result["ai_activity_message"],
+            "Waiting for an active trading account",
+        )
+
 
 class LiveConsoleTests(unittest.TestCase):
     def test_non_tty_status_emits_each_tick_as_a_flushed_line(self) -> None:
@@ -132,6 +147,44 @@ class LiveConsoleTests(unittest.TestCase):
                 "ticks=[100.01 | 100.02] | trade=WATCHING",
             ],
         )
+
+
+class PublicMarketDataTests(unittest.IsolatedAsyncioTestCase):
+    async def test_tick_processing_failure_does_not_escape_or_disconnect_stream(self) -> None:
+        bot = MagicMock()
+        bot._on_tick = AsyncMock(side_effect=RuntimeError("database unavailable"))
+        client = enhanced_bot.PublicMarketDataClient(bot)
+
+        await client._on_message(
+            json.dumps(
+                {
+                    "msg_type": "tick",
+                    "tick": {
+                        "symbol": "1HZ100V",
+                        "epoch": 1_700_000_001,
+                        "quote": 100.01,
+                    },
+                }
+            )
+        )
+
+        bot._on_tick.assert_awaited_once()
+        bot.logger.exception.assert_called_once()
+
+    async def test_disconnect_releases_pending_public_requests(self) -> None:
+        bot = MagicMock()
+        client = enhanced_bot.PublicMarketDataClient(bot)
+        future = asyncio.get_running_loop().create_future()
+        client.pending_requests[7] = future
+
+        client._handle_disconnect(ConnectionError("stream closed"))
+
+        self.assertEqual(
+            future.result()["error"]["code"],
+            "PUBLIC_CONNECTION_LOST",
+        )
+        self.assertEqual(client.pending_requests, {})
+        bot._on_public_connection_lost.assert_called_once()
 
 
 class SignalTests(unittest.TestCase):

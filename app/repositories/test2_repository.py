@@ -802,7 +802,11 @@ class Test2Repository:
                 return ("STOPPED", "")
             return self._normalize_control_status(state.status, state.pause_reason)
 
-    def _runtime_guard_state(self, status: str) -> dict[str, Any]:
+    def _runtime_guard_state(
+        self,
+        status: str,
+        pause_reason: str = "",
+    ) -> dict[str, Any]:
         guard_paused = False
         guard_reason = ""
         updated_at = ""
@@ -833,22 +837,35 @@ class Test2Repository:
         shadow_samples = len(latest_shadow_outcomes)
         shadow_win_rate = shadow_wins / shadow_samples if shadow_samples else 0.0
 
+        status = str(status or "STOPPED").upper()
         running = status == "RUNNING"
         if running and guard_paused:
             activity_mode = "learning"
-            activity_label = "Learning Mode"
-            activity_message = "Ai is learning market changes"
-            activity_detail = "AI is studying market changes before trading resumes."
+            activity_label = "Market analysis"
+            activity_message = "Risk filter is evaluating the market"
+            activity_detail = "New entries wait while the risk filter evaluates market conditions."
         elif running:
             activity_mode = "trading"
-            activity_label = "Trading Mode"
-            activity_message = "Ai trading resumed"
-            activity_detail = "AI is watching for valid market entries."
+            activity_label = "Bot online"
+            activity_message = "Scanning all configured markets"
+            activity_detail = "The worker is online and evaluating incoming ticks."
+        elif status == "RECONNECTING":
+            activity_mode = "reconnecting"
+            activity_label = "Connection recovery"
+            activity_message = "Market stream reconnecting"
+            activity_detail = (
+                "Trading waits for a fresh stream before evaluating another entry."
+            )
+        elif status == "MANUAL_PAUSE":
+            activity_mode = "paused"
+            activity_label = "Paused"
+            activity_message = "Trading is paused"
+            activity_detail = pause_reason or "Trading was paused from the control panel."
         else:
             activity_mode = "idle"
             activity_label = "Standby"
-            activity_message = "Ai trading stopped"
-            activity_detail = "AI trading is stopped."
+            activity_message = "Auto trading is off"
+            activity_detail = pause_reason or "The worker is not accepting new entries."
 
         return {
             "regime_guard_paused": guard_paused,
@@ -868,12 +885,12 @@ class Test2Repository:
     def summary(self) -> dict[str, Any]:
         with self.database.session() as session:
             state = session.get(BotState, self.run_id)
-            status, _ = (
+            status, pause_reason = (
                 self._normalize_control_status(state.status, state.pause_reason)
                 if state
                 else ("UNKNOWN", "")
             )
-            runtime_guard_state = self._runtime_guard_state(status)
+            runtime_guard_state = self._runtime_guard_state(status, pause_reason)
             candidates = session.scalar(
                 select(func.count()).select_from(CandidateSignalRecord).where(
                     CandidateSignalRecord.run_id == self.run_id

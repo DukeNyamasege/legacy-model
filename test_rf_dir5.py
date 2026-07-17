@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import time
 import unittest
+from collections import deque
 from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 from sqlalchemy import func, select
 
@@ -143,6 +146,37 @@ class RiseFallContractTests(unittest.TestCase):
         )
 
 
+class RFLiveMarketDisplayTests(unittest.TestCase):
+    def test_live_output_contains_exact_last_five_quotes_and_scan_state(self) -> None:
+        bot = object.__new__(RFDir5TradingBot)
+        bot.symbol = "1HZ100V"
+        bot.live_market_symbol = "R_25"
+        bot.rf_config = SimpleNamespace(minimum_history_movements=200)
+        market = SimpleNamespace(
+            symbol="R_25",
+            live_ticks_history=deque(
+                (
+                    {"quote": Decimal(f"100.0{index}"), "display": f"100.0{index}"}
+                    for index in range(1, 7)
+                ),
+                maxlen=5,
+            ),
+            ticks_history=[None] * 201,
+        )
+        bot.market_states = {"1HZ100V": market, "R_25": market}
+        handler = MagicMock()
+        bot._get_live_console_handler = lambda: handler
+
+        bot._render_live_ticks()
+
+        output = handler.set_status.call_args.args[0]
+        self.assertIn(
+            "last5=[100.02 | 100.03 | 100.04 | 100.05 | 100.06]",
+            output,
+        )
+        self.assertIn("state=SCANNING", output)
+        self.assertNotIn("strategy=", output)
+
 class RFRepositoryTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = TemporaryDirectory()
@@ -240,6 +274,13 @@ class RFRepositoryTests(unittest.TestCase):
         restarted = RFDir5Repository(self.base)
         self.assertEqual(restarted.guard_state()["state"], "ARMED_AFTER_VIRTUAL_WIN")
         self.assertEqual(restarted.guard_state()["active_signal_id"], "")
+
+    def test_virtual_guard_can_be_reset_without_removing_trade_data(self) -> None:
+        self.repository.activate_after_demo_loss()
+
+        self.repository.reset_guard()
+
+        self.assertEqual(self.repository.guard_state()["state"], "DEMO_LIVE")
 
     def test_stake_never_exceeds_half_percent_balance(self) -> None:
         account_id = self.create_managed_account()

@@ -197,7 +197,7 @@ class RiseFallStrategySettings(StrictModel):
 
 
 class VirtualGuardSettings(StrictModel):
-    enabled: bool = True
+    enabled: bool = False
     scope: Literal["global"] = "global"
     activate_after_demo_losses: Literal[1] = 1
     virtual_wins_required_to_resume: Literal[1] = 1

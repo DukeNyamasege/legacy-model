@@ -254,6 +254,18 @@ class RFDir5Repository:
                 "updated_at": row.updated_at.isoformat() if row.updated_at else "",
             }
 
+    def reset_guard(self) -> None:
+        with self.database.session() as session:
+            row = session.get(VirtualGuardState, self.run_id, with_for_update=True)
+            if row is None:
+                row = VirtualGuardState(run_id=self.run_id)
+                session.add(row)
+            row.state = "DEMO_LIVE"
+            row.active_signal_id = ""
+            row.active_shadow_duration = 0
+            row.virtual_wins = 0
+            row.updated_at = utc_now()
+
     def activate_after_demo_loss(self) -> None:
         with self.database.session() as session:
             row = session.get(VirtualGuardState, self.run_id, with_for_update=True)

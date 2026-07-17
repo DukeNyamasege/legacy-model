@@ -239,6 +239,12 @@
       line-height: .98;
       color: var(--ink);
     }
+    .ai-mode-detail {
+      position: relative;
+      margin: 10px 0 0;
+      color: var(--muted);
+      font-size: .88rem;
+    }
     .shadow-snapshot {
       position: relative;
       display: grid;
@@ -610,8 +616,9 @@
 
   <section id="ai-mode-card" class="panel ai-mode-card idle" aria-live="polite">
     <div>
-      <span id="ai-mode-label" class="ai-mode-label">Checking AI Mode</span>
-      <h2 id="ai-mode-message" class="ai-mode-message">Reading bot state</h2>
+      <span id="ai-mode-label" class="ai-mode-label">Checking bot status</span>
+      <h2 id="ai-mode-message" class="ai-mode-message">Connecting to worker</h2>
+      <p id="ai-mode-detail" class="ai-mode-detail">Waiting for the first status update.</p>
       <div id="shadow-snapshot" class="shadow-snapshot" hidden>
         <span>Latest 20 shadow outcomes</span>
         <strong><b id="shadow-wins">0</b> wins / <b id="shadow-losses">0</b> losses</strong>
@@ -627,14 +634,6 @@
     <article class="panel metric"><span>Master losses</span><strong id="losses">0</strong></article>
     <article class="panel metric"><span>Master win rate</span><strong id="win-rate">0%</strong></article>
     <article class="panel metric"><span>Master account P/L</span><strong id="profit">0.00</strong></article>
-  </section>
-
-  <section class="metrics">
-    <article class="panel metric"><span>Strategy</span><strong id="strategy-name">RF-DIR5-V1</strong></article>
-    <article class="panel metric"><span>Execution phase</span><strong id="execution-phase">EXPLORATION</strong></article>
-    <article class="panel metric"><span>Virtual guard</span><strong id="virtual-guard">DEMO_LIVE</strong></article>
-    <article class="panel metric"><span>Settled shadow tests</span><strong id="shadow-settled">0</strong></article>
-    <article class="panel metric"><span>Shadow P/L</span><strong id="shadow-profit-total">0.00</strong></article>
   </section>
 
   <section class="metrics">
@@ -705,9 +704,6 @@
   let localControl = false;
   let readOnlyDashboard = false;
   let currentAiActivityMode = "";
-  let pendingRobotMessage = "";
-  let robotSpeakTimer = 0;
-  let robotVoice = null;
   let wsConnection = null;
   let wsReconnectTimer = 0;
   const themeKey = "legacy-dashboard-theme";
@@ -840,72 +836,43 @@
       renderContracts([]);
     }
   }
-  function pickRobotVoice() {
-    if (!("speechSynthesis" in window)) return null;
-    const voices = window.speechSynthesis.getVoices();
-    robotVoice = voices.find(voice => /david|mark|daniel|zira|google us english|google uk english male/i.test(voice.name))
-      || voices.find(voice => /^en[-_]/i.test(voice.lang))
-      || voices[0]
-      || null;
-    return robotVoice;
-  }
-  function speakRobot(message) {
-    if (!message || !("speechSynthesis" in window)) return;
-    pendingRobotMessage = message;
-    window.clearTimeout(robotSpeakTimer);
-    robotSpeakTimer = window.setTimeout(() => playRobotMessage(message, 0), 80);
-  }
-  function playRobotMessage(message, attempt) {
-    if (!message || !("speechSynthesis" in window)) return;
-    const utterance = new SpeechSynthesisUtterance(message);
-    utterance.voice = robotVoice || pickRobotVoice();
-    utterance.pitch = 0.55;
-    utterance.rate = 0.82;
-    utterance.volume = 0.95;
-    utterance.onend = () => {
-      if (pendingRobotMessage === message) pendingRobotMessage = "";
-    };
-    utterance.onerror = () => {
-      if (attempt < 2 && pendingRobotMessage === message) {
-        window.setTimeout(() => playRobotMessage(message, attempt + 1), 450);
-      }
-    };
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.resume();
-    window.speechSynthesis.speak(utterance);
-  }
   function alertForMode(mode) {
-    if (mode === "learning") return "Ai is learning market changes";
-    if (mode === "trading") return "Ai trading resumed";
-    if (mode === "idle") return "Ai trading stopped";
-    return "AI state updated";
+    if (mode === "learning") return "Risk filter is evaluating the market";
+    if (mode === "trading") return "Scanning all configured markets";
+    if (mode === "watching") return "Waiting for an active trading account";
+    if (mode === "reconnecting") return "Market stream reconnecting";
+    if (mode === "paused") return "Trading is paused";
+    if (mode === "idle") return "Auto trading is off";
+    return "Bot status updated";
   }
   function labelForMode(mode) {
-    if (mode === "learning") return "Learning Mode";
-    if (mode === "trading") return "Trading Mode";
+    if (mode === "learning") return "Market analysis";
+    if (mode === "trading") return "Bot online";
+    if (mode === "watching") return "Market watcher online";
+    if (mode === "reconnecting") return "Connection recovery";
+    if (mode === "paused") return "Paused";
     if (mode === "idle") return "Standby";
-    return "AI Mode";
+    return "Bot status";
   }
   function renderAiActivity(data) {
-    const previousMode = currentAiActivityMode;
     const guardLearning = Boolean(data.regime_guard_paused);
     const mode = data.ai_activity_mode || (guardLearning ? "learning" : currentStatus === "RUNNING" ? "trading" : "idle");
     const label = data.ai_activity_label || labelForMode(mode);
-    const message = alertForMode(mode);
-    const visualMode = mode === "learning" ? "learning" : mode === "trading" ? "trading" : "idle";
+    const message = data.ai_activity_message || alertForMode(mode);
+    const detail = data.ai_activity_detail || "Status received from the trading worker.";
+    const visualMode = mode === "learning" || mode === "reconnecting"
+      ? "learning"
+      : mode === "trading" || mode === "watching"
+        ? "trading"
+        : "idle";
 
     $("ai-mode-card").className = `panel ai-mode-card ${visualMode}`;
     $("ai-mode-label").textContent = label;
     $("ai-mode-message").textContent = message;
+    $("ai-mode-detail").textContent = detail;
     renderShadowSnapshot(data, mode);
 
     currentAiActivityMode = mode;
-    if (
-      previousMode !== mode
-      && (mode === "learning" || mode === "trading" || mode === "idle")
-    ) {
-      speakRobot(message);
-    }
   }
   function renderShadowSnapshot(data, mode) {
     const snapshot = $("shadow-snapshot");
@@ -934,7 +901,6 @@
         const msg = JSON.parse(event.data);
         if (msg.type === "snapshot" && msg.data) {
           renderStatus(msg.data);
-          renderAiActivity(msg.data);
         }
       } catch (_) {}
     };
@@ -974,13 +940,6 @@
     $("global-profit").className = allAccountsProfit < 0 ? "negative" : allAccountsProfit > 0 ? "positive" : "";
     const currency = data.primary_account_currency || data.accounts?.[0]?.currency || "USD";
     $("balance").textContent = `${number(data.primary_account_balance || 0, 2)} ${currency}`;
-    $("strategy-name").textContent = data.strategy_name || "RF-DIR5-V1";
-    $("execution-phase").textContent = data.execution_phase || "EXPLORATION";
-    $("virtual-guard").textContent = data.virtual_guard_state || "DEMO_LIVE";
-    $("shadow-settled").textContent = number(data.shadow_settled || 0);
-    const shadowProfit = Number(data.shadow_profit || 0);
-    $("shadow-profit-total").textContent = number(shadowProfit, 2);
-    $("shadow-profit-total").className = shadowProfit < 0 ? "negative" : shadowProfit > 0 ? "positive" : "";
     renderAiActivity(data);
   }
   function applyReadOnlyMode() {
@@ -1217,22 +1176,6 @@
     } catch (error) {
       if ($("error")) $("error").textContent = error.message || "Unable to reach the service.";
     }
-  }
-  if ("speechSynthesis" in window) {
-    const replayPendingRobotMessage = () => {
-      if (pendingRobotMessage) speakRobot(pendingRobotMessage);
-    };
-    window.speechSynthesis.onvoiceschanged = () => {
-      pickRobotVoice();
-      replayPendingRobotMessage();
-    };
-    window.addEventListener("focus", replayPendingRobotMessage);
-    document.addEventListener("visibilitychange", () => {
-      if (!document.hidden) replayPendingRobotMessage();
-    });
-    window.addEventListener("pointerdown", replayPendingRobotMessage, { once: true });
-    window.addEventListener("keydown", replayPendingRobotMessage, { once: true });
-    pickRobotVoice();
   }
 async function initialize() {
   try {

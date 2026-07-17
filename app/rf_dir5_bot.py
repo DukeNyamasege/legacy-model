@@ -55,7 +55,7 @@ class RFDir5TradingBot(TradingBot):
         history_size = self.rf_config.minimum_history_movements + 16
         for market in self.market_states.values():
             market.ticks_history = deque(maxlen=history_size)
-            market.live_ticks_history = deque(maxlen=6)
+            market.live_ticks_history = deque(maxlen=5)
             market.raw_tick_digits.clear()
         primary = self.market_states[self.symbol]
         self.ticks_history = primary.ticks_history
@@ -63,6 +63,8 @@ class RFDir5TradingBot(TradingBot):
         self.raw_tick_digits = primary.raw_tick_digits
 
         self.rf_repository = RFDir5Repository(self.repository)
+        if not self.virtual_guard_config.enabled:
+            self.rf_repository.reset_guard()
         self.keyed_bayesian = KeyedBayesianProbability(
             prior_alpha=self.test2_config.bayesian.prior_alpha,
             prior_beta=self.test2_config.bayesian.prior_beta,
@@ -94,11 +96,12 @@ class RFDir5TradingBot(TradingBot):
         self._save_state()
         self.logger.info(
             "RF_DIR5_ACTIVE version=%s markets=%s demo_duration=%s shadow_durations=%s "
-            "martingale=disabled virtual_guard=%s",
+            "one_shot_recovery_after_losses=%s virtual_guard=%s",
             RF_DIR5_VERSION,
             ",".join(self.symbols),
             self.duration,
             list(self.rf_config.shadow_duration_ticks),
+            self.risk_config.recovery_trigger_losses,
             self.virtual_guard_config.enabled,
         )
 
@@ -136,6 +139,12 @@ class RFDir5TradingBot(TradingBot):
         self.rf_supported_contracts.clear()
         self.rf_last_epoch.clear()
         self.rf_last_tick_id.clear()
+
+    def _on_public_connection_lost(self, error: Exception) -> None:
+        if self.rf_contract_validation_task and not self.rf_contract_validation_task.done():
+            self.rf_contract_validation_task.cancel()
+        self.rf_contract_validation_task = None
+        self.rf_supported_contracts.clear()
 
     def _on_market_subscriptions_ready(self) -> None:
         if self.rf_contract_validation_task and not self.rf_contract_validation_task.done():
@@ -259,9 +268,16 @@ class RFDir5TradingBot(TradingBot):
         moves = [later - earlier for earlier, later in zip(quotes[:-1], quotes[1:])]
         move_text = " | ".join(f"{value:+f}" for value in moves)
         quote_text = " | ".join(str(item.get("display", item["quote"])) for item in market.live_ticks_history)
+        required_ticks = self.rf_config.minimum_history_movements + 1
+        history_count = len(market.ticks_history)
+        state = note or (
+            f"COLLECTING {history_count}/{required_ticks}"
+            if history_count < required_ticks
+            else "SCANNING"
+        )
         handler.set_status(
-            f"LIVE {market.symbol} | quotes=[{quote_text}] | moves=[{move_text}] | "
-            f"strategy={note or 'RF-DIR5-WATCHING'}"
+            f"LIVE {market.symbol} | last5=[{quote_text}] | moves=[{move_text}] | "
+            f"state={state}"
         )
 
     async def _on_tick(self, tick_data: dict[str, Any]) -> None:
