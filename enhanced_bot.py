@@ -1107,6 +1107,12 @@ class TradingBot:
         self.regime_guard_reason = str(saved_bot_state.get("regime_guard_reason", ""))
         self.regime_consecutive_losses = int(saved_bot_state.get("regime_consecutive_losses", 0))
         self.shadow_consecutive_wins = int(saved_bot_state.get("shadow_consecutive_wins", 0))
+        saved_rotation_market = str(
+            saved_bot_state.get("loss_rotation_blocked_market", "")
+        ).strip()
+        self.loss_rotation_blocked_market = (
+            saved_rotation_market if saved_rotation_market in self.market_states else ""
+        )
         self.pending_shadow_signals: List[Dict[str, Any]] = []
 
         self.clients: Dict[str, Dict[str, Any]] = self._init_clients_from_state()
@@ -1120,7 +1126,9 @@ class TradingBot:
         self.contract_signal_ids: Dict[int, str] = {}
         self.contract_symbols: Dict[int, str] = {}
         self.pending_by_signal: Dict[str, Set[int]] = {}
-        self.outcomes_by_signal: Dict[str, List[str]] = {}
+        self.outcomes_by_signal: Dict[str, Dict[str, str]] = {}
+        self.signal_master_account_ids: Dict[str, str] = {}
+        self.signal_symbols: Dict[str, str] = {}
         self.pending_contract_started_at: Dict[int, datetime] = {}
         self.delayed_contracts_logged: Set[int] = set()
 
@@ -1544,6 +1552,7 @@ class TradingBot:
                 "regime_outcomes": list(self.regime_outcomes),
                 "shadow_outcomes": list(self.shadow_outcomes),
                 "shadow_consecutive_wins": self.shadow_consecutive_wins,
+                "loss_rotation_blocked_market": self.loss_rotation_blocked_market,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             },
             "clients": {},
@@ -1973,6 +1982,32 @@ class TradingBot:
         )
         self._save_state()
 
+    def _market_rotation_blocks(self, symbol: str) -> bool:
+        return bool(
+            self.loss_rotation_blocked_market
+            and str(symbol) == self.loss_rotation_blocked_market
+        )
+
+    def _register_master_market_outcome(self, symbol: str, outcome: str) -> None:
+        if str(outcome).lower() != "loss":
+            return
+        self.loss_rotation_blocked_market = str(symbol)
+        self.logger.warning(
+            "MARKET_ROTATION_REQUIRED lost_market=%s; next purchase must use a different market",
+            symbol,
+        )
+
+    def _complete_market_rotation_after_purchase(self, symbol: str) -> None:
+        blocked = self.loss_rotation_blocked_market
+        if not blocked or str(symbol) == blocked:
+            return
+        self.loss_rotation_blocked_market = ""
+        self.logger.info(
+            "MARKET_ROTATION_COMPLETED previous_lost_market=%s next_market=%s",
+            blocked,
+            symbol,
+        )
+
     def _get_live_console_handler(self) -> Optional[LiveConsoleHandler]:
         handler = getattr(self.logger, "live_console_handler", None)
         return handler if isinstance(handler, LiveConsoleHandler) else None
@@ -2381,11 +2416,19 @@ class TradingBot:
 
         if self.is_trading_locked:
             if signal is not None:
+                selected_symbol = (
+                    self.pending_signal.symbol if self.pending_signal is not None else "unknown"
+                )
                 self._record_blocked_signal(
                     signal,
                     status="SKIP_TRADING_LOCK",
                     digits_display=digits_display,
-                    note="trade=TRADING_LOCK",
+                    note=f"trade=MARKET_COLLISION selected={selected_symbol}",
+                )
+                self.logger.info(
+                    "MARKET_COLLISION_SUPPRESSED selected_market=%s suspended_market=%s",
+                    selected_symbol,
+                    signal.symbol,
                 )
             return
 
@@ -2433,6 +2476,15 @@ class TradingBot:
             return
 
         if signal is None:
+            return
+
+        if self._market_rotation_blocks(signal.symbol):
+            self._record_blocked_signal(
+                signal,
+                status="SKIP_LOSS_MARKET_ROTATION",
+                digits_display=digits_display,
+                note=f"trade=ROTATE_AWAY_FROM_{signal.symbol}",
+            )
             return
 
         if (
@@ -2639,6 +2691,7 @@ class TradingBot:
                 )
                 return
             eligible_account_ids = {account_id for _, account_id in eligible_accounts}
+            master_account_id = self._copytrading_master_account_id()
             profit_ratio = economics.potential_profit / economics.stake
             stake_by_token = {
                 token: self._planned_stake_for_account(token, account_id, profit_ratio)
@@ -2666,7 +2719,9 @@ class TradingBot:
             )
             signal_contracts: Set[int] = set()
             registered_account_ids: Set[str] = set()
-            self.outcomes_by_signal[signal.signal_id] = []
+            self.outcomes_by_signal[signal.signal_id] = {}
+            self.signal_master_account_ids[signal.signal_id] = master_account_id
+            self.signal_symbols[signal.signal_id] = signal.symbol
 
             for tx in transactions:
                 account_id = tx.get("account_id")
@@ -2715,12 +2770,17 @@ class TradingBot:
                     registered_account_ids.add(str(account_id))
 
             self.pending_by_signal[signal.signal_id] = signal_contracts
-            self._save_state()
 
             if not signal_contracts:
+                self.outcomes_by_signal.pop(signal.signal_id, None)
+                self.signal_master_account_ids.pop(signal.signal_id, None)
+                self.signal_symbols.pop(signal.signal_id, None)
+                self._save_state()
                 self.repository.mark_signal(signal.signal_id, status="PURCHASE_FAILED")
                 self.logger.warning("No contracts were purchased successfully")
                 return
+            self._complete_market_rotation_after_purchase(signal.symbol)
+            self._save_state()
             purchased_account_ids = registered_account_ids
             missing_purchases = sorted(eligible_account_ids - purchased_account_ids)
             if missing_purchases:
@@ -3495,20 +3555,38 @@ class TradingBot:
         if signal_id:
             pending = self.pending_by_signal.setdefault(signal_id, set())
             pending.discard(contract_id)
-            self.outcomes_by_signal.setdefault(signal_id, []).append(outcome)
+            self.outcomes_by_signal.setdefault(signal_id, {})[account_id] = outcome
             if not pending:
-                outcomes = self.outcomes_by_signal.pop(signal_id, [outcome])
-                self.pending_by_signal.pop(signal_id, None)
-                cycle_outcome = "win" if all(value == "win" for value in outcomes) else "loss"
-                self.bayesian.update(cycle_outcome == "win")
-                self._record_real_cycle_outcome(cycle_outcome)
-                self._register_trade_cycle_outcome(cycle_outcome)
-                self.logger.info(
-                    "CONTRACT_SETTLED signal_id=%s result=%s exit_digit=%s",
+                outcomes = self.outcomes_by_signal.pop(
                     signal_id,
-                    cycle_outcome.upper(),
-                    exit_digit,
+                    {account_id: outcome},
                 )
+                self.pending_by_signal.pop(signal_id, None)
+                master_account_id = self.signal_master_account_ids.pop(signal_id, "")
+                signal_symbol = self.signal_symbols.pop(signal_id, "")
+                master_outcome = outcomes.get(master_account_id)
+                if master_outcome:
+                    self.bayesian.update(master_outcome == "win")
+                    self._record_real_cycle_outcome(master_outcome)
+                    self._register_trade_cycle_outcome(master_outcome)
+                    self._register_master_market_outcome(signal_symbol, master_outcome)
+                    self.logger.info(
+                        "CONTRACT_SETTLED signal_id=%s symbol=%s master_account=%s "
+                        "result=%s exit_digit=%s",
+                        signal_id,
+                        signal_symbol,
+                        mask_account_id(master_account_id),
+                        master_outcome.upper(),
+                        exit_digit,
+                    )
+                else:
+                    self.logger.warning(
+                        "MASTER_OUTCOME_UNAVAILABLE signal_id=%s symbol=%s master_account=%s; "
+                        "copier outcomes remain personal and do not affect global strategy state",
+                        signal_id,
+                        signal_symbol,
+                        mask_account_id(master_account_id),
+                    )
 
         self._save_state()
 
@@ -3648,6 +3726,14 @@ class TradingBot:
                         trade.signal_id
                     ) or self.symbol
                     self.pending_by_signal.setdefault(trade.signal_id, set()).add(cid)
+                    self.signal_master_account_ids.setdefault(
+                        trade.signal_id,
+                        self._copytrading_master_account_id(),
+                    )
+                    self.signal_symbols.setdefault(
+                        trade.signal_id,
+                        self.contract_symbols[cid],
+                    )
 
                 for session in self.sessions.values():
                     session.task = asyncio.create_task(session.connect_and_run())

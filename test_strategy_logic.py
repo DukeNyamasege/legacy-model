@@ -750,6 +750,33 @@ class TimingAndModelTests(unittest.TestCase):
 
 
 class AccountIsolationTests(unittest.IsolatedAsyncioTestCase):
+    def test_master_loss_rotates_only_the_losing_market(self) -> None:
+        bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
+        bot.loss_rotation_blocked_market = ""
+        bot.logger = MagicMock()
+
+        bot._register_master_market_outcome("1HZ100V", "loss")
+
+        self.assertTrue(bot._market_rotation_blocks("1HZ100V"))
+        self.assertFalse(bot._market_rotation_blocks("R_10"))
+
+        bot._complete_market_rotation_after_purchase("R_10")
+
+        self.assertFalse(bot._market_rotation_blocks("1HZ100V"))
+        self.assertEqual(bot.loss_rotation_blocked_market, "")
+
+    def test_copier_outcome_cannot_rotate_master_market_state(self) -> None:
+        bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
+        bot.loss_rotation_blocked_market = ""
+        bot.logger = MagicMock()
+
+        copier_outcomes = {"DOT90000002": "loss"}
+        master_outcome = copier_outcomes.get("DOT90000001")
+        if master_outcome:
+            bot._register_master_market_outcome("R_25", master_outcome)
+
+        self.assertEqual(bot.loss_rotation_blocked_market, "")
+
     def test_permanent_credential_errors_are_distinct_from_timeouts(self) -> None:
         self.assertTrue(
             enhanced_bot.is_permanent_credential_error(
@@ -1317,6 +1344,19 @@ class BotSignalIntegrationTests(unittest.IsolatedAsyncioTestCase):
                     bot.repository.recent_signals(1)[0]["symbol"],
                     "R_10",
                 )
+
+                for sequence, quote in enumerate(
+                    [200.06, 200.08, 201.00, 202.02, 203.04],
+                    start=6,
+                ):
+                    await bot._on_tick(
+                        live_tick_payload(sequence, quote, symbol="R_25")
+                    )
+
+                self.assertEqual(len(spawned), 1)
+                latest = bot.repository.recent_signals(1)[0]
+                self.assertEqual(latest["symbol"], "R_25")
+                self.assertEqual(latest["final_status"], "SKIP_TRADING_LOCK")
             finally:
                 bot.database.engine.dispose()
                 for handler in list(bot.logger.handlers):
