@@ -1,19 +1,15 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
-import shutil
-import stat
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from app.config import load_test2_config
 from app.database import Database
 from app.models import (
-    AccountSnapshot,
     BotState,
     CandidateSignalRecord,
     ModelDecisionRecord,
@@ -22,157 +18,195 @@ from app.models import (
     TestRun,
     Tick,
     Trade,
+    TraderLease,
+    utc_now,
 )
-from app.repositories.test2_repository import Test2Repository
-from app.services.analytics_service import export_test2
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def redact_legacy_state(source: Path, destination: Path) -> None:
-    data = json.loads(source.read_text(encoding="utf-8"))
-    for item in data.get("unresolved_contracts", []):
-        item.pop("token", None)
-        account = str(item.pop("account_id", ""))
-        if account:
-            item["account_id_masked"] = f"{account[:3]}***{account[-3:]}"
-    destination.write_text(json.dumps(data, indent=2), encoding="utf-8")
+def _aware_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
-def archive_test1() -> Path:
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    archive = ROOT / "archives" / f"test1_{timestamp}"
-    archive.mkdir(parents=True, exist_ok=False)
-
-    state = ROOT / "bot_state.json"
-    if state.exists():
-        redact_legacy_state(state, archive / state.name)
-
-    log = ROOT / "trading_bot.log"
-    if log.exists():
-        shutil.copy2(log, archive / log.name)
-
-    analysis = ROOT / "analysis"
-    if analysis.exists():
-        shutil.copytree(analysis, archive / "analysis")
-
-    exports = ROOT / "exports"
-    if exports.exists():
-        shutil.copytree(exports, archive / "exports")
-
-    artifacts = ROOT / "model_artifacts"
-    if artifacts.exists():
-        shutil.copytree(artifacts, archive / "model_artifacts")
-
-    for path in archive.rglob("*"):
-        if path.is_file():
-            path.chmod(stat.S_IREAD)
-    return archive
-
-
-def clear_active_files() -> None:
-    for path in (ROOT / "analysis", ROOT / "exports", ROOT / "model_artifacts"):
-        if path.exists():
-            shutil.rmtree(path)
-    for path in (ROOT / "bot_state.json", ROOT / "trading_bot.log"):
-        if path.exists():
-            path.unlink()
-
-
-def reset_database(database: Database, run_name: str) -> None:
-    database.create_schema()
-    with database.session() as session:
-        run = session.scalar(select(TestRun).where(TestRun.run_name == run_name))
-        if run is None:
-            return
-        unresolved = session.scalars(
-            select(Trade).where(Trade.settlement_time.is_(None))
-        ).all()
-        if unresolved:
-            raise RuntimeError(
-                "Database has unresolved contracts; reconcile them before reset"
-            )
-        signal_ids = session.scalars(
-            select(CandidateSignalRecord.signal_id).where(
-                CandidateSignalRecord.run_id == run.id
-            )
-        ).all()
-        if signal_ids:
-            session.execute(
-                delete(ModelDecisionRecord).where(
-                    ModelDecisionRecord.signal_id.in_(signal_ids)
-                )
-            )
-            session.execute(
-                delete(ProposalRecord).where(ProposalRecord.signal_id.in_(signal_ids))
-            )
-            session.execute(delete(Trade).where(Trade.signal_id.in_(signal_ids)))
-        session.execute(
-            delete(CandidateSignalRecord).where(CandidateSignalRecord.run_id == run.id)
-        )
-        session.execute(delete(Tick).where(Tick.run_id == run.id))
-        session.execute(delete(Streak).where(Streak.run_id == run.id))
-        session.execute(
-            delete(AccountSnapshot).where(AccountSnapshot.run_id == run.id)
-        )
-        session.execute(delete(BotState).where(BotState.run_id == run.id))
-        session.delete(run)
-
-
-def write_zero_state(config) -> None:
-    state = {
-        "version": 6,
-        "bot": {
-            "run_id": config.model.run_id,
-            "environment": config.deriv.environment,
-            "symbol": "1HZ100V",
-            "status": "STOPPED",
-            "cooldown_ticks_remaining": 0,
-            "pending_contract_count": 0,
-            "regime_guard_paused": False,
-            "regime_guard_reason": "",
-            "regime_consecutive_losses": 0,
-            "regime_outcomes": [],
-            "shadow_outcomes": [],
-            "shadow_consecutive_wins": 0,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        },
-        "clients": {},
-        "unresolved_contracts": [],
-    }
-    (ROOT / "bot_state.json").write_text(
-        json.dumps(state, indent=2), encoding="utf-8"
+def _is_expired_one_tick(trade: Trade, *, stale_after_seconds: int) -> bool:
+    age_seconds = (utc_now() - _aware_utc(trade.purchase_time)).total_seconds()
+    return (
+        str(trade.contract_duration_unit or "") == "t"
+        and int(trade.contract_duration or 0) == 1
+        and age_seconds >= stale_after_seconds
     )
 
 
+def reset_database(
+    database: Database,
+    run_name: str,
+    *,
+    all_runs: bool = False,
+    allow_expired_one_tick: bool = False,
+    stale_after_seconds: int = 300,
+) -> dict[str, int]:
+    """Reset trading history without touching identities, controls, or balances."""
+    database.create_schema()
+    stale_after_seconds = max(60, int(stale_after_seconds))
+
+    with database.session() as session:
+        run_query = select(TestRun)
+        if not all_runs:
+            run_query = run_query.where(TestRun.run_name == run_name)
+        runs = list(session.scalars(run_query).all())
+        run_ids = [int(run.id) for run in runs]
+        if not run_ids:
+            return {
+                "runs": 0,
+                "trades": 0,
+                "signals": 0,
+                "ticks": 0,
+                "expired_unresolved": 0,
+            }
+
+        signal_ids_query = select(CandidateSignalRecord.signal_id).where(
+            CandidateSignalRecord.run_id.in_(run_ids)
+        )
+        unresolved = list(
+            session.scalars(
+                select(Trade).where(
+                    Trade.signal_id.in_(signal_ids_query),
+                    Trade.settlement_time.is_(None),
+                )
+            ).all()
+        )
+        blocking = [
+            trade
+            for trade in unresolved
+            if not (
+                allow_expired_one_tick
+                and _is_expired_one_tick(
+                    trade,
+                    stale_after_seconds=stale_after_seconds,
+                )
+            )
+        ]
+        if blocking:
+            contract_ids = ", ".join(str(trade.contract_id) for trade in blocking[:10])
+            raise RuntimeError(
+                "Potentially active or non-1-tick contracts block reset: "
+                f"{contract_ids}. Let the worker reconcile them first."
+            )
+
+        counts = {
+            "runs": len(run_ids),
+            "trades": int(
+                session.scalar(
+                    select(func.count()).select_from(Trade).where(
+                        Trade.signal_id.in_(signal_ids_query)
+                    )
+                )
+                or 0
+            ),
+            "signals": int(
+                session.scalar(
+                    select(func.count()).select_from(CandidateSignalRecord).where(
+                        CandidateSignalRecord.run_id.in_(run_ids)
+                    )
+                )
+                or 0
+            ),
+            "ticks": int(
+                session.scalar(
+                    select(func.count()).select_from(Tick).where(Tick.run_id.in_(run_ids))
+                )
+                or 0
+            ),
+            "expired_unresolved": len(unresolved),
+        }
+
+        session.execute(
+            delete(ModelDecisionRecord).where(
+                ModelDecisionRecord.signal_id.in_(signal_ids_query)
+            )
+        )
+        session.execute(
+            delete(ProposalRecord).where(ProposalRecord.signal_id.in_(signal_ids_query))
+        )
+        session.execute(delete(Trade).where(Trade.signal_id.in_(signal_ids_query)))
+        session.execute(
+            delete(CandidateSignalRecord).where(
+                CandidateSignalRecord.run_id.in_(run_ids)
+            )
+        )
+        session.execute(delete(Tick).where(Tick.run_id.in_(run_ids)))
+        session.execute(delete(Streak).where(Streak.run_id.in_(run_ids)))
+
+        for state in session.scalars(
+            select(BotState).where(BotState.run_id.in_(run_ids))
+        ).all():
+            state.status = "STOPPED"
+            state.current_sequence = 0
+            state.current_streak = 0
+            state.current_streak_type = ""
+            state.current_drawdown = 0.0
+            state.session_profit = 0.0
+            state.total_profit = 0.0
+            state.high_water_mark = 0.0
+            state.pause_reason = ""
+            state.current_connection_id = ""
+            state.consecutive_wins = 0
+            state.consecutive_losses = 0
+            state.cooldown_ticks_remaining = 0
+            state.last_heartbeat = utc_now()
+
+        if all_runs:
+            session.execute(delete(TraderLease))
+        else:
+            session.execute(
+                delete(TraderLease).where(
+                    TraderLease.lease_key.like(f"{run_name}:%")
+                )
+            )
+
+    return counts
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description="Reset trading history while preserving accounts and sessions."
+    )
     parser.add_argument("--target", required=True, choices=["test2"])
     parser.add_argument("--confirm", required=True)
+    parser.add_argument(
+        "--all-runs",
+        action="store_true",
+        help="Clear trading history for every historical run.",
+    )
+    parser.add_argument(
+        "--allow-expired-one-tick",
+        action="store_true",
+        help="Permit unresolved one-tick rows older than the safety threshold.",
+    )
+    parser.add_argument("--stale-after-seconds", type=int, default=300)
     args = parser.parse_args()
     if args.confirm != "RESET_TEST2":
         raise SystemExit("Reset confirmation must be RESET_TEST2")
 
-    legacy_state = ROOT / "bot_state.json"
-    if legacy_state.exists():
-        data = json.loads(legacy_state.read_text(encoding="utf-8"))
-        unresolved = data.get("unresolved_contracts", [])
-        if unresolved and os.getenv("TEST1_CONTRACTS_RECONCILED") != "true":
-            raise SystemExit(
-                "Legacy state lists unresolved contracts. Reconcile them with Deriv, then "
-                "set TEST1_CONTRACTS_RECONCILED=true for this one reset."
-            )
-
     config = load_test2_config(os.getenv("DERIV_BOT_CONFIG", ROOT / "config.yaml"))
-    archive = archive_test1()
     database = Database(config.database_url)
-    reset_database(database, config.model.run_id)
-    clear_active_files()
-    database.create_schema()
-    Test2Repository(database, config)
-    write_zero_state(config)
-    export_test2(database, config.model.run_id, config.storage.export_directory)
-    print(f"RESET_COMPLETED archive={archive.name} run=test2 trades=0 profit=0.00")
+    counts = reset_database(
+        database,
+        config.model.run_id,
+        all_runs=args.all_runs,
+        allow_expired_one_tick=args.allow_expired_one_tick,
+        stale_after_seconds=args.stale_after_seconds,
+    )
+    print(
+        "RESET_COMPLETED "
+        f"runs={counts['runs']} removed_trades={counts['trades']} "
+        f"removed_signals={counts['signals']} removed_ticks={counts['ticks']} "
+        f"expired_unresolved={counts['expired_unresolved']} "
+        "preserved=accounts,sessions,controls,balances,models"
+    )
 
 
 if __name__ == "__main__":

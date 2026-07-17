@@ -1078,19 +1078,90 @@ class PersistenceTests(unittest.TestCase):
             managed_account_id=account["id"],
             expires_at=datetime.now(timezone.utc) + timedelta(days=1),
         )
+        self.repository.update_account_balance(
+            account_id="DOT90000001",
+            balance=123.45,
+            currency="USD",
+        )
+        signal = Over2SignalDetector(
+            run_id="test2",
+            overlapping_signals_allowed=False,
+            require_pattern_reset=True,
+        ).observe(
+            pattern_ticks(),
+            connection_session_id="connection-1",
+            tick_sequence=5,
+        )
+        self.repository.record_candidate(signal)
+        self.repository.register_purchase(
+            signal_id=signal.signal_id,
+            contract_id="reset-contract",
+            transaction_id="reset-transaction",
+            account_id="DOT90000001",
+            purchase_time=datetime.now(timezone.utc),
+            aligned_with_signal=True,
+        )
+        self.repository.settle_trade(
+            contract_id="reset-contract",
+            profit=0.19,
+            outcome="win",
+            entry_tick=100.01,
+            exit_tick=100.03,
+            exit_digit=3,
+        )
 
-        reset_database(self.database, self.config.model.run_id)
+        removed = reset_database(self.database, self.config.model.run_id)
         repository = Test2Repository(self.database, self.config)
         stored = repository.managed_account(account["id"])
         session_account = repository.client_session_account("session-hash")
+        summary = repository.summary()
 
+        self.assertEqual(removed["trades"], 1)
         self.assertEqual(stored["token_secret"], "encrypted-token-placeholder")
         self.assertTrue(stored["enabled"])
         self.assertEqual(stored["stake_amount"], 1.25)
         self.assertEqual(stored["take_profit"], 12.50)
         self.assertEqual(stored["stop_loss"], 4.00)
         self.assertIsNotNone(session_account)
-        self.assertEqual(repository.summary()["purchased_trades"], 0)
+        self.assertEqual(summary["purchased_trades"], 0)
+        self.assertEqual(summary["skipped_signals"], 0)
+        self.assertEqual(summary["primary_account_balance"], 123.45)
+        self.assertEqual(repository.recent_trades(account_id="DOT90000001"), [])
+
+    def test_trade_reset_accepts_only_expired_one_tick_unresolved_rows(self) -> None:
+        signal = Over2SignalDetector(
+            run_id="test2",
+            overlapping_signals_allowed=False,
+            require_pattern_reset=True,
+        ).observe(
+            pattern_ticks(),
+            connection_session_id="connection-1",
+            tick_sequence=5,
+        )
+        self.repository.record_candidate(signal)
+        self.repository.register_purchase(
+            signal_id=signal.signal_id,
+            contract_id="expired-one-tick",
+            transaction_id="expired-one-tick-transaction",
+            account_id="DOT90000001",
+            purchase_time=datetime.now(timezone.utc) - timedelta(minutes=10),
+            aligned_with_signal=True,
+            contract_duration=1,
+            contract_duration_unit="t",
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "block reset"):
+            reset_database(self.database, self.config.model.run_id)
+
+        removed = reset_database(
+            self.database,
+            self.config.model.run_id,
+            allow_expired_one_tick=True,
+            stale_after_seconds=300,
+        )
+
+        self.assertEqual(removed["expired_unresolved"], 1)
+        self.assertEqual(self.repository.summary()["purchased_trades"], 0)
 
     def test_deriv_may_reuse_proposal_id_for_identical_terms(self) -> None:
         signals = []
