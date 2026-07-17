@@ -173,6 +173,26 @@ def sanitize_account_ids(message: Any) -> str:
     return ACCOUNT_ID_PATTERN.sub(lambda match: mask_account_id(match.group(0)), value)
 
 
+def is_permanent_credential_error(error: Dict[str, Any]) -> bool:
+    """Return whether Deriv explicitly rejected a credential, not a transient request."""
+    code = str(error.get("code") or "").strip().lower().replace("_", "")
+    message = str(error.get("message") or "").strip().lower()
+    permanent_codes = {
+        "authorizationrequired",
+        "http401",
+        "http403",
+        "invalidtoken",
+        "tokenexpired",
+    }
+    permanent_messages = (
+        "invalid or expired token",
+        "invalid token",
+        "token has expired",
+        "token is expired",
+    )
+    return code in permanent_codes or any(marker in message for marker in permanent_messages)
+
+
 def today_local_iso() -> str:
     return datetime.now().date().isoformat()
 
@@ -1113,6 +1133,7 @@ class TradingBot:
         self.public_client = PublicMarketDataClient(self)
         self._managed_accounts_revision = self.repository.managed_accounts_revision()
         self._runtime_mode_cache = self.environment
+        self._runtime_account_refresh_lock = asyncio.Lock()
         if self.regime_guard_paused:
             if not self.recovery_cfg.regime_guard_enabled:
                 self._set_regime_guard(False, "REGIME_GUARD_DISABLED")
@@ -1194,6 +1215,13 @@ class TradingBot:
                             "disabled",
                             "Auto trading is disabled",
                         )
+                    continue
+                if str(row.execution_status) == "credential_error":
+                    self.logger.warning(
+                        "Managed account %s remains isolated because its Deriv credential "
+                        "was rejected; reconnect the account to retry it.",
+                        row.id,
+                    )
                     continue
                 try:
                     payload = decrypt_auth_payload(row.token_secret, self.encryption_key)
@@ -2092,10 +2120,12 @@ class TradingBot:
             resp = await _rest_request("GET", path, self.app_id, self.rest_base_url, token=token)
 
             if "error" in resp:
+                error = resp["error"]
                 message = sanitize_account_ids(
-                    str(resp["error"].get("message") or "Account verification failed")
+                    str(error.get("message") or "Account verification failed")
                 )
-                self._set_account_execution_status(managed_account_id, "error", message)
+                status = "credential_error" if is_permanent_credential_error(error) else "error"
+                self._set_account_execution_status(managed_account_id, status, message)
                 self.logger.error("Account verification failed: %s", message, extra={"token_tag": tag})
                 continue
 
@@ -2242,18 +2272,20 @@ class TradingBot:
             session.task = asyncio.create_task(session.connect_and_run())
 
     async def _refresh_runtime_accounts_if_needed(self) -> None:
-        current_revision = self.repository.managed_accounts_revision()
-        current_mode = self.repository.runtime_mode()
-        if (
-            current_revision == self._managed_accounts_revision
-            and current_mode == self._runtime_mode_cache
-        ):
-            return
-        self._managed_accounts_revision = current_revision
-        self._runtime_mode_cache = current_mode
-        await self.validate_accounts()
-        self._sync_clients_with_runtime_accounts()
-        await self._ensure_sessions_for_valid_clients()
+        async with self._runtime_account_refresh_lock:
+            current_revision = self.repository.managed_accounts_revision()
+            current_mode = self.repository.runtime_mode()
+            if (
+                current_revision == self._managed_accounts_revision
+                and current_mode == self._runtime_mode_cache
+            ):
+                return
+            await self.validate_accounts()
+            self._sync_clients_with_runtime_accounts()
+            await self._ensure_sessions_for_valid_clients()
+            # Validation may refresh OAuth credentials and update the revision itself.
+            self._managed_accounts_revision = self.repository.managed_accounts_revision()
+            self._runtime_mode_cache = self.repository.runtime_mode()
 
     async def _on_tick(self, tick_data: Dict[str, Any]) -> None:
         tick = tick_data["tick"]
@@ -2447,7 +2479,9 @@ class TradingBot:
             market = self.market_states.get(signal.symbol)
             if market is None:
                 raise ValueError(f"Signal references unconfigured market {signal.symbol!r}")
-            await self._refresh_runtime_accounts_if_needed()
+            # Account discovery performs REST validation and belongs to the watchdog.
+            # A signal must use the last known connected set instead of aging while an
+            # unrelated account is added, refreshed, or rejected.
             base_stake = self.base_stake
             validate_contract_parameters(
                 contract_type=signal.contract_type,

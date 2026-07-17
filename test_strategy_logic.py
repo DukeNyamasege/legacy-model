@@ -750,6 +750,69 @@ class TimingAndModelTests(unittest.TestCase):
 
 
 class AccountIsolationTests(unittest.IsolatedAsyncioTestCase):
+    def test_permanent_credential_errors_are_distinct_from_timeouts(self) -> None:
+        self.assertTrue(
+            enhanced_bot.is_permanent_credential_error(
+                {"code": "InvalidToken", "message": "Invalid or expired token"}
+            )
+        )
+        self.assertFalse(
+            enhanced_bot.is_permanent_credential_error(
+                {"code": "TIMEOUT", "message": "Request timed out"}
+            )
+        )
+
+    async def test_invalid_token_is_quarantined_without_blocking_other_accounts(self) -> None:
+        bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
+        bot.repository = MagicMock()
+        bot.repository.runtime_mode.return_value = "demo"
+        bot._load_runtime_accounts = MagicMock(
+            return_value=(
+                ["invalid-token", "healthy-token"],
+                {
+                    "invalid-token": {
+                        "managed_account_id": 60,
+                        "account_id": "DOT90000060",
+                    },
+                    "healthy-token": {
+                        "managed_account_id": 10,
+                        "account_id": "DOT90000010",
+                    },
+                },
+            )
+        )
+        bot._set_account_execution_status = MagicMock()
+        bot._sync_running_status_after_validation = MagicMock()
+        bot.logger = MagicMock()
+        bot.app_id = "app-id"
+        bot.rest_base_url = "https://example.invalid"
+        bot.valid_clients = []
+
+        responses = [
+            {"error": {"code": "InvalidToken", "message": "Invalid or expired token"}},
+            {
+                "data": [
+                    {
+                        "account_id": "DOT90000010",
+                        "account_type": "demo",
+                        "balance": 100.0,
+                        "currency": "USD",
+                        "status": "active",
+                    }
+                ]
+            },
+        ]
+        with patch("enhanced_bot._rest_request", new=AsyncMock(side_effect=responses)):
+            await bot.validate_accounts()
+
+        self.assertEqual(bot.valid_clients, [("healthy-token", "DOT90000010")])
+        bot._set_account_execution_status.assert_any_call(
+            60,
+            "credential_error",
+            "Invalid or expired token",
+        )
+        bot.repository.update_account_balance.assert_called_once()
+
     async def test_each_account_uses_its_own_configured_base_stake(self) -> None:
         bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
         bot.cfg = {"strategy": {"initial_stake": 0.50}}
