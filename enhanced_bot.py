@@ -1065,7 +1065,7 @@ class TradingBot:
                 symbol=symbol,
                 pip_size=2,
                 ticks_history=deque(maxlen=50),
-                live_ticks_history=deque(maxlen=7),
+                live_ticks_history=deque(maxlen=5),
                 raw_tick_digits=raw_tick_digits,
                 signal_detector=Over2SignalDetector(
                     run_id=self.test2_config.model.run_id,
