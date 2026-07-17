@@ -76,6 +76,7 @@ class ExecutionSettings(StrictModel):
     rising_policy: Literal[
         "strict_last_three_quotes",
         "soft_rising_momentum",
+        "high_frequency_momentum",
     ] = "soft_rising_momentum"
     maximum_signal_age_ms: int = Field(default=2500, gt=0)
     maximum_proposal_age_ms: int = Field(default=900, gt=0)
@@ -259,4 +260,8 @@ def load_test2_config(path: str | Path = "config.yaml") -> Test2Config:
         raw.setdefault("execution", {})["rising_policy"] = os.environ[
             "RISING_POLICY"
         ].strip()
+    if os.getenv("BAYESIAN_MIN_EDGE_CONFIDENCE"):
+        raw.setdefault("bayesian", {})[
+            "minimum_probability_edge_confidence"
+        ] = float(os.environ["BAYESIAN_MIN_EDGE_CONFIDENCE"])
     return Test2Config.model_validate(raw)

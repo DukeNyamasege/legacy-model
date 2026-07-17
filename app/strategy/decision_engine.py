@@ -159,10 +159,13 @@ class DecisionEngine:
             not hmm.ready or favourable_probability < self.favourable_state_threshold
         ):
             reasons.append("SKIP_HMM_NOT_FAVOURABLE")
+        bayesian_confidence_low = (
+            bayesian.probability_above_safety_threshold
+            < self.bayesian_confidence_threshold
+        )
         if self.bayesian_mode == "gate" and (
             not bayesian.ready
-            or bayesian.probability_above_safety_threshold
-            < self.bayesian_confidence_threshold
+            or (bayesian_confidence_low and economics.expected_value <= 0)
         ):
             reasons.append("SKIP_BAYESIAN_EDGE_INSUFFICIENT")
         if self.bayesian_mode == "gate" and economics.expected_value < 0:

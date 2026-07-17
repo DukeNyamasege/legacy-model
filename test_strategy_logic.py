@@ -14,7 +14,7 @@ import enhanced_bot
 from app.config import load_test2_config
 from app.database import Database
 from app.dashboard_metrics import build_execution_summary
-from app.model.bayesian_probability import BayesianProbability
+from app.model.bayesian_probability import BayesianProbability, BayesianSnapshot
 from app.model.hmm_regime import HmmInference
 from app.models import ProposalRecord
 from app.repositories.test2_repository import Test2Repository
@@ -407,6 +407,62 @@ class TimingAndModelTests(unittest.TestCase):
         )
         self.assertEqual(decision.final_action, "PURCHASE")
         self.assertGreater(decision.expected_value, 0)
+
+    def test_positive_ev_can_pass_relaxed_bayesian_confidence_gate(self) -> None:
+        detector = Over2SignalDetector(run_id="test2")
+        signal = detector.observe(
+            pattern_ticks(),
+            connection_session_id="connection-1",
+            tick_sequence=5,
+        )
+        bayesian = BayesianSnapshot(
+            prior_alpha=108.0,
+            prior_beta=19.0,
+            observed_wins=29,
+            observed_losses=6,
+            posterior_alpha=137.0,
+            posterior_beta=25.0,
+            posterior_mean=0.8457,
+            lower_credible_bound=0.0,
+            upper_credible_bound=1.0,
+            probability_above_break_even=0.60,
+            probability_above_safety_threshold=0.40,
+            ready=True,
+        )
+        economics = ProposalEconomics(
+            proposal_id="p-relaxed",
+            stake=0.50,
+            payout=0.69,
+            potential_profit=0.1693,
+            potential_loss=0.5207,
+            break_even_probability=0.7546,
+            predicted_win_probability=0.8115,
+            expected_value=0.0392,
+            expected_return_on_stake=0.0784,
+            requested_monotonic=time.monotonic(),
+            received_monotonic=time.monotonic(),
+        )
+        decision = DecisionEngine(
+            reject_if_new_tick_arrives=False,
+            maximum_signal_age_ms=900,
+            maximum_proposal_age_ms=900,
+            bayesian_mode="gate",
+            bayesian_confidence_threshold=0.95,
+            hmm_mode="shadow",
+            favourable_state="MEAN_REVERSION",
+            favourable_state_threshold=0.70,
+        ).decide(
+            signal=signal,
+            economics=economics,
+            bayesian=bayesian,
+            hmm=HmmInference(False, "NOT_READY", {}, 0),
+            current_tick_sequence=5,
+            connection_session_id="connection-1",
+            connection_healthy=True,
+            pattern_reset_required=False,
+        )
+        self.assertEqual(decision.final_action, "PURCHASE")
+        self.assertNotIn("SKIP_BAYESIAN_EDGE_INSUFFICIENT", decision.rejection_reasons)
 
     def test_adaptive_cooldown_has_no_hard_session_stop(self) -> None:
         cooldown = AdaptiveCooldown(
@@ -1311,6 +1367,16 @@ class BotSignalIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("purchase_", spawned[0])
                 self.assertFalse(bot._last_three_ticks_rising())
                 self.assertTrue(bot._soft_rising_momentum())
+
+                bot.ticks_history.clear()
+                for quote in [105.00, 104.00, 103.00, 102.00]:
+                    bot.ticks_history.append({"quote": quote})
+                self.assertFalse(bot._high_frequency_momentum())
+
+                bot.ticks_history.clear()
+                for quote in [100.50, 100.10, 100.20, 100.15]:
+                    bot.ticks_history.append({"quote": quote})
+                self.assertTrue(bot._high_frequency_momentum())
             finally:
                 bot.database.engine.dispose()
                 for handler in list(bot.logger.handlers):

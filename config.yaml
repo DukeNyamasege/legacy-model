@@ -40,11 +40,11 @@ signal:
     - [0, 2]
     - [3, 5]
   overlapping_signals_allowed: false
-  require_pattern_reset: true
+  require_pattern_reset: false
 execution:
   reject_if_new_tick_arrives: false
   require_rising_ticks: true
-  rising_policy: soft_rising_momentum
+  rising_policy: high_frequency_momentum
   maximum_signal_age_ms: 2500
   maximum_proposal_age_ms: 900
 bayesian:
@@ -55,7 +55,7 @@ bayesian:
   credible_interval: 0.95
   safety_margin_probability: 0.02
   minimum_completed_trades: 0
-  minimum_probability_edge_confidence: 0.95
+  minimum_probability_edge_confidence: 0.50
 hmm:
   enabled: true
   mode: shadow
@@ -64,11 +64,11 @@ hmm:
   favourable_state: MEAN_REVERSION
   minimum_favourable_state_probability: 0.70
 cooldown:
-  after_win_ticks: 1
-  after_loss_ticks: 3
-  after_three_consecutive_losses_ticks: 15
-  after_five_consecutive_losses_ticks: 50
-  require_pattern_reset: true
+  after_win_ticks: 0
+  after_loss_ticks: 1
+  after_three_consecutive_losses_ticks: 5
+  after_five_consecutive_losses_ticks: 12
+  require_pattern_reset: false
 recovery:
   mode: two_run
   recovery_runs: 2

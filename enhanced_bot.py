@@ -1519,9 +1519,21 @@ class TradingBot:
         upward_moves = sum(1 for move in moves if move > 0)
         return quotes[-1] > quotes[-3] and quotes[-1] >= quotes[0] and upward_moves >= 2
 
+    def _high_frequency_momentum(self) -> bool:
+        if len(self.ticks_history) < 4:
+            return False
+        quotes = [float(item["quote"]) for item in list(self.ticks_history)[-4:]]
+        moves = [later - earlier for earlier, later in zip(quotes, quotes[1:])]
+        upward_moves = sum(1 for move in moves if move > 0)
+        latest_holds_ground = quotes[-1] >= min(quotes[-3:])
+        recent_recovery = quotes[-1] > quotes[-2] or quotes[-1] >= quotes[-3]
+        return latest_holds_ground and recent_recovery and upward_moves >= 1
+
     def _rising_policy_allows_entry(self) -> bool:
         if self.rising_policy == "strict_last_three_quotes":
             return self._last_three_ticks_rising()
+        if self.rising_policy == "high_frequency_momentum":
+            return self._high_frequency_momentum()
         return self._soft_rising_momentum()
 
     @property
