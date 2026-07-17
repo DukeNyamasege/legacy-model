@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from typing import Iterable
 
 
 def _beta_continued_fraction(a: float, b: float, x: float) -> float:
@@ -138,3 +139,69 @@ class BayesianProbability:
             - beta_cdf(safety_threshold, alpha, beta),
             ready=(self.wins + self.losses) >= self.minimum_completed_trades,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class BayesianGroupKey:
+    strategy_version: str
+    market: str
+    direction: str
+    duration_ticks: int
+
+
+class KeyedBayesianProbability:
+    """Independent weak-prior posteriors for settled RF-DIR5 shadow groups."""
+
+    def __init__(
+        self,
+        *,
+        prior_alpha: float = 0.5,
+        prior_beta: float = 0.5,
+        credible_interval: float = 0.95,
+        minimum_completed_trades: int = 1000,
+    ) -> None:
+        self.prior_alpha = float(prior_alpha)
+        self.prior_beta = float(prior_beta)
+        self.credible_interval = float(credible_interval)
+        self.minimum_completed_trades = int(minimum_completed_trades)
+        self._outcomes: dict[BayesianGroupKey, tuple[int, int]] = {}
+
+    def restore(
+        self,
+        key: BayesianGroupKey,
+        *,
+        wins: int,
+        losses: int,
+    ) -> None:
+        self._outcomes[key] = (max(0, int(wins)), max(0, int(losses)))
+
+    def restore_many(
+        self,
+        values: Iterable[tuple[BayesianGroupKey, int, int]],
+    ) -> None:
+        for key, wins, losses in values:
+            self.restore(key, wins=wins, losses=losses)
+
+    def update(self, key: BayesianGroupKey, won: bool) -> None:
+        wins, losses = self._outcomes.get(key, (0, 0))
+        self._outcomes[key] = (wins + int(won), losses + int(not won))
+
+    def counts(self, key: BayesianGroupKey) -> tuple[int, int]:
+        return self._outcomes.get(key, (0, 0))
+
+    def snapshot(
+        self,
+        key: BayesianGroupKey,
+        *,
+        break_even_probability: float,
+        safety_margin: float = 0.01,
+    ) -> BayesianSnapshot:
+        wins, losses = self.counts(key)
+        model = BayesianProbability(
+            prior_alpha=self.prior_alpha,
+            prior_beta=self.prior_beta,
+            credible_interval=self.credible_interval,
+            minimum_completed_trades=self.minimum_completed_trades,
+        )
+        model.restore(wins, losses)
+        return model.snapshot(break_even_probability, safety_margin)

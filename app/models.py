@@ -305,3 +305,85 @@ class RuntimePreference(Base):
     preference_key: Mapped[str] = mapped_column(String(80), primary_key=True)
     preference_value: Mapped[str] = mapped_column(Text, default="")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class DirectionalSignal(Base):
+    __tablename__ = "directional_signals"
+
+    signal_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("test_runs.id"), index=True)
+    strategy_version: Mapped[str] = mapped_column(String(100), index=True)
+    symbol: Mapped[str] = mapped_column(String(30), index=True)
+    direction: Mapped[str] = mapped_column(String(10), index=True)
+    contract_type: Mapped[str] = mapped_column(String(10))
+    duration_ticks: Mapped[int] = mapped_column(Integer)
+    signal_epoch: Mapped[int] = mapped_column(Integer)
+    signal_tick_id: Mapped[str] = mapped_column(String(100))
+    tick_sequence: Mapped[int] = mapped_column(Integer)
+    reference_entry_quote: Mapped[float] = mapped_column(Float)
+    analysis_quotes: Mapped[list] = mapped_column(JSON)
+    movements: Mapped[list] = mapped_column(JSON)
+    feature_values: Mapped[dict] = mapped_column(JSON)
+    quality_score: Mapped[int] = mapped_column(Integer)
+    validated_edge: Mapped[float | None] = mapped_column(Float)
+    selected_for_execution: Mapped[bool] = mapped_column(Boolean, default=False)
+    execution_decision: Mapped[str] = mapped_column(String(50), default="PENDING")
+    execution_reason: Mapped[str] = mapped_column(String(200), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class ShadowContract(Base):
+    __tablename__ = "shadow_contracts"
+    __table_args__ = (
+        UniqueConstraint("signal_id", "duration_ticks", name="uq_shadow_signal_duration"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("test_runs.id"), index=True)
+    signal_id: Mapped[str] = mapped_column(
+        ForeignKey("directional_signals.signal_id"), index=True
+    )
+    strategy_version: Mapped[str] = mapped_column(String(100), index=True)
+    symbol: Mapped[str] = mapped_column(String(30), index=True)
+    direction: Mapped[str] = mapped_column(String(10), index=True)
+    duration_ticks: Mapped[int] = mapped_column(Integer, index=True)
+    entry_tick_sequence: Mapped[int] = mapped_column(Integer)
+    expiry_tick_sequence: Mapped[int] = mapped_column(Integer, index=True)
+    entry_quote: Mapped[float] = mapped_column(Float)
+    expiry_quote: Mapped[float | None] = mapped_column(Float)
+    proposal_ask_price: Mapped[float | None] = mapped_column(Float)
+    proposal_payout: Mapped[float | None] = mapped_column(Float)
+    break_even_probability: Mapped[float | None] = mapped_column(Float)
+    hypothetical_profit: Mapped[float | None] = mapped_column(Float)
+    outcome: Mapped[str] = mapped_column(String(10), default="OPEN")
+    status: Mapped[str] = mapped_column(String(20), default="OPEN")
+    execution_state: Mapped[str] = mapped_column(String(30), default="SHADOW")
+    execution_reason: Mapped[str] = mapped_column(String(200), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class VirtualGuardState(Base):
+    __tablename__ = "virtual_guard_state"
+
+    run_id: Mapped[int] = mapped_column(ForeignKey("test_runs.id"), primary_key=True)
+    state: Mapped[str] = mapped_column(String(40), default="DEMO_LIVE")
+    active_signal_id: Mapped[str] = mapped_column(String(36), default="")
+    active_shadow_duration: Mapped[int] = mapped_column(Integer, default=0)
+    demo_losses: Mapped[int] = mapped_column(Integer, default=0)
+    virtual_wins: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class AccountRiskState(Base):
+    __tablename__ = "account_risk_states"
+
+    managed_account_id: Mapped[int] = mapped_column(
+        ForeignKey("managed_accounts.id"), primary_key=True
+    )
+    trading_day: Mapped[str] = mapped_column(String(10), default="")
+    daily_start_balance: Mapped[float] = mapped_column(Float, default=0.0)
+    session_profit: Mapped[float] = mapped_column(Float, default=0.0)
+    consecutive_losses: Mapped[int] = mapped_column(Integer, default=0)
+    equity_high_water: Mapped[float] = mapped_column(Float, default=0.0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

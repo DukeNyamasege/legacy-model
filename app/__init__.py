@@ -1,1 +1,1 @@
-"""Underdog Legacy Model Test 2 application package."""
+"""RF-DIR5 Guarded trading and shadow-evaluation application."""

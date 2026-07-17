@@ -549,6 +549,7 @@ class PublicMarketDataClient:
 
                     # Subscribe to every configured market on this connection.
                     await self._subscribe_ticks()
+                    self.bot._on_market_subscriptions_ready()
 
                     self.bot._mark_tick_received()
 
@@ -759,6 +760,8 @@ class ClientSession:
                     # Restore subscriptions for any unresolved contracts
                     for cid in list(self.pending_contracts):
                         await self.subscribe_contract(cid)
+
+                    self.bot._on_private_session_ready(self)
 
                     # Start ping keep-alive
                     ping_task = asyncio.create_task(self._ping_loop())
@@ -1005,18 +1008,20 @@ class TradingBot:
             self.cfg["logging"].get("level", "INFO"),
             self.cfg["logging"].get("file", "trading_bot.log"),
         )
-        self.logger.info("RISING_POLICY_ACTIVE mode=%s", self.rising_policy)
-        self.logger.info(
-            "MULTI_MARKET_ACTIVE count=%s symbols=%s execution=first_qualifying_market",
-            len(self.symbols),
-            ",".join(self.symbols),
-        )
-        self.logger.info(
-            "CONTRACT_TIMING_STANDARD duration=1_tick settlement_sla_seconds=%.1f "
-            "reconciliation_after_seconds=%s",
-            self.settlement_sla_seconds,
-            self.settle_wait_seconds,
-        )
+        rf_runtime = str(self.test2_config.model.version).startswith("3.0.0-rf-dir5")
+        if not rf_runtime:
+            self.logger.info("RISING_POLICY_ACTIVE mode=%s", self.rising_policy)
+            self.logger.info(
+                "MULTI_MARKET_ACTIVE count=%s symbols=%s execution=first_qualifying_market",
+                len(self.symbols),
+                ",".join(self.symbols),
+            )
+            self.logger.info(
+                "CONTRACT_TIMING_STANDARD duration=1_tick settlement_sla_seconds=%.1f "
+                "reconciliation_after_seconds=%s",
+                self.settlement_sla_seconds,
+                self.settle_wait_seconds,
+            )
         self.logger.info(
             "APP_MARKUP_EXPECTED percentage=%.2f source=registered_app_or_direct_buy "
             "verification=settled_contract_and_markup_statistics",
@@ -2108,6 +2113,14 @@ class TradingBot:
             market.ticks_history.clear()
             market.live_ticks_history.clear()
             market.signal_detector.rearm()
+
+    def _on_market_subscriptions_ready(self) -> None:
+        """Hook for strategies that need public requests after the listener starts."""
+        return
+
+    def _on_private_session_ready(self, session: ClientSession) -> None:
+        """Hook for account-scoped contract capability validation."""
+        return
 
     def _reset_session_runtime_state(self) -> None:
         self.is_trading_locked = False
@@ -3515,11 +3528,12 @@ class TradingBot:
                 (provider_settlement_time - provider_purchase_time).total_seconds(),
             )
         self.logger.info(
-            "CONTRACT_TIMING account=%s contract_id=%s duration=1_tick "
+            "CONTRACT_TIMING account=%s contract_id=%s duration=%s_ticks "
             "lifecycle_seconds=%.3f provider_lifecycle_seconds=%s sla_seconds=%.1f "
             "sla_status=%s",
             mask_account_id(account_id),
             contract_id,
+            self.duration,
             lifecycle_seconds,
             (
                 f"{provider_lifecycle_seconds:.3f}"

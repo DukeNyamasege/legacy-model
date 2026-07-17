@@ -278,7 +278,7 @@ class ContractTests(unittest.TestCase):
         )
         self.assertAlmostEqual(economics.break_even_probability, 0.50 / 0.95)
 
-    def test_public_proposal_economics_reserve_expected_app_markup(self) -> None:
+    def test_public_proposal_economics_use_provider_quote_as_source_of_truth(self) -> None:
         economics = parse_proposal_economics(
             {
                 "proposal": {
@@ -293,13 +293,12 @@ class ContractTests(unittest.TestCase):
             received_monotonic=time.monotonic(),
             app_markup_percentage=3.0,
         )
-        expected_markup = 0.69 * 0.03
         self.assertAlmostEqual(economics.payout, 0.69)
-        self.assertAlmostEqual(economics.potential_profit, 0.69 - 0.50 - expected_markup)
-        self.assertAlmostEqual(economics.potential_loss, 0.50 + expected_markup)
+        self.assertAlmostEqual(economics.potential_profit, 0.69 - 0.50)
+        self.assertAlmostEqual(economics.potential_loss, 0.50)
         self.assertAlmostEqual(
             economics.break_even_probability,
-            (0.50 + expected_markup) / 0.69,
+            0.50 / 0.69,
         )
 
     def test_direct_buy_places_markup_only_in_documented_parameters(self) -> None:
@@ -1325,7 +1324,7 @@ class PersistenceTests(unittest.TestCase):
         self.assertAlmostEqual(personal[0]["app_markup_amount"], 0.02)
         self.assertEqual(personal[0]["duration_label"], "1 tick")
         self.assertEqual(personal[0]["provider_lifecycle_seconds"], 1.0)
-        self.assertEqual(personal[0]["settlement_sla_seconds"], 2.0)
+        self.assertEqual(personal[0]["settlement_sla_seconds"], 15.0)
         self.assertEqual(personal[0]["settlement_sla_status"], "MET")
         self.assertEqual(
             self.repository.recent_trades(account_id="DOT90000999"),

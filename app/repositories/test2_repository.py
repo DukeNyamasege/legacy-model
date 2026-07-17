@@ -65,10 +65,10 @@ class Test2Repository:
                     strategy_version=self.config.model.version,
                     configuration_hash=config_hash,
                     environment=self.config.deriv.environment,
-                    symbol=self.config.strategy.symbol,
+                    symbol=self.config.rf_strategy.markets[0],
                     stake=self.config.strategy.initial_stake,
-                    barrier=str(self.config.strategy.prediction),
-                    trigger=self.config.signal.trigger_name,
+                    barrier="",
+                    trigger=self.config.rf_strategy.name,
                     notes=self.config.model.brand,
                 )
                 session.add(run)

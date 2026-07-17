@@ -58,6 +58,7 @@ def parse_proposal_economics(
     requested_monotonic: float,
     received_monotonic: float,
     app_markup_percentage: float = 0.0,
+    commission_in_ask: bool = True,
 ) -> ProposalEconomics:
     proposal = response.get("proposal")
     if not isinstance(proposal, dict):
@@ -72,18 +73,21 @@ def parse_proposal_economics(
         raise ValueError("Proposal is missing valid ask_price or payout") from exc
     if abs(ask_price - stake) > 0.011:
         raise ValueError(f"Proposal ask price {ask_price} does not match stake {stake}")
-    markup_rate = min(3.0, max(0.0, float(app_markup_percentage))) / 100.0
     try:
         reported_commission = float(proposal.get("commission") or 0.0)
     except (TypeError, ValueError):
         reported_commission = 0.0
-    expected_markup = max(0.0, reported_commission, gross_payout * markup_rate)
+    # The proposal returned by the registered application is the source of truth.
+    # Application markup is normally already reflected in ask_price/payout; only add
+    # commission when the provider explicitly reports it as a separate charge.
+    separate_commission = 0.0 if commission_in_ask else max(0.0, reported_commission)
+    actual_cost = ask_price + separate_commission
     payout = gross_payout
-    potential_profit = payout - stake - expected_markup
-    potential_loss = stake + expected_markup
-    if payout <= stake or potential_profit <= 0:
+    potential_profit = payout - actual_cost
+    potential_loss = actual_cost
+    if payout <= actual_cost or potential_profit <= 0:
         raise ValueError("Proposal payout does not provide positive potential profit")
-    break_even = potential_loss / payout
+    break_even = actual_cost / payout
     expected_value = predicted_probability * potential_profit - (
         1.0 - predicted_probability
     ) * potential_loss
@@ -100,6 +104,85 @@ def parse_proposal_economics(
         requested_monotonic=requested_monotonic,
         received_monotonic=received_monotonic,
     )
+
+
+RF_ACTIONS = {
+    "BUY_DEMO",
+    "SHADOW_ONLY",
+    "SKIP_VIRTUAL_GUARD",
+    "SKIP_LOW_SCORE",
+    "SKIP_STALE_SIGNAL",
+    "SKIP_UNPROFITABLE_QUOTE",
+    "SKIP_INSUFFICIENT_BALANCE",
+    "SKIP_TRADING_LOCK",
+    "SKIP_MARKET_QUARANTINED",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class RiseFallDecision:
+    action: str
+    reasons: tuple[str, ...]
+    exploration: bool
+    validated_edge: float | None
+
+
+class RiseFallDecisionEngine:
+    def __init__(
+        self,
+        *,
+        minimum_score: int,
+        stale_signal_after_ms: int,
+        minimum_shadow_outcomes: int,
+        required_edge_margin: float,
+        real_gate_enabled: bool,
+    ) -> None:
+        self.minimum_score = int(minimum_score)
+        self.stale_signal_after_ms = int(stale_signal_after_ms)
+        self.minimum_shadow_outcomes = int(minimum_shadow_outcomes)
+        self.required_edge_margin = float(required_edge_margin)
+        self.real_gate_enabled = bool(real_gate_enabled)
+
+    def decide(
+        self,
+        *,
+        quality_score: int,
+        signal_age_ms: float,
+        proposal_age_ms: float,
+        proposal_economics: ProposalEconomics,
+        shadow_snapshot: BayesianSnapshot,
+        execution_mode: str,
+        virtual_guard_state: str,
+        trading_locked: bool,
+        market_quarantined: bool = False,
+    ) -> RiseFallDecision:
+        edge = shadow_snapshot.lower_credible_bound - proposal_economics.break_even_probability
+        if market_quarantined:
+            return RiseFallDecision("SKIP_MARKET_QUARANTINED", ("market_quarantined",), True, edge)
+        if quality_score < self.minimum_score:
+            return RiseFallDecision("SKIP_LOW_SCORE", ("directional_score",), True, edge)
+        if signal_age_ms > self.stale_signal_after_ms or proposal_age_ms > self.stale_signal_after_ms:
+            return RiseFallDecision("SKIP_STALE_SIGNAL", ("stale_signal_or_proposal",), True, edge)
+        if proposal_economics.potential_profit <= 0:
+            return RiseFallDecision("SKIP_UNPROFITABLE_QUOTE", ("non_positive_payout",), True, edge)
+        if trading_locked:
+            return RiseFallDecision("SKIP_TRADING_LOCK", ("open_strategy_contract",), True, edge)
+        if virtual_guard_state in {"WAITING_FOR_VIRTUAL_WIN", "VIRTUAL_CONTRACT_ACTIVE"}:
+            return RiseFallDecision("SKIP_VIRTUAL_GUARD", (virtual_guard_state,), True, edge)
+
+        observations = shadow_snapshot.observed_wins + shadow_snapshot.observed_losses
+        validated = (
+            observations >= self.minimum_shadow_outcomes
+            and edge > self.required_edge_margin
+        )
+        if execution_mode == "real" and self.real_gate_enabled and not validated:
+            return RiseFallDecision("SHADOW_ONLY", ("real_validation_gate",), False, edge)
+        return RiseFallDecision(
+            "BUY_DEMO" if execution_mode == "demo" else "SHADOW_ONLY",
+            ("exploration",) if not validated else ("validated_edge",),
+            not validated,
+            edge,
+        )
 
 
 class DecisionEngine:

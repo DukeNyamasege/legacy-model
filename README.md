@@ -1,93 +1,43 @@
-# The Underdog Legacy Model - Rising Over 2
+# RF-DIR5 Guarded v1
 
-Father of Automation Series.
+RF-DIR5 is a demo-first Rise/Fall continuation strategy for Deriv synthetic
+markets. The production worker executes `CALL` and `PUT` contracts while a
+separate shadow ledger evaluates both 5-tick and 10-tick outcomes.
 
-The bot is an Over-2 Deriv digit strategy using the current APIs documented at
-<https://developers.deriv.com/docs/>:
+## Strategy
 
-- Signal: the latest five completed digit bins match
-  `[6-9], [6-9], [0-2], [0-2], [3-5]` (`BIN22001x5`) and the latest
-  market-specific quote window passes the configured rising policy.
-- Contract: `DIGITOVER`, barrier `2`, on the qualifying market.
-- Markets: `1HZ100V`, `1HZ10V`, `1HZ25V`, `1HZ50V`, `1HZ75V`,
-  `R_10`, `R_100`, `R_25`, `R_50`, and `R_75`.
-- Market isolation: each symbol has its own precision, tick window, signal
-  detector, and HMM history. Digits from different symbols are never combined.
-- Execution: the first qualifying market acquires the global copy-purchase lock;
-  another market cannot submit a competing signal during that purchase.
-- Base stake: `$0.50 USD`.
-- Recovery sizing: configured two-run recovery, capped by `maximum_stake`.
-- Duration: one tick.
-- Bayesian layer: active gate using a locked historical calibration and the
-  markup-adjusted break-even payout. HMM remains observation-only.
-- No session stop, drawdown stop, hourly cap, trade-count cap, or
-  consecutive-loss hard stop.
+- Six full quotes produce five completed price movements.
+- A Rise candidate requires at least four positive movements; Fall is symmetric.
+- Efficiency, normalized impulse, and exhaustion filters reject noisy windows.
+- All ten configured markets enter a 200 ms candidate arbitration window.
+- The selected demo contract uses five ticks; every qualified signal shadows
+  both five and ten ticks.
+- Proposal `ask_price`, `payout`, and optional commission are the economics
+  source of truth. No phantom markup cost is added.
+- Independent `Beta(0.5, 0.5)` posteriors are maintained per strategy version,
+  market, direction, and duration from settled shadow outcomes only.
 
-The locked 60,000/40,000 chronological research split produced `51/58` wins in
-development and `56/67` on the untouched holdout. This is a small historical
-sample, not a profit guarantee; live outcomes update the Bayesian gate once per
-copy-trade signal rather than once per copied account.
+## Safety
 
-Deriv app markup must be configured on the Registered App. Public proposal and
-REST bulk-purchase contract parameters do not accept a markup field; bulk
-purchases are attributed through the `Deriv-App-ID` header. Authenticated direct
-buys additionally send the documented `parameters.app_markup_percentage` field.
-`DERIV_APP_MARKUP_PERCENTAGE` is used for that direct-buy request, conservative
-economics, and verification. The worker records settled `app_markup_amount`, and
-administrators can compare it with Deriv using `GET /control/markup-statistics`.
-The environment value does not configure markup at Deriv, and an application's
-redirect URI or OAuth scopes do not enable it. Markup must be enabled for the
-exact registered App ID sent by the worker; do not substitute a legacy numeric
-App ID into the new REST API.
-Paid markup revenue requires the application owner to satisfy Deriv's real-account
-eligibility requirements; demo trading is for integration testing.
+- Martingale and recovery debt are disabled in production execution.
+- Effective stake cannot exceed the user's requested stake, 0.5% of current
+  balance, or the remaining 2% daily loss allowance.
+- Accounts stop individually after three consecutive losses, TP, or SL.
+- One strategy contract can be open globally and one contract per account.
+- A demo loss activates the persistent virtual guard. Virtual contracts never
+  increase stake and their results never enter the demo execution ledger.
+- Real execution remains disabled. Promotion requires at least 1,000 settled
+  shadow outcomes for the exact market/direction/duration group plus a positive
+  95% lower confidence-bound edge and forward validation.
 
-Contract duration and reporting latency are deliberately separate. The contract
-is always `1 tick`; the operational settlement SLA is 2 seconds. The worker starts
-reconciliation at 2 seconds, while the dashboard reports the truthful lifecycle
-and flags late delivery instead of changing every row to a fabricated duration.
+## Run
 
-## Local Run
-
-```powershell
-& ".\.venv\Scripts\python.exe" -m pip install -r requirements.txt
-& ".\.venv\Scripts\python.exe" local_dashboard.py
+```bash
+docker compose -f docker-compose.yml -f docker-compose.vps.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.vps.yml logs -f --tail=100 worker
 ```
 
-Open `http://127.0.0.1:8080`. The terminal prints a temporary control key; enter
-it in the dashboard to use Start/Stop. Start resumes candidate purchases and Stop
-places the worker in manual pause while ticks, settlements, database heartbeats,
-and recovery continue.
-
-The local launcher runs the API and worker as separate processes while keeping
-worker logs visible. It defaults to demo trading and SQLite at
-`data/bin22001.db`.
-Use PostgreSQL through `DATABASE_URL` for deployment.
-
-## Test And Verify
-
-```powershell
-& ".\.venv\Scripts\python.exe" -m unittest -v
-& ".\.venv\Scripts\python.exe" full_verify.py
-& ".\.venv\Scripts\python.exe" -m scripts.export_test2
-```
-
-The one-time reset command archives active historical files before creating a
-zeroed Test 2 run:
-
-```powershell
-$env:TEST1_CONTRACTS_RECONCILED = "true"
-& ".\.venv\Scripts\python.exe" -m scripts.reset_test_data --target test2 --confirm RESET_TEST2
-```
-
-Never set the reconciliation flag until every legacy open-contract ID has been
-checked through Deriv.
-
-## Deployment
-
-Run the dashboard, API, and worker together on an Ubuntu VPS behind Caddy.
-Instructions are in [README_VPS_DEPLOYMENT.md](README_VPS_DEPLOYMENT.md).
-
-Real trading remains locked unless `TRADING_MODE=real`,
-`DERIV_ENVIRONMENT=real`, `ALLOW_REAL_TRADING=true`, and
-`PRODUCTION_ACKNOWLEDGEMENT=I_ACKNOWLEDGE_REAL_MONEY_TRADING` are all present.
+The API exposes `/metrics/rf-strategy`, `/metrics/model`, and the existing
+personal/global dashboard endpoints. PostgreSQL stores demo trades, directional
+signals, shadow contracts, virtual-guard state, and per-account risk state in
+separate tables.

@@ -11,10 +11,10 @@ deriv:
   oauth_redirect_url: https://derivadmin.site/oauth/callback
   token_encryption_key: ''
 model:
-  name: The Underdog Legacy Model
-  version: 2.2.0-over2-rising-22001
+  name: RF-DIR5 Guarded
+  version: 3.0.0-rf-dir5-guarded-v1
   brand: Father of Automation Series
-  run_id: bin22001
+  run_id: rfdir5v1
 files:
   tokens: tokens.txt
   state: bot_state.json
@@ -58,17 +58,24 @@ execution:
   rising_policy: high_frequency_momentum
   maximum_signal_age_ms: 2500
   maximum_proposal_age_ms: 900
+  demo_enabled: true
+  real_enabled: false
+  shadow_enabled: true
 bayesian:
   enabled: true
-  mode: gate
-  prior_alpha: 108.0
-  prior_beta: 19.0
+  mode: shadow
+  prior_alpha: 0.5
+  prior_beta: 0.5
   credible_interval: 0.95
   safety_margin_probability: 0.02
-  minimum_completed_trades: 0
+  minimum_completed_trades: 1000
   minimum_probability_edge_confidence: 0.50
+  scope: per_market_direction_duration
+  minimum_shadow_outcomes: 1000
+  real_gate_enabled: false
+  required_edge_margin: 0.01
 hmm:
-  enabled: true
+  enabled: false
   mode: shadow
   minimum_training_ticks: 5000
   retrain_every_ticks: 1000
@@ -81,6 +88,7 @@ cooldown:
   after_five_consecutive_losses_ticks: 12
   require_pattern_reset: false
 recovery:
+  enabled: false
   mode: two_run
   recovery_runs: 2
   debt_threshold: 0.50
@@ -94,15 +102,58 @@ recovery:
   shadow_min_samples: 20
   shadow_consecutive_wins_required: 0
   pause_after_consecutive_losses: 3
+rf_strategy:
+  name: RF-DIR5-V1
+  markets:
+    - 1HZ100V
+    - 1HZ10V
+    - 1HZ25V
+    - 1HZ50V
+    - 1HZ75V
+    - R_10
+    - R_25
+    - R_50
+    - R_75
+    - R_100
+  analysis_movements: 5
+  required_quotes: 6
+  minimum_history_movements: 200
+  normalization_movements: 100
+  demo_duration_ticks: 5
+  shadow_duration_ticks: [5, 10]
+  minimum_directional_moves: 4
+  minimum_efficiency: 0.55
+  minimum_impulse: 0.50
+  maximum_impulse: 3.00
+  maximum_move_ratio: 4.00
+  minimum_directional_score: 6
+  candidate_window_ms: 200
+  stale_signal_after_ms: 900
+  maximum_open_strategy_contracts: 1
+virtual_guard:
+  enabled: true
+  scope: global
+  activate_after_demo_losses: 1
+  virtual_wins_required_to_resume: 1
+  maximum_virtual_contracts: 1
+  ties_are_losses: true
+  persist_state: true
+risk:
+  recovery_enabled: false
+  maximum_stake_balance_percent: 0.5
+  daily_drawdown_percent: 2.0
+  maximum_equity_drawdown_percent: 5.0
+  maximum_session_losses: 3
+  maximum_open_contracts_per_account: 1
 storage:
   database_url_env: DATABASE_URL
-  local_database_url: sqlite:///data/bin22001.db
-  export_directory: exports/bin22001
+  local_database_url: sqlite:///data/rfdir5.db
+  export_directory: exports/rfdir5
   database_required: true
 trade:
-  settlement_sla_seconds: 2.0
-  settle_wait_seconds: 2
+  settlement_sla_seconds: 15.0
+  settle_wait_seconds: 6
   max_tick_silence_seconds: 45
   reconnect_delay_seconds: 10
-  max_open_trade_seconds: 6
+  max_open_trade_seconds: 30
   reconciliation_poll_seconds: 1

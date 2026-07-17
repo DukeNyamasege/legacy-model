@@ -8,6 +8,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.strategy.over2_strategy import TEST2_SYMBOLS
+from app.strategy.rise_fall_strategy import RF_SYMBOLS
 
 
 class StrictModel(BaseModel):
@@ -92,6 +93,9 @@ class ExecutionSettings(StrictModel):
     ] = "soft_rising_momentum"
     maximum_signal_age_ms: int = Field(default=2500, gt=0)
     maximum_proposal_age_ms: int = Field(default=900, gt=0)
+    demo_enabled: bool = True
+    real_enabled: bool = False
+    shadow_enabled: bool = True
 
 
 class BayesianSettings(StrictModel):
@@ -103,6 +107,10 @@ class BayesianSettings(StrictModel):
     safety_margin_probability: float = Field(default=0.02, ge=0, lt=1)
     minimum_completed_trades: int = Field(default=0, ge=0)
     minimum_probability_edge_confidence: float = Field(default=0.95, gt=0, le=1)
+    scope: Literal["global", "per_market_direction_duration"] = "global"
+    minimum_shadow_outcomes: int = Field(default=1000, ge=1)
+    real_gate_enabled: bool = False
+    required_edge_margin: float = Field(default=0.01, ge=0, lt=1)
 
 
 class HmmSettings(StrictModel):
@@ -123,6 +131,7 @@ class CooldownSettings(StrictModel):
 
 
 class RecoverySettings(StrictModel):
+    enabled: bool = False
     mode: Literal["single_step", "two_run"] = "two_run"
     recovery_runs: int = Field(default=2, ge=1, le=10)
     debt_threshold: float = Field(default=0.50, ge=0)
@@ -154,6 +163,58 @@ class RecoverySettings(StrictModel):
         return self
 
 
+class RiseFallStrategySettings(StrictModel):
+    name: Literal["RF-DIR5-V1"] = "RF-DIR5-V1"
+    markets: tuple[str, ...] = RF_SYMBOLS
+    analysis_movements: Literal[5] = 5
+    required_quotes: Literal[6] = 6
+    minimum_history_movements: int = Field(default=200, ge=100)
+    normalization_movements: int = Field(default=100, ge=50)
+    demo_duration_ticks: Literal[5, 10] = 5
+    shadow_duration_ticks: tuple[Literal[5, 10], ...] = (5, 10)
+    minimum_directional_moves: int = Field(default=4, ge=4, le=5)
+    minimum_efficiency: float = Field(default=0.55, ge=0, le=1)
+    minimum_impulse: float = Field(default=0.50, ge=0)
+    maximum_impulse: float = Field(default=3.00, gt=0)
+    maximum_move_ratio: float = Field(default=4.00, gt=0)
+    minimum_directional_score: int = Field(default=6, ge=1, le=10)
+    candidate_window_ms: int = Field(default=200, ge=50, le=1000)
+    stale_signal_after_ms: int = Field(default=900, ge=100)
+    maximum_open_strategy_contracts: Literal[1] = 1
+
+    @model_validator(mode="after")
+    def validate_rf_strategy(self) -> "RiseFallStrategySettings":
+        if not self.markets or len(set(self.markets)) != len(self.markets):
+            raise ValueError("RF-DIR5 markets must be non-empty and unique")
+        unsupported = [symbol for symbol in self.markets if symbol not in RF_SYMBOLS]
+        if unsupported:
+            raise ValueError(f"Unsupported RF-DIR5 markets: {unsupported!r}")
+        if set(self.shadow_duration_ticks) != {5, 10}:
+            raise ValueError("RF-DIR5 must shadow both 5-tick and 10-tick durations")
+        if self.maximum_impulse < self.minimum_impulse:
+            raise ValueError("maximum_impulse must be >= minimum_impulse")
+        return self
+
+
+class VirtualGuardSettings(StrictModel):
+    enabled: bool = True
+    scope: Literal["global"] = "global"
+    activate_after_demo_losses: Literal[1] = 1
+    virtual_wins_required_to_resume: Literal[1] = 1
+    maximum_virtual_contracts: Literal[1] = 1
+    ties_are_losses: Literal[True] = True
+    persist_state: Literal[True] = True
+
+
+class RiskSettings(StrictModel):
+    recovery_enabled: Literal[False] = False
+    maximum_stake_balance_percent: float = Field(default=0.5, gt=0, le=1)
+    daily_drawdown_percent: float = Field(default=2.0, gt=0, le=100)
+    maximum_equity_drawdown_percent: float = Field(default=5.0, gt=0, le=100)
+    maximum_session_losses: int = Field(default=3, ge=1)
+    maximum_open_contracts_per_account: Literal[1] = 1
+
+
 class StorageSettings(StrictModel):
     database_url_env: str = "DATABASE_URL"
     local_database_url: str = "sqlite:///data/test2.db"
@@ -173,13 +234,13 @@ class LoggingSettings(StrictModel):
 
 
 class TradeSettings(StrictModel):
-    # One-tick contracts are provider-timed. This is the operational target for
-    # receiving their final status, not a promise about market tick timing.
-    settlement_sla_seconds: float = Field(default=2.0, gt=0)
-    settle_wait_seconds: int = 2
+    # Tick contracts are provider-timed. This is the operational target for
+    # receiving final status, not a promise about wall-clock timing.
+    settlement_sla_seconds: float = Field(default=15.0, gt=0)
+    settle_wait_seconds: int = 6
     max_tick_silence_seconds: int = 45
     reconnect_delay_seconds: int = 10
-    max_open_trade_seconds: int = 6
+    max_open_trade_seconds: int = 30
     reconciliation_poll_seconds: int = 1
 
 
@@ -195,6 +256,9 @@ class Test2Config(StrictModel):
     hmm: HmmSettings
     cooldown: CooldownSettings
     recovery: RecoverySettings = Field(default_factory=RecoverySettings)
+    rf_strategy: RiseFallStrategySettings = Field(default_factory=RiseFallStrategySettings)
+    virtual_guard: VirtualGuardSettings = Field(default_factory=VirtualGuardSettings)
+    risk: RiskSettings = Field(default_factory=RiskSettings)
     storage: StorageSettings
     trade: TradeSettings
 
@@ -262,7 +326,9 @@ def load_test2_config(path: str | Path = "config.yaml") -> Test2Config:
         raw.setdefault("deriv", {})["production_acknowledgement"] = os.environ[
             "PRODUCTION_ACKNOWLEDGEMENT"
         ]
-    if os.getenv("TEST_RUN_ID"):
+    if os.getenv("RF_STRATEGY_RUN_ID"):
+        raw.setdefault("model", {})["run_id"] = os.environ["RF_STRATEGY_RUN_ID"]
+    elif os.getenv("TEST_RUN_ID") and "rf_strategy" not in raw:
         raw.setdefault("model", {})["run_id"] = os.environ["TEST_RUN_ID"]
     if os.getenv("MARKET_SYMBOLS"):
         raw.setdefault("strategy", {})["symbols"] = tuple(

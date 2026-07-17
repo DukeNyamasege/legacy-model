@@ -36,6 +36,7 @@ from app.oauth_client import (
     token_is_expiring,
 )
 from app.repositories.test2_repository import Test2Repository, mask_account_id
+from app.repositories.rf_dir5_repository import RFDir5Repository
 from app.token_store import (
     decrypt_auth_payload,
     decrypt_token,
@@ -51,6 +52,7 @@ CONFIG = load_test2_config(os.getenv("DERIV_BOT_CONFIG", ROOT / "config.yaml"))
 DATABASE = Database(CONFIG.database_url)
 DATABASE.create_schema()
 REPOSITORY = Test2Repository(DATABASE, CONFIG)
+RF_REPOSITORY = RFDir5Repository(REPOSITORY)
 CONTROL_RATE: dict[str, deque[float]] = defaultdict(deque)
 GLOBAL_ACCOUNT_REFRESH: dict[str, object] = {"last": 0.0, "accounts": []}
 OAUTH_STATE_COOKIE = "deriv_oauth_state"
@@ -665,7 +667,7 @@ def refresh_personal_account_snapshot(account: dict) -> dict | None:
     )
 
 app = FastAPI(
-    title="Underdog Legacy Model",
+    title="RF-DIR5 Guarded",
     version=CONFIG.model.version,
     description=CONFIG.model.brand,
 )
@@ -1135,7 +1137,7 @@ def update_personal_trading_settings(
     if not all(math.isfinite(float(value)) for value in values):
         raise HTTPException(status_code=400, detail="Trading settings must be finite numbers.")
     minimum_stake = float(CONFIG.strategy.initial_stake)
-    maximum_stake = float(CONFIG.recovery.maximum_stake)
+    maximum_stake = 1_000_000.0
     stake_amount = round(float(body.stake_amount), 2)
     take_profit = round(float(body.take_profit), 2)
     stop_loss = round(float(body.stop_loss), 2)
@@ -1302,7 +1304,19 @@ def metrics_summary() -> dict:
     else:
         if refresh_global_account_snapshots():
             summary = REPOSITORY.summary()
-    return filter_summary_to_trading_ready_accounts(summary)
+    filtered = filter_summary_to_trading_ready_accounts(summary)
+    guard = RF_REPOSITORY.guard_state()
+    groups = RF_REPOSITORY.shadow_groups()
+    filtered.update(
+        {
+            "strategy_name": CONFIG.rf_strategy.name,
+            "execution_phase": "EXPLORATION",
+            "virtual_guard_state": guard["state"],
+            "shadow_settled": sum(group["wins"] + group["losses"] for group in groups),
+            "shadow_profit": sum(group["profit"] for group in groups),
+        }
+    )
+    return filtered
 
 
 @app.get("/metrics/recent-trades")
@@ -1334,21 +1348,31 @@ def recent_signals(limit: int = 50) -> dict:
 
 @app.get("/metrics/model")
 def model_metrics() -> dict:
-    wins, losses = REPOSITORY.completed_outcomes()
     return {
         "bayesian": {
-            "mode": CONFIG.bayesian.mode,
-            "completed_trades": wins + losses,
-            "minimum_completed_trades": CONFIG.bayesian.minimum_completed_trades,
-            "ready": (wins + losses) >= CONFIG.bayesian.minimum_completed_trades,
+            "mode": "per_market_direction_duration",
+            "prior_alpha": CONFIG.bayesian.prior_alpha,
+            "prior_beta": CONFIG.bayesian.prior_beta,
+            "minimum_shadow_outcomes": CONFIG.bayesian.minimum_shadow_outcomes,
+            "groups": RF_REPOSITORY.shadow_groups(),
         },
-        "hmm": {
-            "mode": CONFIG.hmm.mode,
-            "observed_ticks": REPOSITORY.current_tick_sequence(),
-            "minimum_training_ticks": CONFIG.hmm.minimum_training_ticks,
-            "ready": REPOSITORY.current_tick_sequence()
-            >= CONFIG.hmm.minimum_training_ticks,
+        "strategy": {
+            "name": CONFIG.rf_strategy.name,
+            "phase": "EXPLORATION",
+            "hmm_enabled": False,
+            "martingale_enabled": False,
+            "virtual_guard": RF_REPOSITORY.guard_state(),
         },
+    }
+
+
+@app.get("/metrics/rf-strategy")
+def rf_strategy_metrics() -> dict:
+    return {
+        "strategy": CONFIG.rf_strategy.name,
+        "phase": "EXPLORATION",
+        "virtual_guard": RF_REPOSITORY.guard_state(),
+        "shadow_groups": RF_REPOSITORY.shadow_groups(),
     }
 
 

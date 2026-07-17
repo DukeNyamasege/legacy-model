@@ -3,11 +3,11 @@ from __future__ import annotations
 import asyncio
 import signal
 
-from enhanced_bot import TradingBot
+from app.rf_dir5_bot import RFDir5TradingBot
 
 
 async def run_worker() -> None:
-    bot = TradingBot()
+    bot = RFDir5TradingBot()
     loop = asyncio.get_running_loop()
 
     def stop() -> None:

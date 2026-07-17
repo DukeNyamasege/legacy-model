@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="api-base-url" content="">
-  <title>Underdog Legacy Model</title>
+  <title>RF-DIR5 Guarded</title>
   <script>
     (() => {
       const key = "legacy-dashboard-theme";
@@ -630,6 +630,14 @@
   </section>
 
   <section class="metrics">
+    <article class="panel metric"><span>Strategy</span><strong id="strategy-name">RF-DIR5-V1</strong></article>
+    <article class="panel metric"><span>Execution phase</span><strong id="execution-phase">EXPLORATION</strong></article>
+    <article class="panel metric"><span>Virtual guard</span><strong id="virtual-guard">DEMO_LIVE</strong></article>
+    <article class="panel metric"><span>Settled shadow tests</span><strong id="shadow-settled">0</strong></article>
+    <article class="panel metric"><span>Shadow P/L</span><strong id="shadow-profit-total">0.00</strong></article>
+  </section>
+
+  <section class="metrics">
     <article class="panel metric"><span>Longest win streak</span><strong id="longest-win">0</strong></article>
     <article class="panel metric"><span>Longest loss streak</span><strong id="longest-loss">0</strong></article>
     <article class="panel metric"><span>Master account balance</span><strong id="balance">0.00</strong></article>
@@ -667,7 +675,7 @@
             <th>Settled</th>
             <th>Duration</th>
             <th>Lifecycle</th>
-            <th>2s SLA</th>
+            <th>Lifecycle SLA</th>
           </tr>
         </thead>
         <tbody id="contracts-body">
@@ -966,6 +974,13 @@
     $("global-profit").className = allAccountsProfit < 0 ? "negative" : allAccountsProfit > 0 ? "positive" : "";
     const currency = data.primary_account_currency || data.accounts?.[0]?.currency || "USD";
     $("balance").textContent = `${number(data.primary_account_balance || 0, 2)} ${currency}`;
+    $("strategy-name").textContent = data.strategy_name || "RF-DIR5-V1";
+    $("execution-phase").textContent = data.execution_phase || "EXPLORATION";
+    $("virtual-guard").textContent = data.virtual_guard_state || "DEMO_LIVE";
+    $("shadow-settled").textContent = number(data.shadow_settled || 0);
+    const shadowProfit = Number(data.shadow_profit || 0);
+    $("shadow-profit-total").textContent = number(shadowProfit, 2);
+    $("shadow-profit-total").className = shadowProfit < 0 ? "negative" : shadowProfit > 0 ? "positive" : "";
     renderAiActivity(data);
   }
   function applyReadOnlyMode() {
