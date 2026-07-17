@@ -164,22 +164,23 @@ class RecoverySettings(StrictModel):
 
 
 class RiseFallStrategySettings(StrictModel):
-    name: Literal["RF-DIR5-V1"] = "RF-DIR5-V1"
+    name: Literal["RF-DIR5-HF-V2"] = "RF-DIR5-HF-V2"
     markets: tuple[str, ...] = RF_SYMBOLS
     analysis_movements: Literal[5] = 5
     required_quotes: Literal[6] = 6
-    minimum_history_movements: int = Field(default=200, ge=100)
+    minimum_history_movements: int = Field(default=100, ge=50)
     normalization_movements: int = Field(default=100, ge=50)
     demo_duration_ticks: Literal[5, 10] = 5
     shadow_duration_ticks: tuple[Literal[5, 10], ...] = (5, 10)
-    minimum_directional_moves: int = Field(default=4, ge=4, le=5)
-    minimum_efficiency: float = Field(default=0.55, ge=0, le=1)
-    minimum_impulse: float = Field(default=0.50, ge=0)
-    maximum_impulse: float = Field(default=3.00, gt=0)
-    maximum_move_ratio: float = Field(default=4.00, gt=0)
-    minimum_directional_score: int = Field(default=6, ge=1, le=10)
-    candidate_window_ms: int = Field(default=200, ge=50, le=1000)
-    stale_signal_after_ms: int = Field(default=900, ge=100)
+    minimum_directional_moves: int = Field(default=3, ge=3, le=5)
+    minimum_efficiency: float = Field(default=0.25, ge=0, le=1)
+    minimum_impulse: float = Field(default=0.15, ge=0)
+    maximum_impulse: float = Field(default=4.50, gt=0)
+    maximum_move_ratio: float = Field(default=6.00, gt=0)
+    minimum_directional_score: int = Field(default=4, ge=1, le=10)
+    candidate_window_ms: int = Field(default=75, ge=50, le=1000)
+    stale_signal_after_ms: int = Field(default=1800, ge=100)
+    minimum_trade_interval_seconds: int = Field(default=60, ge=0, le=3600)
     maximum_open_strategy_contracts: Literal[1] = 1
 
     @model_validator(mode="after")

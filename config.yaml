@@ -103,7 +103,7 @@ recovery:
   shadow_consecutive_wins_required: 0
   pause_after_consecutive_losses: 3
 rf_strategy:
-  name: RF-DIR5-V1
+  name: RF-DIR5-HF-V2
   markets:
     - 1HZ100V
     - 1HZ10V
@@ -117,18 +117,19 @@ rf_strategy:
     - R_100
   analysis_movements: 5
   required_quotes: 6
-  minimum_history_movements: 200
+  minimum_history_movements: 100
   normalization_movements: 100
   demo_duration_ticks: 5
   shadow_duration_ticks: [5, 10]
-  minimum_directional_moves: 4
-  minimum_efficiency: 0.55
-  minimum_impulse: 0.50
-  maximum_impulse: 3.00
-  maximum_move_ratio: 4.00
-  minimum_directional_score: 6
-  candidate_window_ms: 200
-  stale_signal_after_ms: 900
+  minimum_directional_moves: 3
+  minimum_efficiency: 0.25
+  minimum_impulse: 0.15
+  maximum_impulse: 4.50
+  maximum_move_ratio: 6.00
+  minimum_directional_score: 4
+  candidate_window_ms: 75
+  stale_signal_after_ms: 1800
+  minimum_trade_interval_seconds: 60
   maximum_open_strategy_contracts: 1
 virtual_guard:
   enabled: false

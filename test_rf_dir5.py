@@ -7,7 +7,7 @@ from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from sqlalchemy import func, select
 
@@ -75,6 +75,17 @@ class RiseFallFeatureTests(unittest.TestCase):
         self.assertTrue(detect_fall_candidate(fall))
         self.assertFalse(detect_rise_candidate(fall))
         self.assertAlmostEqual(rise.efficiency, fall.efficiency)
+
+    def test_high_frequency_rule_accepts_three_of_five_directional_moves(self) -> None:
+        rise = features(["100", "101", "100.5", "101.5", "101", "102"])
+        fall = features(["102", "101", "101.5", "100.5", "101", "100"])
+
+        self.assertEqual(rise.up_count, 3)
+        self.assertEqual(fall.down_count, 3)
+        self.assertTrue(detect_rise_candidate(rise))
+        self.assertTrue(detect_fall_candidate(fall))
+        self.assertFalse(detect_rise_candidate(rise, minimum_directional_moves=4))
+        self.assertFalse(detect_fall_candidate(fall, minimum_directional_moves=4))
 
     def test_flat_window_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
@@ -251,6 +262,79 @@ class RFTickStreamTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(bot.repository.record_tick.call_count, 6)
         bot.logger.warning.assert_not_called()
+
+
+class RFCandidateArbitrationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_only_highest_ranked_fresh_market_requests_a_proposal(self) -> None:
+        bot = object.__new__(RFDir5TradingBot)
+        weaker = signal("RISE", tick_sequence=10)
+        stronger = signal("RISE", tick_sequence=20)
+        stronger.symbol = "R_25"
+        stronger.quality_score = weaker.quality_score + 1
+        bot.rf_candidate_queue = [weaker, stronger]
+        bot.rf_config = SimpleNamespace(
+            candidate_window_ms=0,
+            demo_duration_ticks=5,
+            minimum_trade_interval_seconds=60,
+        )
+        bot.market_states = {
+            weaker.symbol: SimpleNamespace(tick_sequence=weaker.tick_sequence),
+            stronger.symbol: SimpleNamespace(tick_sequence=stronger.tick_sequence),
+        }
+        bot.repository = MagicMock()
+        bot.repository.control_state.return_value = ("RUNNING", "")
+        bot.rf_repository = MagicMock()
+        bot.rf_repository.shadow_group_counts.return_value = (0, 0)
+        bot.rf_repository.guard_state.return_value = {"state": "DEMO_LIVE"}
+        bot.keyed_bayesian = KeyedBayesianProbability(minimum_completed_trades=1000)
+        bot.test2_config = SimpleNamespace(
+            bayesian=SimpleNamespace(
+                required_edge_margin=0.01,
+                minimum_shadow_outcomes=1000,
+            ),
+            execution=SimpleNamespace(demo_enabled=True),
+        )
+        bot.rf_decision_engine = RiseFallDecisionEngine(
+            minimum_score=4,
+            stale_signal_after_ms=1800,
+            minimum_shadow_outcomes=1000,
+            required_edge_margin=0.01,
+            real_gate_enabled=False,
+        )
+        bot.environment = "demo"
+        bot.is_trading_locked = False
+        bot.pending_contracts_for_current_cycle = set()
+        bot.rf_last_purchase_monotonic = 0.0
+        bot._prune_stale_pending_contracts = MagicMock()
+        bot._mark_rf_decision = MagicMock()
+        economics = ProposalEconomics(
+            proposal_id="proposal-1",
+            stake=0.50,
+            payout=0.90,
+            potential_profit=0.40,
+            potential_loss=0.50,
+            break_even_probability=0.50 / 0.90,
+            predicted_win_probability=0.50,
+            expected_value=-0.05,
+            expected_return_on_stake=-0.10,
+            requested_monotonic=time.monotonic(),
+            received_monotonic=time.monotonic(),
+        )
+        bot._proposal_for_duration = AsyncMock(
+            return_value=(economics, time.monotonic(), time.monotonic())
+        )
+        bot._buy_selected_demo = AsyncMock()
+
+        await bot._arbitrate_candidates()
+
+        bot._proposal_for_duration.assert_awaited_once_with(stronger, 5)
+        bot._buy_selected_demo.assert_awaited_once()
+        bot._mark_rf_decision.assert_any_call(
+            weaker,
+            "SHADOW_ONLY",
+            "another market ranked higher",
+            selected=False,
+        )
 
 class RFRepositoryTests(unittest.TestCase):
     def setUp(self) -> None:

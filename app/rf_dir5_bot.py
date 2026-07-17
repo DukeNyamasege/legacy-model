@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import math
 import time
 from collections import deque
 from datetime import datetime, timezone
@@ -90,6 +89,7 @@ class RFDir5TradingBot(TradingBot):
         self.rf_pending_recovery_registrations: dict[str, int] = {}
         self.rf_last_epoch: dict[str, int] = {}
         self.rf_last_tick_id: dict[str, str] = {}
+        self.rf_last_purchase_monotonic = 0.0
 
         for state in self.clients.values():
             self._clear_recovery_state(state)
@@ -542,63 +542,112 @@ class RFDir5TradingBot(TradingBot):
         if not candidates:
             return
 
-        evaluated: list[tuple[SignalEvent, ProposalEconomics, float, bool]] = []
+        fresh_candidates: list[SignalEvent] = []
         for signal in candidates:
-            duration_results = await asyncio.gather(
-                *(
-                    self._proposal_for_duration(signal, duration)
-                    for duration in self.rf_config.shadow_duration_ticks
+            market = self.market_states[signal.symbol]
+            if market.tick_sequence != signal.tick_sequence:
+                self._mark_rf_decision(
+                    signal,
+                    "SKIP_STALE_SIGNAL",
+                    "new tick before candidate selection",
                 )
-            )
-            demo_index = tuple(self.rf_config.shadow_duration_ticks).index(
-                self.rf_config.demo_duration_ticks
-            )
-            economics, _requested, received = duration_results[demo_index]
-            if economics is None:
-                self._mark_rf_decision(signal, "SKIP_UNPROFITABLE_QUOTE", "invalid proposal")
                 continue
-            key = BayesianGroupKey(
-                RF_DIR5_VERSION,
-                signal.symbol,
-                signal.direction,
-                signal.duration_ticks,
-            )
-            wins, losses = self.rf_repository.shadow_group_counts(key)
-            self.keyed_bayesian.restore(key, wins=wins, losses=losses)
-            posterior = self.keyed_bayesian.snapshot(
-                key,
-                break_even_probability=economics.break_even_probability,
-                safety_margin=self.test2_config.bayesian.required_edge_margin,
-            )
-            validated_edge = posterior.lower_credible_bound - economics.break_even_probability
-            validated = posterior.ready and validated_edge > self.test2_config.bayesian.required_edge_margin
-            signal.validated_edge = validated_edge if validated else None
-            signal.quality_score = calculate_directional_score(
-                signal.features,
-                direction=signal.direction,
-                volatility_ok=True,
-                exhaustion_ok=True,
-                validated_edge=validated,
-            )
-            signal.proposal_ask_price = economics.stake
-            signal.proposal_payout = economics.payout
-            signal.break_even_probability = economics.break_even_probability
-            evaluated.append((signal, economics, received, validated))
+            fresh_candidates.append(signal)
 
-        if not evaluated:
+        if not fresh_candidates:
             return
-        evaluated.sort(
-            key=lambda item: (
-                -(item[0].validated_edge if item[0].validated_edge is not None else -math.inf),
-                -item[0].quality_score,
-                -item[0].features.efficiency,
-                item[1].stake,
-                item[0].symbol,
+
+        fresh_candidates.sort(
+            key=lambda signal: (
+                -signal.quality_score,
+                -signal.features.efficiency,
+                -signal.features.impulse,
+                -signal.generated_monotonic,
+                signal.symbol,
             )
         )
-        selected, economics, proposal_received, _validated = evaluated[0]
-        for signal, _economics, _received, _is_validated in evaluated[1:]:
-            self._mark_rf_decision(signal, "SHADOW_ONLY", "candidate ranking", selected=False)
+        selected = fresh_candidates[0]
+        for signal in fresh_candidates[1:]:
+            self._mark_rf_decision(
+                signal,
+                "SHADOW_ONLY",
+                "another market ranked higher",
+                selected=False,
+            )
+
+        status, _pause_reason = self.repository.control_state()
+        self._prune_stale_pending_contracts("rf_pre_proposal")
+        if (
+            self.is_trading_locked
+            or bool(self.pending_contracts_for_current_cycle)
+            or status in {"STOPPED", "MANUAL_PAUSE"}
+        ):
+            self._mark_rf_decision(
+                selected,
+                "SHADOW_ONLY",
+                "existing contract or account control state",
+                selected=True,
+            )
+            return
+
+        minimum_interval = float(self.rf_config.minimum_trade_interval_seconds)
+        last_purchase = float(getattr(self, "rf_last_purchase_monotonic", 0.0))
+        elapsed = time.monotonic() - last_purchase if last_purchase else minimum_interval
+        if elapsed < minimum_interval:
+            self._mark_rf_decision(
+                selected,
+                "SHADOW_ONLY",
+                f"trade spacing {minimum_interval - elapsed:.1f}s remaining",
+                selected=True,
+            )
+            return
+
+        economics, _proposal_requested, proposal_received = (
+            await self._proposal_for_duration(
+                selected,
+                self.rf_config.demo_duration_ticks,
+            )
+        )
+        if economics is None:
+            self._mark_rf_decision(
+                selected,
+                "SKIP_UNPROFITABLE_QUOTE",
+                "invalid proposal",
+                selected=True,
+            )
+            return
+
+        key = BayesianGroupKey(
+            RF_DIR5_VERSION,
+            selected.symbol,
+            selected.direction,
+            selected.duration_ticks,
+        )
+        wins, losses = self.rf_repository.shadow_group_counts(key)
+        self.keyed_bayesian.restore(key, wins=wins, losses=losses)
+        posterior = self.keyed_bayesian.snapshot(
+            key,
+            break_even_probability=economics.break_even_probability,
+            safety_margin=self.test2_config.bayesian.required_edge_margin,
+        )
+        validated_edge = (
+            posterior.lower_credible_bound - economics.break_even_probability
+        )
+        validated = (
+            posterior.ready
+            and validated_edge > self.test2_config.bayesian.required_edge_margin
+        )
+        selected.validated_edge = validated_edge if validated else None
+        selected.quality_score = calculate_directional_score(
+            selected.features,
+            direction=selected.direction,
+            volatility_ok=True,
+            exhaustion_ok=True,
+            validated_edge=validated,
+        )
+        selected.proposal_ask_price = economics.stake
+        selected.proposal_payout = economics.payout
+        selected.break_even_probability = economics.break_even_probability
 
         market = self.market_states[selected.symbol]
         signal_age_ms = (time.monotonic() - selected.generated_monotonic) * 1000.0
@@ -624,7 +673,6 @@ class RFDir5TradingBot(TradingBot):
             self._mark_rf_decision(selected, "SKIP_VIRTUAL_GUARD", guard["state"], selected=True)
             return
 
-        status, _pause_reason = self.repository.control_state()
         self._prune_stale_pending_contracts("rf_pre_decision")
         execution_mode = self.environment
         decision = self.rf_decision_engine.decide(
@@ -815,6 +863,7 @@ class RFDir5TradingBot(TradingBot):
                     registered_account_masks=[],
                 )
                 return
+            self.rf_last_purchase_monotonic = time.monotonic()
             missing_accounts = sorted(expected_account_ids - registered)
             final_status = "PURCHASE_PARTIAL" if missing_accounts else "PURCHASE_CONFIRMED"
             self.repository.mark_signal(

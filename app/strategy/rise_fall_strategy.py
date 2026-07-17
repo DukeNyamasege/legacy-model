@@ -8,7 +8,7 @@ from statistics import median
 from typing import Sequence
 
 
-RF_DIR5_VERSION = "RF-DIR5-V1"
+RF_DIR5_VERSION = "RF-DIR5-HF-V2"
 RF_SYMBOLS = (
     "1HZ100V",
     "1HZ10V",
@@ -152,8 +152,8 @@ def build_five_move_features(
 def detect_rise_candidate(
     features: FiveMoveFeatures,
     *,
-    minimum_directional_moves: int = 4,
-    minimum_efficiency: float = 0.55,
+    minimum_directional_moves: int = 3,
+    minimum_efficiency: float = 0.25,
 ) -> bool:
     return (
         features.up_count >= minimum_directional_moves
@@ -168,8 +168,8 @@ def detect_rise_candidate(
 def detect_fall_candidate(
     features: FiveMoveFeatures,
     *,
-    minimum_directional_moves: int = 4,
-    minimum_efficiency: float = 0.55,
+    minimum_directional_moves: int = 3,
+    minimum_efficiency: float = 0.25,
 ) -> bool:
     return (
         features.down_count >= minimum_directional_moves
