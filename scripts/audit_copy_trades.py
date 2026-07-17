@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from collections import defaultdict
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from sqlalchemy import select
 
@@ -14,14 +19,11 @@ from app.repositories.test2_repository import Test2Repository, mask_account_id
 from app.token_store import decrypt_auth_payload
 
 
-ROOT = Path(__file__).resolve().parents[1]
-
-
 def enabled_managed_accounts(
     database: Database,
     encryption_key: str,
-) -> list[tuple[str, bool, str]]:
-    accounts: list[tuple[str, bool, str]] = []
+) -> list[tuple[str, bool, str, str]]:
+    accounts: list[tuple[str, bool, str, str]] = []
     with database.session() as session:
         rows = session.scalars(select(ManagedAccount).order_by(ManagedAccount.id)).all()
         for row in rows:
@@ -31,7 +33,14 @@ def enabled_managed_accounts(
                 account_id = str(payload.get("account_id", "")).strip()
             except Exception:
                 account_id = "DECRYPT_FAILED"
-            accounts.append((mask_account_id(account_id), bool(row.enabled), row.label))
+            accounts.append(
+                (
+                    mask_account_id(account_id),
+                    bool(row.enabled),
+                    row.label,
+                    str(row.execution_status),
+                )
+            )
     return accounts
 
 
@@ -50,8 +59,8 @@ def main() -> None:
     managed = enabled_managed_accounts(database, config.deriv.token_encryption_key)
     enabled_masks = {
         account
-        for account, enabled, _ in managed
-        if enabled and account != "DECRYPT_FAILED"
+        for account, enabled, _, status in managed
+        if enabled and status == "active" and account != "DECRYPT_FAILED"
     }
 
     print("\n=== MANAGED ACCOUNTS ===")
@@ -135,7 +144,6 @@ def main() -> None:
             len(rows) == len(enabled_masks)
             and not missing
             and len(outcomes) == 1
-            and len(profits) == 1
             and len(exit_digits) == 1
         )
         if not ok:

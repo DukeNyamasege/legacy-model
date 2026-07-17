@@ -1010,6 +1010,142 @@ class AccountIsolationTests(unittest.IsolatedAsyncioTestCase):
             2.00,
         )
 
+
+class ContractRuntimeLockTests(unittest.IsolatedAsyncioTestCase):
+    def make_bot(self) -> enhanced_bot.TradingBot:
+        bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
+        bot.sessions = {}
+        bot.valid_clients = []
+        bot.pending_contracts_for_current_cycle = set()
+        bot.unresolved_contracts_from_state = set()
+        bot.unregistered_contracts = set()
+        bot.contract_signal_ids = {}
+        bot.contract_symbols = {}
+        bot.pending_by_signal = {}
+        bot.outcomes_by_signal = {}
+        bot.signal_master_account_ids = {}
+        bot.signal_symbols = {}
+        bot.pending_contract_started_at = {}
+        bot.delayed_contracts_logged = set()
+        bot.last_contract_state_prune_at = 0.0
+        bot.repository = MagicMock()
+        bot.logger = MagicMock()
+        bot._save_state = MagicMock()
+        return bot
+
+    async def test_registration_failure_isolated_to_one_account_without_global_lock(self) -> None:
+        bot = self.make_bot()
+        state = {
+            "token_tag": "token-tag",
+            "current_stake": 0.5,
+            "last_profit_ratio": 0.0,
+            "single_recovery_pending": False,
+            "single_recovery_active": False,
+            "base_stake": 0.5,
+        }
+        bot._client_state_for_token = MagicMock(return_value=state)
+        bot.duration = 5
+        bot.duration_unit = "t"
+        bot.cfg = {"strategy": {"initial_stake": 0.5}}
+        bot.repository.register_purchase.side_effect = RuntimeError("database rejected row")
+        session = MagicMock()
+        session.pending_contracts = set()
+        bot.sessions = {"token": session}
+        item = MagicMock(
+            signal_id="signal-1",
+            symbol="1HZ100V",
+            contract_type="CALL",
+            barrier="",
+            trigger_name="RF-DIR5",
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "database rejected row"):
+            await bot._register_account_purchase(
+                signal=item,
+                transaction={"contract_id": 123, "transaction_id": 456},
+                token="token",
+                account_id="DOT90000001",
+                stake_amount=0.5,
+                profit_ratio=0.8,
+                purchase_requested_at=datetime.now(timezone.utc),
+            )
+
+        self.assertEqual(bot.pending_contracts_for_current_cycle, set())
+        self.assertEqual(bot.unregistered_contracts, {123})
+        self.assertEqual(session.pending_contracts, {123})
+
+    async def test_duplicate_settlement_always_releases_runtime_lock(self) -> None:
+        bot = self.make_bot()
+        contract_id = 123
+        signal_id = "signal-1"
+        session = MagicMock(account_id="DOT90000001")
+        session.pending_contracts = {contract_id}
+        bot.sessions = {"token": session}
+        bot.pending_contracts_for_current_cycle = {contract_id}
+        bot.contract_signal_ids = {contract_id: signal_id}
+        bot.contract_symbols = {contract_id: "1HZ100V"}
+        bot.pending_by_signal = {signal_id: {contract_id}}
+        bot.outcomes_by_signal = {signal_id: {}}
+        bot.signal_master_account_ids = {signal_id: "DOT90000001"}
+        bot.signal_symbols = {signal_id: "1HZ100V"}
+        bot.pending_contract_started_at = {contract_id: datetime.now(timezone.utc)}
+        bot.symbol = "1HZ100V"
+        bot.market_states = {"1HZ100V": MagicMock(pip_size=2)}
+        bot.repository.settle_trade.return_value = False
+        bot._client_state_for_token = MagicMock(
+            return_value={"token_tag": "tag", "current_stake": 0.5}
+        )
+        bot._finish_contract_transport_cleanup = AsyncMock()
+
+        await bot.handle_contract_update(
+            "token",
+            contract_id,
+            {"status": "lost", "profit": -0.5, "exit_tick": 100.01},
+        )
+
+        self.assertEqual(bot.pending_contracts_for_current_cycle, set())
+        self.assertEqual(session.pending_contracts, set())
+        self.assertNotIn(signal_id, bot.pending_by_signal)
+        self.assertNotIn(signal_id, bot.outcomes_by_signal)
+        bot._finish_contract_transport_cleanup.assert_awaited_once()
+
+    def test_durable_reconciliation_prunes_only_stale_contract_ids(self) -> None:
+        bot = self.make_bot()
+        session = MagicMock()
+        session.pending_contracts = {101, 102}
+        bot.sessions = {"token": session}
+        bot.pending_contracts_for_current_cycle = {101, 102}
+        bot.contract_signal_ids = {101: "open-signal", 102: "stale-signal"}
+        bot.pending_by_signal = {
+            "open-signal": {101},
+            "stale-signal": {102},
+        }
+        bot.outcomes_by_signal = {"stale-signal": {}}
+        bot.signal_master_account_ids = {"stale-signal": "DOT90000001"}
+        bot.signal_symbols = {"stale-signal": "1HZ100V"}
+        bot.repository.unresolved_contract_ids.return_value = {101}
+
+        removed = bot._prune_stale_pending_contracts("test", force=True)
+
+        self.assertEqual(removed, 1)
+        self.assertEqual(bot.pending_contracts_for_current_cycle, {101})
+        self.assertEqual(session.pending_contracts, {101})
+        self.assertNotIn("stale-signal", bot.pending_by_signal)
+        self.assertIn("open-signal", bot.pending_by_signal)
+
+    async def test_disabled_account_session_is_retained_only_for_open_settlement(self) -> None:
+        bot = self.make_bot()
+        session = MagicMock(account_id="DOT90000001", is_connected=True)
+        session.pending_contracts = {123}
+        session.task = MagicMock()
+        session.task.done.return_value = False
+        bot.sessions = {"token": session}
+
+        await bot._ensure_sessions_for_valid_clients()
+
+        self.assertIn("token", bot.sessions)
+        session.task.cancel.assert_not_called()
+
     async def test_disconnected_account_is_skipped_without_blocking_healthy_account(self) -> None:
         bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
         bot.valid_clients = [
@@ -1384,6 +1520,7 @@ class PersistenceTests(unittest.TestCase):
             buy_price=0.50,
             payout=0.67,
         )
+        self.assertEqual(self.repository.unresolved_contract_ids(), {12345, 12346})
         self.assertTrue(
             self.repository.settle_trade(
                 contract_id="12345",
@@ -1434,6 +1571,7 @@ class PersistenceTests(unittest.TestCase):
         self.assertEqual(summary["wins"], 2)
         self.assertAlmostEqual(summary["net_profit"], 0.40)
         self.assertEqual(self.repository.completed_outcomes(), (1, 0))
+        self.assertEqual(self.repository.unresolved_contract_ids(), set())
 
         personal = self.repository.recent_trades(account_id="DOT90000001")
         self.assertEqual(len(personal), 1)

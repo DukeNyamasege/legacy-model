@@ -843,7 +843,10 @@ class ClientSession:
 
     async def connect_and_run(self) -> None:
         attempt = 0
-        while self.bot.is_running:
+        while self.bot.is_running and (
+            self.pending_contracts
+            or any(token == self.token for token, _ in self.bot.valid_clients)
+        ):
             try:
                 # 1. Fetch short-lived OTP WebSocket URL
                 url = await self.get_otp_url()
@@ -862,11 +865,12 @@ class ClientSession:
                 async with websockets.connect(url) as ws:
                     self.ws = ws
                     self.is_connected = True
-                    self.bot._set_account_execution_status(
-                        self.managed_account_id,
-                        "active",
-                        "Private trading connection is active",
-                    )
+                    if any(token == self.token for token, _ in self.bot.valid_clients):
+                        self.bot._set_account_execution_status(
+                            self.managed_account_id,
+                            "active",
+                            "Private trading connection is active",
+                        )
                     self.pending_requests.clear()
                     attempt = 0
                     self.bot.logger.info(
@@ -917,11 +921,12 @@ class ClientSession:
             except (ConnectionClosed, OSError, Exception) as e:
                 self.is_connected = False
                 self.ws = None
-                self.bot._set_account_execution_status(
-                    self.managed_account_id,
-                    "reconnecting",
-                    "Private trading connection interrupted",
-                )
+                if any(token == self.token for token, _ in self.bot.valid_clients):
+                    self.bot._set_account_execution_status(
+                        self.managed_account_id,
+                        "reconnecting",
+                        "Private trading connection interrupted",
+                    )
                 attempt += 1
                 self.bot.logger.warning(
                     "Private connection lost for account %s: %s. Reconnecting...",
@@ -1287,6 +1292,7 @@ class TradingBot:
         self.sessions: Dict[str, ClientSession] = {}
         self.valid_clients: List[Tuple[str, str]] = [] # list of (token, account_id) pairs
         self.unresolved_contracts_from_state: Set[int] = set()
+        self.unregistered_contracts: Set[int] = set()
 
         # Trade cycle monitoring variables
         self.pending_contracts_for_current_cycle: Set[int] = set()
@@ -1299,6 +1305,7 @@ class TradingBot:
         self.signal_symbols: Dict[str, str] = {}
         self.pending_contract_started_at: Dict[int, datetime] = {}
         self.delayed_contracts_logged: Set[int] = set()
+        self.last_contract_state_prune_at = 0.0
 
         self._watchdog_task: Optional[asyncio.Task] = None
         self._lease_task: Optional[asyncio.Task] = None
@@ -2282,8 +2289,18 @@ class TradingBot:
             market.live_ticks_history.clear()
             market.last_tick_received_at = 0.0
             market.signal_detector.rearm()
+        self.pending_contracts_for_current_cycle.clear()
+        self.unresolved_contracts_from_state.clear()
+        self.unregistered_contracts.clear()
+        self.contract_signal_ids.clear()
+        self.contract_symbols.clear()
+        self.pending_by_signal.clear()
+        self.outcomes_by_signal.clear()
+        self.signal_master_account_ids.clear()
+        self.signal_symbols.clear()
         self.pending_contract_started_at.clear()
         self.delayed_contracts_logged.clear()
+        self.last_contract_state_prune_at = 0.0
         self._clear_live_ticks()
 
     def _contract_age_seconds(self, contract_id: int) -> float:
@@ -2300,9 +2317,126 @@ class TradingBot:
                 return token, session
         return None
 
+    def _release_contract_runtime_state(self, contract_id: int) -> tuple[str, bool]:
+        """Idempotently remove a contract from every in-memory lock owner."""
+        contract_id = int(contract_id)
+        for session in self.sessions.values():
+            session.pending_contracts.discard(contract_id)
+        self.unresolved_contracts_from_state.discard(contract_id)
+        self.unregistered_contracts.discard(contract_id)
+        self.pending_contracts_for_current_cycle.discard(contract_id)
+        self.contract_symbols.pop(contract_id, None)
+        self.pending_contract_started_at.pop(contract_id, None)
+        self.delayed_contracts_logged.discard(contract_id)
+
+        signal_id = self.contract_signal_ids.pop(contract_id, "")
+        if not signal_id:
+            signal_id = next(
+                (
+                    candidate_signal_id
+                    for candidate_signal_id, pending in self.pending_by_signal.items()
+                    if contract_id in pending
+                ),
+                "",
+            )
+        if not signal_id:
+            return "", False
+
+        pending = self.pending_by_signal.get(signal_id)
+        if pending is None:
+            return signal_id, False
+        pending.discard(contract_id)
+        if pending:
+            return signal_id, False
+        self.pending_by_signal.pop(signal_id, None)
+        return signal_id, True
+
+    def _clear_closed_signal_runtime_state(self, signal_id: str) -> None:
+        if not signal_id:
+            return
+        self.outcomes_by_signal.pop(signal_id, None)
+        self.signal_master_account_ids.pop(signal_id, None)
+        self.signal_symbols.pop(signal_id, None)
+
+    async def _finish_contract_transport_cleanup(
+        self,
+        token: str,
+        contract_id: int,
+        *,
+        refresh_balance: bool = True,
+    ) -> None:
+        session = self.sessions.get(token)
+        if session is None:
+            return
+        sub_id = session.active_subscriptions.pop(int(contract_id), None)
+        if sub_id:
+            await session.unsubscribe_contract(sub_id)
+        if refresh_balance:
+            try:
+                await self._refresh_account_balance_snapshot(token, session.account_id)
+            except Exception as exc:
+                self.logger.warning(
+                    "Settlement balance refresh failed for %s: %s",
+                    mask_account_id(session.account_id),
+                    exc,
+                    extra={
+                        "token_tag": token_tag(token),
+                        "contract_id": str(contract_id),
+                    },
+                )
+        still_enabled = any(value == token for value, _ in self.valid_clients)
+        if not still_enabled and not session.pending_contracts and session.ws is not None:
+            try:
+                await session.ws.close()
+            except Exception:
+                pass
+
+    def _prune_stale_pending_contracts(
+        self,
+        reason: str,
+        *,
+        force: bool = False,
+    ) -> int:
+        """Release runtime locks that no longer have a durable open trade."""
+        pending = set(self.pending_contracts_for_current_cycle)
+        if not pending:
+            return 0
+        now = time.monotonic()
+        if not force and now - self.last_contract_state_prune_at < 1.0:
+            return 0
+        self.last_contract_state_prune_at = now
+        durable_open = self.repository.unresolved_contract_ids()
+        stale = sorted(pending - durable_open)
+        for contract_id in stale:
+            signal_id, cycle_closed = self._release_contract_runtime_state(contract_id)
+            if cycle_closed:
+                self._clear_closed_signal_runtime_state(signal_id)
+            self.logger.warning(
+                "STALE_CONTRACT_LOCK_RELEASED contract_id=%s signal_id=%s reason=%s",
+                contract_id,
+                signal_id or "unknown",
+                reason,
+                extra={"contract_id": str(contract_id)},
+            )
+        if stale:
+            self._save_state()
+        return len(stale)
+
     async def _reconcile_pending_contract(self, contract_id: int, reason: str) -> None:
         match = self._find_session_for_contract(contract_id)
         if match is None:
+            if contract_id in self.unregistered_contracts:
+                self._release_contract_runtime_state(contract_id)
+                self.logger.error(
+                    "UNREGISTERED_CONTRACT_MONITOR_LOST contract_id=%s; "
+                    "account isolation released without creating a global lock",
+                    contract_id,
+                    extra={"contract_id": str(contract_id)},
+                )
+                return
+            self._prune_stale_pending_contracts(reason, force=True)
+            if contract_id not in self.pending_contracts_for_current_cycle:
+                return
             self.logger.warning(
                 "Contract %s still pending but no live session owns it",
                 contract_id,
@@ -2492,9 +2626,18 @@ class TradingBot:
             self.repository.set_status("RUNNING")
 
     async def _ensure_sessions_for_valid_clients(self) -> None:
+        self._prune_stale_pending_contracts("account_refresh", force=True)
         desired = {token: account_id for token, account_id in self.valid_clients}
         for token, session in list(self.sessions.items()):
             if token in desired and desired[token] == session.account_id:
+                continue
+            if session.pending_contracts:
+                self.logger.info(
+                    "ACCOUNT_SESSION_RETAINED_FOR_SETTLEMENT account=%s pending=%s",
+                    mask_account_id(session.account_id),
+                    len(session.pending_contracts),
+                    extra={"token_tag": token_tag(token)},
+                )
                 continue
             if session.task and not session.task.done():
                 session.task.cancel()
@@ -3065,27 +3208,36 @@ class TradingBot:
             self.sessions[token] = session
             session.task = asyncio.create_task(session.connect_and_run())
 
+        try:
+            self.repository.register_purchase(
+                signal_id=signal.signal_id,
+                contract_id=str(contract_id),
+                transaction_id=str(transaction.get("transaction_id") or contract_id),
+                account_id=account_id,
+                purchase_time=purchase_requested_at,
+                aligned_with_signal=True,
+                buy_price=optional_float(transaction.get("buy_price")),
+                payout=optional_float(transaction.get("payout")),
+                provider_purchase_time=optional_epoch_datetime(
+                    transaction.get("purchase_time")
+                ),
+                provider_start_time=optional_epoch_datetime(transaction.get("start_time")),
+                contract_duration=self.duration,
+                contract_duration_unit=self.duration_unit,
+            )
+        except Exception:
+            # The provider already opened this contract. Isolate it to this account
+            # until its terminal snapshot arrives, but never create a global lock.
+            self.unregistered_contracts.add(contract_id)
+            session.pending_contracts.add(contract_id)
+            self.pending_contract_started_at[contract_id] = purchase_requested_at
+            raise
+
         self.pending_contracts_for_current_cycle.add(contract_id)
         self.contract_signal_ids[contract_id] = signal.signal_id
         self.contract_symbols[contract_id] = signal.symbol
         session.pending_contracts.add(contract_id)
         self.pending_contract_started_at[contract_id] = purchase_requested_at
-        self.repository.register_purchase(
-            signal_id=signal.signal_id,
-            contract_id=str(contract_id),
-            transaction_id=str(transaction.get("transaction_id") or contract_id),
-            account_id=account_id,
-            purchase_time=purchase_requested_at,
-            aligned_with_signal=True,
-            buy_price=optional_float(transaction.get("buy_price")),
-            payout=optional_float(transaction.get("payout")),
-            provider_purchase_time=optional_epoch_datetime(
-                transaction.get("purchase_time")
-            ),
-            provider_start_time=optional_epoch_datetime(transaction.get("start_time")),
-            contract_duration=self.duration,
-            contract_duration_unit=self.duration_unit,
-        )
         self.logger.info(
             "PURCHASE_CONFIRMED signal_id=%s contract_type=%s barrier=%s trigger=%s",
             signal.signal_id,
@@ -3098,14 +3250,30 @@ class TradingBot:
                 "stake": f"{stake_amount:.2f}",
             },
         )
-        self._on_account_contract_registered(
-            token,
-            account_id,
-            contract_id,
-            stake_amount,
-        )
+        try:
+            self._on_account_contract_registered(
+                token,
+                account_id,
+                contract_id,
+                stake_amount,
+            )
+        except Exception as exc:
+            self.logger.error(
+                "Account post-registration hook failed for %s: %s",
+                mask_account_id(account_id),
+                exc,
+                extra={"token_tag": tag, "contract_id": str(contract_id)},
+            )
         await session.subscribe_contract(contract_id)
-        await self._refresh_account_balance_snapshot(token, account_id)
+        try:
+            await self._refresh_account_balance_snapshot(token, account_id)
+        except Exception as exc:
+            self.logger.warning(
+                "Purchase balance refresh failed for %s: %s",
+                mask_account_id(account_id),
+                exc,
+                extra={"token_tag": tag, "contract_id": str(contract_id)},
+            )
         return contract_id
 
     async def _purchase_accounts_by_stake(
@@ -3594,6 +3762,19 @@ class TradingBot:
         if status not in {"won", "lost", "sold", "cancelled"}:
             return # not settled
 
+        if contract_id in self.unregistered_contracts:
+            self._release_contract_runtime_state(contract_id)
+            self.logger.error(
+                "UNREGISTERED_CONTRACT_SETTLED contract_id=%s status=%s; "
+                "the provider contract closed and only this account was isolated",
+                contract_id,
+                status,
+                extra={"token_tag": token_tag(token), "contract_id": str(contract_id)},
+            )
+            self._save_state()
+            await self._finish_contract_transport_cleanup(token, contract_id)
+            return
+
         session = self.sessions.get(token)
         account_id = session.account_id if session else ""
         st = self._client_state_for_token(token, account_id=account_id)
@@ -3665,6 +3846,17 @@ class TradingBot:
             provider_expiry_time=provider_expiry_time,
             provider_settlement_time=provider_settlement_time,
         ):
+            signal_id, cycle_closed = self._release_contract_runtime_state(contract_id)
+            if cycle_closed:
+                self._clear_closed_signal_runtime_state(signal_id)
+            self.logger.warning(
+                "DUPLICATE_OR_MISSING_SETTLEMENT_CLEANED contract_id=%s signal_id=%s",
+                contract_id,
+                signal_id or "unknown",
+                extra={"token_tag": tag, "contract_id": str(contract_id)},
+            )
+            self._save_state()
+            await self._finish_contract_transport_cleanup(token, contract_id)
             return
 
         self.logger.info(
@@ -3754,67 +3946,56 @@ class TradingBot:
             extra=extra,
         )
 
-        # Cleanup subscription
-        session = self.sessions.get(token)
-        if session:
-            sub_id = session.active_subscriptions.pop(contract_id, None)
-            if sub_id:
-                await session.unsubscribe_contract(sub_id)
-            session.pending_contracts.discard(contract_id)
-            await self._refresh_account_balance_snapshot(token, session.account_id)
-
         self._enforce_account_risk_limit(token, account_id, st)
 
-        self.unresolved_contracts_from_state.discard(contract_id)
-        self.pending_contracts_for_current_cycle.discard(contract_id)
-        self.contract_symbols.pop(contract_id, None)
-        self.pending_contract_started_at.pop(contract_id, None)
-        self.delayed_contracts_logged.discard(contract_id)
-
-        signal_id = self.contract_signal_ids.pop(contract_id, "")
+        signal_id = self.contract_signal_ids.get(contract_id, "")
         if signal_id:
-            pending = self.pending_by_signal.setdefault(signal_id, set())
-            pending.discard(contract_id)
             self.outcomes_by_signal.setdefault(signal_id, {})[account_id] = outcome
-            if not pending:
-                outcomes = self.outcomes_by_signal.pop(
+        released_signal_id, cycle_closed = self._release_contract_runtime_state(contract_id)
+        signal_id = signal_id or released_signal_id
+        if signal_id and cycle_closed:
+            outcomes = self.outcomes_by_signal.pop(
+                signal_id,
+                {account_id: outcome},
+            )
+            master_account_id = self.signal_master_account_ids.pop(signal_id, "")
+            signal_symbol = self.signal_symbols.pop(signal_id, "")
+            master_outcome = outcomes.get(master_account_id)
+            if master_outcome:
+                self.bayesian.update(master_outcome == "win")
+                self._record_real_cycle_outcome(master_outcome)
+                self._register_trade_cycle_outcome(master_outcome)
+                self._register_master_market_outcome(signal_symbol, master_outcome)
+                self.logger.info(
+                    "CONTRACT_SETTLED signal_id=%s symbol=%s master_account=%s "
+                    "result=%s exit_digit=%s",
                     signal_id,
-                    {account_id: outcome},
+                    signal_symbol,
+                    mask_account_id(master_account_id),
+                    master_outcome.upper(),
+                    exit_digit,
                 )
-                self.pending_by_signal.pop(signal_id, None)
-                master_account_id = self.signal_master_account_ids.pop(signal_id, "")
-                signal_symbol = self.signal_symbols.pop(signal_id, "")
-                master_outcome = outcomes.get(master_account_id)
-                if master_outcome:
-                    self.bayesian.update(master_outcome == "win")
-                    self._record_real_cycle_outcome(master_outcome)
-                    self._register_trade_cycle_outcome(master_outcome)
-                    self._register_master_market_outcome(signal_symbol, master_outcome)
-                    self.logger.info(
-                        "CONTRACT_SETTLED signal_id=%s symbol=%s master_account=%s "
-                        "result=%s exit_digit=%s",
-                        signal_id,
-                        signal_symbol,
-                        mask_account_id(master_account_id),
-                        master_outcome.upper(),
-                        exit_digit,
-                    )
-                else:
-                    self.logger.warning(
-                        "MASTER_OUTCOME_UNAVAILABLE signal_id=%s symbol=%s master_account=%s; "
-                        "copier outcomes remain personal and do not affect global strategy state",
-                        signal_id,
-                        signal_symbol,
-                        mask_account_id(master_account_id),
-                    )
+            else:
+                self.logger.warning(
+                    "MASTER_OUTCOME_UNAVAILABLE signal_id=%s symbol=%s master_account=%s; "
+                    "copier outcomes remain personal and do not affect global strategy state",
+                    signal_id,
+                    signal_symbol,
+                    mask_account_id(master_account_id),
+                )
 
         self._save_state()
+        await self._finish_contract_transport_cleanup(token, contract_id)
 
     async def _watchdog_loop(self) -> None:
         await asyncio.sleep(min(self.max_tick_silence_seconds, self.watchdog_poll_interval_seconds))
         refresh_interval = max(5, int(os.getenv("ACCOUNT_REFRESH_INTERVAL_SECONDS", "10")))
         refresh_timer = 0
         while self.is_running:
+            try:
+                self._prune_stale_pending_contracts("watchdog")
+            except Exception as exc:
+                self.logger.warning("Contract lock reconciliation failed: %s", exc)
             self.repository.touch_managed_account_execution(
                 [
                     int(session.managed_account_id)

@@ -625,6 +625,7 @@ class RFDir5TradingBot(TradingBot):
             return
 
         status, _pause_reason = self.repository.control_state()
+        self._prune_stale_pending_contracts("rf_pre_decision")
         execution_mode = self.environment
         decision = self.rf_decision_engine.decide(
             quality_score=selected.quality_score,

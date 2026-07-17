@@ -745,6 +745,23 @@ class Test2Repository:
                 ).all()
             )
 
+    def unresolved_contract_ids(self) -> set[int]:
+        """Return durable open contract IDs for runtime lock reconciliation."""
+        with self.database.session() as session:
+            values = session.scalars(
+                select(Trade.contract_id).where(
+                    Trade.settlement_time.is_(None),
+                    self._current_run_trade_filter(),
+                )
+            ).all()
+        result: set[int] = set()
+        for value in values:
+            try:
+                result.add(int(value))
+            except (TypeError, ValueError):
+                continue
+        return result
+
     @staticmethod
     def _normalize_control_status(status: str, pause_reason: str = "") -> tuple[str, str]:
         if str(status or "").upper() == "EMERGENCY_STOP":
