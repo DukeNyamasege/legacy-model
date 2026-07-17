@@ -755,7 +755,15 @@ class RFDir5TradingBot(TradingBot):
                 return
             self.repository.consume_signal(signal.signal_id)
             signal.consumed = True
-            self.repository.mark_signal(signal.signal_id, status="PURCHASE_REQUESTED", purchase_requested=True)
+            expected_account_ids = {account_id for _token, account_id in filtered}
+            self.repository.mark_signal(
+                signal.signal_id,
+                status="PURCHASE_REQUESTED",
+                purchase_requested=True,
+                expected_account_masks=[
+                    mask_account_id(account_id) for account_id in expected_account_ids
+                ],
+            )
             transactions = await self._purchase_accounts_by_stake(
                 signal=signal,
                 eligible_accounts=filtered,
@@ -801,8 +809,31 @@ class RFDir5TradingBot(TradingBot):
             self.pending_by_signal[signal.signal_id] = contracts
             if not contracts:
                 self._mark_rf_decision(signal, "SHADOW_ONLY", "demo purchase failed", selected=True)
+                self.repository.mark_signal(
+                    signal.signal_id,
+                    status="SHADOW_ONLY",
+                    registered_account_masks=[],
+                )
                 return
-            self.repository.mark_signal(signal.signal_id, status="PURCHASE_CONFIRMED", purchase_confirmed=True)
+            missing_accounts = sorted(expected_account_ids - registered)
+            final_status = "PURCHASE_PARTIAL" if missing_accounts else "PURCHASE_CONFIRMED"
+            self.repository.mark_signal(
+                signal.signal_id,
+                status=final_status,
+                purchase_confirmed=True,
+                registered_account_masks=[
+                    mask_account_id(account_id) for account_id in registered
+                ],
+            )
+            if missing_accounts:
+                self.logger.warning(
+                    "RF_COPY_PURCHASE_PARTIAL signal_id=%s purchased=%s expected=%s "
+                    "missing=%s; failed accounts were isolated and healthy accounts continue.",
+                    signal.signal_id,
+                    len(registered),
+                    len(expected_account_ids),
+                    [mask_account_id(account_id) for account_id in missing_accounts],
+                )
             self.rf_repository.set_signal_decision(
                 signal.signal_id,
                 "BUY_DEMO",

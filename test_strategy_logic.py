@@ -7,6 +7,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import yaml
@@ -18,7 +19,7 @@ from app.database import Database
 from app.dashboard_metrics import build_execution_summary
 from app.model.bayesian_probability import BayesianProbability, BayesianSnapshot
 from app.model.hmm_regime import HmmInference
-from app.models import ProposalRecord
+from app.models import CandidateSignalRecord, ProposalRecord
 from app.repositories.test2_repository import Test2Repository
 from app.strategy.cooldown import AdaptiveCooldown
 from app.strategy.decision_engine import (
@@ -29,6 +30,7 @@ from app.strategy.decision_engine import (
 from app.strategy.over2_strategy import TEST2_SYMBOLS, validate_contract_parameters
 from app.strategy.signal_detector import Over2SignalDetector
 from scripts.reset_test_data import reset_database
+from scripts.audit_copy_trades import classify_trade_group
 
 os.environ.setdefault("COPYTRADING_ALLOW_LEGACY_GLOBAL_TOKENS", "true")
 
@@ -123,6 +125,54 @@ class DashboardMetricsTests(unittest.TestCase):
             result["ai_activity_message"],
             "Waiting for an active trading account",
         )
+
+
+class CopyTradeAuditTests(unittest.TestCase):
+    @staticmethod
+    def trade(
+        account: str,
+        *,
+        outcome: str = "WIN",
+        entry: float = 100.0,
+        exit_value: float = 101.0,
+        exit_digit: int = 1,
+    ) -> SimpleNamespace:
+        return SimpleNamespace(
+            account_id_masked=account,
+            outcome=outcome,
+            entry_tick=entry,
+            exit_tick=exit_value,
+            exit_digit=exit_digit,
+        )
+
+    def test_historical_group_does_not_use_current_accounts_as_expected(self) -> None:
+        result = classify_trade_group(
+            [self.trade("DOT***001")],
+            expected_accounts=set(),
+        )
+
+        self.assertEqual(result["status"], "HISTORICAL_UNSCOPED")
+        self.assertEqual(result["missing"], [])
+
+    def test_purchase_snapshot_identifies_missing_account(self) -> None:
+        result = classify_trade_group(
+            [self.trade("DOT***001")],
+            expected_accounts={"DOT***001", "DOT***002"},
+        )
+
+        self.assertEqual(result["status"], "PARTIAL_PURCHASE")
+        self.assertEqual(result["missing"], ["DOT***002"])
+
+    def test_same_outcome_with_different_exit_is_lifecycle_variance(self) -> None:
+        result = classify_trade_group(
+            [
+                self.trade("DOT***001"),
+                self.trade("DOT***002", exit_value=102.0, exit_digit=2),
+            ],
+            expected_accounts={"DOT***001", "DOT***002"},
+        )
+
+        self.assertEqual(result["status"], "LIFECYCLE_VARIANCE")
 
 
 class LiveConsoleTests(unittest.TestCase):
@@ -1298,6 +1348,29 @@ class PersistenceTests(unittest.TestCase):
         self.repository.record_candidate(signal)
         self.assertTrue(self.repository.consume_signal(signal.signal_id))
         self.assertFalse(self.repository.consume_signal(signal.signal_id))
+
+    def test_signal_records_expected_and_registered_account_snapshots(self) -> None:
+        signal = Over2SignalDetector(
+            run_id="test2",
+            overlapping_signals_allowed=False,
+            require_pattern_reset=True,
+        ).observe(
+            pattern_ticks(),
+            connection_session_id="connection-1",
+            tick_sequence=5,
+        )
+        self.repository.record_candidate(signal)
+        self.repository.mark_signal(
+            signal.signal_id,
+            status="PURCHASE_PARTIAL",
+            expected_account_masks=["DOT***002", "DOT***001", "DOT***002"],
+            registered_account_masks=["DOT***001"],
+        )
+
+        with self.database.session() as session:
+            row = session.get(CandidateSignalRecord, signal.signal_id)
+            self.assertEqual(row.expected_account_masks, ["DOT***001", "DOT***002"])
+            self.assertEqual(row.registered_account_masks, ["DOT***001"])
 
     def test_second_worker_cannot_take_healthy_lease(self) -> None:
         values = {

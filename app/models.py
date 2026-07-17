@@ -97,6 +97,8 @@ class CandidateSignalRecord(Base):
         DateTime(timezone=True)
     )
     ticks_between_signal_and_purchase: Mapped[int | None] = mapped_column(Integer)
+    expected_account_masks: Mapped[list] = mapped_column(JSON, default=list)
+    registered_account_masks: Mapped[list] = mapped_column(JSON, default=list)
 
 
 class ModelDecisionRecord(Base):

@@ -4,7 +4,9 @@ import argparse
 import os
 import sys
 from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -14,7 +16,13 @@ from sqlalchemy import select
 
 from app.config import load_test2_config
 from app.database import Database
-from app.models import CandidateSignalRecord, ManagedAccount, ModelDecisionRecord, Trade
+from app.models import (
+    CandidateSignalRecord,
+    DirectionalSignal,
+    ManagedAccount,
+    ModelDecisionRecord,
+    Trade,
+)
 from app.repositories.test2_repository import Test2Repository, mask_account_id
 from app.token_store import decrypt_auth_payload
 
@@ -44,17 +52,98 @@ def enabled_managed_accounts(
     return accounts
 
 
+def parse_utc_timestamp(value: str) -> datetime:
+    normalized = value.strip().replace("Z", "+00:00")
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def classify_trade_group(
+    rows: list[Trade],
+    *,
+    expected_accounts: set[str],
+) -> dict[str, Any]:
+    actual_accounts = {row.account_id_masked for row in rows}
+    outcomes = {
+        str(row.outcome or "").upper()
+        for row in rows
+        if str(row.outcome or "").upper() not in {"", "OPEN"}
+    }
+    open_contracts = sum(
+        str(row.outcome or "").upper() in {"", "OPEN"} for row in rows
+    )
+    entry_ticks = {
+        round(float(row.entry_tick), 8)
+        for row in rows
+        if row.entry_tick is not None
+    }
+    exit_ticks = {
+        round(float(row.exit_tick), 8)
+        for row in rows
+        if row.exit_tick is not None
+    }
+    exit_digits = {row.exit_digit for row in rows if row.exit_digit is not None}
+    participation_known = bool(expected_accounts)
+    missing = sorted(expected_accounts - actual_accounts) if participation_known else []
+    unexpected = sorted(actual_accounts - expected_accounts) if participation_known else []
+
+    if open_contracts:
+        status = "IN_PROGRESS"
+    elif missing or unexpected:
+        status = "PARTIAL_PURCHASE"
+    elif len(outcomes) > 1:
+        status = "OUTCOME_MISMATCH"
+    elif len(entry_ticks) > 1 or len(exit_ticks) > 1 or len(exit_digits) > 1:
+        status = "LIFECYCLE_VARIANCE"
+    elif not participation_known:
+        status = "HISTORICAL_UNSCOPED"
+    else:
+        status = "CONSISTENT"
+
+    return {
+        "status": status,
+        "actual_accounts": actual_accounts,
+        "outcomes": outcomes,
+        "open_contracts": open_contracts,
+        "entry_ticks": entry_ticks,
+        "exit_ticks": exit_ticks,
+        "exit_digits": exit_digits,
+        "participation_known": participation_known,
+        "missing": missing,
+        "unexpected": unexpected,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=50)
+    scope = parser.add_mutually_exclusive_group()
+    scope.add_argument(
+        "--since",
+        type=parse_utc_timestamp,
+        help="Only include trades purchased at or after this ISO-8601 timestamp.",
+    )
+    scope.add_argument(
+        "--since-minutes",
+        type=float,
+        help="Only include trades purchased during the most recent number of minutes.",
+    )
     args = parser.parse_args()
+    cutoff = args.since
+    if args.since_minutes is not None:
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=args.since_minutes)
 
     config = load_test2_config(os.getenv("DERIV_BOT_CONFIG", ROOT / "config.yaml"))
     database = Database(config.database_url)
     repository = Test2Repository(database, config)
 
     print("=== SUMMARY ===")
-    print(repository.summary())
+    summary = repository.summary()
+    print(summary)
+    if cutoff is not None:
+        print("audit_trade_cutoff=", cutoff.isoformat())
 
     managed = enabled_managed_accounts(database, config.deriv.token_encryption_key)
     enabled_masks = {
@@ -68,6 +157,9 @@ def main() -> None:
         print(item)
 
     with database.session() as session:
+        current_signal_ids = select(CandidateSignalRecord.signal_id).where(
+            CandidateSignalRecord.run_id == repository.run_id
+        )
         signals = {
             row.signal_id: row
             for row in session.scalars(
@@ -80,27 +172,26 @@ def main() -> None:
             row.signal_id: row
             for row in session.scalars(
                 select(ModelDecisionRecord).where(
-                    ModelDecisionRecord.signal_id.in_(
-                        select(CandidateSignalRecord.signal_id).where(
-                            CandidateSignalRecord.run_id == repository.run_id
-                        )
-                    )
+                    ModelDecisionRecord.signal_id.in_(current_signal_ids)
                 )
             ).all()
         }
-        trades = list(
-            session.scalars(
-                select(Trade)
-                .where(
-                    Trade.signal_id.in_(
-                        select(CandidateSignalRecord.signal_id).where(
-                            CandidateSignalRecord.run_id == repository.run_id
-                        )
-                    )
+        directional_signals = {
+            row.signal_id: row
+            for row in session.scalars(
+                select(DirectionalSignal).where(
+                    DirectionalSignal.run_id == repository.run_id
                 )
-                .order_by(Trade.purchase_time.asc())
             ).all()
+        }
+        trade_query = (
+            select(Trade)
+            .where(Trade.signal_id.in_(current_signal_ids))
+            .order_by(Trade.purchase_time.asc())
         )
+        if cutoff is not None:
+            trade_query = trade_query.where(Trade.purchase_time >= cutoff)
+        trades = list(session.scalars(trade_query).all())
 
     groups: dict[str, list[Trade]] = defaultdict(list)
     for trade in trades:
@@ -125,7 +216,9 @@ def main() -> None:
         print(account, row)
 
     print("\n=== SIGNAL CONSISTENCY REPORT ===")
-    mismatch_count = 0
+    critical_mismatch_count = 0
+    lifecycle_variance_count = 0
+    historical_unscoped_count = 0
     recent_groups = sorted(
         groups.items(),
         key=lambda item: max(t.purchase_time for t in item[1]),
@@ -135,39 +228,53 @@ def main() -> None:
     for signal_id, rows in recent_groups:
         signal = signals.get(signal_id)
         decision = decisions.get(signal_id)
-        accounts = {row.account_id_masked for row in rows}
-        outcomes = {str(row.outcome).upper() for row in rows}
-        profits = {round(float(row.profit or 0.0), 2) for row in rows}
-        exit_digits = {row.exit_digit for row in rows}
-        missing = sorted(enabled_masks - accounts)
-        ok = (
-            len(rows) == len(enabled_masks)
-            and not missing
-            and len(outcomes) == 1
-            and len(exit_digits) == 1
+        directional = directional_signals.get(signal_id)
+        expected_accounts = set(signal.expected_account_masks or []) if signal else set()
+        registered_snapshot = (
+            set(signal.registered_account_masks or []) if signal else set()
         )
-        if not ok:
-            mismatch_count += 1
+        result = classify_trade_group(rows, expected_accounts=expected_accounts)
+        profits = {round(float(row.profit or 0.0), 2) for row in rows}
+        status = result["status"]
+        if status in {"PARTIAL_PURCHASE", "OUTCOME_MISMATCH"}:
+            critical_mismatch_count += 1
+        elif status == "LIFECYCLE_VARIANCE":
+            lifecycle_variance_count += 1
+        elif status == "HISTORICAL_UNSCOPED":
+            historical_unscoped_count += 1
 
-        print(f"\n--- {'OK' if ok else 'MISMATCH'} {signal_id} ---")
+        print(f"\n--- {status} {signal_id} ---")
         print("signal_status=", signal.final_status if signal else None)
         print("decision=", decision.final_decision if decision else None)
         print("trigger_digits=", signal.trigger_digits if signal else None)
+        if directional is not None:
+            print(
+                "directional_contract=",
+                directional.symbol,
+                directional.direction,
+                f"{directional.duration_ticks}t",
+            )
         print(
             "rows=",
             len(rows),
-            "expected_accounts=",
-            len(enabled_masks),
+            "expected_accounts_at_purchase=",
+            len(expected_accounts) if result["participation_known"] else "UNKNOWN",
+            "registered_snapshot=",
+            len(registered_snapshot) if result["participation_known"] else "UNKNOWN",
             "missing=",
-            missing,
+            result["missing"],
+            "unexpected=",
+            result["unexpected"],
         )
         print(
             "outcomes=",
-            sorted(outcomes),
+            sorted(result["outcomes"]),
             "profits=",
             sorted(profits),
             "exit_digits=",
-            sorted(str(value) for value in exit_digits),
+            sorted(str(value) for value in result["exit_digits"]),
+            "open_contracts=",
+            result["open_contracts"],
         )
 
         for trade in sorted(rows, key=lambda item: item.account_id_masked):
@@ -179,8 +286,11 @@ def main() -> None:
                 f"settle={trade.settlement_time}"
             )
 
-    print("\n=== MISMATCH COUNT ===")
-    print(mismatch_count)
+    print("\n=== AUDIT COUNTS ===")
+    print("critical_mismatches=", critical_mismatch_count)
+    print("lifecycle_variances=", lifecycle_variance_count)
+    print("historical_membership_unknown=", historical_unscoped_count)
+    print("current_active_accounts=", len(enabled_masks))
 
 
 if __name__ == "__main__":

@@ -3060,6 +3060,10 @@ class TradingBot:
                 status="PURCHASE_REQUESTED",
                 purchase_requested=True,
                 ticks_between=market.tick_sequence - signal.tick_sequence,
+                expected_account_masks=[
+                    mask_account_id(account_id)
+                    for _token, account_id in eligible_accounts
+                ],
             )
             self.logger.info(
                 "PURCHASE_REQUESTED signal_id=%s symbol=%s account_count=%s proposal_id=%s",
@@ -3132,7 +3136,11 @@ class TradingBot:
                 self.signal_master_account_ids.pop(signal.signal_id, None)
                 self.signal_symbols.pop(signal.signal_id, None)
                 self._save_state()
-                self.repository.mark_signal(signal.signal_id, status="PURCHASE_FAILED")
+                self.repository.mark_signal(
+                    signal.signal_id,
+                    status="PURCHASE_FAILED",
+                    registered_account_masks=[],
+                )
                 self.logger.warning("No contracts were purchased successfully")
                 return
             self._complete_market_rotation_after_purchase(signal.symbol)
@@ -3144,6 +3152,10 @@ class TradingBot:
                     signal.signal_id,
                     status="PURCHASE_PARTIAL",
                     purchase_confirmed=True,
+                    registered_account_masks=[
+                        mask_account_id(account_id)
+                        for account_id in registered_account_ids
+                    ],
                 )
                 self.logger.warning(
                     "COPY_PURCHASE_PARTIAL signal_id=%s purchased=%s expected=%s missing=%s; "
@@ -3158,6 +3170,10 @@ class TradingBot:
                     signal.signal_id,
                     status="PURCHASE_CONFIRMED",
                     purchase_confirmed=True,
+                    registered_account_masks=[
+                        mask_account_id(account_id)
+                        for account_id in registered_account_ids
+                    ],
                 )
             asyncio.create_task(
                 self._cycle_timeout_watchdog(signal.signal_id, list(signal_contracts))

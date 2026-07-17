@@ -515,6 +515,8 @@ class Test2Repository:
         purchase_requested: bool = False,
         purchase_confirmed: bool = False,
         ticks_between: int | None = None,
+        expected_account_masks: list[str] | None = None,
+        registered_account_masks: list[str] | None = None,
     ) -> None:
         with self.database.session() as session:
             signal = session.get(CandidateSignalRecord, signal_id)
@@ -533,6 +535,10 @@ class Test2Repository:
                 signal.purchase_confirmation_timestamp = now
             if ticks_between is not None:
                 signal.ticks_between_signal_and_purchase = ticks_between
+            if expected_account_masks is not None:
+                signal.expected_account_masks = sorted(set(expected_account_masks))
+            if registered_account_masks is not None:
+                signal.registered_account_masks = sorted(set(registered_account_masks))
 
     def consume_signal(self, signal_id: str) -> bool:
         with self.database.session() as session:
