@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import time
 import unittest
@@ -24,7 +25,7 @@ from app.strategy.decision_engine import (
     ProposalEconomics,
     parse_proposal_economics,
 )
-from app.strategy.over2_strategy import validate_contract_parameters
+from app.strategy.over2_strategy import TEST2_SYMBOLS, validate_contract_parameters
 from app.strategy.signal_detector import Over2SignalDetector
 from scripts.reset_test_data import reset_database
 
@@ -51,13 +52,17 @@ def pattern_ticks(
     ]
 
 
-def live_tick_payload(sequence: int, quote: float) -> dict:
+def live_tick_payload(
+    sequence: int,
+    quote: float,
+    symbol: str = "1HZ100V",
+) -> dict:
     return {
         "tick": {
             "quote": quote,
             "epoch": 1_700_000_000 + sequence,
             "id": f"tick-{sequence}",
-            "symbol": "1HZ100V",
+            "symbol": symbol,
         }
     }
 
@@ -131,6 +136,16 @@ class SignalTests(unittest.TestCase):
             self.assertEqual(signal.trigger_name, "BIN22001x5")
             self.assertEqual(signal.trigger_digits, digits)
 
+    def test_candidate_keeps_the_market_that_emitted_the_pattern(self) -> None:
+        detector = Over2SignalDetector(run_id="test2", symbol="R_10")
+        signal = detector.observe(
+            pattern_ticks(),
+            connection_session_id="connection-1",
+            tick_sequence=5,
+        )
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal.symbol, "R_10")
+
     def test_near_miss_patterns_never_signal(self) -> None:
         invalid_patterns = (
             (5, 8, 0, 2, 4),
@@ -185,18 +200,19 @@ class SignalTests(unittest.TestCase):
 
 class ContractTests(unittest.TestCase):
     def test_only_exact_test2_contract_is_accepted(self) -> None:
-        validate_contract_parameters(
-            contract_type="DIGITOVER",
-            barrier="2",
-            symbol="1HZ100V",
-            stake=0.50,
-            duration=1,
-            duration_unit="t",
-        )
+        for symbol in TEST2_SYMBOLS:
+            validate_contract_parameters(
+                contract_type="DIGITOVER",
+                barrier="2",
+                symbol=symbol,
+                stake=0.50,
+                duration=1,
+                duration_unit="t",
+            )
         invalid = [
             {"contract_type": "DIGITUNDER"},
             {"barrier": "3"},
-            {"symbol": "R_100"},
+            {"symbol": "R_UNKNOWN"},
             {"stake": 0.10},
             {"duration": 2},
             {"duration_unit": "s"},
@@ -1183,6 +1199,66 @@ class BotSignalIntegrationTests(unittest.IsolatedAsyncioTestCase):
             for handler in list(bot.logger.handlers):
                 handler.close()
             bot.logger.handlers.clear()
+
+    async def test_all_markets_subscribe_and_keep_tick_windows_isolated(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            raw = yaml.safe_load(Path("config.yaml").read_text(encoding="utf-8"))
+            token_path = root / "tokens.txt"
+            token_path.write_text("test-token\n", encoding="utf-8")
+            raw["files"] = {
+                "tokens": token_path.as_posix(),
+                "state": (root / "state.json").as_posix(),
+                "users": (root / "users.json").as_posix(),
+            }
+            raw["logging"]["file"] = (root / "bot.log").as_posix()
+            raw["storage"]["local_database_url"] = (
+                "sqlite:///" + (root / "test2.db").as_posix()
+            )
+            path = root / "config.yaml"
+            path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+            bot = enhanced_bot.TradingBot(str(path))
+            try:
+                fake_ws = AsyncMock()
+                bot.public_client.ws = fake_ws
+                await bot.public_client._subscribe_ticks()
+                subscriptions = [
+                    json.loads(call.args[0])["ticks"]
+                    for call in fake_ws.send.await_args_list
+                ]
+                self.assertEqual(subscriptions, list(TEST2_SYMBOLS))
+
+                bot.connection_session_id = "connection-1"
+                bot.public_client.is_connected = True
+                bot.repository.set_status("RUNNING")
+                bot._render_live_ticks = lambda note="": None
+                spawned: list[str] = []
+
+                def capture_task(coroutine, *, name: str) -> None:
+                    spawned.append(name)
+                    coroutine.close()
+
+                bot._spawn_background_task = capture_task
+                for sequence, quote in enumerate(
+                    [100.06, 100.08, 101.00, 102.02, 103.04],
+                    start=1,
+                ):
+                    await bot._on_tick(
+                        live_tick_payload(sequence, quote, symbol="R_10")
+                    )
+
+                self.assertEqual(len(spawned), 1)
+                self.assertEqual(len(bot.market_states["R_10"].ticks_history), 5)
+                self.assertEqual(len(bot.market_states["1HZ100V"].ticks_history), 0)
+                self.assertEqual(
+                    bot.repository.recent_signals(1)[0]["symbol"],
+                    "R_10",
+                )
+            finally:
+                bot.database.engine.dispose()
+                for handler in list(bot.logger.handlers):
+                    handler.close()
+                bot.logger.handlers.clear()
 
     async def test_cooldown_blocked_match_is_recorded_with_skip_reason(self) -> None:
         with TemporaryDirectory() as directory:

@@ -7,6 +7,8 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.strategy.over2_strategy import TEST2_SYMBOLS
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -35,6 +37,7 @@ class DerivSettings(StrictModel):
 
 class StrategySettings(StrictModel):
     symbol: Literal["1HZ100V"] = "1HZ100V"
+    symbols: tuple[str, ...] = TEST2_SYMBOLS
     contract_type: Literal["DIGITOVER"] = "DIGITOVER"
     prediction: Literal[2] = 2
     duration: Literal[1] = 1
@@ -47,6 +50,15 @@ class StrategySettings(StrictModel):
     def enforce_test2_contract(self) -> "StrategySettings":
         if abs(self.initial_stake - 0.50) > 1e-9:
             raise ValueError("Over 2 recovery requires a base stake of exactly 0.50 USD")
+        if not self.symbols:
+            raise ValueError("At least one Over-2 market must be configured")
+        if len(set(self.symbols)) != len(self.symbols):
+            raise ValueError("Over-2 markets must not contain duplicates")
+        unsupported = [symbol for symbol in self.symbols if symbol not in TEST2_SYMBOLS]
+        if unsupported:
+            raise ValueError(f"Unsupported Over-2 markets: {unsupported!r}")
+        if self.symbol not in self.symbols:
+            raise ValueError("The primary Over-2 market must be included in symbols")
         return self
 
 
@@ -252,6 +264,12 @@ def load_test2_config(path: str | Path = "config.yaml") -> Test2Config:
         ]
     if os.getenv("TEST_RUN_ID"):
         raw.setdefault("model", {})["run_id"] = os.environ["TEST_RUN_ID"]
+    if os.getenv("MARKET_SYMBOLS"):
+        raw.setdefault("strategy", {})["symbols"] = tuple(
+            symbol.strip()
+            for symbol in os.environ["MARKET_SYMBOLS"].split(",")
+            if symbol.strip()
+        )
     if os.getenv("REQUIRE_RISING_TICKS"):
         raw.setdefault("execution", {})["require_rising_ticks"] = os.environ[
             "REQUIRE_RISING_TICKS"

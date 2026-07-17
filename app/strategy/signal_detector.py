@@ -6,7 +6,13 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Sequence
 
-from app.strategy.over2_strategy import TEST2_BARRIER, TEST2_PATTERN_RANGES, TEST2_TRIGGER
+from app.strategy.over2_strategy import (
+    TEST2_BARRIER,
+    TEST2_PATTERN_RANGES,
+    TEST2_SYMBOL,
+    TEST2_SYMBOLS,
+    TEST2_TRIGGER,
+)
 
 
 @dataclass(slots=True)
@@ -42,6 +48,7 @@ class Over2SignalDetector:
         pattern_ranges: Sequence[Sequence[int]] = TEST2_PATTERN_RANGES,
         overlapping_signals_allowed: bool = False,
         require_pattern_reset: bool = True,
+        symbol: str = TEST2_SYMBOL,
     ) -> None:
         self.run_id = run_id
         self.trigger_name = str(trigger_name)
@@ -54,6 +61,9 @@ class Over2SignalDetector:
             )
         self.overlapping_signals_allowed = overlapping_signals_allowed
         self.require_pattern_reset = require_pattern_reset
+        if symbol not in TEST2_SYMBOLS:
+            raise ValueError(f"Unsupported Over-2 market: {symbol!r}")
+        self.symbol = symbol
         self.last_emitted_tick_id: str | None = None
 
     def observe(
@@ -91,7 +101,7 @@ class Over2SignalDetector:
         signal = CandidateSignal(
             signal_id=str(uuid.uuid4()),
             run_id=self.run_id,
-            symbol="1HZ100V",
+            symbol=self.symbol,
             contract_type="DIGITOVER",
             barrier=TEST2_BARRIER,
             trigger_name=self.trigger_name,

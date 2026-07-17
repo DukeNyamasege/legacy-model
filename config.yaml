@@ -24,6 +24,17 @@ logging:
   file: trading_bot.log
 strategy:
   symbol: 1HZ100V
+  symbols:
+    - 1HZ100V
+    - 1HZ10V
+    - 1HZ25V
+    - 1HZ50V
+    - 1HZ75V
+    - R_10
+    - R_100
+    - R_25
+    - R_50
+    - R_75
   contract_type: DIGITOVER
   prediction: 2
   duration: 1

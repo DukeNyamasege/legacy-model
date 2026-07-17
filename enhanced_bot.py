@@ -26,6 +26,7 @@ import socket
 import subprocess
 import math
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
 from collections import deque
 from datetime import datetime, timezone
@@ -448,6 +449,19 @@ def setup_logging(level: str, log_file: str) -> logging.Logger:
     return logger
 
 
+@dataclass(slots=True)
+class MarketRuntime:
+    symbol: str
+    pip_size: int
+    ticks_history: deque
+    live_ticks_history: deque
+    raw_tick_digits: deque
+    signal_detector: Over2SignalDetector
+    hmm: ThreeStateHmm
+    tick_sequence: int = 0
+    last_tick_received_at: float = 0.0
+
+
 class PublicMarketDataClient:
     """Manages the unauthenticated public WebSocket connection for ticks and symbol info."""
     def __init__(self, bot: 'TradingBot'):
@@ -471,10 +485,10 @@ class PublicMarketDataClient:
                     self.bot._on_public_connection_established()
                     self.bot.logger.info("Public WebSocket connection established")
 
-                    # Fetch and cache pip size (symbol precision)
+                    # Fetch and cache precision for every configured market.
                     await self._fetch_precision()
 
-                    # Subscribe to symbol ticks
+                    # Subscribe to every configured market on this connection.
                     await self._subscribe_ticks()
 
                     self.bot._mark_tick_received()
@@ -514,7 +528,10 @@ class PublicMarketDataClient:
             self.pending_requests.pop(req_id, None)
 
     async def _fetch_precision(self) -> None:
-        self.bot.logger.info("Retrieving symbol details for %s...", self.bot.symbol)
+        self.bot.logger.info(
+            "Retrieving symbol details for %s markets...",
+            len(self.bot.symbols),
+        )
         if not self.ws:
             return
         req_id = self.next_req_id
@@ -533,36 +550,48 @@ class PublicMarketDataClient:
             return
 
         symbols = resp.get("active_symbols", [])
-        matched = False
+        matched: Set[str] = set()
         for sym in symbols:
-            if sym.get("underlying_symbol") == self.bot.symbol:
+            symbol = str(sym.get("underlying_symbol") or sym.get("symbol") or "")
+            market = self.bot.market_states.get(symbol)
+            if market is not None:
                 pip_size_val = sym.get("pip_size", 0.01)
 
                 # Convert pip_size float to decimal places
                 if isinstance(pip_size_val, (int, float)):
                     if pip_size_val < 1:
                         s = f"{pip_size_val:.10f}".rstrip('0')
-                        self.bot.pip_size = len(s.split('.')[1]) if '.' in s else 2
+                        market.pip_size = len(s.split('.')[1]) if '.' in s else 2
                     else:
-                        self.bot.pip_size = int(pip_size_val)
+                        market.pip_size = int(pip_size_val)
                 else:
-                    self.bot.pip_size = 2
+                    market.pip_size = 2
 
-                matched = True
-                self.bot.logger.info("Cached %s precision: %s decimal places", self.bot.symbol, self.bot.pip_size)
-                break
+                matched.add(symbol)
+                self.bot.logger.info(
+                    "Cached %s precision: %s decimal places",
+                    symbol,
+                    market.pip_size,
+                )
 
-        if not matched:
-            self.bot.logger.warning("Symbol %s not found in active symbols. Defaulting to 2 decimals.", self.bot.symbol)
-            self.bot.pip_size = 2
+        self.bot.pip_size = self.bot.market_states[self.bot.symbol].pip_size
+        missing = [symbol for symbol in self.bot.symbols if symbol not in matched]
+        if missing:
+            self.bot.logger.warning(
+                "Markets not found in active symbols; using 2 decimal places: %s",
+                ", ".join(missing),
+            )
 
     async def _subscribe_ticks(self) -> None:
-        req = {
-            "ticks": self.bot.symbol,
-            "subscribe": 1
-        }
-        await self.ws.send(json.dumps(req))
-        self.bot.logger.info("Subscribed to %s ticks on public connection", self.bot.symbol)
+        if not self.ws:
+            return
+        for symbol in self.bot.symbols:
+            await self.ws.send(json.dumps({"ticks": symbol, "subscribe": 1}))
+        self.bot.logger.info(
+            "MULTI_MARKET_SUBSCRIBED count=%s symbols=%s",
+            len(self.bot.symbols),
+            ",".join(self.bot.symbols),
+        )
 
     async def _on_message(self, msg_str: str) -> None:
         try:
@@ -578,6 +607,13 @@ class PublicMarketDataClient:
         msg_type = data.get("msg_type")
         if msg_type == "tick":
             await self.bot._on_tick(data)
+        elif "error" in data:
+            requested_symbol = str(data.get("echo_req", {}).get("ticks") or "unknown")
+            self.bot.logger.error(
+                "Market subscription failed symbol=%s: %s",
+                requested_symbol,
+                data["error"].get("message", "Unknown market-data error"),
+            )
 
 
 class ClientSession:
@@ -873,6 +909,7 @@ class TradingBot:
         self.encryption_key = str(self.cfg["deriv"].get("token_encryption_key", ""))
 
         self.symbol = self.cfg["strategy"].get("symbol", "1HZ100V")
+        self.symbols = list(self.cfg["strategy"].get("symbols") or [self.symbol])
         self.contract_type = str(self.cfg["strategy"]["contract_type"])
         self.contract_barrier = str(self.cfg["strategy"]["prediction"])
         self.duration = int(self.cfg["strategy"]["duration"])
@@ -890,14 +927,15 @@ class TradingBot:
         self.reconciliation_poll_seconds = max(1, int(self.cfg["trade"].get("reconciliation_poll_seconds", 2)))
         self.watchdog_poll_interval_seconds = 5.0
 
-        validate_contract_parameters(
-            contract_type=self.contract_type,
-            barrier=self.contract_barrier,
-            symbol=self.symbol,
-            stake=float(self.cfg["strategy"]["initial_stake"]),
-            duration=self.duration,
-            duration_unit=self.duration_unit,
-        )
+        for symbol in self.symbols:
+            validate_contract_parameters(
+                contract_type=self.contract_type,
+                barrier=self.contract_barrier,
+                symbol=symbol,
+                stake=float(self.cfg["strategy"]["initial_stake"]),
+                duration=self.duration,
+                duration_unit=self.duration_unit,
+            )
         if not self.test2_config.execution.require_rising_ticks:
             raise RuntimeError("Rising-only entry policy must remain enabled.")
         self.rising_policy = str(
@@ -909,6 +947,11 @@ class TradingBot:
             self.cfg["logging"].get("file", "trading_bot.log"),
         )
         self.logger.info("RISING_POLICY_ACTIVE mode=%s", self.rising_policy)
+        self.logger.info(
+            "MULTI_MARKET_ACTIVE count=%s symbols=%s execution=first_qualifying_market",
+            len(self.symbols),
+            ",".join(self.symbols),
+        )
         self.logger.info(
             "CONTRACT_TIMING_STANDARD duration=1_tick settlement_sla_seconds=%.1f "
             "reconciliation_after_seconds=%s",
@@ -946,20 +989,49 @@ class TradingBot:
         self.tick_sequence = 0
         self.connection_session_id = ""
         self.pending_signal: Optional[CandidateSignal] = None
-        self.ticks_history = deque(maxlen=50)
-        self.live_ticks_history = deque(maxlen=7)
         self.tick_sequence = self.repository.current_tick_sequence()
-        historical_digits = self.repository.recent_digits(limit=6000)
-        self.raw_tick_digits = deque(historical_digits, maxlen=10000)
 
         signal_cfg = self.test2_config.signal
-        self.signal_detector = Over2SignalDetector(
-            run_id=self.test2_config.model.run_id,
-            trigger_name=signal_cfg.trigger_name,
-            pattern_ranges=signal_cfg.pattern_ranges,
-            overlapping_signals_allowed=signal_cfg.overlapping_signals_allowed,
-            require_pattern_reset=signal_cfg.require_pattern_reset,
-        )
+        hmm_cfg = self.test2_config.hmm
+        self.market_states: Dict[str, MarketRuntime] = {}
+        trained_markets: List[MarketRuntime] = []
+        for symbol in self.symbols:
+            historical_digits = self.repository.recent_digits(
+                limit=6000,
+                symbol=symbol,
+            )
+            raw_tick_digits = deque(historical_digits, maxlen=10000)
+            hmm = ThreeStateHmm(hmm_cfg.minimum_training_ticks)
+            market = MarketRuntime(
+                symbol=symbol,
+                pip_size=2,
+                ticks_history=deque(maxlen=50),
+                live_ticks_history=deque(maxlen=7),
+                raw_tick_digits=raw_tick_digits,
+                signal_detector=Over2SignalDetector(
+                    run_id=self.test2_config.model.run_id,
+                    trigger_name=signal_cfg.trigger_name,
+                    pattern_ranges=signal_cfg.pattern_ranges,
+                    overlapping_signals_allowed=signal_cfg.overlapping_signals_allowed,
+                    require_pattern_reset=signal_cfg.require_pattern_reset,
+                    symbol=symbol,
+                ),
+                hmm=hmm,
+                tick_sequence=self.repository.current_tick_sequence(symbol=symbol),
+            )
+            self.market_states[symbol] = market
+            if hmm.train(list(raw_tick_digits)):
+                trained_markets.append(market)
+
+        primary_market = self.market_states[self.symbol]
+        # Compatibility aliases used by existing integrations and focused unit tests.
+        self.ticks_history = primary_market.ticks_history
+        self.live_ticks_history = primary_market.live_ticks_history
+        self.raw_tick_digits = primary_market.raw_tick_digits
+        self.signal_detector = primary_market.signal_detector
+        self.hmm = primary_market.hmm
+        self.live_market_symbol = self.symbol
+
         bayes_cfg = self.test2_config.bayesian
         self.bayesian = BayesianProbability(
             prior_alpha=bayes_cfg.prior_alpha,
@@ -969,10 +1041,8 @@ class TradingBot:
         )
         wins, losses = self.repository.completed_outcomes()
         self.bayesian.restore(wins, losses)
-        hmm_cfg = self.test2_config.hmm
-        self.hmm = ThreeStateHmm(hmm_cfg.minimum_training_ticks)
-        if self.hmm.train(list(self.raw_tick_digits)):
-            self._persist_hmm_metadata()
+        for market in trained_markets:
+            self._persist_hmm_metadata(market)
         execution_cfg = self.test2_config.execution
         self.decision_engine = DecisionEngine(
             reject_if_new_tick_arrives=execution_cfg.reject_if_new_tick_arrives,
@@ -1028,6 +1098,7 @@ class TradingBot:
         self.pending_contracts_for_current_cycle: Set[int] = set()
         self.cycle_outcomes: List[str] = []
         self.contract_signal_ids: Dict[int, str] = {}
+        self.contract_symbols: Dict[int, str] = {}
         self.pending_by_signal: Dict[str, Set[int]] = {}
         self.outcomes_by_signal: Dict[str, List[str]] = {}
         self.pending_contract_started_at: Dict[int, datetime] = {}
@@ -1218,23 +1289,34 @@ class TradingBot:
 
         return tokens, profiles
 
-    def _persist_hmm_metadata(self) -> None:
-        model_id = f"hmm-{self.test2_config.model.run_id}-{self.tick_sequence}"
-        first_sequence = max(1, self.tick_sequence - len(self.raw_tick_digits) + 1)
+    def _persist_hmm_metadata(self, market: MarketRuntime | None = None) -> None:
+        market = market or self.market_states[self.symbol]
+        safe_symbol = market.symbol.replace("_", "-").lower()
+        model_id = (
+            f"hmm-{self.test2_config.model.run_id}-{safe_symbol}-"
+            f"{market.tick_sequence}"
+        )
+        first_sequence = max(
+            1,
+            market.tick_sequence - len(market.raw_tick_digits) + 1,
+        )
         try:
             metadata = persist_model_metadata(
                 "model_artifacts",
                 model_id=model_id,
                 model_version=self.test2_config.model.version,
                 training_run_id=self.test2_config.model.run_id,
-                training_tick_range=(first_sequence, self.tick_sequence),
-                observation_count=len(self.raw_tick_digits),
+                training_tick_range=(first_sequence, market.tick_sequence),
+                observation_count=len(market.raw_tick_digits),
                 state_mappings={
                     "0": "MEAN_REVERSION",
                     "1": "NEUTRAL_RANDOM",
                     "2": "CONTINUATION",
                 },
-                validation_metrics={"framework_ready": True},
+                validation_metrics={
+                    "framework_ready": True,
+                    "symbol": market.symbol,
+                },
             )
         except OSError as exc:
             self.logger.warning("HMM metadata persistence skipped: %s", exc)
@@ -1424,6 +1506,7 @@ class TradingBot:
                 "cooldown_ticks_remaining": self.cooldown_ticks_remaining,
                 "environment": self.environment,
                 "symbol": self.symbol,
+                "symbols": self.symbols,
                 "is_trading_locked": self.is_trading_locked,
                 "pending_contract_count": len(self.pending_contracts_for_current_cycle),
                 "last_tick_received_at": self.last_tick_received_at,
@@ -1505,36 +1588,39 @@ class TradingBot:
     def base_stake(self) -> float:
         return float(self.cfg["strategy"]["initial_stake"])
 
-    def _last_three_ticks_rising(self) -> bool:
-        if len(self.ticks_history) < 3:
+    def _last_three_ticks_rising(self, market: MarketRuntime | None = None) -> bool:
+        history = (market or self.market_states[self.symbol]).ticks_history
+        if len(history) < 3:
             return False
-        quotes = [float(item["quote"]) for item in list(self.ticks_history)[-3:]]
+        quotes = [float(item["quote"]) for item in list(history)[-3:]]
         return quotes[0] < quotes[1] < quotes[2]
 
-    def _soft_rising_momentum(self) -> bool:
-        if len(self.ticks_history) < 5:
+    def _soft_rising_momentum(self, market: MarketRuntime | None = None) -> bool:
+        history = (market or self.market_states[self.symbol]).ticks_history
+        if len(history) < 5:
             return False
-        quotes = [float(item["quote"]) for item in list(self.ticks_history)[-5:]]
+        quotes = [float(item["quote"]) for item in list(history)[-5:]]
         moves = [later - earlier for earlier, later in zip(quotes, quotes[1:])]
         upward_moves = sum(1 for move in moves if move > 0)
         return quotes[-1] > quotes[-3] and quotes[-1] >= quotes[0] and upward_moves >= 2
 
-    def _high_frequency_momentum(self) -> bool:
-        if len(self.ticks_history) < 4:
+    def _high_frequency_momentum(self, market: MarketRuntime | None = None) -> bool:
+        history = (market or self.market_states[self.symbol]).ticks_history
+        if len(history) < 4:
             return False
-        quotes = [float(item["quote"]) for item in list(self.ticks_history)[-4:]]
+        quotes = [float(item["quote"]) for item in list(history)[-4:]]
         moves = [later - earlier for earlier, later in zip(quotes, quotes[1:])]
         upward_moves = sum(1 for move in moves if move > 0)
         latest_holds_ground = quotes[-1] >= min(quotes[-3:])
         recent_recovery = quotes[-1] > quotes[-2] or quotes[-1] >= quotes[-3]
         return latest_holds_ground and recent_recovery and upward_moves >= 1
 
-    def _rising_policy_allows_entry(self) -> bool:
+    def _rising_policy_allows_entry(self, market: MarketRuntime | None = None) -> bool:
         if self.rising_policy == "strict_last_three_quotes":
-            return self._last_three_ticks_rising()
+            return self._last_three_ticks_rising(market)
         if self.rising_policy == "high_frequency_momentum":
-            return self._high_frequency_momentum()
-        return self._soft_rising_momentum()
+            return self._high_frequency_momentum(market)
+        return self._soft_rising_momentum(market)
 
     @property
     def recovery_stake_cap(self) -> float:
@@ -1749,12 +1835,19 @@ class TradingBot:
         else:
             self._save_state()
 
-    def _evaluate_pending_shadow_signals(self, final_digit: int) -> None:
+    def _evaluate_pending_shadow_signals(
+        self,
+        final_digit: int,
+        market: MarketRuntime,
+    ) -> None:
         if not self.pending_shadow_signals:
             return
         remaining: List[Dict[str, Any]] = []
         for item in self.pending_shadow_signals:
-            if int(item["tick_sequence"]) >= self.tick_sequence:
+            if (
+                str(item.get("symbol")) != market.symbol
+                or int(item["tick_sequence"]) >= market.tick_sequence
+            ):
                 remaining.append(item)
                 continue
             outcome = "win" if final_digit > int(self.contract_barrier) else "loss"
@@ -1768,11 +1861,14 @@ class TradingBot:
             {
                 "signal_id": signal.signal_id,
                 "tick_sequence": signal.tick_sequence,
+                "symbol": signal.symbol,
             }
         )
         self.logger.warning(
-            "SIGNAL_SKIPPED signal_id=%s digits=[%s] trigger=%s status=SKIP_REGIME_GUARD reason=%s",
+            "SIGNAL_SKIPPED signal_id=%s symbol=%s digits=[%s] trigger=%s "
+            "status=SKIP_REGIME_GUARD reason=%s",
             signal.signal_id,
+            signal.symbol,
             digits_display,
             signal.trigger_name,
             self.regime_guard_reason,
@@ -1790,8 +1886,9 @@ class TradingBot:
         self.repository.record_candidate(signal)
         self.repository.mark_signal(signal.signal_id, status=status)
         self.logger.info(
-            "SIGNAL_SKIPPED signal_id=%s digits=[%s] trigger=%s status=%s",
+            "SIGNAL_SKIPPED signal_id=%s symbol=%s digits=[%s] trigger=%s status=%s",
             signal.signal_id,
+            signal.symbol,
             digits_display,
             signal.trigger_name,
             status,
@@ -1804,6 +1901,7 @@ class TradingBot:
         *,
         connection_session_id: str,
         tick_sequence: int,
+        symbol: str | None = None,
     ) -> CandidateSignal:
         required = len(TEST2_PATTERN_RANGES)
         window = ticks[-required:]
@@ -1812,7 +1910,7 @@ class TradingBot:
         return CandidateSignal(
             signal_id=str(uuid.uuid4()),
             run_id=self.test2_config.model.run_id,
-            symbol=self.symbol,
+            symbol=symbol or self.symbol,
             contract_type=self.contract_type,
             barrier=self.contract_barrier,
             trigger_name=TEST2_TRIGGER,
@@ -1853,12 +1951,16 @@ class TradingBot:
 
     def _render_live_ticks(self, note: str = "") -> None:
         handler = self._get_live_console_handler()
-        if handler is None or not self.live_ticks_history:
+        market = self.market_states.get(
+            self.live_market_symbol,
+            self.market_states[self.symbol],
+        )
+        if handler is None or not market.live_ticks_history:
             return
 
-        symbol = self.symbol
-        digits_display = " | ".join(t["last_digit"] for t in self.live_ticks_history)
-        quotes_display = " | ".join(t["display"] for t in self.live_ticks_history)
+        symbol = market.symbol
+        digits_display = " | ".join(t["last_digit"] for t in market.live_ticks_history)
+        quotes_display = " | ".join(t["display"] for t in market.live_ticks_history)
         state = note
         if not state:
             if self.is_trading_locked:
@@ -1876,8 +1978,10 @@ class TradingBot:
         if handler is not None:
             handler.clear_status()
 
-    def _mark_tick_received(self) -> None:
+    def _mark_tick_received(self, market: MarketRuntime | None = None) -> None:
         self.last_tick_received_at = time.monotonic()
+        if market is not None:
+            market.last_tick_received_at = self.last_tick_received_at
 
     def _on_public_connection_established(self) -> None:
         previous = self.connection_session_id
@@ -1889,12 +1993,19 @@ class TradingBot:
                 stale=True,
             )
             self.pending_signal = None
+        for market in self.market_states.values():
+            market.ticks_history.clear()
+            market.live_ticks_history.clear()
+            market.signal_detector.rearm()
 
     def _reset_session_runtime_state(self) -> None:
         self.is_trading_locked = False
         self.last_tick_received_at = 0.0
-        self.ticks_history.clear()
-        self.live_ticks_history.clear()
+        for market in self.market_states.values():
+            market.ticks_history.clear()
+            market.live_ticks_history.clear()
+            market.last_tick_received_at = 0.0
+            market.signal_detector.rearm()
         self.pending_contract_started_at.clear()
         self.delayed_contracts_logged.clear()
         self._clear_live_ticks()
@@ -2146,13 +2257,20 @@ class TradingBot:
 
     async def _on_tick(self, tick_data: Dict[str, Any]) -> None:
         tick = tick_data["tick"]
+        symbol = str(tick.get("symbol") or self.symbol)
+        market = self.market_states.get(symbol)
+        if market is None:
+            self.logger.warning("Ignoring tick for unconfigured market symbol=%s", symbol)
+            return
         quote = float(tick["quote"])
-        display_value = f"{quote:.{self.pip_size}f}"
+        display_value = f"{quote:.{market.pip_size}f}"
         last_digit = display_value[-1]
         epoch = int(tick["epoch"])
         tick_id = str(tick.get("id") or f"{epoch}:{display_value}")
-        self._mark_tick_received()
+        self.live_market_symbol = symbol
+        self._mark_tick_received(market)
         self.tick_sequence += 1
+        market.tick_sequence += 1
 
         tick_snapshot = {
             "quote": quote,
@@ -2161,62 +2279,72 @@ class TradingBot:
             "epoch": epoch,
             "tick_id": tick_id,
         }
-        self.live_ticks_history.append(tick_snapshot)
-        self.ticks_history.append(tick_snapshot)
-        self.raw_tick_digits.append(int(last_digit))
+        market.live_ticks_history.append(tick_snapshot)
+        market.ticks_history.append(tick_snapshot)
+        market.raw_tick_digits.append(int(last_digit))
         self.repository.record_tick(
             sequence_id=self.tick_sequence,
-            symbol=str(tick.get("symbol") or self.symbol),
+            symbol=symbol,
             epoch=epoch,
             tick_id=tick_id,
             quote=quote,
             final_digit=int(last_digit),
             connection_session_id=self.connection_session_id,
         )
-        self._evaluate_pending_shadow_signals(int(last_digit))
+        self._evaluate_pending_shadow_signals(int(last_digit), market)
         self._render_live_ticks()
 
         hmm_cfg = self.test2_config.hmm
         if (
             hmm_cfg.enabled
-            and len(self.raw_tick_digits) >= hmm_cfg.minimum_training_ticks
+            and len(market.raw_tick_digits) >= hmm_cfg.minimum_training_ticks
             and (
-                not self.hmm.trained
-                or self.tick_sequence % hmm_cfg.retrain_every_ticks == 0
+                not market.hmm.trained
+                or market.tick_sequence % hmm_cfg.retrain_every_ticks == 0
             )
         ):
-            if self.hmm.train(list(self.raw_tick_digits)):
-                self._persist_hmm_metadata()
+            if market.hmm.train(list(market.raw_tick_digits)):
+                self._persist_hmm_metadata(market)
 
         digits_display = " | ".join(
-            t["last_digit"] for t in list(self.ticks_history)[-self.pattern_length :]
+            t["last_digit"]
+            for t in list(market.ticks_history)[-self.pattern_length :]
         )
-        self.logger.debug("tick %s last_digits=[%s]", display_value, digits_display)
-        last_digits = [t["last_digit"] for t in list(self.ticks_history)]
+        self.logger.debug(
+            "tick symbol=%s quote=%s last_digits=[%s]",
+            symbol,
+            display_value,
+            digits_display,
+        )
+        last_digits = [t["last_digit"] for t in list(market.ticks_history)]
         raw_match = detect_digit_streak_signal(last_digits, self.pattern_length)
         if raw_match is not None:
             self.logger.info(
-                "RAW_MATCH_DETECTED digits=[%s] trigger=%s tick_sequence=%s",
+                "RAW_MATCH_DETECTED symbol=%s digits=[%s] trigger=%s tick_sequence=%s",
+                symbol,
                 digits_display,
                 raw_match[2],
-                self.tick_sequence,
+                market.tick_sequence,
             )
 
-        signal = self.signal_detector.observe(
-            list(self.ticks_history),
+        signal = market.signal_detector.observe(
+            list(market.ticks_history),
             connection_session_id=self.connection_session_id,
-            tick_sequence=self.tick_sequence,
+            tick_sequence=market.tick_sequence,
         )
         if raw_match is not None and signal is None:
             signal = self._build_candidate_signal_from_ticks(
-                list(self.ticks_history),
+                list(market.ticks_history),
                 connection_session_id=self.connection_session_id,
-                tick_sequence=self.tick_sequence,
+                tick_sequence=market.tick_sequence,
+                symbol=symbol,
             )
             self.logger.warning(
-                "RAW_MATCH_RECOVERED digits=[%s] tick_sequence=%s detector_returned_none",
+                "RAW_MATCH_RECOVERED symbol=%s digits=[%s] tick_sequence=%s "
+                "detector_returned_none",
+                symbol,
                 digits_display,
-                self.tick_sequence,
+                market.tick_sequence,
             )
 
         if self.is_trading_locked:
@@ -2237,7 +2365,10 @@ class TradingBot:
                     digits_display=digits_display,
                     note=self._cooldown_note(),
                 )
-            self._consume_cooldown_tick()
+            # Preserve the original cooldown timing instead of consuming it up to
+            # ten times faster because ten streams share one execution lock.
+            if symbol == self.symbol:
+                self._consume_cooldown_tick()
             self._render_live_ticks(note=self._cooldown_note() if self._is_cooldown_active() else "trade=WATCHING")
             return
 
@@ -2274,7 +2405,7 @@ class TradingBot:
 
         if (
             self.test2_config.execution.require_rising_ticks
-            and not self._rising_policy_allows_entry()
+            and not self._rising_policy_allows_entry(market)
         ):
             self._record_blocked_signal(
                 signal,
@@ -2293,8 +2424,10 @@ class TradingBot:
         self.is_trading_locked = True
         self._render_live_ticks(note=f"CANDIDATE {signal.trigger_name}")
         self.logger.info(
-            "SIGNAL_CREATED signal_id=%s digits=[%s] trigger=%s contract_type=%s barrier=%s",
+            "SIGNAL_CREATED signal_id=%s symbol=%s digits=[%s] trigger=%s "
+            "contract_type=%s barrier=%s",
             signal.signal_id,
+            signal.symbol,
             digits_display,
             signal.trigger_name,
             signal.contract_type,
@@ -2311,6 +2444,9 @@ class TradingBot:
     ) -> None:
         """Evaluate one Test 2 candidate and submit a new-API bulk purchase."""
         try:
+            market = self.market_states.get(signal.symbol)
+            if market is None:
+                raise ValueError(f"Signal references unconfigured market {signal.symbol!r}")
             await self._refresh_runtime_accounts_if_needed()
             base_stake = self.base_stake
             validate_contract_parameters(
@@ -2322,8 +2458,9 @@ class TradingBot:
                 duration_unit=self.duration_unit,
             )
             self.logger.info(
-                "Validating candidate via proposal request signal_id=%s",
+                "Validating candidate via proposal request signal_id=%s symbol=%s",
                 signal.signal_id,
+                signal.symbol,
             )
             proposal_requested = time.monotonic()
             self.repository.mark_signal(
@@ -2385,14 +2522,14 @@ class TradingBot:
                 economics.break_even_probability,
                 self.test2_config.bayesian.safety_margin_probability,
             )
-            features = build_features(list(self.raw_tick_digits))
-            hmm = self.hmm.infer(features)
+            features = build_features(list(market.raw_tick_digits))
+            hmm = market.hmm.infer(features)
             decision = self.decision_engine.decide(
                 signal=signal,
                 economics=economics,
                 bayesian=bayesian,
                 hmm=hmm,
-                current_tick_sequence=self.tick_sequence,
+                current_tick_sequence=market.tick_sequence,
                 connection_session_id=self.connection_session_id,
                 connection_healthy=(
                     self.public_client.is_connected
@@ -2406,9 +2543,10 @@ class TradingBot:
                 bayesian=bayesian,
             )
             self.logger.info(
-                "MODEL_DECISION signal_id=%s action=%s expected_value=%.5f "
+                "MODEL_DECISION signal_id=%s symbol=%s action=%s expected_value=%.5f "
                 "posterior_mean=%.5f hmm_state=%s",
                 signal.signal_id,
+                signal.symbol,
                 decision.final_action,
                 decision.expected_value,
                 decision.posterior_mean,
@@ -2430,7 +2568,7 @@ class TradingBot:
 
             if (
                 self.test2_config.execution.reject_if_new_tick_arrives
-                and self.tick_sequence != signal.tick_sequence
+                and market.tick_sequence != signal.tick_sequence
             ):
                 self.repository.mark_signal(
                     signal.signal_id,
@@ -2478,11 +2616,12 @@ class TradingBot:
                 signal.signal_id,
                 status="PURCHASE_REQUESTED",
                 purchase_requested=True,
-                ticks_between=self.tick_sequence - signal.tick_sequence,
+                ticks_between=market.tick_sequence - signal.tick_sequence,
             )
             self.logger.info(
-                "PURCHASE_REQUESTED signal_id=%s account_count=%s proposal_id=%s",
+                "PURCHASE_REQUESTED signal_id=%s symbol=%s account_count=%s proposal_id=%s",
                 signal.signal_id,
+                signal.symbol,
                 len(eligible_accounts),
                 economics.proposal_id,
             )
@@ -2548,7 +2687,6 @@ class TradingBot:
                 self.repository.mark_signal(signal.signal_id, status="PURCHASE_FAILED")
                 self.logger.warning("No contracts were purchased successfully")
                 return
-
             purchased_account_ids = registered_account_ids
             missing_purchases = sorted(eligible_account_ids - purchased_account_ids)
             if missing_purchases:
@@ -2622,6 +2760,7 @@ class TradingBot:
 
         self.pending_contracts_for_current_cycle.add(contract_id)
         self.contract_signal_ids[contract_id] = signal.signal_id
+        self.contract_symbols[contract_id] = signal.symbol
         session.pending_contracts.add(contract_id)
         self.pending_contract_started_at[contract_id] = purchase_requested_at
         self.repository.register_purchase(
@@ -3179,7 +3318,17 @@ class TradingBot:
             exit_tick = None
         exit_digit = None
         if exit_tick is not None:
-            exit_digit = int(f"{exit_tick:.{self.pip_size}f}"[-1])
+            contract_symbol = str(
+                contract.get("underlying")
+                or contract.get("underlying_symbol")
+                or self.contract_symbols.get(contract_id)
+                or self.symbol
+            )
+            precision = self.market_states.get(
+                contract_symbol,
+                self.market_states[self.symbol],
+            ).pip_size
+            exit_digit = int(f"{exit_tick:.{precision}f}"[-1])
 
         if status == "won":
             outcome = "win"
@@ -3304,6 +3453,7 @@ class TradingBot:
 
         self.unresolved_contracts_from_state.discard(contract_id)
         self.pending_contracts_for_current_cycle.discard(contract_id)
+        self.contract_symbols.pop(contract_id, None)
         self.pending_contract_started_at.pop(contract_id, None)
         self.delayed_contracts_logged.discard(contract_id)
 
@@ -3460,6 +3610,9 @@ class TradingBot:
                     self.unresolved_contracts_from_state.add(cid)
                     self.pending_contracts_for_current_cycle.add(cid)
                     self.contract_signal_ids[cid] = trade.signal_id
+                    self.contract_symbols[cid] = self.repository.signal_symbol(
+                        trade.signal_id
+                    ) or self.symbol
                     self.pending_by_signal.setdefault(trade.signal_id, set()).add(cid)
 
                 for session in self.sessions.values():

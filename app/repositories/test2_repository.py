@@ -461,21 +461,27 @@ class Test2Repository:
                 state.current_connection_id = connection_session_id
                 state.last_heartbeat = utc_now()
 
-    def recent_digits(self, limit: int = 6000) -> list[int]:
+    def recent_digits(
+        self,
+        limit: int = 6000,
+        *,
+        symbol: str | None = None,
+    ) -> list[int]:
         with self.database.session() as session:
+            query = select(Tick.final_digit).where(Tick.run_id == self.run_id)
+            if symbol:
+                query = query.where(Tick.symbol == symbol)
             rows = session.scalars(
-                select(Tick.final_digit)
-                .where(Tick.run_id == self.run_id)
-                .order_by(Tick.sequence_id.desc())
-                .limit(limit)
+                query.order_by(Tick.sequence_id.desc()).limit(limit)
             ).all()
         return list(reversed([int(value) for value in rows]))
 
-    def current_tick_sequence(self) -> int:
+    def current_tick_sequence(self, *, symbol: str | None = None) -> int:
         with self.database.session() as session:
-            value = session.scalar(
-                select(func.max(Tick.sequence_id)).where(Tick.run_id == self.run_id)
-            )
+            query = select(func.max(Tick.sequence_id)).where(Tick.run_id == self.run_id)
+            if symbol:
+                query = query.where(Tick.symbol == symbol)
+            value = session.scalar(query)
         return int(value or 0)
 
     def record_candidate(self, signal: CandidateSignal) -> None:
@@ -539,6 +545,16 @@ class Test2Repository:
                 .values(consumed=True, final_status="PURCHASE_REQUESTED")
             )
             return result.rowcount == 1
+
+    def signal_symbol(self, signal_id: str) -> str:
+        with self.database.session() as session:
+            value = session.scalar(
+                select(CandidateSignalRecord.symbol).where(
+                    CandidateSignalRecord.signal_id == signal_id,
+                    CandidateSignalRecord.run_id == self.run_id,
+                )
+            )
+        return str(value or "")
 
     def record_proposal(
         self, signal: CandidateSignal, economics: ProposalEconomics
@@ -1052,17 +1068,24 @@ class Test2Repository:
     ) -> list[dict[str, Any]]:
         account_masked = mask_account_id(account_id) if account_id else ""
         with self.database.session() as session:
-            query = select(Trade).where(self._current_run_trade_filter())
+            query = (
+                select(Trade, CandidateSignalRecord.symbol)
+                .join(
+                    CandidateSignalRecord,
+                    CandidateSignalRecord.signal_id == Trade.signal_id,
+                )
+                .where(self._current_run_trade_filter())
+            )
             if account_masked:
                 query = query.where(Trade.account_id_masked == account_masked)
-            trades = session.scalars(
+            trade_rows = session.execute(
                 query
                 .order_by(Trade.purchase_time.desc())
                 .limit(limit)
             ).all()
             settlement_sla = float(self.config.trade.settlement_sla_seconds)
             results: list[dict[str, Any]] = []
-            for trade in trades:
+            for trade, symbol in trade_rows:
                 lifecycle_seconds = max(
                     0.0,
                     ((trade.settlement_time or utc_now()) - trade.purchase_time).total_seconds(),
@@ -1093,6 +1116,7 @@ class Test2Repository:
                 )
                 results.append({
                     "contract_id": trade.contract_id,
+                    "symbol": str(symbol),
                     "account": trade.account_id_masked,
                     "purchase_time": trade.purchase_time.isoformat(),
                     "settlement_time": (
@@ -1224,6 +1248,7 @@ class Test2Repository:
                 results.append(
                     {
                         "signal_id": signal.signal_id,
+                        "symbol": signal.symbol,
                         "generated_at": signal.generated_timestamp.isoformat(),
                         "trigger_name": signal.trigger_name,
                         "trigger_digits": signal.trigger_digits,

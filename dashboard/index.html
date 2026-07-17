@@ -653,6 +653,7 @@
         <thead>
           <tr>
             <th>Contract ID</th>
+            <th>Market</th>
             <th>Account</th>
             <th>Status</th>
             <th>Buy price</th>
@@ -670,7 +671,7 @@
           </tr>
         </thead>
         <tbody id="contracts-body">
-          <tr><td colspan="15"><div class="empty">No contracts yet.</div></td></tr>
+          <tr><td colspan="16"><div class="empty">No contracts yet.</div></td></tr>
         </tbody>
       </table>
     </div>
@@ -786,7 +787,7 @@
       count.innerHTML = `<strong>${label} ${escapeHtml(account || "")}</strong>${number(rows.length)} shown | markup ${number(totalMarkup, 4)} | ${escapeHtml(markupStatus)}`;
     }
     if (!rows.length) {
-      body.innerHTML = '<tr><td colspan="15"><div class="empty">No contracts yet.</div></td></tr>';
+      body.innerHTML = '<tr><td colspan="16"><div class="empty">No contracts yet.</div></td></tr>';
       return;
     }
     body.innerHTML = rows.map(trade => {
@@ -798,6 +799,7 @@
       return `
         <tr>
           <td class="contract-id">${escapeHtml(trade.contract_id || "-")}</td>
+          <td>${escapeHtml(trade.symbol || "-")}</td>
           <td>${escapeHtml(trade.account || "-")}</td>
           <td>
             <span class="contract-status ${status.className}">${status.label}</span>

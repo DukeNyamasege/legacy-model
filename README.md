@@ -7,15 +7,21 @@ The bot is an Over-2 Deriv digit strategy using the current APIs documented at
 
 - Signal: the latest five completed digit bins match
   `[6-9], [6-9], [0-2], [0-2], [3-5]` (`BIN22001x5`) and the latest
-  three quotes are strictly rising.
-- Contract: `DIGITOVER`, barrier `2`, symbol `1HZ100V`.
+  market-specific quote window passes the configured rising policy.
+- Contract: `DIGITOVER`, barrier `2`, on the qualifying market.
+- Markets: `1HZ100V`, `1HZ10V`, `1HZ25V`, `1HZ50V`, `1HZ75V`,
+  `R_10`, `R_100`, `R_25`, `R_50`, and `R_75`.
+- Market isolation: each symbol has its own precision, tick window, signal
+  detector, and HMM history. Digits from different symbols are never combined.
+- Execution: the first qualifying market acquires the global copy-purchase lock;
+  another market cannot submit a competing signal during that purchase.
 - Base stake: `$0.50 USD`.
 - Recovery sizing: configured two-run recovery, capped by `maximum_stake`.
 - Duration: one tick.
 - Bayesian layer: active gate using a locked historical calibration and the
   markup-adjusted break-even payout. HMM remains observation-only.
-- No session stop, drawdown stop, hourly cap, trade-count cap, open-contract cap,
-  or consecutive-loss hard stop.
+- No session stop, drawdown stop, hourly cap, trade-count cap, or
+  consecutive-loss hard stop.
 
 The locked 60,000/40,000 chronological research split produced `51/58` wins in
 development and `56/67` on the untouched holdout. This is a small historical
