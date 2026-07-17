@@ -1,4 +1,5 @@
 import asyncio
+import io
 import json
 import os
 import time
@@ -107,6 +108,30 @@ class DashboardMetricsTests(unittest.TestCase):
         self.assertEqual(result["primary_account_balance"], 389.16)
         self.assertEqual(result["all_accounts_profit"], 1.50)
         self.assertEqual(result["copy_trade_gap"], 1)
+
+
+class LiveConsoleTests(unittest.TestCase):
+    def test_non_tty_status_emits_each_tick_as_a_flushed_line(self) -> None:
+        stream = io.StringIO()
+        handler = enhanced_bot.LiveConsoleHandler(stream)
+
+        handler.set_status(
+            "LIVE R_10 | digits=[1] | ticks=[100.01] | trade=WATCHING"
+        )
+        handler.set_status(
+            "LIVE R_10 | digits=[1 | 2] | "
+            "ticks=[100.01 | 100.02] | trade=WATCHING"
+        )
+
+        self.assertTrue(handler.live_tick_log_lines)
+        self.assertEqual(
+            stream.getvalue().splitlines(),
+            [
+                "LIVE R_10 | digits=[1] | ticks=[100.01] | trade=WATCHING",
+                "LIVE R_10 | digits=[1 | 2] | "
+                "ticks=[100.01 | 100.02] | trade=WATCHING",
+            ],
+        )
 
 
 class SignalTests(unittest.TestCase):

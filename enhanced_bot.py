@@ -67,6 +67,24 @@ if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
+
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+ANSI_RESET = "\033[0m"
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.getenv(name, "true" if default else "false").strip().lower()
+    return raw not in {"0", "false", "no", "off", "plain"}
+
+
+def _strip_ansi(text: str) -> str:
+    return ANSI_RE.sub("", text)
+
+
+def _ansi(text: str, code: str) -> str:
+    return f"\033[{code}m{text}{ANSI_RESET}"
+
+
 def load_config(config_path: str) -> Dict[str, Any]:
     return load_test2_config(config_path).model_dump()
 
@@ -412,16 +430,36 @@ class LiveConsoleHandler(logging.StreamHandler):
     def __init__(self, stream=None):
         super().__init__(stream)
         self._status_text = ""
+        self._status_width = 0
+        stream_is_tty = bool(getattr(self.stream, "isatty", lambda: False)())
+        self.live_tick_log_lines = _env_flag(
+            "LIVE_TICK_LOG_LINES",
+            not stream_is_tty,
+        )
+        self.cyber_tick_colors = (
+            _env_flag("CYBER_TICK_COLORS", True)
+            and not os.getenv("NO_COLOR")
+        )
 
     def _erase_status(self) -> None:
         if self._status_text:
-            self.stream.write("\r" + (" " * len(self._status_text)) + "\r")
+            self.stream.write("\r" + (" " * self._status_width) + "\r")
             self.flush()
 
     def set_status(self, text: str) -> None:
-        text = text[:220]
+        plain = _strip_ansi(text)
+        if self.live_tick_log_lines:
+            self._status_text = ""
+            self._status_width = 0
+            self.stream.write(plain + "\n")
+            self.flush()
+            return
+        if len(plain) > 220 and "\033[" not in text:
+            text = text[:220]
+            plain = text
         self._erase_status()
         self._status_text = text
+        self._status_width = len(plain)
         if self._status_text:
             self.stream.write(self._status_text)
             self.flush()
@@ -429,6 +467,7 @@ class LiveConsoleHandler(logging.StreamHandler):
     def clear_status(self) -> None:
         self._erase_status()
         self._status_text = ""
+        self._status_width = 0
 
     def emit(self, record: logging.LogRecord) -> None:
         self._erase_status()
@@ -2032,9 +2071,18 @@ class TradingBot:
                 state = self._cooldown_note()
             else:
                 state = "trade=WATCHING"
-        handler.set_status(
-            f"LIVE {symbol} | digits=[{digits_display}] | ticks=[{quotes_display}] | {state}"
+        status_text = (
+            f"LIVE {symbol} | digits=[{digits_display}] | "
+            f"ticks=[{quotes_display}] | {state}"
         )
+        if handler.cyber_tick_colors and not handler.live_tick_log_lines:
+            status_text = (
+                f"{_ansi('LIVE', '1;34')} {_ansi(symbol, '1;36')} | "
+                f"{_ansi('digits', '1;33')}=[{_ansi(digits_display, '1;32')}] | "
+                f"{_ansi('ticks', '1;33')}=[{_ansi(quotes_display, '1;36')}] | "
+                f"{_ansi(state, '1;35')}"
+            )
+        handler.set_status(status_text)
 
     def _clear_live_ticks(self) -> None:
         handler = self._get_live_console_handler()
