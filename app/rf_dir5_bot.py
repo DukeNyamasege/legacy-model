@@ -85,6 +85,7 @@ class RFDir5TradingBot(TradingBot):
         self.rf_contract_validation_task: asyncio.Task | None = None
         self.rf_account_contract_tasks: dict[str, asyncio.Task] = {}
         self.rf_account_supported_contracts: dict[tuple[str, str], set[str]] = {}
+        self.rf_pending_recovery_registrations: dict[str, int] = {}
         self.rf_last_epoch: dict[str, int] = {}
         self.rf_last_tick_id: dict[str, str] = {}
 
@@ -123,6 +124,7 @@ class RFDir5TradingBot(TradingBot):
             if not task.done():
                 task.cancel()
         self.rf_account_contract_tasks.clear()
+        self.rf_pending_recovery_registrations.clear()
         self.rf_candidate_queue.clear()
         self.rf_supported_contracts.clear()
         self.rf_last_epoch.clear()
@@ -630,7 +632,10 @@ class RFDir5TradingBot(TradingBot):
     ) -> None:
         eligible = self._eligible_purchase_accounts()
         stake_by_token: dict[str, float] = {}
+        recovery_by_token: dict[str, bool] = {}
+        managed_id_by_token: dict[str, int] = {}
         filtered: list[tuple[str, str]] = []
+        proposal_profit_ratio = economics.potential_profit / economics.stake
         for token, account_id in eligible:
             if signal.contract_type not in self.rf_account_supported_contracts.get(
                 (account_id, signal.symbol),
@@ -648,24 +653,38 @@ class RFDir5TradingBot(TradingBot):
             summary = self.repository.account_summary(account_id)
             if managed_id is None:
                 continue
-            stake, reason = self.rf_repository.effective_stake(
+            plan = self.rf_repository.plan_stake(
                 managed_account_id=managed_id,
                 current_balance=float(summary.get("balance") or 0.0),
                 requested_stake=float(state.get("base_stake", self.base_stake)),
+                proposal_profit_ratio=proposal_profit_ratio,
+                recovery_enabled=self.risk_config.recovery_enabled,
+                recovery_trigger_losses=self.risk_config.recovery_trigger_losses,
                 maximum_balance_percent=self.risk_config.maximum_stake_balance_percent,
                 daily_drawdown_percent=self.risk_config.daily_drawdown_percent,
                 maximum_equity_drawdown_percent=self.risk_config.maximum_equity_drawdown_percent,
                 minimum_stake=self.base_stake,
             )
-            if stake is None:
+            if plan.stake is None:
                 self.logger.warning(
                     "RF_ACCOUNT_SKIPPED account=%s reason=%s",
                     mask_account_id(account_id),
-                    reason,
+                    plan.reason,
                 )
                 continue
             filtered.append((token, account_id))
-            stake_by_token[token] = stake
+            stake_by_token[token] = plan.stake
+            recovery_by_token[token] = plan.is_recovery
+            managed_id_by_token[token] = managed_id
+            if plan.is_recovery:
+                self.logger.warning(
+                    "RF_ONE_SHOT_RECOVERY_PLANNED account=%s debt=%.2f stake=%.2f "
+                    "proposal_profit_ratio=%.5f",
+                    mask_account_id(account_id),
+                    plan.recovery_debt,
+                    plan.stake,
+                    proposal_profit_ratio,
+                )
         if not filtered:
             self._mark_rf_decision(signal, "SKIP_INSUFFICIENT_BALANCE", "no risk-eligible accounts", selected=True)
             return
@@ -697,15 +716,27 @@ class RFDir5TradingBot(TradingBot):
                 if token is None or "error" in transaction:
                     continue
                 stake = float(transaction.get("stake_amount", stake_by_token[token]))
-                contract_id = await self._register_account_purchase(
-                    signal=signal,
-                    transaction=transaction,
-                    token=token,
-                    account_id=account_id,
-                    stake_amount=stake,
-                    profit_ratio=economics.potential_profit / economics.stake,
-                    purchase_requested_at=requested_at,
-                )
+                if recovery_by_token.get(token):
+                    self.rf_pending_recovery_registrations[token] = managed_id_by_token[token]
+                try:
+                    contract_id = await self._register_account_purchase(
+                        signal=signal,
+                        transaction=transaction,
+                        token=token,
+                        account_id=account_id,
+                        stake_amount=stake,
+                        profit_ratio=economics.potential_profit / economics.stake,
+                        purchase_requested_at=requested_at,
+                    )
+                except Exception as exc:
+                    self.logger.error(
+                        "RF_ACCOUNT_REGISTRATION_FAILED account=%s error=%s",
+                        mask_account_id(account_id),
+                        exc,
+                    )
+                    continue
+                finally:
+                    self.rf_pending_recovery_registrations.pop(token, None)
                 if contract_id is not None:
                     contracts.add(contract_id)
                     registered.add(account_id)
@@ -798,6 +829,26 @@ class RFDir5TradingBot(TradingBot):
         state = self._client_state_for_token(token, account_id=account_id)
         return round(float(state.get("base_stake", self.base_stake)), 2)
 
+    def _on_account_contract_registered(
+        self,
+        token: str,
+        account_id: str,
+        contract_id: int,
+        stake_amount: float,
+    ) -> None:
+        managed_id = self.rf_pending_recovery_registrations.pop(token, None)
+        if managed_id is None:
+            return
+        started = self.rf_repository.mark_recovery_attempt_started(managed_id)
+        self.logger.warning(
+            "RF_ONE_SHOT_RECOVERY_STARTED account=%s contract_id=%s stake=%.2f "
+            "state_persisted=%s",
+            mask_account_id(account_id),
+            contract_id,
+            stake_amount,
+            started,
+        )
+
     def _update_client_recovery_state(
         self,
         state: dict[str, Any],
@@ -817,7 +868,24 @@ class RFDir5TradingBot(TradingBot):
             managed_account_id=int(managed_id),
             profit=float(profit),
             current_balance=current_balance,
+            recovery_enabled=self.risk_config.recovery_enabled,
+            recovery_trigger_losses=self.risk_config.recovery_trigger_losses,
         )
+        if risk["settled_recovery_attempt"]:
+            self.logger.warning(
+                "RF_ONE_SHOT_RECOVERY_SETTLED account=%s result=%s profit=%.2f "
+                "further_recovery=false",
+                mask_account_id(account_id),
+                outcome.upper(),
+                profit,
+            )
+        elif risk["recovery_pending"]:
+            self.logger.warning(
+                "RF_ONE_SHOT_RECOVERY_ARMED account=%s consecutive_losses=%s debt=%.2f",
+                mask_account_id(account_id),
+                risk["consecutive_losses"],
+                risk["recovery_loss_debt"],
+            )
         if risk["consecutive_losses"] >= self.risk_config.maximum_session_losses:
             self.repository.set_managed_account_enabled(int(managed_id), False)
             self.repository.set_managed_account_execution_status(

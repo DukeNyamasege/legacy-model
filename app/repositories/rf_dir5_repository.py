@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
@@ -16,6 +17,15 @@ from app.models import (
     utc_now,
 )
 from app.strategy.rise_fall_strategy import SignalEvent, shadow_outcome
+
+
+@dataclass(frozen=True, slots=True)
+class StakePlan:
+    stake: float | None
+    reason: str = ""
+    is_recovery: bool = False
+    recovery_debt: float = 0.0
+    required_recovery_stake: float = 0.0
 
 
 class RFDir5Repository:
@@ -308,17 +318,20 @@ class RFDir5Repository:
                 row.state = "DEMO_LIVE"
                 row.updated_at = utc_now()
 
-    def effective_stake(
+    def plan_stake(
         self,
         *,
         managed_account_id: int,
         current_balance: float,
         requested_stake: float,
+        proposal_profit_ratio: float,
+        recovery_enabled: bool,
+        recovery_trigger_losses: int,
         maximum_balance_percent: float,
         daily_drawdown_percent: float,
         maximum_equity_drawdown_percent: float,
         minimum_stake: float,
-    ) -> tuple[float | None, str]:
+    ) -> StakePlan:
         today = datetime.now(timezone.utc).date().isoformat()
         balance = max(0.0, float(current_balance))
         with self.database.session() as session:
@@ -330,6 +343,9 @@ class RFDir5Repository:
                     daily_start_balance=balance,
                     session_profit=0.0,
                     consecutive_losses=0,
+                    recovery_loss_debt=0.0,
+                    recovery_pending=False,
+                    recovery_attempt_active=False,
                     equity_high_water=balance,
                 )
                 session.add(state)
@@ -338,6 +354,9 @@ class RFDir5Repository:
                 state.daily_start_balance = balance
                 state.session_profit = 0.0
                 state.consecutive_losses = 0
+                state.recovery_loss_debt = 0.0
+                state.recovery_pending = False
+                state.recovery_attempt_active = False
                 state.equity_high_water = balance
 
             state.equity_high_water = max(state.equity_high_water, balance)
@@ -345,17 +364,104 @@ class RFDir5Repository:
                 1.0 - float(maximum_equity_drawdown_percent) / 100.0
             )
             if balance < equity_floor - 0.005:
-                return None, "maximum equity drawdown reached"
+                return StakePlan(None, "maximum equity drawdown reached")
 
             daily_limit = state.daily_start_balance * float(daily_drawdown_percent) / 100.0
             remaining_daily = daily_limit - max(0.0, -state.session_profit)
             percentage_cap = balance * float(maximum_balance_percent) / 100.0
-            effective = min(float(requested_stake), percentage_cap, remaining_daily)
+            safety_cap = min(percentage_cap, remaining_daily)
+            is_recovery = bool(
+                recovery_enabled
+                and state.recovery_pending
+                and not state.recovery_attempt_active
+                and state.consecutive_losses >= int(recovery_trigger_losses)
+                and state.recovery_loss_debt > 0
+            )
+            required_recovery_stake = 0.0
+            target_stake = float(requested_stake)
+            if is_recovery:
+                ratio = float(proposal_profit_ratio)
+                if ratio <= 0:
+                    return StakePlan(
+                        None,
+                        "recovery requires a positive live proposal profit ratio",
+                        True,
+                        state.recovery_loss_debt,
+                    )
+                required_recovery_stake = (
+                    math.ceil((state.recovery_loss_debt / ratio) * 100.0 - 1e-9)
+                    / 100.0
+                )
+                target_stake = max(float(minimum_stake), required_recovery_stake)
+                if target_stake > safety_cap + 1e-9:
+                    return StakePlan(
+                        None,
+                        "required one-shot recovery stake exceeds account safety caps",
+                        True,
+                        state.recovery_loss_debt,
+                        required_recovery_stake,
+                    )
+            effective = min(target_stake, safety_cap)
             effective = math.floor(max(0.0, effective) * 100.0 + 1e-9) / 100.0
             if effective < float(minimum_stake) - 1e-9:
-                return None, "stake below provider minimum after risk caps"
+                return StakePlan(
+                    None,
+                    "stake below provider minimum after risk caps",
+                    is_recovery,
+                    state.recovery_loss_debt,
+                    required_recovery_stake,
+                )
             state.updated_at = utc_now()
-            return effective, ""
+            return StakePlan(
+                effective,
+                is_recovery=is_recovery,
+                recovery_debt=state.recovery_loss_debt,
+                required_recovery_stake=required_recovery_stake,
+            )
+
+    def effective_stake(
+        self,
+        *,
+        managed_account_id: int,
+        current_balance: float,
+        requested_stake: float,
+        maximum_balance_percent: float,
+        daily_drawdown_percent: float,
+        maximum_equity_drawdown_percent: float,
+        minimum_stake: float,
+    ) -> tuple[float | None, str]:
+        """Compatibility wrapper for callers that require fixed-risk stake only."""
+        plan = self.plan_stake(
+            managed_account_id=managed_account_id,
+            current_balance=current_balance,
+            requested_stake=requested_stake,
+            proposal_profit_ratio=0.0,
+            recovery_enabled=False,
+            recovery_trigger_losses=2,
+            maximum_balance_percent=maximum_balance_percent,
+            daily_drawdown_percent=daily_drawdown_percent,
+            maximum_equity_drawdown_percent=maximum_equity_drawdown_percent,
+            minimum_stake=minimum_stake,
+        )
+        return plan.stake, plan.reason
+
+    def mark_recovery_attempt_started(self, managed_account_id: int) -> bool:
+        with self.database.session() as session:
+            state = session.get(
+                AccountRiskState,
+                int(managed_account_id),
+                with_for_update=True,
+            )
+            if (
+                state is None
+                or not state.recovery_pending
+                or state.recovery_attempt_active
+            ):
+                return False
+            state.recovery_pending = False
+            state.recovery_attempt_active = True
+            state.updated_at = utc_now()
+            return True
 
     def record_account_outcome(
         self,
@@ -363,6 +469,8 @@ class RFDir5Repository:
         managed_account_id: int,
         profit: float,
         current_balance: float,
+        recovery_enabled: bool = False,
+        recovery_trigger_losses: int = 2,
     ) -> dict[str, Any]:
         today = datetime.now(timezone.utc).date().isoformat()
         with self.database.session() as session:
@@ -374,16 +482,44 @@ class RFDir5Repository:
                     daily_start_balance=max(0.0, float(current_balance) - float(profit)),
                     session_profit=0.0,
                     consecutive_losses=0,
+                    recovery_loss_debt=0.0,
+                    recovery_pending=False,
+                    recovery_attempt_active=False,
                     equity_high_water=max(0.0, float(current_balance)),
                 )
                 session.add(state)
             state.session_profit += float(profit)
-            state.consecutive_losses = state.consecutive_losses + 1 if profit <= 0 else 0
+            was_recovery = bool(state.recovery_attempt_active)
+            if was_recovery:
+                state.consecutive_losses = (
+                    0 if profit > 0 else state.consecutive_losses + 1
+                )
+                # One attempt means neither a recovery win nor loss can start a
+                # second chase from the same debt cycle.
+                state.recovery_loss_debt = 0.0
+                state.recovery_pending = False
+                state.recovery_attempt_active = False
+            elif profit <= 0:
+                state.consecutive_losses += 1
+                state.recovery_loss_debt += abs(float(profit))
+                state.recovery_pending = bool(
+                    recovery_enabled
+                    and state.consecutive_losses >= int(recovery_trigger_losses)
+                )
+            else:
+                state.consecutive_losses = 0
+                state.recovery_loss_debt = 0.0
+                state.recovery_pending = False
+                state.recovery_attempt_active = False
             state.equity_high_water = max(state.equity_high_water, float(current_balance))
             state.updated_at = utc_now()
             return {
                 "session_profit": state.session_profit,
                 "consecutive_losses": state.consecutive_losses,
+                "recovery_loss_debt": state.recovery_loss_debt,
+                "recovery_pending": state.recovery_pending,
+                "recovery_attempt_active": state.recovery_attempt_active,
+                "settled_recovery_attempt": was_recovery,
                 "daily_start_balance": state.daily_start_balance,
                 "equity_high_water": state.equity_high_water,
             }

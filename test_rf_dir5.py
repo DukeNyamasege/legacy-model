@@ -163,6 +163,13 @@ class RFRepositoryTests(unittest.TestCase):
         self.repository.create_shadow_contracts(item, (5, 10))
         return item
 
+    def create_managed_account(self, label: str = "Risk") -> int:
+        with self.database.session() as session:
+            account = ManagedAccount(label=label, token_secret="encrypted", enabled=True)
+            session.add(account)
+            session.flush()
+            return account.id
+
     def test_five_and_ten_tick_shadows_expire_on_exact_market_ticks(self) -> None:
         item = self.create_signal_and_shadows()
         self.assertEqual(
@@ -235,11 +242,7 @@ class RFRepositoryTests(unittest.TestCase):
         self.assertEqual(restarted.guard_state()["active_signal_id"], "")
 
     def test_stake_never_exceeds_half_percent_balance(self) -> None:
-        with self.database.session() as session:
-            account = ManagedAccount(label="Risk", token_secret="encrypted", enabled=True)
-            session.add(account)
-            session.flush()
-            account_id = account.id
+        account_id = self.create_managed_account()
         stake, reason = self.repository.effective_stake(
             managed_account_id=account_id,
             current_balance=1000.0,
@@ -253,11 +256,7 @@ class RFRepositoryTests(unittest.TestCase):
         self.assertEqual(stake, 5.0)
 
     def test_below_minimum_risk_stake_skips_account(self) -> None:
-        with self.database.session() as session:
-            account = ManagedAccount(label="Small", token_secret="encrypted", enabled=True)
-            session.add(account)
-            session.flush()
-            account_id = account.id
+        account_id = self.create_managed_account("Small")
         stake, reason = self.repository.effective_stake(
             managed_account_id=account_id,
             current_balance=90.0,
@@ -269,6 +268,104 @@ class RFRepositoryTests(unittest.TestCase):
         )
         self.assertIsNone(stake)
         self.assertIn("provider minimum", reason)
+
+    def test_two_losses_arm_exactly_one_recovery_attempt(self) -> None:
+        account_id = self.create_managed_account("Recovery")
+        first = self.repository.record_account_outcome(
+            managed_account_id=account_id,
+            profit=-0.50,
+            current_balance=999.50,
+            recovery_enabled=True,
+            recovery_trigger_losses=2,
+        )
+        second = self.repository.record_account_outcome(
+            managed_account_id=account_id,
+            profit=-0.50,
+            current_balance=999.00,
+            recovery_enabled=True,
+            recovery_trigger_losses=2,
+        )
+        self.assertFalse(first["recovery_pending"])
+        self.assertTrue(second["recovery_pending"])
+        self.assertEqual(second["recovery_loss_debt"], 1.0)
+
+        plan = self.repository.plan_stake(
+            managed_account_id=account_id,
+            current_balance=999.00,
+            requested_stake=0.50,
+            proposal_profit_ratio=0.40,
+            recovery_enabled=True,
+            recovery_trigger_losses=2,
+            maximum_balance_percent=0.5,
+            daily_drawdown_percent=2.0,
+            maximum_equity_drawdown_percent=5.0,
+            minimum_stake=0.50,
+        )
+        self.assertTrue(plan.is_recovery)
+        self.assertEqual(plan.stake, 2.50)
+        self.assertTrue(self.repository.mark_recovery_attempt_started(account_id))
+
+        settled = self.repository.record_account_outcome(
+            managed_account_id=account_id,
+            profit=1.00,
+            current_balance=1000.00,
+            recovery_enabled=True,
+            recovery_trigger_losses=2,
+        )
+        self.assertTrue(settled["settled_recovery_attempt"])
+        self.assertFalse(settled["recovery_pending"])
+        self.assertFalse(settled["recovery_attempt_active"])
+        self.assertEqual(settled["recovery_loss_debt"], 0.0)
+        self.assertEqual(settled["consecutive_losses"], 0)
+
+    def test_failed_recovery_is_not_chased_again(self) -> None:
+        account_id = self.create_managed_account("One attempt")
+        for balance in (999.50, 999.00):
+            self.repository.record_account_outcome(
+                managed_account_id=account_id,
+                profit=-0.50,
+                current_balance=balance,
+                recovery_enabled=True,
+                recovery_trigger_losses=2,
+            )
+        self.assertTrue(self.repository.mark_recovery_attempt_started(account_id))
+        settled = self.repository.record_account_outcome(
+            managed_account_id=account_id,
+            profit=-2.50,
+            current_balance=996.50,
+            recovery_enabled=True,
+            recovery_trigger_losses=2,
+        )
+        self.assertTrue(settled["settled_recovery_attempt"])
+        self.assertEqual(settled["consecutive_losses"], 3)
+        self.assertEqual(settled["recovery_loss_debt"], 0.0)
+        self.assertFalse(settled["recovery_pending"])
+
+    def test_recovery_is_skipped_when_exact_target_exceeds_half_percent_cap(self) -> None:
+        account_id = self.create_managed_account("Capped recovery")
+        for balance in (299.50, 299.00):
+            self.repository.record_account_outcome(
+                managed_account_id=account_id,
+                profit=-0.50,
+                current_balance=balance,
+                recovery_enabled=True,
+                recovery_trigger_losses=2,
+            )
+        plan = self.repository.plan_stake(
+            managed_account_id=account_id,
+            current_balance=299.00,
+            requested_stake=0.50,
+            proposal_profit_ratio=0.40,
+            recovery_enabled=True,
+            recovery_trigger_losses=2,
+            maximum_balance_percent=0.5,
+            daily_drawdown_percent=2.0,
+            maximum_equity_drawdown_percent=5.0,
+            minimum_stake=0.50,
+        )
+        self.assertIsNone(plan.stake)
+        self.assertTrue(plan.is_recovery)
+        self.assertIn("safety caps", plan.reason)
 
 
 class RFDecisionTests(unittest.TestCase):

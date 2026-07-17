@@ -19,9 +19,11 @@ separate shadow ledger evaluates both 5-tick and 10-tick outcomes.
 
 ## Safety
 
-- Martingale and recovery debt are disabled in production execution.
-- Effective stake cannot exceed the user's requested stake, 0.5% of current
-  balance, or the remaining 2% daily loss allowance.
+- After two consecutive account losses, one recovery attempt targets the
+  recorded loss debt using the current proposal profit ratio. It never chains.
+- A recovery stake may exceed the user's normal stake, but neither normal nor
+  recovery execution can exceed 0.5% of current balance or the remaining 2%
+  daily loss allowance. If full recovery does not fit, that account is skipped.
 - Accounts stop individually after three consecutive losses, TP, or SL.
 - One strategy contract can be open globally and one contract per account.
 - A demo loss activates the persistent virtual guard. Virtual contracts never
@@ -29,6 +31,9 @@ separate shadow ledger evaluates both 5-tick and 10-tick outcomes.
 - Real execution remains disabled. Promotion requires at least 1,000 settled
   shadow outcomes for the exact market/direction/duration group plus a positive
   95% lower confidence-bound edge and forward validation.
+
+Recovery is a loss-sizing mechanism, not a guarantee. The recovery contract can
+lose, and its actual payout can differ from the indicative public proposal.
 
 ## Run
 

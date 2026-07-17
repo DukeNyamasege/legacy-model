@@ -2122,6 +2122,16 @@ class TradingBot:
         """Hook for account-scoped contract capability validation."""
         return
 
+    def _on_account_contract_registered(
+        self,
+        token: str,
+        account_id: str,
+        contract_id: int,
+        stake_amount: float,
+    ) -> None:
+        """Hook after durable purchase registration and before settlement subscription."""
+        return
+
     def _reset_session_runtime_state(self) -> None:
         self.is_trading_locked = False
         self.last_tick_received_at = 0.0
@@ -2945,6 +2955,12 @@ class TradingBot:
                 "contract_id": str(contract_id),
                 "stake": f"{stake_amount:.2f}",
             },
+        )
+        self._on_account_contract_registered(
+            token,
+            account_id,
+            contract_id,
+            stake_amount,
         )
         await session.subscribe_contract(contract_id)
         await self._refresh_account_balance_snapshot(token, account_id)

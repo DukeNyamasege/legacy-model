@@ -139,7 +139,9 @@ virtual_guard:
   ties_are_losses: true
   persist_state: true
 risk:
-  recovery_enabled: false
+  recovery_enabled: true
+  recovery_trigger_losses: 2
+  maximum_recovery_attempts: 1
   maximum_stake_balance_percent: 0.5
   daily_drawdown_percent: 2.0
   maximum_equity_drawdown_percent: 5.0

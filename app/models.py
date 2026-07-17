@@ -385,5 +385,8 @@ class AccountRiskState(Base):
     daily_start_balance: Mapped[float] = mapped_column(Float, default=0.0)
     session_profit: Mapped[float] = mapped_column(Float, default=0.0)
     consecutive_losses: Mapped[int] = mapped_column(Integer, default=0)
+    recovery_loss_debt: Mapped[float] = mapped_column(Float, default=0.0)
+    recovery_pending: Mapped[bool] = mapped_column(Boolean, default=False)
+    recovery_attempt_active: Mapped[bool] = mapped_column(Boolean, default=False)
     equity_high_water: Mapped[float] = mapped_column(Float, default=0.0)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
