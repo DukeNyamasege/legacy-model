@@ -211,10 +211,6 @@ class RiskSettings(StrictModel):
     recovery_enabled: bool = True
     recovery_trigger_losses: Literal[2] = 2
     maximum_recovery_attempts: Literal[1] = 1
-    maximum_stake_balance_percent: float = Field(default=0.5, gt=0, le=1)
-    daily_drawdown_percent: float = Field(default=2.0, gt=0, le=100)
-    maximum_equity_drawdown_percent: float = Field(default=5.0, gt=0, le=100)
-    maximum_session_losses: int = Field(default=3, ge=1)
     maximum_open_contracts_per_account: Literal[1] = 1
 
 

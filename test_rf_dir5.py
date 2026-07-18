@@ -441,33 +441,27 @@ class RFRepositoryTests(unittest.TestCase):
 
         self.assertEqual(self.repository.guard_state()["state"], "DEMO_LIVE")
 
-    def test_stake_never_exceeds_half_percent_balance(self) -> None:
+    def test_configured_stake_is_not_reduced_by_automatic_drawdown_caps(self) -> None:
         account_id = self.create_managed_account()
         stake, reason = self.repository.effective_stake(
             managed_account_id=account_id,
             current_balance=1000.0,
             requested_stake=20.0,
-            maximum_balance_percent=0.5,
-            daily_drawdown_percent=2.0,
-            maximum_equity_drawdown_percent=5.0,
             minimum_stake=0.50,
         )
         self.assertEqual(reason, "")
-        self.assertEqual(stake, 5.0)
+        self.assertEqual(stake, 20.0)
 
-    def test_below_minimum_risk_stake_skips_account(self) -> None:
+    def test_insufficient_balance_skips_only_that_account(self) -> None:
         account_id = self.create_managed_account("Small")
         stake, reason = self.repository.effective_stake(
             managed_account_id=account_id,
-            current_balance=90.0,
+            current_balance=0.49,
             requested_stake=0.50,
-            maximum_balance_percent=0.5,
-            daily_drawdown_percent=2.0,
-            maximum_equity_drawdown_percent=5.0,
             minimum_stake=0.50,
         )
         self.assertIsNone(stake)
-        self.assertIn("provider minimum", reason)
+        self.assertIn("insufficient account balance", reason)
 
     def test_two_losses_arm_exactly_one_recovery_attempt(self) -> None:
         account_id = self.create_managed_account("Recovery")
@@ -496,9 +490,6 @@ class RFRepositoryTests(unittest.TestCase):
             proposal_profit_ratio=0.40,
             recovery_enabled=True,
             recovery_trigger_losses=2,
-            maximum_balance_percent=0.5,
-            daily_drawdown_percent=2.0,
-            maximum_equity_drawdown_percent=5.0,
             minimum_stake=0.50,
         )
         self.assertTrue(plan.is_recovery)
@@ -541,9 +532,9 @@ class RFRepositoryTests(unittest.TestCase):
         self.assertEqual(settled["recovery_loss_debt"], 0.0)
         self.assertFalse(settled["recovery_pending"])
 
-    def test_recovery_is_skipped_when_exact_target_exceeds_half_percent_cap(self) -> None:
-        account_id = self.create_managed_account("Capped recovery")
-        for balance in (299.50, 299.00):
+    def test_unaffordable_recovery_continues_with_configured_stake(self) -> None:
+        account_id = self.create_managed_account("Recovery fallback")
+        for balance in (1.50, 1.00):
             self.repository.record_account_outcome(
                 managed_account_id=account_id,
                 profit=-0.50,
@@ -553,19 +544,63 @@ class RFRepositoryTests(unittest.TestCase):
             )
         plan = self.repository.plan_stake(
             managed_account_id=account_id,
-            current_balance=299.00,
+            current_balance=1.00,
             requested_stake=0.50,
             proposal_profit_ratio=0.40,
             recovery_enabled=True,
             recovery_trigger_losses=2,
-            maximum_balance_percent=0.5,
-            daily_drawdown_percent=2.0,
-            maximum_equity_drawdown_percent=5.0,
             minimum_stake=0.50,
         )
-        self.assertIsNone(plan.stake)
-        self.assertTrue(plan.is_recovery)
-        self.assertIn("safety caps", plan.reason)
+        self.assertEqual(plan.stake, 0.50)
+        self.assertFalse(plan.is_recovery)
+        self.assertIn("continuing with configured stake", plan.reason)
+
+        next_plan = self.repository.plan_stake(
+            managed_account_id=account_id,
+            current_balance=1.00,
+            requested_stake=0.50,
+            proposal_profit_ratio=0.40,
+            recovery_enabled=True,
+            recovery_trigger_losses=2,
+            minimum_stake=0.50,
+        )
+        self.assertEqual(next_plan.stake, 0.50)
+        self.assertFalse(next_plan.is_recovery)
+        self.assertEqual(next_plan.reason, "")
+
+    def test_three_losses_never_disable_the_account(self) -> None:
+        bot = object.__new__(RFDir5TradingBot)
+        bot.repository = MagicMock()
+        bot.repository.account_summary.return_value = {"balance": 100.0}
+        bot.rf_repository = MagicMock()
+        bot.rf_repository.record_account_outcome.return_value = {
+            "settled_recovery_attempt": False,
+            "recovery_pending": True,
+            "consecutive_losses": 3,
+            "recovery_loss_debt": 1.50,
+        }
+        bot.risk_config = SimpleNamespace(
+            recovery_enabled=True,
+            recovery_trigger_losses=2,
+        )
+        bot.logger = MagicMock()
+        state = {
+            "managed_account_id": 7,
+            "account_id": "DOT90000422",
+            "base_stake": 0.50,
+        }
+
+        bot._update_client_recovery_state(state, outcome="loss", profit=-0.50)
+
+        bot.repository.set_managed_account_enabled.assert_not_called()
+        bot.repository.set_managed_account_execution_status.assert_not_called()
+        self.assertTrue(
+            any(
+                call.args
+                and "RF_ACCOUNT_CONTINUES_AFTER_LOSSES" in str(call.args[0])
+                for call in bot.logger.warning.call_args_list
+            )
+        )
 
 
 class RFDecisionTests(unittest.TestCase):

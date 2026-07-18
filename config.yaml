@@ -143,10 +143,6 @@ risk:
   recovery_enabled: true
   recovery_trigger_losses: 2
   maximum_recovery_attempts: 1
-  maximum_stake_balance_percent: 0.5
-  daily_drawdown_percent: 2.0
-  maximum_equity_drawdown_percent: 5.0
-  maximum_session_losses: 3
   maximum_open_contracts_per_account: 1
 storage:
   database_url_env: DATABASE_URL

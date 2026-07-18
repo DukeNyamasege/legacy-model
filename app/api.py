@@ -1363,7 +1363,7 @@ def model_metrics() -> dict:
             "martingale_enabled": CONFIG.risk.recovery_enabled,
             "recovery_trigger_losses": CONFIG.risk.recovery_trigger_losses,
             "maximum_recovery_attempts": CONFIG.risk.maximum_recovery_attempts,
-            "recovery_risk_cap_percent": CONFIG.risk.maximum_stake_balance_percent,
+            "automatic_loss_stop": False,
             "virtual_guard": RF_REPOSITORY.guard_state(),
         },
     }

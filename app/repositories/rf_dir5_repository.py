@@ -339,9 +339,6 @@ class RFDir5Repository:
         proposal_profit_ratio: float,
         recovery_enabled: bool,
         recovery_trigger_losses: int,
-        maximum_balance_percent: float,
-        daily_drawdown_percent: float,
-        maximum_equity_drawdown_percent: float,
         minimum_stake: float,
     ) -> StakePlan:
         today = datetime.now(timezone.utc).date().isoformat()
@@ -372,16 +369,13 @@ class RFDir5Repository:
                 state.equity_high_water = balance
 
             state.equity_high_water = max(state.equity_high_water, balance)
-            equity_floor = state.equity_high_water * (
-                1.0 - float(maximum_equity_drawdown_percent) / 100.0
+            base_stake = (
+                math.ceil(max(float(minimum_stake), float(requested_stake)) * 100.0 - 1e-9)
+                / 100.0
             )
-            if balance < equity_floor - 0.005:
-                return StakePlan(None, "maximum equity drawdown reached")
+            if base_stake > balance + 1e-9:
+                return StakePlan(None, "insufficient account balance for configured stake")
 
-            daily_limit = state.daily_start_balance * float(daily_drawdown_percent) / 100.0
-            remaining_daily = daily_limit - max(0.0, -state.session_profit)
-            percentage_cap = balance * float(maximum_balance_percent) / 100.0
-            safety_cap = min(percentage_cap, remaining_daily)
             is_recovery = bool(
                 recovery_enabled
                 and state.recovery_pending
@@ -390,42 +384,35 @@ class RFDir5Repository:
                 and state.recovery_loss_debt > 0
             )
             required_recovery_stake = 0.0
-            target_stake = float(requested_stake)
+            target_stake = base_stake
+            reason = ""
             if is_recovery:
                 ratio = float(proposal_profit_ratio)
                 if ratio <= 0:
-                    return StakePlan(
-                        None,
-                        "recovery requires a positive live proposal profit ratio",
-                        True,
-                        state.recovery_loss_debt,
+                    reason = "recovery economics unavailable; continuing with configured stake"
+                else:
+                    required_recovery_stake = (
+                        math.ceil((state.recovery_loss_debt / ratio) * 100.0 - 1e-9)
+                        / 100.0
                     )
-                required_recovery_stake = (
-                    math.ceil((state.recovery_loss_debt / ratio) * 100.0 - 1e-9)
-                    / 100.0
-                )
-                target_stake = max(float(minimum_stake), required_recovery_stake)
-                if target_stake > safety_cap + 1e-9:
-                    return StakePlan(
-                        None,
-                        "required one-shot recovery stake exceeds account safety caps",
-                        True,
-                        state.recovery_loss_debt,
-                        required_recovery_stake,
-                    )
-            effective = min(target_stake, safety_cap)
-            effective = math.floor(max(0.0, effective) * 100.0 + 1e-9) / 100.0
-            if effective < float(minimum_stake) - 1e-9:
-                return StakePlan(
-                    None,
-                    "stake below provider minimum after risk caps",
-                    is_recovery,
-                    state.recovery_loss_debt,
-                    required_recovery_stake,
-                )
+                    target_stake = max(float(minimum_stake), required_recovery_stake)
+                    if target_stake > balance + 1e-9:
+                        reason = (
+                            "recovery target exceeds available balance; continuing with "
+                            "configured stake"
+                        )
+                if reason:
+                    is_recovery = False
+                    target_stake = base_stake
+                    state.consecutive_losses = 0
+                    state.recovery_loss_debt = 0.0
+                    state.recovery_pending = False
+                    state.recovery_attempt_active = False
+
             state.updated_at = utc_now()
             return StakePlan(
-                effective,
+                target_stake,
+                reason,
                 is_recovery=is_recovery,
                 recovery_debt=state.recovery_loss_debt,
                 required_recovery_stake=required_recovery_stake,
@@ -437,9 +424,6 @@ class RFDir5Repository:
         managed_account_id: int,
         current_balance: float,
         requested_stake: float,
-        maximum_balance_percent: float,
-        daily_drawdown_percent: float,
-        maximum_equity_drawdown_percent: float,
         minimum_stake: float,
     ) -> tuple[float | None, str]:
         """Compatibility wrapper for callers that require fixed-risk stake only."""
@@ -450,9 +434,6 @@ class RFDir5Repository:
             proposal_profit_ratio=0.0,
             recovery_enabled=False,
             recovery_trigger_losses=2,
-            maximum_balance_percent=maximum_balance_percent,
-            daily_drawdown_percent=daily_drawdown_percent,
-            maximum_equity_drawdown_percent=maximum_equity_drawdown_percent,
             minimum_stake=minimum_stake,
         )
         return plan.stake, plan.reason

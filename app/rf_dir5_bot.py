@@ -766,9 +766,6 @@ class RFDir5TradingBot(TradingBot):
                 proposal_profit_ratio=proposal_profit_ratio,
                 recovery_enabled=self.risk_config.recovery_enabled,
                 recovery_trigger_losses=self.risk_config.recovery_trigger_losses,
-                maximum_balance_percent=self.risk_config.maximum_stake_balance_percent,
-                daily_drawdown_percent=self.risk_config.daily_drawdown_percent,
-                maximum_equity_drawdown_percent=self.risk_config.maximum_equity_drawdown_percent,
                 minimum_stake=self.base_stake,
             )
             if plan.stake is None:
@@ -1024,15 +1021,10 @@ class RFDir5TradingBot(TradingBot):
                 risk["consecutive_losses"],
                 risk["recovery_loss_debt"],
             )
-        if risk["consecutive_losses"] >= self.risk_config.maximum_session_losses:
-            self.repository.set_managed_account_enabled(int(managed_id), False)
-            self.repository.set_managed_account_execution_status(
-                int(managed_id),
-                "session_loss_stop",
-                f"Stopped after {risk['consecutive_losses']} consecutive losses",
-            )
+        if risk["consecutive_losses"] >= 3:
             self.logger.warning(
-                "RF_ACCOUNT_SESSION_STOP account=%s consecutive_losses=%s",
+                "RF_ACCOUNT_CONTINUES_AFTER_LOSSES account=%s consecutive_losses=%s "
+                "automatic_stop=false",
                 mask_account_id(account_id),
                 risk["consecutive_losses"],
             )
