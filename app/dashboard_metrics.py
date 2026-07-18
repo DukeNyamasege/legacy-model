@@ -81,4 +81,7 @@ def build_execution_summary(
     result["all_accounts_profit"] = sum(
         float(account.get("profit") or 0.0) for account in linked_accounts
     )
+    result["all_accounts_trades"] = sum(
+        int(account.get("trades") or 0) for account in linked_accounts
+    )
     return result

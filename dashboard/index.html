@@ -640,6 +640,7 @@
     <article class="panel metric"><span>Longest win streak</span><strong id="longest-win">0</strong></article>
     <article class="panel metric"><span>Longest loss streak</span><strong id="longest-loss">0</strong></article>
     <article class="panel metric"><span>Master account balance</span><strong id="balance">0.00</strong></article>
+    <article class="panel metric" title="Combined completed contracts across every linked account."><span>All account runs</span><strong id="all-account-runs">0</strong><small>Combined contracts</small></article>
     <article class="panel metric"><span>All accounts P/L</span><strong id="global-profit">0.00</strong></article>
     <article class="panel metric"><span>Open trades</span><strong id="open-trades">0</strong></article>
     <article class="panel metric"><span>Open trade age</span><strong id="open-trade-age">0s</strong></article>
@@ -917,6 +918,7 @@
     currentStatus = data.status || "UNKNOWN";
     $("traders").textContent = number(data.total_traders);
     $("trades").textContent = number(data.purchased_trades);
+    $("all-account-runs").textContent = number(data.all_accounts_trades);
     $("wins").textContent = number(data.wins);
     $("losses").textContent = number(data.losses);
     $("win-rate").textContent = `${number(Number(data.win_rate || 0) * 100, 2)}%`;

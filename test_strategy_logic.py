@@ -109,6 +109,7 @@ class DashboardMetricsTests(unittest.TestCase):
         self.assertEqual(result["longest_win_streak"], 3)
         self.assertEqual(result["primary_account_balance"], 389.16)
         self.assertEqual(result["all_accounts_profit"], 1.50)
+        self.assertEqual(result["all_accounts_trades"], 11)
         self.assertEqual(result["copy_trade_gap"], 1)
 
     def test_running_worker_without_active_accounts_is_watching_not_stopped(self) -> None:
