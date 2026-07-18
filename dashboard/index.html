@@ -346,12 +346,6 @@
       gap: 14px;
       align-items: flex-start;
     }
-    .contract-history .section-head p {
-      color: var(--muted);
-      font-size: .82rem;
-      margin-top: 5px;
-      max-width: 620px;
-    }
     .contract-table-wrap {
       width: 100%;
       overflow-x: auto;
@@ -361,7 +355,7 @@
     }
     .contract-table {
       width: 100%;
-      min-width: 1280px;
+      min-width: 560px;
       border-collapse: collapse;
       font-size: .84rem;
     }
@@ -381,12 +375,6 @@
       white-space: nowrap;
     }
     .contract-table tr:last-child td { border-bottom: 0; }
-    .contract-id {
-      max-width: 170px;
-      overflow-wrap: anywhere;
-      font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-      font-size: .78rem;
-    }
     .contract-status {
       display: inline-flex;
       align-items: center;
@@ -403,15 +391,6 @@
     .contract-status.win { color: var(--green); }
     .contract-status.loss { color: var(--red); }
     .contract-status.open { color: var(--gold); }
-    .contract-subtle { display: block; color: var(--muted); font-size: .74rem; margin-top: 3px; }
-    .empty {
-      color: var(--muted);
-      padding: 48px 15px;
-      text-align: center;
-      border: 1px dashed rgba(185,133,47,.35);
-      border-radius: 14px;
-      background: var(--empty-bg);
-    }
     .model-grid { display: grid; gap: 10px; }
     .model-row { border-bottom: 1px solid var(--row-line); padding: 10px 0; }
     .model-row:last-child { border-bottom: 0; }
@@ -528,10 +507,8 @@
   <header>
     <div>
       <div class="brand">Father of Automation Series</div>
-      <div class="tagline">Global Dashboard</div>
     </div>
     <div class="auth-controls">
-      <div id="user-info" style="display: none; font-size: 0.85rem; font-weight: bold;"></div>
       <div id="oauth-error" style="display: none; color: var(--red); font-size: 0.9rem; margin-left: 12px; padding: 4px 12px; background: rgba(170,52,52,.1); border-radius: 8px; font-weight: 500;"></div>
       <a href="/oauth/start" id="btn-login" class="btn-login">Login with Deriv</a>
       <button id="btn-logout" class="btn-logout" style="display: none;">Logout</button>
@@ -591,7 +568,6 @@
         <div class="personal-settings-head">
           <div>
             <strong>Personal Trading Controls</strong>
-            <div style="font-size: .78rem; opacity: .7; margin-top: 3px;">Your stake and limits apply only to your account. Use 0 to disable a TP or SL limit.</div>
           </div>
           <span id="personal-execution-state" class="execution-state">Inactive</span>
         </div>
@@ -652,35 +628,20 @@
     <div class="section-head">
       <div>
         <h2>Recent Contracts</h2>
-        <p>Your latest 50 contracts when signed in, or the master account's contracts when signed out. Strategy internals remain hidden.</p>
       </div>
-      <span id="contracts-count" class="version"><strong>Contracts</strong>0 shown</span>
     </div>
     <div class="contract-table-wrap">
       <table class="contract-table">
         <thead>
           <tr>
-            <th>Contract ID</th>
             <th>Market</th>
-            <th>Account</th>
-            <th>Status</th>
-            <th>Buy price</th>
+            <th>Contract type</th>
+            <th>Stake</th>
             <th>Payout</th>
-            <th>Markup</th>
-            <th>Commission</th>
-            <th>Profit</th>
-            <th>Entry</th>
-            <th>Exit</th>
-            <th>Opened</th>
-            <th>Settled</th>
-            <th>Duration</th>
-            <th>Lifecycle</th>
-            <th>Lifecycle SLA</th>
+            <th>Outcome</th>
           </tr>
         </thead>
-        <tbody id="contracts-body">
-          <tr><td colspan="16"><div class="empty">No contracts yet.</div></td></tr>
-        </tbody>
+        <tbody id="contracts-body"></tbody>
       </table>
     </div>
   </section>
@@ -762,69 +723,29 @@
       "'": "&#39;"
     })[character]);
   }
-  function formatDateTime(value) {
-    if (!value) return "-";
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) return String(value);
-    return parsed.toLocaleString(undefined, {
-      month: "short",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit"
-    });
-  }
   function formatContractStatus(outcome) {
     const normalized = String(outcome || "OPEN").toUpperCase();
     if (normalized === "WIN") return { label: "Win", className: "win" };
     if (normalized === "LOSS") return { label: "Loss", className: "loss" };
     return { label: "Open", className: "open" };
   }
-  function renderContracts(trades, account = "", viewer = "master", markup = {}) {
+  function renderContracts(trades) {
     const body = $("contracts-body");
-    const count = $("contracts-count");
     if (!body) return;
     const rows = Array.isArray(trades) ? trades.slice(0, 50) : [];
-    if (count) {
-      const label = viewer === "personal" ? "Personal" : "Master";
-      const totalMarkup = Number(markup.app_markup_total || 0);
-      const markupStatus = String(markup.status || "AWAITING_CONTRACT").replaceAll("_", " ");
-      count.innerHTML = `<strong>${label} ${escapeHtml(account || "")}</strong>${number(rows.length)} shown | markup ${number(totalMarkup, 4)} | ${escapeHtml(markupStatus)}`;
-    }
     if (!rows.length) {
-      body.innerHTML = '<tr><td colspan="16"><div class="empty">No contracts yet.</div></td></tr>';
+      body.innerHTML = "";
       return;
     }
     body.innerHTML = rows.map(trade => {
       const status = formatContractStatus(trade.outcome);
-      const profit = Number(trade.profit || 0);
-      const isOpen = !trade.settlement_time;
-      const lifecycle = Number(trade.lifecycle_seconds ?? trade.age_seconds ?? 0);
-      const slaStatus = String(trade.settlement_sla_status || (isOpen ? "OPEN" : "UNKNOWN"));
       return `
         <tr>
-          <td class="contract-id">${escapeHtml(trade.contract_id || "-")}</td>
           <td>${escapeHtml(trade.symbol || "-")}</td>
-          <td>${escapeHtml(trade.account || "-")}</td>
-          <td>
-            <span class="contract-status ${status.className}">${status.label}</span>
-            <span class="contract-subtle">${escapeHtml(trade.closure_summary || (isOpen ? "Awaiting settlement" : "Settled"))}</span>
-          </td>
+          <td>${escapeHtml(trade.contract_type || "-")}</td>
           <td>${trade.buy_price == null ? "-" : number(trade.buy_price, 2)}</td>
           <td>${trade.payout == null ? "-" : number(trade.payout, 2)}</td>
-          <td>${trade.app_markup_amount == null ? "-" : number(trade.app_markup_amount, 4)}</td>
-          <td>${trade.commission == null ? "-" : number(trade.commission, 4)}</td>
-          <td class="${profit < 0 ? "negative" : profit > 0 ? "positive" : ""}">${isOpen ? "-" : number(profit, 2)}</td>
-          <td>${trade.entry_tick == null ? "-" : number(trade.entry_tick, 2)}</td>
-          <td>
-            ${trade.exit_tick == null ? "-" : number(trade.exit_tick, 2)}
-            <span class="contract-subtle">Digit: ${trade.exit_digit == null ? "-" : escapeHtml(trade.exit_digit)}</span>
-          </td>
-          <td>${formatDateTime(trade.purchase_time)}</td>
-          <td>${formatDateTime(trade.settlement_time)}</td>
-          <td>${escapeHtml(trade.duration_label || "1 tick")}</td>
-          <td>${number(lifecycle, 3)}s</td>
-          <td class="${slaStatus === "LATE" ? "negative" : slaStatus === "MET" ? "positive" : ""}">${escapeHtml(slaStatus)}</td>
+          <td><span class="contract-status ${status.className}">${status.label}</span></td>
         </tr>
       `;
     }).join("");
@@ -832,7 +753,7 @@
   async function loadRecentContracts() {
     try {
       const data = await api("/metrics/recent-trades?limit=50");
-      renderContracts(data.trades || [], data.account || "", data.viewer || "master", data.markup || {});
+      renderContracts(data.trades || []);
     } catch (_) {
       renderContracts([]);
     }
@@ -1138,8 +1059,6 @@
         $("personal-section").style.display = "block";
         $("btn-login").style.display = "none";
         $("btn-logout").style.display = "inline-flex";
-        $("user-info").style.display = "block";
-        $("user-info").textContent = me.label;
         clearOAuthError();
         
         $("personal-balance").textContent = `${number(me.balance, 2)} ${me.currency || "USD"}`;
@@ -1168,7 +1087,6 @@
         $("personal-section").style.display = "none";
         $("btn-login").style.display = "inline-flex";
         $("btn-logout").style.display = "none";
-        $("user-info").style.display = "none";
         hasTradingApiToken = false;
         if ($("api-token-panel")) $("api-token-panel").style.display = "none";
         if ($("auto-trade-panel")) $("auto-trade-panel").style.display = "none";

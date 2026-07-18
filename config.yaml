@@ -103,7 +103,7 @@ recovery:
   shadow_consecutive_wins_required: 0
   pause_after_consecutive_losses: 3
 rf_strategy:
-  name: RF-DIR5-HF-V2
+  name: RF-DIR5-HF-V3
   markets:
     - 1HZ100V
     - 1HZ10V
@@ -122,7 +122,7 @@ rf_strategy:
   demo_duration_ticks: 5
   shadow_duration_ticks: [5, 10]
   minimum_directional_moves: 3
-  minimum_efficiency: 0.25
+  minimum_efficiency: 0.35
   minimum_impulse: 0.15
   maximum_impulse: 4.50
   maximum_move_ratio: 6.00

@@ -164,7 +164,7 @@ class RecoverySettings(StrictModel):
 
 
 class RiseFallStrategySettings(StrictModel):
-    name: Literal["RF-DIR5-HF-V2"] = "RF-DIR5-HF-V2"
+    name: Literal["RF-DIR5-HF-V3"] = "RF-DIR5-HF-V3"
     markets: tuple[str, ...] = RF_SYMBOLS
     analysis_movements: Literal[5] = 5
     required_quotes: Literal[6] = 6
@@ -173,7 +173,7 @@ class RiseFallStrategySettings(StrictModel):
     demo_duration_ticks: Literal[5, 10] = 5
     shadow_duration_ticks: tuple[Literal[5, 10], ...] = (5, 10)
     minimum_directional_moves: int = Field(default=3, ge=3, le=5)
-    minimum_efficiency: float = Field(default=0.25, ge=0, le=1)
+    minimum_efficiency: float = Field(default=0.35, ge=0, le=1)
     minimum_impulse: float = Field(default=0.15, ge=0)
     maximum_impulse: float = Field(default=4.50, gt=0)
     maximum_move_ratio: float = Field(default=6.00, gt=0)

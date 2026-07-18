@@ -1109,7 +1109,11 @@ class Test2Repository:
         account_masked = mask_account_id(account_id) if account_id else ""
         with self.database.session() as session:
             query = (
-                select(Trade, CandidateSignalRecord.symbol)
+                select(
+                    Trade,
+                    CandidateSignalRecord.symbol,
+                    CandidateSignalRecord.contract_type,
+                )
                 .join(
                     CandidateSignalRecord,
                     CandidateSignalRecord.signal_id == Trade.signal_id,
@@ -1125,7 +1129,7 @@ class Test2Repository:
             ).all()
             settlement_sla = float(self.config.trade.settlement_sla_seconds)
             results: list[dict[str, Any]] = []
-            for trade, symbol in trade_rows:
+            for trade, symbol, contract_type in trade_rows:
                 lifecycle_seconds = max(
                     0.0,
                     ((trade.settlement_time or utc_now()) - trade.purchase_time).total_seconds(),
@@ -1157,6 +1161,7 @@ class Test2Repository:
                 results.append({
                     "contract_id": trade.contract_id,
                     "symbol": str(symbol),
+                    "contract_type": str(contract_type),
                     "account": trade.account_id_masked,
                     "purchase_time": trade.purchase_time.isoformat(),
                     "settlement_time": (

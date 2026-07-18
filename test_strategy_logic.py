@@ -71,6 +71,21 @@ def live_tick_payload(
 
 
 class DashboardMetricsTests(unittest.TestCase):
+    def test_dashboard_contract_table_is_compact_and_has_no_repeated_copy(self) -> None:
+        html = Path("dashboard/index.html").read_text(encoding="utf-8")
+        for heading in ("Market", "Contract type", "Stake", "Payout", "Outcome"):
+            self.assertIn(f"<th>{heading}</th>", html)
+        for removed in (
+            "Global Dashboard",
+            "Your stake and limits apply only to your account.",
+            "Your latest 50 contracts when signed in",
+            "No contracts yet.",
+            'id="contracts-count"',
+            'id="user-info"',
+            "<th>Contract ID</th>",
+        ):
+            self.assertNotIn(removed, html)
+
     def test_global_cards_use_master_stats_and_all_account_profit(self) -> None:
         master = {
             "account": "DOT***422",
@@ -1650,6 +1665,7 @@ class PersistenceTests(unittest.TestCase):
         personal = self.repository.recent_trades(account_id="DOT90000001")
         self.assertEqual(len(personal), 1)
         self.assertEqual(personal[0]["contract_id"], "12345")
+        self.assertEqual(personal[0]["contract_type"], "DIGITOVER")
         self.assertAlmostEqual(personal[0]["app_markup_amount"], 0.02)
         self.assertEqual(personal[0]["duration_label"], "1 tick")
         self.assertEqual(personal[0]["provider_lifecycle_seconds"], 1.0)

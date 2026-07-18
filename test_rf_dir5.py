@@ -68,8 +68,8 @@ class RiseFallFeatureTests(unittest.TestCase):
         self.assertEqual(len(item.movements), 5)
 
     def test_rise_and_fall_rules_are_symmetric(self) -> None:
-        rise = features(["1.00", "1.10", "1.20", "1.30", "1.25", "1.40"])
-        fall = features(["1.40", "1.30", "1.20", "1.10", "1.15", "1.00"])
+        rise = features(["1.00", "1.10", "1.05", "1.15", "1.25", "1.40"])
+        fall = features(["1.40", "1.30", "1.35", "1.25", "1.15", "1.00"])
         self.assertTrue(detect_rise_candidate(rise))
         self.assertFalse(detect_fall_candidate(rise))
         self.assertTrue(detect_fall_candidate(fall))
@@ -77,8 +77,8 @@ class RiseFallFeatureTests(unittest.TestCase):
         self.assertAlmostEqual(rise.efficiency, fall.efficiency)
 
     def test_high_frequency_rule_accepts_three_of_five_directional_moves(self) -> None:
-        rise = features(["100", "101", "100.5", "101.5", "101", "102"])
-        fall = features(["102", "101", "101.5", "100.5", "101", "100"])
+        rise = features(["100", "101", "100.5", "100", "101", "102"])
+        fall = features(["102", "101", "101.5", "102", "101", "100"])
 
         self.assertEqual(rise.up_count, 3)
         self.assertEqual(fall.down_count, 3)
@@ -86,6 +86,13 @@ class RiseFallFeatureTests(unittest.TestCase):
         self.assertTrue(detect_fall_candidate(fall))
         self.assertFalse(detect_rise_candidate(rise, minimum_directional_moves=4))
         self.assertFalse(detect_fall_candidate(fall, minimum_directional_moves=4))
+
+    def test_final_two_ticks_must_confirm_the_trade_direction(self) -> None:
+        rise_pullback = features(["1.00", "1.10", "1.20", "1.30", "1.25", "1.40"])
+        fall_pullback = features(["1.40", "1.30", "1.20", "1.10", "1.15", "1.00"])
+
+        self.assertFalse(detect_rise_candidate(rise_pullback))
+        self.assertFalse(detect_fall_candidate(fall_pullback))
 
     def test_flat_window_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
