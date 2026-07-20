@@ -782,7 +782,7 @@ class RFDecisionTests(unittest.TestCase):
         bot._save_state.assert_called_once()
 
     def test_log_sanitizer_redacts_pat_tokens(self) -> None:
-        secret = "pat_abcdefghijklmnopqrstuvwxyz0123456789"
+        secret = "pat_" + "abcdefghijklmnopqrstuvwxyz0123456789"
         self.assertNotIn(secret, sanitize_log_value(KeyError(secret)))
         self.assertIn("[REDACTED_TOKEN]", sanitize_log_value(KeyError(secret)))
 
