@@ -184,11 +184,28 @@ def mask_account_id(account_id: str) -> str:
 
 
 ACCOUNT_ID_PATTERN = re.compile(r"\b[A-Z]{2,6}\d{3,}\b")
+SENSITIVE_TOKEN_PATTERN = re.compile(
+    r"\b(?:pat_|ory_at_)[A-Za-z0-9._-]{20,}\b",
+    re.IGNORECASE,
+)
 
 
 def sanitize_account_ids(message: Any) -> str:
     value = str(message or "")
     return ACCOUNT_ID_PATTERN.sub(lambda match: mask_account_id(match.group(0)), value)
+
+
+def sanitize_log_value(value: Any) -> Any:
+    """Redact credentials without changing numeric logging arguments."""
+    if isinstance(value, BaseException):
+        value = f"{type(value).__name__}: {value}"
+    if isinstance(value, str):
+        return SENSITIVE_TOKEN_PATTERN.sub("[REDACTED_TOKEN]", value)
+    if isinstance(value, tuple):
+        return tuple(sanitize_log_value(item) for item in value)
+    if isinstance(value, dict):
+        return {key: sanitize_log_value(item) for key, item in value.items()}
+    return value
 
 
 def is_permanent_credential_error(error: Dict[str, Any]) -> bool:
@@ -388,15 +405,19 @@ def scan_source_for_hardcoded_tokens(root: Path) -> None:
 
 class _EnsureExtraFieldsFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
+        record.msg = sanitize_log_value(record.msg)
+        record.args = sanitize_log_value(record.args)
         for k in ("token", "token_tag", "contract_id", "stake"):
             if not hasattr(record, k):
                 setattr(record, k, "-")
+            else:
+                setattr(record, k, sanitize_log_value(getattr(record, k)))
         return True
 
 
 class JsonLogFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
-        message = record.getMessage()
+        message = sanitize_log_value(record.getMessage())
         first_word = message.split(" ", 1)[0].strip(":").upper() if message else "LOG"
         payload = {
             "timestamp": datetime.fromtimestamp(
@@ -418,7 +439,9 @@ class JsonLogFormatter(logging.Formatter):
             "message": message,
         }
         if record.exc_info:
-            payload["exception"] = self.formatException(record.exc_info)
+            payload["exception"] = sanitize_log_value(
+                self.formatException(record.exc_info)
+            )
         return json.dumps(payload, ensure_ascii=True)
 
 
@@ -2351,6 +2374,27 @@ class TradingBot:
         self.pending_by_signal.pop(signal_id, None)
         return signal_id, True
 
+    def _isolate_stale_contract_from_global_cycle(
+        self,
+        contract_id: int,
+        reason: str,
+    ) -> bool:
+        """Keep account settlement monitoring without blocking healthy accounts."""
+        contract_id = int(contract_id)
+        if contract_id not in self.pending_contracts_for_current_cycle:
+            return False
+        self.pending_contracts_for_current_cycle.discard(contract_id)
+        self.logger.error(
+            "STALE_CONTRACT_ACCOUNT_ISOLATED contract_id=%s age_seconds=%s reason=%s; "
+            "healthy accounts may continue while settlement reconciliation remains active",
+            contract_id,
+            int(self._contract_age_seconds(contract_id)),
+            reason,
+            extra={"contract_id": str(contract_id)},
+        )
+        self._save_state()
+        return True
+
     def _clear_closed_signal_runtime_state(self, signal_id: str) -> None:
         if not signal_id:
             return
@@ -2454,6 +2498,11 @@ class TradingBot:
                 snapshot["error"].get("message"),
                 extra={"token_tag": token_tag(token), "contract_id": str(contract_id)},
             )
+            if self._contract_age_seconds(contract_id) >= self.max_open_trade_seconds:
+                self._isolate_stale_contract_from_global_cycle(
+                    contract_id,
+                    f"{reason}:snapshot_error",
+                )
             return
         contract = snapshot.get("proposal_open_contract")
         if not contract:
@@ -2478,6 +2527,11 @@ class TradingBot:
                 reason,
                 contract.get("status", "unknown"),
                 extra={"token_tag": token_tag(token), "contract_id": str(contract_id)},
+            )
+        if self._contract_age_seconds(contract_id) >= self.max_open_trade_seconds:
+            self._isolate_stale_contract_from_global_cycle(
+                contract_id,
+                f"{reason}:provider_still_open",
             )
 
     async def validate_accounts(self) -> None:
@@ -3793,9 +3847,16 @@ class TradingBot:
 
         session = self.sessions.get(token)
         account_id = session.account_id if session else ""
-        st = self._client_state_for_token(token, account_id=account_id)
-        tag = st["token_tag"]
-        extra = {"token_tag": tag, "contract_id": str(contract_id), "stake": f"{st['current_stake']:.2f}"}
+        try:
+            st = self._client_state_for_token(token, account_id=account_id)
+        except KeyError:
+            st = None
+        tag = str(st.get("token_tag") if st else token_tag(token))
+        extra = {
+            "token_tag": tag,
+            "contract_id": str(contract_id),
+            "stake": f"{float(st['current_stake']):.2f}" if st else "-",
+        }
 
         # Prevent duplicate processing
         if contract_id not in self.pending_contracts_for_current_cycle and contract_id not in self.unresolved_contracts_from_state:
@@ -3930,39 +3991,45 @@ class TradingBot:
                 extra=extra,
             )
 
-        st["total_profit"] = float(st["total_profit"]) + profit
-        st["profit_today"] = float(st["profit_today"]) + profit
-        st["total_trades"] = int(st.get("total_trades", 0)) + 1
-        st["last_profit"] = profit
-
-        if status == "won":
-            self.logger.info("WIN profit=%.2f", profit, extra=extra)
-            st["wins"] = int(st.get("wins", 0)) + 1
-        elif status == "lost":
-            self.logger.info("LOSS profit=%.2f", profit, extra=extra)
-            st["losses"] = int(st.get("losses", 0)) + 1
-        elif status in {"sold", "cancelled"}:
-            self.logger.info("SETTLED status=%s profit=%.2f", status, profit, extra=extra)
-            if outcome == "win":
-                st["wins"] = int(st.get("wins", 0)) + 1
-            else:
-                st["losses"] = int(st.get("losses", 0)) + 1
+        if st is None:
+            self.logger.warning(
+                "SETTLEMENT_CLIENT_STATE_MISSING account=%s contract_id=%s; "
+                "durable trade settled and account-scoped runtime state will be cleaned",
+                mask_account_id(account_id),
+                contract_id,
+                extra=extra,
+            )
         else:
-            outcome = "loss"
-            st["losses"] = int(st.get("losses", 0)) + 1
-        st["last_result"] = outcome
+            st["total_profit"] = float(st["total_profit"]) + profit
+            st["profit_today"] = float(st["profit_today"]) + profit
+            st["total_trades"] = int(st.get("total_trades", 0)) + 1
+            st["last_profit"] = profit
 
-        self._update_client_recovery_state(st, outcome=outcome, profit=profit)
+            if status == "won":
+                self.logger.info("WIN profit=%.2f", profit, extra=extra)
+                st["wins"] = int(st.get("wins", 0)) + 1
+            elif status == "lost":
+                self.logger.info("LOSS profit=%.2f", profit, extra=extra)
+                st["losses"] = int(st.get("losses", 0)) + 1
+            elif status in {"sold", "cancelled"}:
+                self.logger.info("SETTLED status=%s profit=%.2f", status, profit, extra=extra)
+                if outcome == "win":
+                    st["wins"] = int(st.get("wins", 0)) + 1
+                else:
+                    st["losses"] = int(st.get("losses", 0)) + 1
+            st["last_result"] = outcome
 
-        self.logger.info(
-            "total_profit=%.2f profit_today=%.2f next_stake=%.2f",
-            st["total_profit"],
-            st["profit_today"],
-            st["current_stake"],
-            extra=extra,
-        )
+            self._update_client_recovery_state(st, outcome=outcome, profit=profit)
 
-        self._enforce_account_risk_limit(token, account_id, st)
+            self.logger.info(
+                "total_profit=%.2f profit_today=%.2f next_stake=%.2f",
+                st["total_profit"],
+                st["profit_today"],
+                st["current_stake"],
+                extra=extra,
+            )
+
+            self._enforce_account_risk_limit(token, account_id, st)
 
         signal_id = self.contract_signal_ids.get(contract_id, "")
         if signal_id:
@@ -4144,7 +4211,6 @@ class TradingBot:
                     self.sessions[matched_token].pending_contracts.add(cid)
                     self.pending_contract_started_at[cid] = trade.purchase_time
                     self.unresolved_contracts_from_state.add(cid)
-                    self.pending_contracts_for_current_cycle.add(cid)
                     self.contract_signal_ids[cid] = trade.signal_id
                     self.contract_symbols[cid] = self.repository.signal_symbol(
                         trade.signal_id
@@ -4158,6 +4224,18 @@ class TradingBot:
                         trade.signal_id,
                         self.contract_symbols[cid],
                     )
+                    if self._contract_age_seconds(cid) < self.max_open_trade_seconds:
+                        self.pending_contracts_for_current_cycle.add(cid)
+                    else:
+                        self.logger.error(
+                            "STARTUP_STALE_CONTRACT_ACCOUNT_ISOLATED contract_id=%s "
+                            "account=%s age_seconds=%s; reconciliation retained without "
+                            "creating a global execution lock",
+                            cid,
+                            trade.account_id_masked,
+                            int(self._contract_age_seconds(cid)),
+                            extra={"contract_id": str(cid)},
+                        )
 
                 for session in self.sessions.values():
                     session.task = asyncio.create_task(session.connect_and_run())

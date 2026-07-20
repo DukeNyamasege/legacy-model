@@ -245,30 +245,6 @@
       color: var(--muted);
       font-size: .88rem;
     }
-    .shadow-snapshot {
-      position: relative;
-      display: grid;
-      gap: 6px;
-      width: min(420px, 100%);
-      margin-top: 16px;
-      padding: 13px 15px;
-      border: 1px solid rgba(185,133,47,.28);
-      border-radius: 16px;
-      background: var(--glass-bg);
-    }
-    .shadow-snapshot[hidden] { display: none; }
-    .shadow-snapshot span {
-      color: var(--muted);
-      font-size: .74rem;
-      letter-spacing: .08em;
-      text-transform: uppercase;
-    }
-    .shadow-snapshot strong {
-      color: var(--ink);
-      font-size: clamp(1.05rem, 2.3vw, 1.45rem);
-      line-height: 1.05;
-    }
-    .shadow-snapshot small { color: var(--muted); font-size: .86rem; }
     button, input, textarea, select {
       min-height: 44px;
       border-radius: 12px;
@@ -595,11 +571,6 @@
       <span id="ai-mode-label" class="ai-mode-label">Checking bot status</span>
       <h2 id="ai-mode-message" class="ai-mode-message">Connecting to worker</h2>
       <p id="ai-mode-detail" class="ai-mode-detail">Waiting for the first status update.</p>
-      <div id="shadow-snapshot" class="shadow-snapshot" hidden>
-        <span>Latest 20 shadow outcomes</span>
-        <strong><b id="shadow-wins">0</b> wins / <b id="shadow-losses">0</b> losses</strong>
-        <small>Shadow win rate: <b id="shadow-rate">0%</b></small>
-      </div>
     </div>
   </section>
 
@@ -792,19 +763,7 @@
     $("ai-mode-label").textContent = label;
     $("ai-mode-message").textContent = message;
     $("ai-mode-detail").textContent = detail;
-    renderShadowSnapshot(data, mode);
-
     currentAiActivityMode = mode;
-  }
-  function renderShadowSnapshot(data, mode) {
-    const snapshot = $("shadow-snapshot");
-    if (!snapshot) return;
-    const isLearning = mode === "learning";
-    snapshot.hidden = !isLearning;
-    if (!isLearning) return;
-    $("shadow-wins").textContent = number(data.shadow_latest_wins);
-    $("shadow-losses").textContent = number(data.shadow_latest_losses);
-    $("shadow-rate").textContent = `${number(Number(data.shadow_latest_win_rate || 0) * 100, 0)}%`;
   }
   function connectWebSocket() {
     if (wsConnection && wsConnection.readyState <= 1) return;

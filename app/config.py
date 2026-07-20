@@ -95,7 +95,6 @@ class ExecutionSettings(StrictModel):
     maximum_proposal_age_ms: int = Field(default=900, gt=0)
     demo_enabled: bool = True
     real_enabled: bool = False
-    shadow_enabled: bool = True
 
 
 class BayesianSettings(StrictModel):
@@ -164,14 +163,13 @@ class RecoverySettings(StrictModel):
 
 
 class RiseFallStrategySettings(StrictModel):
-    name: Literal["RF-DIR5-HF-V3"] = "RF-DIR5-HF-V3"
+    name: Literal["RF-DIR5-DEMO-V5"] = "RF-DIR5-DEMO-V5"
     markets: tuple[str, ...] = RF_SYMBOLS
     analysis_movements: Literal[5] = 5
     required_quotes: Literal[6] = 6
     minimum_history_movements: int = Field(default=100, ge=50)
     normalization_movements: int = Field(default=100, ge=50)
     demo_duration_ticks: Literal[5, 10] = 5
-    shadow_duration_ticks: tuple[Literal[5, 10], ...] = (5, 10)
     minimum_directional_moves: int = Field(default=3, ge=3, le=5)
     minimum_efficiency: float = Field(default=0.35, ge=0, le=1)
     minimum_impulse: float = Field(default=0.15, ge=0)
@@ -190,21 +188,9 @@ class RiseFallStrategySettings(StrictModel):
         unsupported = [symbol for symbol in self.markets if symbol not in RF_SYMBOLS]
         if unsupported:
             raise ValueError(f"Unsupported RF-DIR5 markets: {unsupported!r}")
-        if set(self.shadow_duration_ticks) != {5, 10}:
-            raise ValueError("RF-DIR5 must shadow both 5-tick and 10-tick durations")
         if self.maximum_impulse < self.minimum_impulse:
             raise ValueError("maximum_impulse must be >= minimum_impulse")
         return self
-
-
-class VirtualGuardSettings(StrictModel):
-    enabled: bool = False
-    scope: Literal["global"] = "global"
-    activate_after_demo_losses: Literal[1] = 1
-    virtual_wins_required_to_resume: Literal[1] = 1
-    maximum_virtual_contracts: Literal[1] = 1
-    ties_are_losses: Literal[True] = True
-    persist_state: Literal[True] = True
 
 
 class RiskSettings(StrictModel):
@@ -256,7 +242,6 @@ class Test2Config(StrictModel):
     cooldown: CooldownSettings
     recovery: RecoverySettings = Field(default_factory=RecoverySettings)
     rf_strategy: RiseFallStrategySettings = Field(default_factory=RiseFallStrategySettings)
-    virtual_guard: VirtualGuardSettings = Field(default_factory=VirtualGuardSettings)
     risk: RiskSettings = Field(default_factory=RiskSettings)
     storage: StorageSettings
     trade: TradeSettings

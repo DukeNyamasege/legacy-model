@@ -8,7 +8,7 @@ from statistics import median
 from typing import Sequence
 
 
-RF_DIR5_VERSION = "RF-DIR5-HF-V3"
+RF_DIR5_VERSION = "RF-DIR5-DEMO-V5"
 RF_SYMBOLS = (
     "1HZ100V",
     "1HZ10V",

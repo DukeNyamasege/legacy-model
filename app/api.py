@@ -1305,15 +1305,10 @@ def metrics_summary() -> dict:
         if refresh_global_account_snapshots():
             summary = REPOSITORY.summary()
     filtered = filter_summary_to_trading_ready_accounts(summary)
-    guard = RF_REPOSITORY.guard_state()
-    groups = RF_REPOSITORY.shadow_groups()
     filtered.update(
         {
             "strategy_name": CONFIG.rf_strategy.name,
-            "execution_phase": "EXPLORATION",
-            "virtual_guard_state": guard["state"],
-            "shadow_settled": sum(group["wins"] + group["losses"] for group in groups),
-            "shadow_profit": sum(group["profit"] for group in groups),
+            "execution_phase": "DIRECT_DEMO",
         }
     )
     return filtered
@@ -1349,22 +1344,14 @@ def recent_signals(limit: int = 50) -> dict:
 @app.get("/metrics/model")
 def model_metrics() -> dict:
     return {
-        "bayesian": {
-            "mode": "per_market_direction_duration",
-            "prior_alpha": CONFIG.bayesian.prior_alpha,
-            "prior_beta": CONFIG.bayesian.prior_beta,
-            "minimum_shadow_outcomes": CONFIG.bayesian.minimum_shadow_outcomes,
-            "groups": RF_REPOSITORY.shadow_groups(),
-        },
         "strategy": {
             "name": CONFIG.rf_strategy.name,
-            "phase": "EXPLORATION",
+            "phase": "DIRECT_DEMO",
             "hmm_enabled": False,
             "martingale_enabled": CONFIG.risk.recovery_enabled,
             "recovery_trigger_losses": CONFIG.risk.recovery_trigger_losses,
             "maximum_recovery_attempts": CONFIG.risk.maximum_recovery_attempts,
             "automatic_loss_stop": False,
-            "virtual_guard": RF_REPOSITORY.guard_state(),
         },
     }
 
@@ -1373,9 +1360,9 @@ def model_metrics() -> dict:
 def rf_strategy_metrics() -> dict:
     return {
         "strategy": CONFIG.rf_strategy.name,
-        "phase": "EXPLORATION",
-        "virtual_guard": RF_REPOSITORY.guard_state(),
-        "shadow_groups": RF_REPOSITORY.shadow_groups(),
+        "phase": "DIRECT_DEMO",
+        "markets": list(CONFIG.rf_strategy.markets),
+        "duration_ticks": CONFIG.rf_strategy.demo_duration_ticks,
     }
 
 

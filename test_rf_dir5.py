@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 import unittest
 from collections import deque
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -31,6 +32,7 @@ from app.strategy.rise_fall_strategy import (
     make_signal_event,
     shadow_outcome,
 )
+from enhanced_bot import TradingBot, sanitize_log_value
 
 
 def features(prices: list[str]):
@@ -268,7 +270,63 @@ class RFTickStreamTests(unittest.IsolatedAsyncioTestCase):
             [Decimal(value) for value in range(101, 106)],
         )
         self.assertEqual(bot.repository.record_tick.call_count, 6)
+        bot.rf_repository.settle_due_shadows.assert_not_called()
         bot.logger.warning.assert_not_called()
+
+    async def test_qualified_live_signal_never_creates_shadow_contracts(self) -> None:
+        bot = object.__new__(RFDir5TradingBot)
+        market = SimpleNamespace(
+            symbol="1HZ100V",
+            pip_size=2,
+            tick_sequence=0,
+            ticks_history=deque(maxlen=216),
+            live_ticks_history=deque(maxlen=5),
+        )
+        bot.symbol = market.symbol
+        bot.market_states = {market.symbol: market}
+        bot.rf_config = SimpleNamespace(
+            minimum_history_movements=100,
+            normalization_movements=100,
+            minimum_directional_moves=4,
+            minimum_efficiency=0.65,
+            minimum_impulse=0.75,
+            maximum_impulse=3.0,
+            maximum_move_ratio=3.0,
+            minimum_directional_score=7,
+            demo_duration_ticks=5,
+        )
+        bot.test2_config = SimpleNamespace(
+            model=SimpleNamespace(run_id="direct-demo-test"),
+        )
+        bot.rf_last_epoch = {}
+        bot.rf_last_tick_id = {}
+        bot.live_market_symbol = market.symbol
+        bot.tick_sequence = 0
+        bot.connection_session_id = "connection-1"
+        bot.repository = MagicMock()
+        bot.rf_repository = MagicMock()
+        bot.rf_supported_contracts = {market.symbol: {"CALL", "PUT"}}
+        bot.rf_candidate_queue = []
+        bot.logger = MagicMock()
+        bot._mark_tick_received = MagicMock()
+        bot._render_live_ticks = MagicMock()
+        bot._schedule_candidate_arbitration = MagicMock()
+
+        for offset in range(106):
+            await bot._on_tick(
+                {
+                    "tick": {
+                        "symbol": market.symbol,
+                        "epoch": 1_700_000_001 + offset,
+                        "quote": 100 + offset,
+                    }
+                }
+            )
+
+        self.assertGreater(bot.rf_repository.record_signal.call_count, 0)
+        self.assertGreater(len(bot.rf_candidate_queue), 0)
+        bot.rf_repository.create_shadow_contracts.assert_not_called()
+        bot.rf_repository.settle_due_shadows.assert_not_called()
 
 
 class RFCandidateArbitrationTests(unittest.IsolatedAsyncioTestCase):
@@ -304,9 +362,6 @@ class RFCandidateArbitrationTests(unittest.IsolatedAsyncioTestCase):
         bot.rf_decision_engine = RiseFallDecisionEngine(
             minimum_score=4,
             stale_signal_after_ms=1800,
-            minimum_shadow_outcomes=1000,
-            required_edge_margin=0.01,
-            real_gate_enabled=False,
         )
         bot.environment = "demo"
         bot.is_trading_locked = False
@@ -336,9 +391,10 @@ class RFCandidateArbitrationTests(unittest.IsolatedAsyncioTestCase):
 
         bot._proposal_for_duration.assert_awaited_once_with(stronger, 5)
         bot._buy_selected_demo.assert_awaited_once()
+        bot.rf_repository.shadow_group_counts.assert_not_called()
         bot._mark_rf_decision.assert_any_call(
             weaker,
-            "SHADOW_ONLY",
+            "SKIP_MARKET_ARBITRATION",
             "another market ranked higher",
             selected=False,
         )
@@ -625,14 +681,6 @@ class RFDecisionTests(unittest.TestCase):
         engine = RiseFallDecisionEngine(
             minimum_score=6,
             stale_signal_after_ms=900,
-            minimum_shadow_outcomes=1000,
-            required_edge_margin=0.01,
-            real_gate_enabled=False,
-        )
-        key = BayesianGroupKey(RF_DIR5_VERSION, "1HZ100V", "RISE", 5)
-        posterior = KeyedBayesianProbability().snapshot(
-            key,
-            break_even_probability=0.55,
         )
         economics = ProposalEconomics(
             proposal_id="p1",
@@ -652,12 +700,91 @@ class RFDecisionTests(unittest.TestCase):
             signal_age_ms=901,
             proposal_age_ms=1,
             proposal_economics=economics,
-            shadow_snapshot=posterior,
             execution_mode="demo",
-            virtual_guard_state="DEMO_LIVE",
             trading_locked=False,
         )
         self.assertEqual(decision.action, "SKIP_STALE_SIGNAL")
+
+    def test_demo_purchase_does_not_require_shadow_evidence(self) -> None:
+        engine = RiseFallDecisionEngine(
+            minimum_score=7,
+            stale_signal_after_ms=900,
+        )
+        economics = ProposalEconomics(
+            proposal_id="p1",
+            stake=0.50,
+            payout=0.96,
+            potential_profit=0.46,
+            potential_loss=0.50,
+            break_even_probability=0.50 / 0.96,
+            predicted_win_probability=0.50,
+            expected_value=-0.02,
+            expected_return_on_stake=-0.04,
+            requested_monotonic=time.monotonic(),
+            received_monotonic=time.monotonic(),
+        )
+
+        decision = engine.decide(
+            quality_score=8,
+            signal_age_ms=1,
+            proposal_age_ms=1,
+            proposal_economics=economics,
+            execution_mode="demo",
+            trading_locked=False,
+        )
+        self.assertEqual(decision.action, "BUY_DEMO")
+        self.assertEqual(decision.reasons, ("direct_demo",))
+
+    def test_real_execution_is_disabled(self) -> None:
+        engine = RiseFallDecisionEngine(
+            minimum_score=7,
+            stale_signal_after_ms=900,
+        )
+        economics = ProposalEconomics(
+            proposal_id="p2",
+            stake=0.50,
+            payout=0.96,
+            potential_profit=0.46,
+            potential_loss=0.50,
+            break_even_probability=0.50 / 0.96,
+            predicted_win_probability=0.55,
+            expected_value=0.028,
+            expected_return_on_stake=0.056,
+            requested_monotonic=time.monotonic(),
+            received_monotonic=time.monotonic(),
+        )
+
+        decision = engine.decide(
+            quality_score=9,
+            signal_age_ms=1,
+            proposal_age_ms=1,
+            proposal_economics=economics,
+            execution_mode="real",
+            trading_locked=False,
+        )
+
+        self.assertEqual(decision.action, "SKIP_REAL_DISABLED")
+        self.assertEqual(decision.reasons, ("demo_only",))
+
+    def test_stale_contract_isolated_without_stopping_account_monitoring(self) -> None:
+        bot = object.__new__(TradingBot)
+        bot.pending_contracts_for_current_cycle = {42}
+        bot.pending_contract_started_at = {
+            42: datetime.now(timezone.utc),
+        }
+        bot.logger = MagicMock()
+        bot._save_state = MagicMock()
+
+        self.assertTrue(
+            bot._isolate_stale_contract_from_global_cycle(42, "unit_test")
+        )
+        self.assertNotIn(42, bot.pending_contracts_for_current_cycle)
+        bot._save_state.assert_called_once()
+
+    def test_log_sanitizer_redacts_pat_tokens(self) -> None:
+        secret = "pat_abcdefghijklmnopqrstuvwxyz0123456789"
+        self.assertNotIn(secret, sanitize_log_value(KeyError(secret)))
+        self.assertIn("[REDACTED_TOKEN]", sanitize_log_value(KeyError(secret)))
 
 
 if __name__ == "__main__":

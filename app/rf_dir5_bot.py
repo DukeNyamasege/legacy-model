@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
-from app.model.bayesian_probability import BayesianGroupKey, KeyedBayesianProbability
 from app.repositories.rf_dir5_repository import RFDir5Repository
 from app.strategy.decision_engine import (
     ProposalEconomics,
@@ -40,7 +39,6 @@ class RFDir5TradingBot(TradingBot):
     def __init__(self, config_path: str | None = None) -> None:
         super().__init__(config_path)
         self.rf_config = self.test2_config.rf_strategy
-        self.virtual_guard_config = self.test2_config.virtual_guard
         self.risk_config = self.test2_config.risk
         self.symbols = list(self.rf_config.markets)
         self.symbol = self.symbols[0]
@@ -62,20 +60,9 @@ class RFDir5TradingBot(TradingBot):
         self.raw_tick_digits = primary.raw_tick_digits
 
         self.rf_repository = RFDir5Repository(self.repository)
-        if not self.virtual_guard_config.enabled:
-            self.rf_repository.reset_guard()
-        self.keyed_bayesian = KeyedBayesianProbability(
-            prior_alpha=self.test2_config.bayesian.prior_alpha,
-            prior_beta=self.test2_config.bayesian.prior_beta,
-            credible_interval=self.test2_config.bayesian.credible_interval,
-            minimum_completed_trades=self.test2_config.bayesian.minimum_shadow_outcomes,
-        )
         self.rf_decision_engine = RiseFallDecisionEngine(
             minimum_score=self.rf_config.minimum_directional_score,
             stale_signal_after_ms=self.rf_config.stale_signal_after_ms,
-            minimum_shadow_outcomes=self.test2_config.bayesian.minimum_shadow_outcomes,
-            required_edge_margin=self.test2_config.bayesian.required_edge_margin,
-            real_gate_enabled=self.test2_config.bayesian.real_gate_enabled,
         )
         # The legacy global posterior remains import-compatible but is never updated or
         # consulted by RF-DIR5 execution.
@@ -85,6 +72,7 @@ class RFDir5TradingBot(TradingBot):
         self.rf_supported_contracts: dict[str, set[str]] = {}
         self.rf_contract_validation_task: asyncio.Task | None = None
         self.rf_account_contract_tasks: dict[str, asyncio.Task] = {}
+        self.rf_account_contract_validation_semaphore = asyncio.Semaphore(3)
         self.rf_account_supported_contracts: dict[tuple[str, str], set[str]] = {}
         self.rf_pending_recovery_registrations: dict[str, int] = {}
         self.rf_last_epoch: dict[str, int] = {}
@@ -95,14 +83,12 @@ class RFDir5TradingBot(TradingBot):
             self._clear_recovery_state(state)
         self._save_state()
         self.logger.info(
-            "RF_DIR5_ACTIVE version=%s markets=%s demo_duration=%s shadow_durations=%s "
-            "one_shot_recovery_after_losses=%s virtual_guard=%s",
+            "RF_DIR5_ACTIVE version=%s markets=%s demo_duration=%s "
+            "recovery_enabled=%s",
             RF_DIR5_VERSION,
             ",".join(self.symbols),
             self.duration,
-            list(self.rf_config.shadow_duration_ticks),
-            self.risk_config.recovery_trigger_losses,
-            self.virtual_guard_config.enabled,
+            self.risk_config.recovery_enabled,
         )
 
     @staticmethod
@@ -236,6 +222,18 @@ class RFDir5TradingBot(TradingBot):
                 self.logger.info("RF_MARKET_VERIFIED symbol=%s contracts=CALL,PUT", symbol)
 
     def _on_private_session_ready(self, session: Any) -> None:
+        if all(
+            {"CALL", "PUT"}.issubset(
+                self.rf_account_supported_contracts.get((session.account_id, symbol), set())
+            )
+            for symbol in self.symbols
+        ):
+            self.logger.info(
+                "RF_ACCOUNT_CONTRACTS_CACHED account=%s markets=%s",
+                mask_account_id(session.account_id),
+                len(self.symbols),
+            )
+            return
         existing = self.rf_account_contract_tasks.get(session.account_id)
         if existing and not existing.done():
             existing.cancel()
@@ -270,24 +268,33 @@ class RFDir5TradingBot(TradingBot):
             )
 
     async def _validate_account_contracts(self, session: Any) -> None:
-        for symbol in self.symbols:
-            response = await session.send_request({"contracts_for": symbol})
-            if "error" in response:
-                self.logger.error(
-                    "RF_ACCOUNT_CONTRACTS_FAILED account=%s symbol=%s error=%s",
-                    mask_account_id(session.account_id),
-                    symbol,
-                    response["error"].get("message", "unknown"),
-                )
-                continue
-            payload = response.get("contracts_for") or {}
-            available = payload.get("available") if isinstance(payload, dict) else []
-            types = {
-                str(item.get("contract_type") or "").upper()
-                for item in (available or [])
-                if isinstance(item, dict)
-            }
-            self.rf_account_supported_contracts[(session.account_id, symbol)] = types
+        async with self.rf_account_contract_validation_semaphore:
+            for symbol in self.symbols:
+                if {"CALL", "PUT"}.issubset(
+                    self.rf_account_supported_contracts.get(
+                        (session.account_id, symbol),
+                        set(),
+                    )
+                ):
+                    continue
+                response = await session.send_request({"contracts_for": symbol})
+                if "error" in response:
+                    self.logger.error(
+                        "RF_ACCOUNT_CONTRACTS_FAILED account=%s symbol=%s error=%s",
+                        mask_account_id(session.account_id),
+                        symbol,
+                        response["error"].get("message", "unknown"),
+                    )
+                    continue
+                payload = response.get("contracts_for") or {}
+                available = payload.get("available") if isinstance(payload, dict) else []
+                types = {
+                    str(item.get("contract_type") or "").upper()
+                    for item in (available or [])
+                    if isinstance(item, dict)
+                }
+                self.rf_account_supported_contracts[(session.account_id, symbol)] = types
+                await asyncio.sleep(0.05)
         self.logger.info(
             "RF_ACCOUNT_CONTRACTS_VERIFIED account=%s markets=%s",
             mask_account_id(session.account_id),
@@ -368,33 +375,6 @@ class RFDir5TradingBot(TradingBot):
         )
         self._render_live_ticks()
 
-        settled_shadows = self.rf_repository.settle_due_shadows(
-            symbol=symbol,
-            tick_sequence=market.tick_sequence,
-            expiry_quote=quote,
-        )
-        for settled in settled_shadows:
-            key = BayesianGroupKey(
-                settled["strategy_version"],
-                settled["symbol"],
-                settled["direction"],
-                settled["duration_ticks"],
-            )
-            self.keyed_bayesian.update(key, settled["outcome"] == "WIN")
-            guard_transition = self.rf_repository.apply_virtual_settlement(settled)
-            self.logger.info(
-                "RF_SHADOW_SETTLED signal_id=%s symbol=%s direction=%s duration=%s "
-                "outcome=%s state=%s",
-                settled["signal_id"],
-                settled["symbol"],
-                settled["direction"],
-                settled["duration_ticks"],
-                settled["outcome"],
-                settled["execution_state"],
-            )
-            if guard_transition:
-                self.logger.warning("RF_VIRTUAL_GUARD_TRANSITION state=%s", guard_transition)
-
         if not {"CALL", "PUT"}.issubset(self.rf_supported_contracts.get(symbol, set())):
             return
         if len(market.ticks_history) < self.rf_config.minimum_history_movements + 1:
@@ -451,6 +431,14 @@ class RFDir5TradingBot(TradingBot):
             volatility_ok=volatility_ok,
             exhaustion_ok=exhaustion_ok,
         )
+        if quality_score < self.rf_config.minimum_directional_score:
+            self.logger.info(
+                "RF_SIGNAL_FILTERED symbol=%s score=%s minimum_score=%s",
+                symbol,
+                quality_score,
+                self.rf_config.minimum_directional_score,
+            )
+            return
         signal = make_signal_event(
             run_id=self.test2_config.model.run_id,
             symbol=symbol,
@@ -464,10 +452,6 @@ class RFDir5TradingBot(TradingBot):
             tick_sequence=market.tick_sequence,
         )
         self.rf_repository.record_signal(signal)
-        self.rf_repository.create_shadow_contracts(
-            signal,
-            tuple(self.rf_config.shadow_duration_ticks),
-        )
         self.rf_candidate_queue.append(signal)
         self.logger.info(
             "RF_SIGNAL_QUALIFIED signal_id=%s symbol=%s direction=%s score=%s "
@@ -490,6 +474,15 @@ class RFDir5TradingBot(TradingBot):
         )
         self.rf_arbitration_task = task
         task.add_done_callback(self._candidate_arbitration_finished)
+
+    def _candidate_rank_key(self, signal: SignalEvent) -> tuple[Any, ...]:
+        return (
+            -signal.quality_score,
+            -signal.features.efficiency,
+            -signal.features.impulse,
+            -signal.generated_monotonic,
+            signal.symbol,
+        )
 
     def _candidate_arbitration_finished(self, task: asyncio.Task) -> None:
         if self.rf_arbitration_task is task:
@@ -526,13 +519,6 @@ class RFDir5TradingBot(TradingBot):
             )
         except (TypeError, ValueError):
             return None, requested, received
-        self.rf_repository.update_shadow_proposal(
-            signal.signal_id,
-            duration_ticks,
-            ask_price=economics.stake,
-            payout=economics.payout,
-            break_even_probability=economics.break_even_probability,
-        )
         return economics, requested, received
 
     async def _arbitrate_candidates(self) -> None:
@@ -557,20 +543,12 @@ class RFDir5TradingBot(TradingBot):
         if not fresh_candidates:
             return
 
-        fresh_candidates.sort(
-            key=lambda signal: (
-                -signal.quality_score,
-                -signal.features.efficiency,
-                -signal.features.impulse,
-                -signal.generated_monotonic,
-                signal.symbol,
-            )
-        )
+        fresh_candidates.sort(key=self._candidate_rank_key)
         selected = fresh_candidates[0]
         for signal in fresh_candidates[1:]:
             self._mark_rf_decision(
                 signal,
-                "SHADOW_ONLY",
+                "SKIP_MARKET_ARBITRATION",
                 "another market ranked higher",
                 selected=False,
             )
@@ -584,7 +562,7 @@ class RFDir5TradingBot(TradingBot):
         ):
             self._mark_rf_decision(
                 selected,
-                "SHADOW_ONLY",
+                "SKIP_TRADING_LOCK",
                 "existing contract or account control state",
                 selected=True,
             )
@@ -596,7 +574,7 @@ class RFDir5TradingBot(TradingBot):
         if elapsed < minimum_interval:
             self._mark_rf_decision(
                 selected,
-                "SHADOW_ONLY",
+                "SKIP_TRADE_SPACING",
                 f"trade spacing {minimum_interval - elapsed:.1f}s remaining",
                 selected=True,
             )
@@ -617,33 +595,13 @@ class RFDir5TradingBot(TradingBot):
             )
             return
 
-        key = BayesianGroupKey(
-            RF_DIR5_VERSION,
-            selected.symbol,
-            selected.direction,
-            selected.duration_ticks,
-        )
-        wins, losses = self.rf_repository.shadow_group_counts(key)
-        self.keyed_bayesian.restore(key, wins=wins, losses=losses)
-        posterior = self.keyed_bayesian.snapshot(
-            key,
-            break_even_probability=economics.break_even_probability,
-            safety_margin=self.test2_config.bayesian.required_edge_margin,
-        )
-        validated_edge = (
-            posterior.lower_credible_bound - economics.break_even_probability
-        )
-        validated = (
-            posterior.ready
-            and validated_edge > self.test2_config.bayesian.required_edge_margin
-        )
-        selected.validated_edge = validated_edge if validated else None
+        selected.validated_edge = None
         selected.quality_score = calculate_directional_score(
             selected.features,
             direction=selected.direction,
             volatility_ok=True,
             exhaustion_ok=True,
-            validated_edge=validated,
+            validated_edge=False,
         )
         selected.proposal_ask_price = economics.stake
         selected.proposal_payout = economics.payout
@@ -656,23 +614,6 @@ class RFDir5TradingBot(TradingBot):
             self._mark_rf_decision(selected, "SKIP_STALE_SIGNAL", "new tick before purchase", selected=True)
             return
 
-        guard = self.rf_repository.guard_state()
-        if guard["state"] == "WAITING_FOR_VIRTUAL_WIN":
-            started = self.rf_repository.start_virtual_contract(
-                selected.signal_id,
-                self.rf_config.demo_duration_ticks,
-            )
-            self._mark_rf_decision(
-                selected,
-                "SKIP_VIRTUAL_GUARD",
-                "virtual contract active" if started else "virtual guard unavailable",
-                selected=True,
-            )
-            return
-        if guard["state"] == "VIRTUAL_CONTRACT_ACTIVE":
-            self._mark_rf_decision(selected, "SKIP_VIRTUAL_GUARD", guard["state"], selected=True)
-            return
-
         self._prune_stale_pending_contracts("rf_pre_decision")
         execution_mode = self.environment
         decision = self.rf_decision_engine.decide(
@@ -680,13 +621,7 @@ class RFDir5TradingBot(TradingBot):
             signal_age_ms=signal_age_ms,
             proposal_age_ms=proposal_age_ms,
             proposal_economics=economics,
-            shadow_snapshot=self.keyed_bayesian.snapshot(
-                BayesianGroupKey(RF_DIR5_VERSION, selected.symbol, selected.direction, selected.duration_ticks),
-                break_even_probability=economics.break_even_probability,
-                safety_margin=self.test2_config.bayesian.required_edge_margin,
-            ),
             execution_mode=execution_mode,
-            virtual_guard_state=guard["state"],
             trading_locked=(
                 self.is_trading_locked
                 or bool(self.pending_contracts_for_current_cycle)
@@ -699,7 +634,7 @@ class RFDir5TradingBot(TradingBot):
         if market.tick_sequence != selected.tick_sequence:
             self._mark_rf_decision(selected, "SKIP_STALE_SIGNAL", "tick changed after decision", selected=True)
             return
-        await self._buy_selected_demo(selected, economics, guard["state"])
+        await self._buy_selected_demo(selected, economics)
 
     def _mark_rf_decision(
         self,
@@ -734,7 +669,6 @@ class RFDir5TradingBot(TradingBot):
         self,
         signal: SignalEvent,
         economics: ProposalEconomics,
-        guard_state: str,
     ) -> None:
         eligible = self._eligible_purchase_accounts()
         stake_by_token: dict[str, float] = {}
@@ -853,10 +787,10 @@ class RFDir5TradingBot(TradingBot):
                     registered.add(account_id)
             self.pending_by_signal[signal.signal_id] = contracts
             if not contracts:
-                self._mark_rf_decision(signal, "SHADOW_ONLY", "demo purchase failed", selected=True)
+                self._mark_rf_decision(signal, "PURCHASE_FAILED", "demo purchase failed", selected=True)
                 self.repository.mark_signal(
                     signal.signal_id,
-                    status="SHADOW_ONLY",
+                    status="PURCHASE_FAILED",
                     registered_account_masks=[],
                 )
                 return
@@ -883,12 +817,10 @@ class RFDir5TradingBot(TradingBot):
             self.rf_repository.set_signal_decision(
                 signal.signal_id,
                 "BUY_DEMO",
-                "EXPLORATION",
+                "DIRECT_DEMO",
                 selected=True,
                 validated_edge=signal.validated_edge,
             )
-            if guard_state == "ARMED_AFTER_VIRTUAL_WIN":
-                self.rf_repository.consume_armed_guard()
             asyncio.create_task(self._cycle_timeout_watchdog(signal.signal_id, list(contracts)))
         finally:
             self.is_trading_locked = False
@@ -1030,9 +962,7 @@ class RFDir5TradingBot(TradingBot):
             )
 
     def _register_trade_cycle_outcome(self, outcome: str) -> None:
-        if self.virtual_guard_config.enabled and str(outcome).lower() != "win":
-            self.rf_repository.activate_after_demo_loss()
-            self.logger.warning("RF_VIRTUAL_GUARD_ACTIVATED reason=demo_loss")
+        del outcome
 
     def _record_real_cycle_outcome(self, outcome: str) -> None:
         del outcome

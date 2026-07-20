@@ -108,8 +108,9 @@ def parse_proposal_economics(
 
 RF_ACTIONS = {
     "BUY_DEMO",
-    "SHADOW_ONLY",
-    "SKIP_VIRTUAL_GUARD",
+    "SKIP_REAL_DISABLED",
+    "SKIP_MARKET_ARBITRATION",
+    "SKIP_TRADE_SPACING",
     "SKIP_LOW_SCORE",
     "SKIP_STALE_SIGNAL",
     "SKIP_UNPROFITABLE_QUOTE",
@@ -133,15 +134,9 @@ class RiseFallDecisionEngine:
         *,
         minimum_score: int,
         stale_signal_after_ms: int,
-        minimum_shadow_outcomes: int,
-        required_edge_margin: float,
-        real_gate_enabled: bool,
     ) -> None:
         self.minimum_score = int(minimum_score)
         self.stale_signal_after_ms = int(stale_signal_after_ms)
-        self.minimum_shadow_outcomes = int(minimum_shadow_outcomes)
-        self.required_edge_margin = float(required_edge_margin)
-        self.real_gate_enabled = bool(real_gate_enabled)
 
     def decide(
         self,
@@ -150,13 +145,11 @@ class RiseFallDecisionEngine:
         signal_age_ms: float,
         proposal_age_ms: float,
         proposal_economics: ProposalEconomics,
-        shadow_snapshot: BayesianSnapshot,
         execution_mode: str,
-        virtual_guard_state: str,
         trading_locked: bool,
         market_quarantined: bool = False,
     ) -> RiseFallDecision:
-        edge = shadow_snapshot.lower_credible_bound - proposal_economics.break_even_probability
+        edge = None
         if market_quarantined:
             return RiseFallDecision("SKIP_MARKET_QUARANTINED", ("market_quarantined",), True, edge)
         if quality_score < self.minimum_score:
@@ -167,21 +160,13 @@ class RiseFallDecisionEngine:
             return RiseFallDecision("SKIP_UNPROFITABLE_QUOTE", ("non_positive_payout",), True, edge)
         if trading_locked:
             return RiseFallDecision("SKIP_TRADING_LOCK", ("open_strategy_contract",), True, edge)
-        if virtual_guard_state in {"WAITING_FOR_VIRTUAL_WIN", "VIRTUAL_CONTRACT_ACTIVE"}:
-            return RiseFallDecision("SKIP_VIRTUAL_GUARD", (virtual_guard_state,), True, edge)
-
-        observations = shadow_snapshot.observed_wins + shadow_snapshot.observed_losses
-        validated = (
-            observations >= self.minimum_shadow_outcomes
-            and edge > self.required_edge_margin
-        )
-        if execution_mode == "real" and self.real_gate_enabled and not validated:
-            return RiseFallDecision("SHADOW_ONLY", ("real_validation_gate",), False, edge)
+        if execution_mode != "demo":
+            return RiseFallDecision("SKIP_REAL_DISABLED", ("demo_only",), False, None)
         return RiseFallDecision(
-            "BUY_DEMO" if execution_mode == "demo" else "SHADOW_ONLY",
-            ("exploration",) if not validated else ("validated_edge",),
-            not validated,
-            edge,
+            "BUY_DEMO",
+            ("direct_demo",),
+            False,
+            None,
         )
 
 
