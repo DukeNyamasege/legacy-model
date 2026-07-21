@@ -234,15 +234,42 @@ class RiseFallContractTests(unittest.TestCase):
                 "master_wins": 7,
                 "master_losses": 3,
                 "master_profit": 1.25,
+                "consecutive_wins": 3,
+                "consecutive_losses": 0,
                 "all_account_runs": 30,
                 "all_account_profit": 3.75,
                 "open_contracts": 0,
                 "generated_at": "2026-07-21T10:00:00+00:00",
             }
         )
-        self.assertIn("Direction: FALL (PUT)", message)
-        self.assertIn("Master results: 10 trades, 7 wins, 3 losses", message)
-        self.assertIn("All accounts: 30 contracts", message)
+        self.assertEqual(
+            message,
+            "\n".join(
+                (
+                    "Test our model: https://derivadmin.site/",
+                    "Total trades: 10",
+                    "Trade type: FALL (PUT)",
+                    "Per-account profit: 1.25 USD",
+                    "Total profit: 3.75 USD",
+                    "Consecutive wins/losses: 3/0",
+                    "Join other traders and let's train the future.",
+                )
+            ),
+        )
+
+    def test_current_consecutive_streaks_use_latest_master_results(self) -> None:
+        self.assertEqual(
+            Test2Repository.current_consecutive_streaks(
+                ["WIN", "WIN", "WIN", "LOSS", "WIN"]
+            ),
+            (3, 0),
+        )
+        self.assertEqual(
+            Test2Repository.current_consecutive_streaks(
+                ["LOSS", "LOSS", "WIN", "LOSS"]
+            ),
+            (0, 2),
+        )
 
     def test_telegram_channel_is_discovered_from_admin_or_post_update(self) -> None:
         chat_id, title = TelegramAlertClient.channel_from_updates(

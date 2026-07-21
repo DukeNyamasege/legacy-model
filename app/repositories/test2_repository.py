@@ -1125,13 +1125,11 @@ class Test2Repository:
     ) -> dict[str, Any]:
         minutes = max(1, int(window_minutes))
         now = utc_now()
-        since = now - timedelta(minutes=minutes)
         master_masked = mask_account_id(master_account_id) if master_account_id else ""
         with self.database.session() as session:
             settled_filter = (
                 self._current_run_trade_filter(),
                 Trade.settlement_time.is_not(None),
-                Trade.settlement_time >= since,
             )
             master_row = session.execute(
                 select(
@@ -1147,6 +1145,14 @@ class Test2Repository:
                     func.sum(Trade.profit).label("profit"),
                 ).where(*settled_filter)
             ).one()
+            recent_master_outcomes = session.scalars(
+                select(Trade.outcome)
+                .where(*settled_filter, Trade.account_id_masked == master_masked)
+                .order_by(Trade.settlement_time.desc(), Trade.id.desc())
+            ).all()
+            consecutive_wins, consecutive_losses = self.current_consecutive_streaks(
+                recent_master_outcomes
+            )
             open_contracts = session.scalar(
                 select(func.count()).select_from(Trade).where(
                     self._current_run_trade_filter(),
@@ -1185,12 +1191,27 @@ class Test2Repository:
             "master_wins": int(master_row.wins or 0),
             "master_losses": int(master_row.losses or 0),
             "master_profit": float(master_row.profit or 0.0),
+            "consecutive_wins": consecutive_wins,
+            "consecutive_losses": consecutive_losses,
             "all_account_runs": int(all_row.trades or 0),
             "all_account_profit": float(all_row.profit or 0.0),
             "open_contracts": int(open_contracts or 0),
             "active_accounts": int(active_accounts or 0),
             "excluded_accounts": int(excluded_accounts or 0),
         }
+
+    @staticmethod
+    def current_consecutive_streaks(outcomes: list[str]) -> tuple[int, int]:
+        normalized = [str(outcome or "").upper() for outcome in outcomes]
+        if not normalized or normalized[0] not in {"WIN", "LOSS"}:
+            return 0, 0
+        latest = normalized[0]
+        length = 0
+        for outcome in normalized:
+            if outcome != latest:
+                break
+            length += 1
+        return (length, 0) if latest == "WIN" else (0, length)
 
     def recent_trades(
         self,

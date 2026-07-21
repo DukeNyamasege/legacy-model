@@ -132,28 +132,16 @@ class TelegramAlertClient:
     def format_hourly_report(report: dict[str, Any]) -> str:
         return "\n".join(
             (
-                "Father of Automation - hourly execution report",
-                f"Window: {report['window_minutes']} minutes",
-                f"Mode: {str(report['mode']).upper()}",
-                f"Strategy: {report['strategy']}",
-                f"Direction: {report['direction']} ({report['contract_type']})",
-                f"Active accounts: {report['active_accounts']}",
-                f"Excluded accounts: {report['excluded_accounts']}",
-                f"Master: {report['master_account'] or 'not configured'}",
+                "Test our model: https://derivadmin.site/",
+                f"Total trades: {report['master_trades']}",
+                f"Trade type: {report['direction']} ({report['contract_type']})",
+                f"Per-account profit: {report['master_profit']:.2f} USD",
+                f"Total profit: {report['all_account_profit']:.2f} USD",
                 (
-                    "Master results: "
-                    f"{report['master_trades']} trades, "
-                    f"{report['master_wins']} wins, "
-                    f"{report['master_losses']} losses, "
-                    f"P/L {report['master_profit']:.2f} USD"
+                    f"Consecutive wins/losses: {report['consecutive_wins']}"
+                    f"/{report['consecutive_losses']}"
                 ),
-                (
-                    "All accounts: "
-                    f"{report['all_account_runs']} contracts, "
-                    f"P/L {report['all_account_profit']:.2f} USD"
-                ),
-                f"Open contracts: {report['open_contracts']}",
-                f"Generated: {report['generated_at']}",
+                "Join other traders and let's train the future.",
             )
         )
 
