@@ -226,7 +226,7 @@ class RiskSettings(StrictModel):
 
 
 class TelegramSettings(StrictModel):
-    enabled: bool = False
+    enabled: bool = True
     bot_token_env: str = "TELEGRAM_BOT_TOKEN"
     chat_id_env: str = "TELEGRAM_CHAT_ID"
     channel_cache_path: str = "/app/model_artifacts/telegram_channel.json"

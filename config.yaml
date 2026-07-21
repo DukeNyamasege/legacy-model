@@ -121,7 +121,7 @@ risk:
   minimum_balance_reserve: 0.50
   maximum_open_contracts_per_account: 1
 telegram:
-  enabled: false
+  enabled: true
   bot_token_env: TELEGRAM_BOT_TOKEN
   chat_id_env: TELEGRAM_CHAT_ID
   channel_cache_path: /app/model_artifacts/telegram_channel.json
