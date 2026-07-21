@@ -163,7 +163,7 @@ class RecoverySettings(StrictModel):
 
 
 class RiseFallStrategySettings(StrictModel):
-    name: Literal["RF-DIR5-DEMO-V5"] = "RF-DIR5-DEMO-V5"
+    name: Literal["RF-DIR5-DEMO-V6"] = "RF-DIR5-DEMO-V6"
     markets: tuple[str, ...] = RF_SYMBOLS
     analysis_movements: Literal[5] = 5
     required_quotes: Literal[6] = 6
@@ -171,6 +171,7 @@ class RiseFallStrategySettings(StrictModel):
     normalization_movements: int = Field(default=100, ge=50)
     demo_duration_ticks: Literal[5, 10] = 5
     minimum_directional_moves: int = Field(default=3, ge=3, le=5)
+    minimum_recent_directional_moves: int = Field(default=2, ge=2, le=5)
     minimum_efficiency: float = Field(default=0.35, ge=0, le=1)
     minimum_impulse: float = Field(default=0.15, ge=0)
     maximum_impulse: float = Field(default=4.50, gt=0)
@@ -193,12 +194,16 @@ class RiseFallStrategySettings(StrictModel):
             raise ValueError(f"Unsupported RF-DIR5 markets: {unsupported!r}")
         if self.maximum_impulse < self.minimum_impulse:
             raise ValueError("maximum_impulse must be >= minimum_impulse")
+        if self.minimum_recent_directional_moves > self.analysis_movements:
+            raise ValueError(
+                "minimum_recent_directional_moves cannot exceed analysis_movements"
+            )
         return self
 
 
 class RiskSettings(StrictModel):
     recovery_enabled: bool = True
-    recovery_trigger_losses: Literal[2] = 2
+    recovery_trigger_losses: Literal[1] = 1
     maximum_recovery_attempts: Literal[1] = 1
     maximum_open_contracts_per_account: Literal[1] = 1
 

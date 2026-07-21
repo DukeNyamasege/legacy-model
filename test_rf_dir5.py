@@ -96,6 +96,29 @@ class RiseFallFeatureTests(unittest.TestCase):
         self.assertFalse(detect_rise_candidate(rise_pullback))
         self.assertFalse(detect_fall_candidate(fall_pullback))
 
+    def test_tight_rule_requires_final_three_moves_in_direction(self) -> None:
+        rise_with_late_pullback = features(
+            ["100.00", "100.20", "100.40", "100.30", "100.50", "100.70"]
+        )
+        fall_with_late_pullback = features(
+            ["100.70", "100.50", "100.30", "100.40", "100.20", "100.00"]
+        )
+
+        self.assertTrue(detect_rise_candidate(rise_with_late_pullback))
+        self.assertTrue(detect_fall_candidate(fall_with_late_pullback))
+        self.assertFalse(
+            detect_rise_candidate(
+                rise_with_late_pullback,
+                minimum_recent_directional_moves=3,
+            )
+        )
+        self.assertFalse(
+            detect_fall_candidate(
+                fall_with_late_pullback,
+                minimum_recent_directional_moves=3,
+            )
+        )
+
     def test_flat_window_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
             features(["1", "1", "1", "1", "1", "1"])
@@ -133,6 +156,16 @@ class RiseFallContractTests(unittest.TestCase):
     def test_rf_execution_has_no_artificial_post_trade_spacing(self) -> None:
         config = load_test2_config(Path(__file__).with_name("config.yaml"))
         self.assertEqual(config.rf_strategy.minimum_trade_interval_seconds, 0)
+
+    def test_live_config_is_tight_direct_execution_with_immediate_recovery(self) -> None:
+        config = load_test2_config(Path(__file__).with_name("config.yaml"))
+
+        self.assertEqual(config.rf_strategy.minimum_directional_moves, 4)
+        self.assertEqual(config.rf_strategy.minimum_recent_directional_moves, 3)
+        self.assertGreaterEqual(config.rf_strategy.minimum_efficiency, 0.72)
+        self.assertTrue(config.risk.recovery_enabled)
+        self.assertEqual(config.risk.recovery_trigger_losses, 1)
+        self.assertEqual(config.risk.maximum_recovery_attempts, 1)
 
     def test_proposal_values_accept_strings_numbers_and_missing_commission(self) -> None:
         economics = parse_proposal_economics(
@@ -576,6 +609,45 @@ class RFRepositoryTests(unittest.TestCase):
         self.assertFalse(settled["recovery_attempt_active"])
         self.assertEqual(settled["recovery_loss_debt"], 0.0)
         self.assertEqual(settled["consecutive_losses"], 0)
+
+    def test_first_loss_arms_next_trade_to_recover_full_debt_once(self) -> None:
+        account_id = self.create_managed_account("Immediate recovery")
+        settled = self.repository.record_account_outcome(
+            managed_account_id=account_id,
+            profit=-0.50,
+            current_balance=999.50,
+            recovery_enabled=True,
+            recovery_trigger_losses=1,
+        )
+
+        self.assertTrue(settled["recovery_pending"])
+        self.assertEqual(settled["recovery_loss_debt"], 0.50)
+
+        plan = self.repository.plan_stake(
+            managed_account_id=account_id,
+            current_balance=999.50,
+            requested_stake=0.50,
+            proposal_profit_ratio=0.38,
+            recovery_enabled=True,
+            recovery_trigger_losses=1,
+            minimum_stake=0.50,
+        )
+
+        self.assertTrue(plan.is_recovery)
+        self.assertEqual(plan.stake, 1.32)
+        self.assertGreaterEqual(plan.stake * 0.38, settled["recovery_loss_debt"])
+
+        self.assertTrue(self.repository.mark_recovery_attempt_started(account_id))
+        recovery = self.repository.record_account_outcome(
+            managed_account_id=account_id,
+            profit=0.50,
+            current_balance=1000.00,
+            recovery_enabled=True,
+            recovery_trigger_losses=1,
+        )
+        self.assertTrue(recovery["settled_recovery_attempt"])
+        self.assertFalse(recovery["recovery_pending"])
+        self.assertEqual(recovery["recovery_loss_debt"], 0.0)
 
     def test_failed_recovery_is_not_chased_again(self) -> None:
         account_id = self.create_managed_account("One attempt")

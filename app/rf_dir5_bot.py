@@ -397,11 +397,17 @@ class RFDir5TradingBot(TradingBot):
         rise = detect_rise_candidate(
             features,
             minimum_directional_moves=self.rf_config.minimum_directional_moves,
+            minimum_recent_directional_moves=(
+                getattr(self.rf_config, "minimum_recent_directional_moves", 2)
+            ),
             minimum_efficiency=self.rf_config.minimum_efficiency,
         )
         fall = detect_fall_candidate(
             features,
             minimum_directional_moves=self.rf_config.minimum_directional_moves,
+            minimum_recent_directional_moves=(
+                getattr(self.rf_config, "minimum_recent_directional_moves", 2)
+            ),
             minimum_efficiency=self.rf_config.minimum_efficiency,
         )
         if not rise and not fall:

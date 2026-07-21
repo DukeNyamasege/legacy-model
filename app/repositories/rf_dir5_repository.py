@@ -395,7 +395,7 @@ class RFDir5Repository:
                         math.ceil((state.recovery_loss_debt / ratio) * 100.0 - 1e-9)
                         / 100.0
                     )
-                    target_stake = max(float(minimum_stake), required_recovery_stake)
+                    target_stake = max(base_stake, required_recovery_stake)
                     if target_stake > balance + 1e-9:
                         reason = (
                             "recovery target exceeds available balance; continuing with "
@@ -463,7 +463,7 @@ class RFDir5Repository:
         profit: float,
         current_balance: float,
         recovery_enabled: bool = False,
-        recovery_trigger_losses: int = 2,
+        recovery_trigger_losses: int = 1,
     ) -> dict[str, Any]:
         today = datetime.now(timezone.utc).date().isoformat()
         with self.database.session() as session:

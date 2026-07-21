@@ -12,7 +12,7 @@ deriv:
   token_encryption_key: ''
 model:
   name: RF-DIR5 Guarded
-  version: 5.0.0-rf-dir5-direct-demo
+  version: 6.0.0-rf-dir5-tight-one-shot
   brand: Father of Automation Series
   run_id: rfdir5v1
 files:
@@ -90,7 +90,7 @@ recovery:
   pause_below_win_rate: 0.58
   pause_after_consecutive_losses: 3
 rf_strategy:
-  name: RF-DIR5-DEMO-V5
+  name: RF-DIR5-DEMO-V6
   markets:
     - 1HZ100V
     - 1HZ10V
@@ -108,18 +108,19 @@ rf_strategy:
   normalization_movements: 100
   demo_duration_ticks: 5
   minimum_directional_moves: 4
-  minimum_efficiency: 0.65
-  minimum_impulse: 0.75
-  maximum_impulse: 3.00
-  maximum_move_ratio: 3.00
+  minimum_recent_directional_moves: 3
+  minimum_efficiency: 0.72
+  minimum_impulse: 0.85
+  maximum_impulse: 2.60
+  maximum_move_ratio: 2.60
   minimum_directional_score: 7
   candidate_window_ms: 75
   stale_signal_after_ms: 1800
   minimum_trade_interval_seconds: 0
   maximum_open_strategy_contracts: 1
 risk:
-  recovery_enabled: false
-  recovery_trigger_losses: 2
+  recovery_enabled: true
+  recovery_trigger_losses: 1
   maximum_recovery_attempts: 1
   maximum_open_contracts_per_account: 1
 storage:

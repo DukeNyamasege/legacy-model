@@ -8,7 +8,7 @@ from statistics import median
 from typing import Sequence
 
 
-RF_DIR5_VERSION = "RF-DIR5-DEMO-V5"
+RF_DIR5_VERSION = "RF-DIR5-DEMO-V6"
 RF_SYMBOLS = (
     "1HZ100V",
     "1HZ10V",
@@ -153,13 +153,15 @@ def detect_rise_candidate(
     features: FiveMoveFeatures,
     *,
     minimum_directional_moves: int = 3,
+    minimum_recent_directional_moves: int = 2,
     minimum_efficiency: float = 0.35,
 ) -> bool:
+    recent_moves = features.movements[-minimum_recent_directional_moves:]
     return (
         features.up_count >= minimum_directional_moves
         and features.net_move > 0
-        and features.last_move > 0
-        and features.movements[-2] > 0
+        and len(recent_moves) == minimum_recent_directional_moves
+        and all(move > 0 for move in recent_moves)
         and features.last_two_move > 0
         and features.efficiency >= minimum_efficiency
         and features.equal_count <= 1
@@ -170,13 +172,15 @@ def detect_fall_candidate(
     features: FiveMoveFeatures,
     *,
     minimum_directional_moves: int = 3,
+    minimum_recent_directional_moves: int = 2,
     minimum_efficiency: float = 0.35,
 ) -> bool:
+    recent_moves = features.movements[-minimum_recent_directional_moves:]
     return (
         features.down_count >= minimum_directional_moves
         and features.net_move < 0
-        and features.last_move < 0
-        and features.movements[-2] < 0
+        and len(recent_moves) == minimum_recent_directional_moves
+        and all(move < 0 for move in recent_moves)
         and features.last_two_move < 0
         and features.efficiency >= minimum_efficiency
         and features.equal_count <= 1
