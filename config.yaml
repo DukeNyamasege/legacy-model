@@ -124,6 +124,7 @@ telegram:
   enabled: false
   bot_token_env: TELEGRAM_BOT_TOKEN
   chat_id_env: TELEGRAM_CHAT_ID
+  channel_cache_path: /app/model_artifacts/telegram_channel.json
   interval_seconds: 3600
   initial_delay_seconds: 15
   request_timeout_seconds: 15.0

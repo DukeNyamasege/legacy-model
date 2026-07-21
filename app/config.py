@@ -229,6 +229,7 @@ class TelegramSettings(StrictModel):
     enabled: bool = False
     bot_token_env: str = "TELEGRAM_BOT_TOKEN"
     chat_id_env: str = "TELEGRAM_CHAT_ID"
+    channel_cache_path: str = "/app/model_artifacts/telegram_channel.json"
     interval_seconds: int = Field(default=3600, ge=60)
     initial_delay_seconds: int = Field(default=15, ge=0)
     request_timeout_seconds: float = Field(default=15.0, gt=0, le=60)

@@ -99,18 +99,24 @@ class RFDir5TradingBot(TradingBot):
     async def _telegram_hourly_loop(self) -> None:
         await asyncio.sleep(self.test2_config.telegram.initial_delay_seconds)
         while self.is_running:
+            sent = False
             try:
                 report = self.repository.hourly_execution_report(
                     master_account_id=self._copytrading_master_account_id(),
                     window_minutes=60,
                 )
-                await self.telegram_alerts.send_hourly_report(report)
+                sent = await self.telegram_alerts.send_hourly_report(report)
             except Exception as exc:
                 self.logger.warning(
                     "TELEGRAM_ALERT_FAILED error=%s",
                     type(exc).__name__,
                 )
-            await asyncio.sleep(self.test2_config.telegram.interval_seconds)
+            retry_seconds = min(60, self.test2_config.telegram.interval_seconds)
+            await asyncio.sleep(
+                self.test2_config.telegram.interval_seconds
+                if sent
+                else retry_seconds
+            )
 
     async def run(self) -> None:
         if not self.telegram_alerts.enabled:

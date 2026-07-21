@@ -8,11 +8,11 @@ from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from sqlalchemy import func, select
 
-from app.config import load_test2_config
+from app.config import TelegramSettings, load_test2_config
 from app.database import Database
 from app.deriv.http import deriv_headers
 from app.model.bayesian_probability import BayesianGroupKey, KeyedBayesianProbability
@@ -243,6 +243,49 @@ class RiseFallContractTests(unittest.TestCase):
         self.assertIn("Direction: FALL (PUT)", message)
         self.assertIn("Master results: 10 trades, 7 wins, 3 losses", message)
         self.assertIn("All accounts: 30 contracts", message)
+
+    def test_telegram_channel_is_discovered_from_admin_or_post_update(self) -> None:
+        chat_id, title = TelegramAlertClient.channel_from_updates(
+            {
+                "ok": True,
+                "result": [
+                    {
+                        "update_id": 1,
+                        "my_chat_member": {
+                            "chat": {
+                                "id": -1001234567890,
+                                "type": "channel",
+                                "title": "MR.DUKE",
+                            }
+                        },
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(chat_id, "-1001234567890")
+        self.assertEqual(title, "MR.DUKE")
+
+    def test_discovered_telegram_channel_survives_container_restart(self) -> None:
+        with TemporaryDirectory() as directory:
+            cache_path = Path(directory) / "telegram-channel.json"
+            settings = TelegramSettings(
+                enabled=True,
+                channel_cache_path=str(cache_path),
+            )
+            with patch.dict(
+                "os.environ",
+                {"TELEGRAM_BOT_TOKEN": "test-token", "TELEGRAM_CHAT_ID": ""},
+            ):
+                first = TelegramAlertClient(settings, MagicMock())
+                first.chat_id = "-1001234567890"
+                first.chat_title = "MR.DUKE"
+                first._cache_channel()
+
+                restarted = TelegramAlertClient(settings, MagicMock())
+
+        self.assertEqual(restarted.chat_id, "-1001234567890")
+        self.assertEqual(restarted.chat_title, "MR.DUKE")
 
 
 class RFLiveMarketDisplayTests(unittest.TestCase):
