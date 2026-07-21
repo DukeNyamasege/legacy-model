@@ -112,9 +112,100 @@
       padding: 0 16px;
     }
     .auth-controls {
+      position: relative;
       display: flex;
       align-items: center;
       gap: 12px;
+    }
+    .risk-disclaimer-toggle {
+      position: relative;
+      min-height: 38px;
+      padding: 0 16px 0 42px;
+      color: var(--ink);
+      background: var(--pill-bg);
+      border-color: var(--line);
+      border-radius: 999px;
+      box-shadow: 0 10px 30px rgba(52, 39, 21, .08);
+      font-size: .82rem;
+      white-space: nowrap;
+    }
+    .risk-disclaimer-toggle::before {
+      content: "!";
+      position: absolute;
+      left: 11px;
+      display: grid;
+      width: 23px;
+      height: 23px;
+      place-items: center;
+      border-radius: 50%;
+      color: #fff9e8;
+      background: linear-gradient(135deg, #d4a13e, #9e6815);
+      box-shadow: 0 0 0 5px rgba(198,147,48,.13);
+      font: 700 .82rem Georgia, serif;
+    }
+    .risk-disclaimer-toggle[aria-expanded="true"] {
+      border-color: var(--gold);
+      box-shadow: 0 12px 34px rgba(198,147,48,.2);
+    }
+    .risk-disclaimer-panel {
+      position: absolute;
+      z-index: 40;
+      top: calc(100% + 12px);
+      right: 0;
+      width: min(430px, calc(100vw - 32px));
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      color: var(--ink);
+      background: var(--card);
+      box-shadow: 0 24px 70px rgba(52, 39, 21, .28);
+      backdrop-filter: blur(16px);
+    }
+    .risk-disclaimer-close {
+      position: absolute;
+      top: 11px;
+      right: 11px;
+      min-height: 32px;
+      padding: 0 11px;
+      border-color: var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      background: var(--pill-bg);
+      box-shadow: none;
+      font-size: .7rem;
+    }
+    .risk-disclaimer-panel[hidden] { display: none; }
+    .risk-disclaimer-kicker {
+      display: block;
+      margin-bottom: 7px;
+      color: var(--gold);
+      font-size: .7rem;
+      font-weight: 700;
+      letter-spacing: .13em;
+      text-transform: uppercase;
+    }
+    .risk-disclaimer-panel h2 { margin-bottom: 12px; color: var(--ink); }
+    .risk-disclaimer-panel p {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: .84rem;
+      line-height: 1.55;
+    }
+    .risk-disclaimer-panel .official-warning {
+      padding: 12px 14px;
+      border-left: 3px solid var(--gold);
+      border-radius: 0 12px 12px 0;
+      color: var(--ink);
+      background: rgba(198,147,48,.1);
+      font-weight: 700;
+    }
+    .risk-disclaimer-panel a {
+      display: inline-flex;
+      margin-top: 14px;
+      color: var(--green);
+      font-size: .82rem;
+      font-weight: 700;
+      text-underline-offset: 3px;
     }
     body::before {
       content: "";
@@ -463,6 +554,17 @@
     @media (max-width: 580px) {
       main { width: calc(100% - 18px); padding-top: 20px; overflow: hidden; }
       header { display: block; padding: 10px 4px 16px; }
+      .auth-controls { margin-top: 14px; flex-wrap: wrap; }
+      .risk-disclaimer-toggle { flex: 1 1 auto; }
+      .risk-disclaimer-panel {
+        position: fixed;
+        top: 72px;
+        right: 12px;
+        left: 12px;
+        width: auto;
+        max-height: calc(100vh - 88px);
+        overflow-y: auto;
+      }
       .version { display: inline-block; margin-top: 13px; }
       .theme-toggle { width: 100%; margin-top: 14px; justify-content: center; }
       .control { grid-template-columns: 1fr 1fr; }
@@ -487,6 +589,29 @@
     </div>
     <div class="auth-controls">
       <div id="oauth-error" style="display: none; color: var(--red); font-size: 0.9rem; margin-left: 12px; padding: 4px 12px; background: rgba(170,52,52,.1); border-radius: 8px; font-weight: 500;"></div>
+      <button
+        id="risk-disclaimer-toggle"
+        class="risk-disclaimer-toggle"
+        type="button"
+        aria-haspopup="dialog"
+        aria-expanded="false"
+        aria-controls="risk-disclaimer-panel"
+      >Risk Disclaimer</button>
+      <aside
+        id="risk-disclaimer-panel"
+        class="risk-disclaimer-panel"
+        role="dialog"
+        aria-labelledby="risk-disclaimer-title"
+        hidden
+      >
+        <button id="risk-disclaimer-close" class="risk-disclaimer-close" type="button">Close</button>
+        <span class="risk-disclaimer-kicker">Important risk information</span>
+        <h2 id="risk-disclaimer-title">Trading involves significant risk</h2>
+        <p class="official-warning">You may lose all the money you invest. Therefore, you should not trade or invest money that you cannot afford to lose.</p>
+        <p>Deriv products include options and other complex derivatives that may not be suitable for everyone. Understand how the product works and the risks involved before trading.</p>
+        <p>This automated dashboard is provided for demonstration and informational purposes only. It is not financial advice, and demo or past performance does not guarantee future results.</p>
+        <a href="https://deriv.com/terms-and-conditions/risk-disclosure" target="_blank" rel="noopener noreferrer">Read Deriv's full official risk disclosure</a>
+      </aside>
       <a href="/oauth/start" id="btn-login" class="btn-login">Login with Deriv</a>
       <button id="btn-logout" class="btn-logout" style="display: none;">Logout</button>
       <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false" style="min-width: 44px; padding: 0 12px;">
@@ -650,6 +775,40 @@
   const themeKey = "legacy-dashboard-theme";
   const themeToggle = $("theme-toggle");
   const themeToggleLabel = $("theme-toggle-label");
+  const riskDisclaimerToggle = $("risk-disclaimer-toggle");
+  const riskDisclaimerPanel = $("risk-disclaimer-panel");
+  const riskDisclaimerClose = $("risk-disclaimer-close");
+
+  function setRiskDisclaimer(open) {
+    if (!riskDisclaimerToggle || !riskDisclaimerPanel) return;
+    riskDisclaimerToggle.setAttribute("aria-expanded", String(open));
+    riskDisclaimerPanel.hidden = !open;
+  }
+
+  if (riskDisclaimerToggle && riskDisclaimerPanel) {
+    riskDisclaimerToggle.addEventListener("click", () => {
+      setRiskDisclaimer(riskDisclaimerPanel.hidden);
+    });
+    riskDisclaimerClose?.addEventListener("click", () => {
+      setRiskDisclaimer(false);
+      riskDisclaimerToggle.focus();
+    });
+    document.addEventListener("click", event => {
+      if (
+        !riskDisclaimerPanel.hidden
+        && !riskDisclaimerPanel.contains(event.target)
+        && !riskDisclaimerToggle.contains(event.target)
+      ) {
+        setRiskDisclaimer(false);
+      }
+    });
+    document.addEventListener("keydown", event => {
+      if (event.key === "Escape" && !riskDisclaimerPanel.hidden) {
+        setRiskDisclaimer(false);
+        riskDisclaimerToggle.focus();
+      }
+    });
+  }
 
   function setTheme(theme, persist = false) {
     const nextTheme = theme === "dark" ? "dark" : "light";

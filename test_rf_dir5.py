@@ -323,6 +323,20 @@ class RiseFallContractTests(unittest.TestCase):
             dashboard,
         )
 
+    def test_dashboard_has_accessible_official_risk_disclaimer(self) -> None:
+        dashboard = (Path(__file__).parent / "dashboard" / "index.html").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('id="risk-disclaimer-toggle"', dashboard)
+        self.assertIn('aria-controls="risk-disclaimer-panel"', dashboard)
+        self.assertIn('id="risk-disclaimer-panel"', dashboard)
+        self.assertIn('id="risk-disclaimer-close"', dashboard)
+        self.assertIn(
+            "https://deriv.com/terms-and-conditions/risk-disclosure",
+            dashboard,
+        )
+        self.assertIn('event.key === "Escape"', dashboard)
+
     @staticmethod
     def _telegram_report() -> dict[str, object]:
         return {
