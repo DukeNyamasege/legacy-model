@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 import unittest
 from collections import deque
@@ -270,6 +271,69 @@ class RiseFallContractTests(unittest.TestCase):
             ),
             (0, 2),
         )
+
+    def test_telegram_hourly_report_attaches_live_dashboard(self) -> None:
+        settings = TelegramSettings(enabled=True)
+        with patch.dict(
+            "os.environ",
+            {
+                "TELEGRAM_BOT_TOKEN": "test-token",
+                "TELEGRAM_CHAT_ID": "-1001234567890",
+            },
+        ):
+            client = TelegramAlertClient(settings, MagicMock())
+        client.dashboard_capture.capture = AsyncMock(return_value=b"png-image")
+        client._send_photo = AsyncMock(return_value=True)
+        client._send_text = AsyncMock(return_value=True)
+
+        sent = asyncio.run(client.send_hourly_report(self._telegram_report()))
+
+        self.assertTrue(sent)
+        client._send_photo.assert_awaited_once()
+        self.assertEqual(client._send_photo.await_args.args[0], b"png-image")
+        client._send_text.assert_not_awaited()
+
+    def test_telegram_photo_failure_falls_back_to_text(self) -> None:
+        settings = TelegramSettings(enabled=True)
+        with patch.dict(
+            "os.environ",
+            {
+                "TELEGRAM_BOT_TOKEN": "test-token",
+                "TELEGRAM_CHAT_ID": "-1001234567890",
+            },
+        ):
+            client = TelegramAlertClient(settings, MagicMock())
+        client.dashboard_capture.capture = AsyncMock(return_value=b"png-image")
+        client._send_photo = AsyncMock(return_value=False)
+        client._send_text = AsyncMock(return_value=True)
+
+        sent = asyncio.run(client.send_hourly_report(self._telegram_report()))
+
+        self.assertTrue(sent)
+        client._send_photo.assert_awaited_once()
+        client._send_text.assert_awaited_once()
+
+    def test_dashboard_exposes_capture_boundary_after_live_metrics_render(self) -> None:
+        dashboard = (Path(__file__).parent / "dashboard" / "index.html").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('id="global-dashboard-snapshot"', dashboard)
+        self.assertIn(
+            '$("global-dashboard-snapshot").dataset.snapshotReady = "true";',
+            dashboard,
+        )
+
+    @staticmethod
+    def _telegram_report() -> dict[str, object]:
+        return {
+            "direction": "FALL",
+            "contract_type": "PUT",
+            "master_trades": 10,
+            "master_profit": 1.25,
+            "consecutive_wins": 3,
+            "consecutive_losses": 0,
+            "all_account_profit": 3.75,
+        }
 
     def test_telegram_channel_is_discovered_from_admin_or_post_update(self) -> None:
         chat_id, title = TelegramAlertClient.channel_from_updates(

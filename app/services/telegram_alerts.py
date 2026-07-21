@@ -8,6 +8,7 @@ from typing import Any
 import aiohttp
 
 from app.config import TelegramSettings
+from app.services.dashboard_screenshot import DashboardScreenshotCapture
 
 
 class TelegramAlertClient:
@@ -18,6 +19,7 @@ class TelegramAlertClient:
         self.chat_id = os.getenv(settings.chat_id_env, "").strip()
         self.chat_title = ""
         self.channel_cache_path = Path(settings.channel_cache_path)
+        self.dashboard_capture = DashboardScreenshotCapture(settings, logger)
         if not self.chat_id:
             self._load_cached_channel()
         self.enabled = bool(settings.enabled and self.bot_token)
@@ -145,11 +147,7 @@ class TelegramAlertClient:
             )
         )
 
-    async def send_hourly_report(self, report: dict[str, Any]) -> bool:
-        if not self.enabled:
-            return False
-        if not self.chat_id and not await self.discover_channel():
-            return False
+    async def _send_text(self, text: str) -> bool:
         url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
         timeout = aiohttp.ClientTimeout(total=self.settings.request_timeout_seconds)
         try:
@@ -158,7 +156,7 @@ class TelegramAlertClient:
                     url,
                     data={
                         "chat_id": self.chat_id,
-                        "text": self.format_hourly_report(report),
+                        "text": text,
                         "disable_web_page_preview": "true",
                     },
                 ) as response:
@@ -176,3 +174,49 @@ class TelegramAlertClient:
                 type(exc).__name__,
             )
             return False
+
+    async def _send_photo(self, photo: bytes, caption: str) -> bool:
+        url = f"https://api.telegram.org/bot{self.bot_token}/sendPhoto"
+        timeout = aiohttp.ClientTimeout(total=self.settings.request_timeout_seconds)
+        form = aiohttp.FormData()
+        form.add_field("chat_id", self.chat_id)
+        form.add_field("caption", caption)
+        form.add_field(
+            "photo",
+            photo,
+            filename="global-dashboard.png",
+            content_type="image/png",
+        )
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(url, data=form) as response:
+                    if response.status != 200:
+                        self.logger.warning(
+                            "TELEGRAM_DASHBOARD_ALERT_FAILED status=%s",
+                            response.status,
+                        )
+                        return False
+            self.logger.info("TELEGRAM_DASHBOARD_ALERT_SENT")
+            return True
+        except (aiohttp.ClientError, TimeoutError) as exc:
+            self.logger.warning(
+                "TELEGRAM_DASHBOARD_ALERT_FAILED error=%s",
+                type(exc).__name__,
+            )
+            return False
+
+    async def send_hourly_report(self, report: dict[str, Any]) -> bool:
+        if not self.enabled:
+            return False
+        if not self.chat_id and not await self.discover_channel():
+            return False
+
+        text = self.format_hourly_report(report)
+        screenshot = await self.dashboard_capture.capture()
+        if screenshot and await self._send_photo(screenshot, text):
+            return True
+        if screenshot:
+            self.logger.warning(
+                "TELEGRAM_DASHBOARD_ALERT_FALLBACK mode=text"
+            )
+        return await self._send_text(text)

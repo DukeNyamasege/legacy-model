@@ -1,4 +1,4 @@
-FROM python:3.13-slim
+FROM python:3.13-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -14,3 +14,13 @@ RUN useradd --create-home --uid 10001 appuser && chown -R appuser:appuser /app
 USER appuser
 
 CMD ["python", "-m", "app.worker"]
+
+FROM base AS api
+
+FROM base AS worker
+
+USER root
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN python -m playwright install --with-deps chromium && \
+    chmod -R a+rX /ms-playwright
+USER appuser

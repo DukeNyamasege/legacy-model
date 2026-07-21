@@ -233,6 +233,10 @@ class TelegramSettings(StrictModel):
     interval_seconds: int = Field(default=3600, ge=60)
     initial_delay_seconds: int = Field(default=15, ge=0)
     request_timeout_seconds: float = Field(default=15.0, gt=0, le=60)
+    dashboard_screenshot_enabled: bool = True
+    dashboard_url: str = "http://api:8080/"
+    dashboard_selector: str = "#global-dashboard-snapshot"
+    dashboard_screenshot_timeout_seconds: float = Field(default=20.0, gt=0, le=60)
 
 
 class StorageSettings(StrictModel):
@@ -382,4 +386,12 @@ def load_test2_config(path: str | Path = "config.yaml") -> Test2Config:
         raw.setdefault("telegram", {})["interval_seconds"] = int(
             os.environ["TELEGRAM_ALERT_INTERVAL_SECONDS"]
         )
+    if os.getenv("TELEGRAM_DASHBOARD_SCREENSHOT_ENABLED"):
+        raw.setdefault("telegram", {})["dashboard_screenshot_enabled"] = os.environ[
+            "TELEGRAM_DASHBOARD_SCREENSHOT_ENABLED"
+        ].lower() in {"1", "true", "yes"}
+    if os.getenv("TELEGRAM_DASHBOARD_URL"):
+        raw.setdefault("telegram", {})["dashboard_url"] = os.environ[
+            "TELEGRAM_DASHBOARD_URL"
+        ].strip()
     return Test2Config.model_validate(raw)

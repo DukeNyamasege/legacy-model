@@ -17,7 +17,9 @@ services:
       test2: {}
 
   api:
-    build: .
+    build:
+      context: .
+      target: api
     restart: unless-stopped
     command: sh -c "alembic upgrade head && uvicorn app.api:app --host 0.0.0.0 --port 8080"
     env_file: .env
@@ -39,7 +41,9 @@ services:
       test2: {}
 
   worker:
-    build: .
+    build:
+      context: .
+      target: worker
     restart: unless-stopped
     command: sh -c "alembic upgrade head && python -m app.worker"
     env_file: .env

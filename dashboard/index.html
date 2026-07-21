@@ -282,6 +282,7 @@
       transform: rotate(-12deg);
     }
     .metrics { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin: 12px 0; }
+    .global-dashboard-snapshot { display: flow-root; }
     .metric { padding: 15px; min-height: 96px; animation: rise .38s both; }
     .metric span { display: block; color: var(--muted); font-size: .75rem; margin-bottom: 11px; overflow-wrap: anywhere; }
     .metric strong { font-size: clamp(1.25rem, 2.8vw, 1.9rem); line-height: 1; }
@@ -564,6 +565,12 @@
     </div>
   </section>
 
+  <section
+    id="global-dashboard-snapshot"
+    class="global-dashboard-snapshot"
+    data-snapshot-ready="false"
+    aria-label="Global Bot Statistics"
+  >
   <h2 style="margin: 30px 0 10px; opacity: 0.5;">Global Bot Statistics</h2>
 
   <section id="ai-mode-card" class="panel ai-mode-card idle" aria-live="polite">
@@ -593,6 +600,7 @@
     <article class="panel metric"><span>Open trade age</span><strong id="open-trade-age">0s</strong></article>
     <article class="panel metric"><span>Skipped</span><strong id="skipped">0</strong></article>
     <article class="panel metric" title="Difference between the master trade count and the furthest active account. Zero means active accounts have equal completed-trade counts."><span>Copy trade gap</span><strong id="copy-gap">0</strong><small>0 means counts match</small></article>
+  </section>
   </section>
 
   <section class="panel section contract-history">
@@ -823,6 +831,7 @@
     const currency = data.primary_account_currency || data.accounts?.[0]?.currency || "USD";
     $("balance").textContent = `${number(data.primary_account_balance || 0, 2)} ${currency}`;
     renderAiActivity(data);
+    $("global-dashboard-snapshot").dataset.snapshotReady = "true";
   }
   function applyReadOnlyMode() {
     const controls = ["toggle", "save-mode", "import-tokens", "emergency"];
