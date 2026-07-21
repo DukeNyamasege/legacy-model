@@ -852,15 +852,34 @@ class ClientSession:
         path = f"/trading/v1/options/accounts/{self.account_id}/otp"
         res = await _rest_request("POST", path, app_id, base_url, token=self.token)
         if "error" in res:
+            error = res["error"]
             message = sanitize_account_ids(
-                str(res["error"].get("message") or "OTP request failed")
+                str(error.get("message") or "OTP request failed")
             )
+            permanent = is_permanent_credential_error(error)
             self.bot._set_account_execution_status(
                 self.managed_account_id,
-                "error",
+                "credential_error" if permanent else "reconnecting",
                 message,
             )
-            self.bot.logger.error("Failed to get OTP: %s", message, extra={"token_tag": self.token_tag})
+            if permanent:
+                self.bot.valid_clients = [
+                    item for item in self.bot.valid_clients if item[0] != self.token
+                ]
+                self.bot.logger.error(
+                    "ACCOUNT_CREDENTIAL_ISOLATED account=%s reason=%s; "
+                    "other accounts continue",
+                    mask_account_id(self.account_id),
+                    message,
+                    extra={"token_tag": self.token_tag},
+                )
+            else:
+                self.bot.logger.warning(
+                    "Account OTP unavailable for %s: %s; retrying this account only",
+                    mask_account_id(self.account_id),
+                    message,
+                    extra={"token_tag": self.token_tag},
+                )
             return None
         return res.get("data", {}).get("url")
 
@@ -3334,7 +3353,29 @@ class TradingBot:
                 exc,
                 extra={"token_tag": tag, "contract_id": str(contract_id)},
             )
-        await session.subscribe_contract(contract_id)
+        try:
+            await session.subscribe_contract(contract_id)
+        except Exception as exc:
+            # The provider contract is already open and durably registered. Keep
+            # reconciling it for this account, but never hold every other account
+            # behind a failed private subscription.
+            self._isolate_stale_contract_from_global_cycle(
+                contract_id,
+                "private_subscription_failed",
+            )
+            self._set_account_execution_status(
+                self._managed_account_id_for_token(token),
+                "reconnecting",
+                "Contract stream unavailable; settlement reconciliation active",
+            )
+            self.logger.error(
+                "ACCOUNT_CONTRACT_SUBSCRIPTION_ISOLATED account=%s contract_id=%s "
+                "error=%s; other accounts continue",
+                mask_account_id(account_id),
+                contract_id,
+                sanitize_account_ids(str(exc)),
+                extra={"token_tag": tag, "contract_id": str(contract_id)},
+            )
         try:
             await self._refresh_account_balance_snapshot(token, account_id)
         except Exception as exc:
@@ -3371,22 +3412,19 @@ class TradingBot:
         for (stake, accounts), result in zip(groups.items(), results):
             if isinstance(result, Exception):
                 message = sanitize_account_ids(str(result))
-                self.logger.error(
-                    "Purchase group failed signal_id=%s stake=%.2f account_count=%s: %s",
+                self.logger.warning(
+                    "Purchase group failed signal_id=%s stake=%.2f account_count=%s: %s; "
+                    "retrying accounts independently",
                     signal.signal_id,
                     stake,
                     len(accounts),
                     message,
                 )
-                transactions.extend(
-                    {
-                        "account_id": account_id,
-                        "stake_amount": stake,
-                        "error": {"message": message},
-                    }
-                    for _token, account_id in accounts
+                result = await self._purchase_via_private_sessions(
+                    signal=signal,
+                    eligible_accounts=accounts,
+                    stake_amount=stake,
                 )
-                continue
             for transaction in result:
                 transaction["stake_amount"] = stake
                 transactions.append(transaction)
@@ -3433,11 +3471,16 @@ class TradingBot:
             message = sanitize_account_ids(
                 response["error"].get("message", "Bulk purchase request failed")
             )
-            self.logger.error("REST Bulk Purchase request failed: %s", message)
-            return [
-                {"account_id": account_id, "error": {"message": message}}
-                for _token, account_id in eligible_accounts
-            ]
+            self.logger.warning(
+                "REST Bulk Purchase request failed: %s; retrying each account "
+                "through its private connection",
+                message,
+            )
+            return await self._purchase_via_private_sessions(
+                signal=signal,
+                eligible_accounts=eligible_accounts,
+                stake_amount=stake_amount,
+            )
 
         transactions = list(response.get("data", {}).get("transactions", []))
         errors = list(response.get("errors") or [])
@@ -3452,7 +3495,35 @@ class TradingBot:
                 "REST Bulk Purchase validation failed for one or more accounts: %s",
                 messages,
             )
-        return transactions
+        successful_transactions = [
+            transaction
+            for transaction in transactions
+            if transaction.get("contract_id") and not transaction.get("error")
+        ]
+        completed_account_ids = {
+            str(transaction.get("account_id") or "")
+            for transaction in successful_transactions
+        }
+        missing_accounts = [
+            (token, account_id)
+            for token, account_id in eligible_accounts
+            if account_id not in completed_account_ids
+        ]
+        if not missing_accounts:
+            return successful_transactions
+
+        self.logger.warning(
+            "BULK_ACCOUNT_FALLBACK signal_id=%s missing_accounts=%s; "
+            "retrying only missing accounts privately",
+            signal.signal_id,
+            [mask_account_id(account_id) for _token, account_id in missing_accounts],
+        )
+        fallback_transactions = await self._purchase_via_private_sessions(
+            signal=signal,
+            eligible_accounts=missing_accounts,
+            stake_amount=stake_amount,
+        )
+        return successful_transactions + fallback_transactions
 
     async def _purchase_via_private_sessions(
         self,
@@ -3471,6 +3542,11 @@ class TradingBot:
             }
             if not session or not session.is_connected:
                 message = "Private WebSocket is not connected"
+                self._set_account_execution_status(
+                    self._managed_account_id_for_token(token),
+                    "reconnecting",
+                    message,
+                )
                 self.logger.error(
                     "Private buy skipped for account %s: %s",
                     mask_account_id(account_id),
@@ -3484,6 +3560,16 @@ class TradingBot:
             )
             if "error" in response:
                 message = response["error"].get("message", "Unknown buy error")
+                permanent = is_permanent_credential_error(response["error"])
+                self._set_account_execution_status(
+                    self._managed_account_id_for_token(token),
+                    "credential_error" if permanent else "error",
+                    sanitize_account_ids(message),
+                )
+                if permanent:
+                    self.valid_clients = [
+                        item for item in self.valid_clients if item[0] != token
+                    ]
                 self.logger.error(
                     "Private buy failed for account %s: %s",
                     mask_account_id(account_id),
@@ -3499,6 +3585,11 @@ class TradingBot:
             ).get("buy")
             if not contract_id:
                 message = "Buy response did not include a contract_id"
+                self._set_account_execution_status(
+                    self._managed_account_id_for_token(token),
+                    "error",
+                    message,
+                )
                 self.logger.error(
                     "Private buy failed for account %s: %s",
                     mask_account_id(account_id),
@@ -3506,6 +3597,12 @@ class TradingBot:
                     extra=extra,
                 )
                 return {"account_id": account_id, "error": {"message": message}}
+
+            self._set_account_execution_status(
+                self._managed_account_id_for_token(token),
+                "active",
+                "Contract purchased successfully",
+            )
 
             return {
                 "account_id": account_id,
@@ -3759,7 +3856,11 @@ class TradingBot:
         self, signal_id: str, contract_ids: List[int]
     ) -> None:
         """Enforces a timeout in case contract settlement updates are not received."""
-        await asyncio.sleep(float(self.max_open_trade_seconds))
+        isolation_after = min(
+            float(self.max_open_trade_seconds),
+            float(self.settlement_sla_seconds),
+        )
+        await asyncio.sleep(isolation_after)
         pending = self.pending_by_signal.get(signal_id, set())
         timed_out = [cid for cid in contract_ids if cid in pending]
         if timed_out:
@@ -3771,6 +3872,14 @@ class TradingBot:
             )
             for cid in timed_out:
                 await self._reconcile_pending_contract(cid, "timeout_watchdog")
+                if (
+                    cid in self.pending_contracts_for_current_cycle
+                    and self._contract_age_seconds(cid) >= isolation_after
+                ):
+                    self._isolate_stale_contract_from_global_cycle(
+                        cid,
+                        "settlement_sla_exceeded",
+                    )
 
     def _enforce_account_risk_limit(
         self,

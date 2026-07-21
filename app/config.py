@@ -178,7 +178,10 @@ class RiseFallStrategySettings(StrictModel):
     minimum_directional_score: int = Field(default=4, ge=1, le=10)
     candidate_window_ms: int = Field(default=75, ge=50, le=1000)
     stale_signal_after_ms: int = Field(default=1800, ge=100)
-    minimum_trade_interval_seconds: int = Field(default=60, ge=0, le=3600)
+    # RF execution is gated by the active contract cycle, not an artificial
+    # post-settlement delay. This prevents valid signals being discarded for
+    # minutes after every completed trade.
+    minimum_trade_interval_seconds: Literal[0] = 0
     maximum_open_strategy_contracts: Literal[1] = 1
 
     @model_validator(mode="after")

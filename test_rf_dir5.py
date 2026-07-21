@@ -130,6 +130,10 @@ class RiseFallContractTests(unittest.TestCase):
         self.assertEqual(request["parameters"]["app_markup_percentage"], 3.0)
         self.assertNotIn("barrier", request["parameters"])
 
+    def test_rf_execution_has_no_artificial_post_trade_spacing(self) -> None:
+        config = load_test2_config(Path(__file__).with_name("config.yaml"))
+        self.assertEqual(config.rf_strategy.minimum_trade_interval_seconds, 0)
+
     def test_proposal_values_accept_strings_numbers_and_missing_commission(self) -> None:
         economics = parse_proposal_economics(
             {"proposal": {"id": "p1", "ask_price": "0.50", "payout": 0.92}},
@@ -347,7 +351,7 @@ class RFCandidateArbitrationTests(unittest.IsolatedAsyncioTestCase):
             stronger.symbol: SimpleNamespace(tick_sequence=stronger.tick_sequence),
         }
         bot.repository = MagicMock()
-        bot.repository.control_state.return_value = ("RUNNING", "")
+        bot.repository.control_state.return_value = ("MANUAL_PAUSE", "legacy pause")
         bot.rf_repository = MagicMock()
         bot.rf_repository.shadow_group_counts.return_value = (0, 0)
         bot.rf_repository.guard_state.return_value = {"state": "DEMO_LIVE"}
@@ -391,6 +395,7 @@ class RFCandidateArbitrationTests(unittest.IsolatedAsyncioTestCase):
 
         bot._proposal_for_duration.assert_awaited_once_with(stronger, 5)
         bot._buy_selected_demo.assert_awaited_once()
+        bot.repository.control_state.assert_not_called()
         bot.rf_repository.shadow_group_counts.assert_not_called()
         bot._mark_rf_decision.assert_any_call(
             weaker,

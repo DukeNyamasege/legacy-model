@@ -553,17 +553,15 @@ class RFDir5TradingBot(TradingBot):
                 selected=False,
             )
 
-        status, _pause_reason = self.repository.control_state()
         self._prune_stale_pending_contracts("rf_pre_proposal")
         if (
             self.is_trading_locked
             or bool(self.pending_contracts_for_current_cycle)
-            or status in {"STOPPED", "MANUAL_PAUSE"}
         ):
             self._mark_rf_decision(
                 selected,
                 "SKIP_TRADING_LOCK",
-                "existing contract or account control state",
+                "existing contract cycle",
                 selected=True,
             )
             return
@@ -625,7 +623,6 @@ class RFDir5TradingBot(TradingBot):
             trading_locked=(
                 self.is_trading_locked
                 or bool(self.pending_contracts_for_current_cycle)
-                or status in {"STOPPED", "MANUAL_PAUSE"}
             ),
         )
         if decision.action != "BUY_DEMO" or not self.test2_config.execution.demo_enabled:
@@ -880,11 +877,48 @@ class RFDir5TradingBot(TradingBot):
         return request
 
     def _eligible_purchase_accounts(self) -> list[tuple[str, str]]:
-        return [
+        eligible = [
             (token, account_id)
             for token, account_id in super()._eligible_purchase_accounts()
             if not self.sessions[token].pending_contracts
         ]
+        eligible_tokens = {token for token, _account_id in eligible}
+        for token, account_id in self.valid_clients:
+            if token in eligible_tokens:
+                continue
+            session = self.sessions.get(token)
+            if session is None or not session.is_connected:
+                reason = "private trading connection unavailable"
+                self._set_account_execution_status(
+                    self._managed_account_id_for_token(token),
+                    "reconnecting",
+                    reason,
+                )
+            elif session.pending_contracts:
+                reason = "previous account contract is still settling"
+            else:
+                reason = "account is not eligible for this purchase cycle"
+            self.logger.warning(
+                "RF_ACCOUNT_EXCLUDED account=%s reason=%s; other accounts continue",
+                mask_account_id(account_id),
+                reason,
+            )
+
+        master_account_id = self._copytrading_master_account_id()
+        if master_account_id and master_account_id not in {
+            account_id for _token, account_id in eligible
+        }:
+            self.logger.warning(
+                "RF_MASTER_ACCOUNT_EXCLUDED account=%s reason=not_purchase_eligible; "
+                "copier execution continues",
+                mask_account_id(master_account_id),
+            )
+        return eligible
+
+    def _sync_running_status_after_validation(self) -> None:
+        # RF-DIR5 has account-scoped start/stop controls. Obsolete global pause
+        # flags must never stop otherwise eligible accounts.
+        self.repository.set_status("RUNNING")
 
     def _planned_stake_for_account(
         self,

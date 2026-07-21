@@ -1212,6 +1212,41 @@ class ContractRuntimeLockTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("token", bot.sessions)
         session.task.cancel.assert_not_called()
 
+    async def test_expired_otp_token_isolates_only_that_account(self) -> None:
+        bot = MagicMock()
+        bot.app_id = "app-id"
+        bot.rest_base_url = "https://example.invalid"
+        bot.valid_clients = [
+            ("expired-token", "DOT90000001"),
+            ("healthy-token", "DOT90000002"),
+        ]
+        session = enhanced_bot.ClientSession(
+            "expired-token",
+            "DOT90000001",
+            bot,
+            managed_account_id=10,
+        )
+        response = {
+            "error": {
+                "code": "InvalidToken",
+                "message": "Invalid or expired token",
+            }
+        }
+
+        with patch("enhanced_bot._rest_request", new=AsyncMock(return_value=response)):
+            url = await session.get_otp_url()
+
+        self.assertIsNone(url)
+        self.assertEqual(
+            bot.valid_clients,
+            [("healthy-token", "DOT90000002")],
+        )
+        bot._set_account_execution_status.assert_called_once_with(
+            10,
+            "credential_error",
+            "Invalid or expired token",
+        )
+
     async def test_disconnected_account_is_skipped_without_blocking_healthy_account(self) -> None:
         bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
         bot.valid_clients = [
@@ -1245,6 +1280,14 @@ class ContractRuntimeLockTests(unittest.IsolatedAsyncioTestCase):
             ]
 
         bot._purchase_stake_group = AsyncMock(side_effect=purchase_group)
+        bot._purchase_via_private_sessions = AsyncMock(
+            return_value=[
+                {
+                    "account_id": "DOT90000002",
+                    "error": {"message": "isolated account failure"},
+                }
+            ]
+        )
         transactions = await bot._purchase_accounts_by_stake(
             signal=signal,
             eligible_accounts=[
@@ -1258,6 +1301,86 @@ class ContractRuntimeLockTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(transactions[0]["stake_amount"], 0.50)
         self.assertIn("error", transactions[1])
         self.assertEqual(transactions[1]["account_id"], "DOT90000002")
+        bot._purchase_via_private_sessions.assert_awaited_once_with(
+            signal=signal,
+            eligible_accounts=[("token-b", "DOT90000002")],
+            stake_amount=2.00,
+        )
+
+    async def test_bulk_partial_failure_retries_only_missing_account_privately(self) -> None:
+        bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
+        bot.environment = "demo"
+        bot.app_id = "app-id"
+        bot.rest_base_url = "https://example.invalid"
+        bot.user_profiles = {
+            "token-a": {"auth_type": "pat"},
+            "token-b": {"auth_type": "pat"},
+        }
+        bot.logger = MagicMock()
+        bot._contract_parameters = MagicMock(return_value={"contract_type": "CALL"})
+        bot._purchase_via_private_sessions = AsyncMock(
+            return_value=[
+                {
+                    "account_id": "DOT90000002",
+                    "contract_id": "456",
+                }
+            ]
+        )
+        signal = MagicMock(signal_id="signal-1")
+        response = {
+            "data": {
+                "transactions": [
+                    {
+                        "account_id": "DOT90000001",
+                        "contract_id": "123",
+                    }
+                ]
+            },
+            "errors": [{"message": "second account rejected"}],
+        }
+
+        with patch("enhanced_bot._rest_request", new=AsyncMock(return_value=response)):
+            transactions = await bot._purchase_stake_group(
+                signal=signal,
+                eligible_accounts=[
+                    ("token-a", "DOT90000001"),
+                    ("token-b", "DOT90000002"),
+                ],
+                stake_amount=0.50,
+            )
+
+        self.assertEqual(
+            {transaction["contract_id"] for transaction in transactions},
+            {"123", "456"},
+        )
+        bot._purchase_via_private_sessions.assert_awaited_once_with(
+            signal=signal,
+            eligible_accounts=[("token-b", "DOT90000002")],
+            stake_amount=0.50,
+        )
+
+    async def test_settlement_sla_isolates_only_delayed_contract_from_global_cycle(self) -> None:
+        bot = self.make_bot()
+        bot.max_open_trade_seconds = 30
+        bot.settlement_sla_seconds = 15.0
+        bot.pending_by_signal = {"signal-1": {101}}
+        bot.pending_contracts_for_current_cycle = {101}
+        bot._reconcile_pending_contract = AsyncMock()
+        bot._contract_age_seconds = MagicMock(return_value=15.0)
+        bot._isolate_stale_contract_from_global_cycle = MagicMock(return_value=True)
+
+        with patch("enhanced_bot.asyncio.sleep", new=AsyncMock()) as sleep:
+            await bot._cycle_timeout_watchdog("signal-1", [101])
+
+        sleep.assert_awaited_once_with(15.0)
+        bot._reconcile_pending_contract.assert_awaited_once_with(
+            101,
+            "timeout_watchdog",
+        )
+        bot._isolate_stale_contract_from_global_cycle.assert_called_once_with(
+            101,
+            "settlement_sla_exceeded",
+        )
 
     async def test_take_profit_disables_only_the_account_that_reached_it(self) -> None:
         bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
