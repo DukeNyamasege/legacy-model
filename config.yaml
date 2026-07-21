@@ -11,8 +11,8 @@ deriv:
   oauth_redirect_url: https://derivadmin.site/oauth/callback
   token_encryption_key: ''
 model:
-  name: RF-DIR5 Guarded
-  version: 6.0.0-rf-dir5-tight-one-shot
+  name: RF-PUT5 Premium
+  version: 7.0.0-rf-put5-cumulative-recovery
   brand: Father of Automation Series
   run_id: rfdir5v1
 files:
@@ -90,30 +90,26 @@ recovery:
   pause_below_win_rate: 0.58
   pause_after_consecutive_losses: 3
 rf_strategy:
-  name: RF-DIR5-DEMO-V6
+  name: RF-PUT5-PREMIUM-V7
+  allowed_direction: FALL
   markets:
-    - 1HZ100V
-    - 1HZ10V
-    - 1HZ25V
-    - 1HZ50V
-    - 1HZ75V
     - R_10
-    - R_25
-    - R_50
-    - R_75
     - R_100
+    - R_75
+    - 1HZ10V
+    - 1HZ75V
   analysis_movements: 5
   required_quotes: 6
   minimum_history_movements: 100
   normalization_movements: 100
   demo_duration_ticks: 5
-  minimum_directional_moves: 4
+  minimum_directional_moves: 5
   minimum_recent_directional_moves: 3
-  minimum_efficiency: 0.72
-  minimum_impulse: 0.85
-  maximum_impulse: 2.60
-  maximum_move_ratio: 2.60
-  minimum_directional_score: 7
+  minimum_efficiency: 0.80
+  minimum_impulse: 0.90
+  maximum_impulse: 2.30
+  maximum_move_ratio: 2.20
+  minimum_directional_score: 8
   candidate_window_ms: 75
   stale_signal_after_ms: 1800
   minimum_trade_interval_seconds: 0
@@ -121,8 +117,16 @@ rf_strategy:
 risk:
   recovery_enabled: true
   recovery_trigger_losses: 1
-  maximum_recovery_attempts: 1
+  maximum_recovery_balance_fraction: 0.10
+  minimum_balance_reserve: 0.50
   maximum_open_contracts_per_account: 1
+telegram:
+  enabled: false
+  bot_token_env: TELEGRAM_BOT_TOKEN
+  chat_id_env: TELEGRAM_CHAT_ID
+  interval_seconds: 3600
+  initial_delay_seconds: 15
+  request_timeout_seconds: 15.0
 storage:
   database_url_env: DATABASE_URL
   local_database_url: sqlite:///data/rfdir5.db

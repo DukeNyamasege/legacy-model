@@ -237,6 +237,23 @@ class Test2Repository:
             row.execution_status_reason = str(reason or "")[:160]
             row.execution_status_updated_at = utc_now()
 
+    def quarantine_managed_account(
+        self,
+        account_id: int,
+        execution_status: str,
+        reason: str,
+    ) -> None:
+        """Exclude one unsafe account while preserving credentials and audit data."""
+        with self.database.session() as session:
+            row = session.get(ManagedAccount, int(account_id))
+            if row is None:
+                return
+            row.enabled = False
+            row.execution_status = str(execution_status or "disabled")[:30]
+            row.execution_status_reason = str(reason or "Account excluded")[:160]
+            row.execution_status_updated_at = utc_now()
+            row.updated_at = utc_now()
+
     def touch_managed_account_execution(self, account_ids: list[int]) -> None:
         normalized = sorted({int(account_id) for account_id in account_ids if account_id})
         if not normalized:
@@ -1099,6 +1116,81 @@ class Test2Repository:
                     state.last_heartbeat.isoformat() if state and state.last_heartbeat else None
                 ),
             }
+
+    def hourly_execution_report(
+        self,
+        *,
+        master_account_id: str,
+        window_minutes: int = 60,
+    ) -> dict[str, Any]:
+        minutes = max(1, int(window_minutes))
+        now = utc_now()
+        since = now - timedelta(minutes=minutes)
+        master_masked = mask_account_id(master_account_id) if master_account_id else ""
+        with self.database.session() as session:
+            settled_filter = (
+                self._current_run_trade_filter(),
+                Trade.settlement_time.is_not(None),
+                Trade.settlement_time >= since,
+            )
+            master_row = session.execute(
+                select(
+                    func.count().label("trades"),
+                    func.sum(case((Trade.outcome == "WIN", 1), else_=0)).label("wins"),
+                    func.sum(case((Trade.outcome == "LOSS", 1), else_=0)).label("losses"),
+                    func.sum(Trade.profit).label("profit"),
+                ).where(*settled_filter, Trade.account_id_masked == master_masked)
+            ).one()
+            all_row = session.execute(
+                select(
+                    func.count().label("trades"),
+                    func.sum(Trade.profit).label("profit"),
+                ).where(*settled_filter)
+            ).one()
+            open_contracts = session.scalar(
+                select(func.count()).select_from(Trade).where(
+                    self._current_run_trade_filter(),
+                    Trade.settlement_time.is_(None),
+                )
+            )
+            active_accounts = session.scalar(
+                select(func.count()).select_from(ManagedAccount).where(
+                    ManagedAccount.enabled.is_(True),
+                    ManagedAccount.execution_status == "active",
+                )
+            )
+            excluded_accounts = session.scalar(
+                select(func.count()).select_from(ManagedAccount).where(
+                    ManagedAccount.enabled.is_(False),
+                    ManagedAccount.execution_status.in_(
+                        (
+                            "credential_error",
+                            "duplicate",
+                            "insufficient_balance",
+                            "invalid_account",
+                            "risk_limit",
+                        )
+                    ),
+                )
+            )
+        return {
+            "generated_at": now.isoformat(),
+            "window_minutes": minutes,
+            "mode": self.runtime_mode(),
+            "strategy": self.config.rf_strategy.name,
+            "direction": self.config.rf_strategy.allowed_direction,
+            "contract_type": "PUT",
+            "master_account": master_masked,
+            "master_trades": int(master_row.trades or 0),
+            "master_wins": int(master_row.wins or 0),
+            "master_losses": int(master_row.losses or 0),
+            "master_profit": float(master_row.profit or 0.0),
+            "all_account_runs": int(all_row.trades or 0),
+            "all_account_profit": float(all_row.profit or 0.0),
+            "open_contracts": int(open_contracts or 0),
+            "active_accounts": int(active_accounts or 0),
+            "excluded_accounts": int(excluded_accounts or 0),
+        }
 
     def recent_trades(
         self,

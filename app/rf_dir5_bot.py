@@ -9,6 +9,7 @@ from decimal import Decimal
 from typing import Any
 
 from app.repositories.rf_dir5_repository import RFDir5Repository
+from app.services.telegram_alerts import TelegramAlertClient
 from app.strategy.decision_engine import (
     ProposalEconomics,
     RiseFallDecisionEngine,
@@ -22,7 +23,6 @@ from app.strategy.rise_fall_strategy import (
     check_exhaustion_filter,
     check_volatility_filter,
     detect_fall_candidate,
-    detect_rise_candidate,
     make_signal_event,
 )
 from enhanced_bot import TradingBot, mask_account_id, optional_float, optional_epoch_datetime
@@ -34,7 +34,7 @@ class _ExecutionDisabledBayesian:
 
 
 class RFDir5TradingBot(TradingBot):
-    """RF-DIR5 production worker using the proven account/transport envelope."""
+    """PUT-only production worker using the proven account/transport envelope."""
 
     def __init__(self, config_path: str | None = None) -> None:
         super().__init__(config_path)
@@ -44,7 +44,7 @@ class RFDir5TradingBot(TradingBot):
         self.symbol = self.symbols[0]
         self.duration = self.rf_config.demo_duration_ticks
         self.duration_unit = "t"
-        self.contract_type = "CALL"
+        self.contract_type = "PUT"
         self.contract_barrier = ""
         self.pattern_length = self.rf_config.analysis_movements
         self.max_open_trade_seconds = max(self.max_open_trade_seconds, 30)
@@ -60,6 +60,10 @@ class RFDir5TradingBot(TradingBot):
         self.raw_tick_digits = primary.raw_tick_digits
 
         self.rf_repository = RFDir5Repository(self.repository)
+        self.telegram_alerts = TelegramAlertClient(
+            self.test2_config.telegram,
+            self.logger,
+        )
         self.rf_decision_engine = RiseFallDecisionEngine(
             minimum_score=self.rf_config.minimum_directional_score,
             stale_signal_after_ms=self.rf_config.stale_signal_after_ms,
@@ -83,13 +87,47 @@ class RFDir5TradingBot(TradingBot):
             self._clear_recovery_state(state)
         self._save_state()
         self.logger.info(
-            "RF_DIR5_ACTIVE version=%s markets=%s demo_duration=%s "
-            "recovery_enabled=%s",
+            "RF_PUT5_ACTIVE version=%s direction=%s markets=%s demo_duration=%s "
+            "cumulative_recovery=%s",
             RF_DIR5_VERSION,
+            self.rf_config.allowed_direction,
             ",".join(self.symbols),
             self.duration,
             self.risk_config.recovery_enabled,
         )
+
+    async def _telegram_hourly_loop(self) -> None:
+        await asyncio.sleep(self.test2_config.telegram.initial_delay_seconds)
+        while self.is_running:
+            try:
+                report = self.repository.hourly_execution_report(
+                    master_account_id=self._copytrading_master_account_id(),
+                    window_minutes=60,
+                )
+                await self.telegram_alerts.send_hourly_report(report)
+            except Exception as exc:
+                self.logger.warning(
+                    "TELEGRAM_ALERT_FAILED error=%s",
+                    type(exc).__name__,
+                )
+            await asyncio.sleep(self.test2_config.telegram.interval_seconds)
+
+    async def run(self) -> None:
+        if not self.telegram_alerts.enabled:
+            await super().run()
+            return
+        alert_task = asyncio.create_task(
+            self._telegram_hourly_loop(),
+            name="telegram_hourly_alerts",
+        )
+        try:
+            await super().run()
+        finally:
+            alert_task.cancel()
+            try:
+                await alert_task
+            except asyncio.CancelledError:
+                pass
 
     @staticmethod
     def _clear_recovery_state(state: dict[str, Any]) -> None:
@@ -212,18 +250,18 @@ class RFDir5TradingBot(TradingBot):
                 if isinstance(item, dict)
             }
             self.rf_supported_contracts[symbol] = types
-            if not {"CALL", "PUT"}.issubset(types):
+            if "PUT" not in types:
                 self.logger.error(
-                    "RF_MARKET_DISABLED symbol=%s required=CALL,PUT available=%s",
+                    "RF_MARKET_DISABLED symbol=%s required=PUT available=%s",
                     symbol,
                     sorted(types),
                 )
             else:
-                self.logger.info("RF_MARKET_VERIFIED symbol=%s contracts=CALL,PUT", symbol)
+                self.logger.info("RF_MARKET_VERIFIED symbol=%s contract=PUT", symbol)
 
     def _on_private_session_ready(self, session: Any) -> None:
         if all(
-            {"CALL", "PUT"}.issubset(
+            "PUT" in (
                 self.rf_account_supported_contracts.get((session.account_id, symbol), set())
             )
             for symbol in self.symbols
@@ -270,7 +308,7 @@ class RFDir5TradingBot(TradingBot):
     async def _validate_account_contracts(self, session: Any) -> None:
         async with self.rf_account_contract_validation_semaphore:
             for symbol in self.symbols:
-                if {"CALL", "PUT"}.issubset(
+                if "PUT" in (
                     self.rf_account_supported_contracts.get(
                         (session.account_id, symbol),
                         set(),
@@ -299,7 +337,7 @@ class RFDir5TradingBot(TradingBot):
             "RF_ACCOUNT_CONTRACTS_VERIFIED account=%s markets=%s",
             mask_account_id(session.account_id),
             sum(
-                {"CALL", "PUT"}.issubset(types)
+                    "PUT" in types
                 for (account_id, _symbol), types in self.rf_account_supported_contracts.items()
                 if account_id == session.account_id
             ),
@@ -375,7 +413,7 @@ class RFDir5TradingBot(TradingBot):
         )
         self._render_live_ticks()
 
-        if not {"CALL", "PUT"}.issubset(self.rf_supported_contracts.get(symbol, set())):
+        if "PUT" not in self.rf_supported_contracts.get(symbol, set()):
             return
         if len(market.ticks_history) < self.rf_config.minimum_history_movements + 1:
             return
@@ -394,14 +432,6 @@ class RFDir5TradingBot(TradingBot):
         except ValueError:
             return
 
-        rise = detect_rise_candidate(
-            features,
-            minimum_directional_moves=self.rf_config.minimum_directional_moves,
-            minimum_recent_directional_moves=(
-                getattr(self.rf_config, "minimum_recent_directional_moves", 2)
-            ),
-            minimum_efficiency=self.rf_config.minimum_efficiency,
-        )
         fall = detect_fall_candidate(
             features,
             minimum_directional_moves=self.rf_config.minimum_directional_moves,
@@ -410,7 +440,7 @@ class RFDir5TradingBot(TradingBot):
             ),
             minimum_efficiency=self.rf_config.minimum_efficiency,
         )
-        if not rise and not fall:
+        if not fall:
             return
         volatility_ok = check_volatility_filter(
             features,
@@ -430,7 +460,7 @@ class RFDir5TradingBot(TradingBot):
             )
             return
 
-        direction = "RISE" if rise else "FALL"
+        direction = "FALL"
         quality_score = calculate_directional_score(
             features,
             direction=direction,
@@ -696,6 +726,18 @@ class RFDir5TradingBot(TradingBot):
             summary = self.repository.account_summary(account_id)
             if managed_id is None:
                 continue
+            if not summary.get("updated_at"):
+                self._set_account_execution_status(
+                    managed_id,
+                    "reconnecting",
+                    "Waiting for a current account balance",
+                )
+                self.logger.warning(
+                    "RF_ACCOUNT_SKIPPED account=%s reason=balance_snapshot_unavailable; "
+                    "healthy accounts continue",
+                    mask_account_id(account_id),
+                )
+                continue
             plan = self.rf_repository.plan_stake(
                 managed_account_id=managed_id,
                 current_balance=float(summary.get("balance") or 0.0),
@@ -704,13 +746,34 @@ class RFDir5TradingBot(TradingBot):
                 recovery_enabled=self.risk_config.recovery_enabled,
                 recovery_trigger_losses=self.risk_config.recovery_trigger_losses,
                 minimum_stake=self.base_stake,
+                maximum_recovery_balance_fraction=(
+                    self.risk_config.maximum_recovery_balance_fraction
+                ),
+                minimum_balance_reserve=self.risk_config.minimum_balance_reserve,
             )
             if plan.stake is None:
-                self.logger.warning(
-                    "RF_ACCOUNT_SKIPPED account=%s reason=%s",
-                    mask_account_id(account_id),
-                    plan.reason,
-                )
+                if "balance" in plan.reason or "safety cap" in plan.reason:
+                    self._set_account_execution_status(
+                        managed_id,
+                        "insufficient_balance",
+                        plan.reason,
+                    )
+                    self.valid_clients = [
+                        item for item in self.valid_clients if item[0] != token
+                    ]
+                    self.logger.warning(
+                        "RF_ACCOUNT_QUARANTINED account=%s "
+                        "status=insufficient_balance reason=%s; healthy accounts continue",
+                        mask_account_id(account_id),
+                        plan.reason,
+                    )
+                else:
+                    self.logger.warning(
+                        "RF_ACCOUNT_SKIPPED account=%s reason=%s; "
+                        "retrying on a future quote",
+                        mask_account_id(account_id),
+                        plan.reason,
+                    )
                 continue
             filtered.append((token, account_id))
             stake_by_token[token] = plan.stake
@@ -718,7 +781,7 @@ class RFDir5TradingBot(TradingBot):
             managed_id_by_token[token] = managed_id
             if plan.is_recovery:
                 self.logger.warning(
-                    "RF_ONE_SHOT_RECOVERY_PLANNED account=%s debt=%.2f stake=%.2f "
+                    "RF_CUMULATIVE_RECOVERY_PLANNED account=%s debt=%.2f stake=%.2f "
                     "proposal_profit_ratio=%.5f",
                     mask_account_id(account_id),
                     plan.recovery_debt,
@@ -866,7 +929,7 @@ class RFDir5TradingBot(TradingBot):
         return values
 
     def _direct_buy_request(self, signal: SignalEvent, stake_amount: float) -> dict[str, Any]:
-        request = {
+        return {
             "buy": "1",
             "price": round(float(stake_amount), 2),
             "parameters": self._contract_parameters_for(
@@ -875,12 +938,6 @@ class RFDir5TradingBot(TradingBot):
                 signal.duration_ticks,
             ),
         }
-        if self.app_markup_percentage > 0:
-            request["parameters"]["app_markup_percentage"] = round(
-                self.app_markup_percentage,
-                4,
-            )
-        return request
 
     def _eligible_purchase_accounts(self) -> list[tuple[str, str]]:
         eligible = [
@@ -948,7 +1005,7 @@ class RFDir5TradingBot(TradingBot):
             return
         started = self.rf_repository.mark_recovery_attempt_started(managed_id)
         self.logger.warning(
-            "RF_ONE_SHOT_RECOVERY_STARTED account=%s contract_id=%s stake=%.2f "
+            "RF_CUMULATIVE_RECOVERY_STARTED account=%s contract_id=%s stake=%.2f "
             "state_persisted=%s",
             mask_account_id(account_id),
             contract_id,
@@ -980,15 +1037,17 @@ class RFDir5TradingBot(TradingBot):
         )
         if risk["settled_recovery_attempt"]:
             self.logger.warning(
-                "RF_ONE_SHOT_RECOVERY_SETTLED account=%s result=%s profit=%.2f "
-                "further_recovery=false",
+                "RF_CUMULATIVE_RECOVERY_SETTLED account=%s result=%s profit=%.2f "
+                "remaining_debt=%.2f recovery_pending=%s",
                 mask_account_id(account_id),
                 outcome.upper(),
                 profit,
+                risk["recovery_loss_debt"],
+                risk["recovery_pending"],
             )
         elif risk["recovery_pending"]:
             self.logger.warning(
-                "RF_ONE_SHOT_RECOVERY_ARMED account=%s consecutive_losses=%s debt=%.2f",
+                "RF_CUMULATIVE_RECOVERY_ARMED account=%s consecutive_losses=%s debt=%.2f",
                 mask_account_id(account_id),
                 risk["consecutive_losses"],
                 risk["recovery_loss_debt"],

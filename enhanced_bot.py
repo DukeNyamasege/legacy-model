@@ -8,7 +8,7 @@
 - Monitores open contracts via proposal_open_contract subscriptions (no polling).
 - Exposes OAuth 2.0 PKCE helper flow on the command-line (--login).
 - Daily risk management, stop-loss, and take-profit per copier.
-- Configurable two-run recovery sizing with a hard maximum stake.
+- Persistent cumulative-loss recovery with account-level affordability limits.
 - Tick-based cooldown and global locking.
 """
 
@@ -39,6 +39,7 @@ from dotenv import load_dotenv
 
 from app.config import load_test2_config
 from app.database import Database
+from app.deriv.http import deriv_headers, mask_app_id
 from app.model.bayesian_probability import BayesianProbability
 from app.model.feature_builder import build_features
 from app.model.hmm_regime import ThreeStateHmm
@@ -317,12 +318,7 @@ async def _rest_request(
 ) -> Dict[str, Any]:
     """Perform a REST API request to the Deriv API."""
     url = f"{base_url.rstrip('/')}{path}"
-    headers = {
-        "Deriv-App-ID": str(app_id),
-        "Content-Type": "application/json"
-    }
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
+    headers = deriv_headers(app_id, bearer_token=token or "")
 
     try:
         async with aiohttp.ClientSession() as session:
@@ -1131,7 +1127,9 @@ class TradingBot:
         self.test2_config = load_test2_config(self.config_path)
         self.cfg = self.test2_config.model_dump()
 
-        self.app_id = str(self.cfg["deriv"].get("app_id", "71937"))
+        self.app_id = str(self.cfg["deriv"].get("app_id", "")).strip()
+        if not self.app_id:
+            raise RuntimeError("DERIV_APP_ID is required")
         self.app_markup_percentage = float(
             self.cfg["deriv"].get("app_markup_percentage", 0.0) or 0.0
         )
@@ -1169,7 +1167,8 @@ class TradingBot:
                 duration=self.duration,
                 duration_unit=self.duration_unit,
             )
-        if not self.test2_config.execution.require_rising_ticks:
+        rf_runtime = "-rf-" in str(self.test2_config.model.version).lower()
+        if not rf_runtime and not self.test2_config.execution.require_rising_ticks:
             raise RuntimeError("Rising-only entry policy must remain enabled.")
         self.rising_policy = str(
             self.cfg["execution"].get("rising_policy", "soft_rising_momentum")
@@ -1179,7 +1178,11 @@ class TradingBot:
             self.cfg["logging"].get("level", "INFO"),
             self.cfg["logging"].get("file", "trading_bot.log"),
         )
-        rf_runtime = str(self.test2_config.model.version).startswith("3.0.0-rf-dir5")
+        self.logger.info(
+            "DERIV_APP_ID_ACTIVE app_id=%s source=%s",
+            mask_app_id(self.app_id),
+            "DERIV_APP_ID" if os.getenv("DERIV_APP_ID") else "config.yaml",
+        )
         if not rf_runtime:
             self.logger.info("RISING_POLICY_ACTIVE mode=%s", self.rising_policy)
             self.logger.info(
@@ -1194,7 +1197,7 @@ class TradingBot:
                 self.settle_wait_seconds,
             )
         self.logger.info(
-            "APP_MARKUP_EXPECTED percentage=%.2f source=registered_app_or_direct_buy "
+            "APP_MARKUP_EXPECTED percentage=%.2f source=registered_deriv_app_id "
             "verification=settled_contract_and_markup_statistics",
             self.app_markup_percentage,
         )
@@ -1397,11 +1400,24 @@ class TradingBot:
         if managed_account_id is None:
             return
         try:
-            self.repository.set_managed_account_execution_status(
-                int(managed_account_id),
-                status,
-                reason,
-            )
+            normalized = str(status or "inactive").strip().lower()
+            if normalized in {
+                "credential_error",
+                "duplicate",
+                "insufficient_balance",
+                "invalid_account",
+            }:
+                self.repository.quarantine_managed_account(
+                    int(managed_account_id),
+                    normalized,
+                    reason,
+                )
+            else:
+                self.repository.set_managed_account_execution_status(
+                    int(managed_account_id),
+                    normalized,
+                    reason,
+                )
         except Exception as exc:
             self.logger.warning(
                 "Could not update account execution status id=%s: %s",
@@ -1434,7 +1450,14 @@ class TradingBot:
         if managed_accounts:
             for row in managed_accounts:
                 if not row.enabled:
-                    if str(row.execution_status) not in {"take_profit", "stop_loss"}:
+                    if str(row.execution_status) not in {
+                        "take_profit",
+                        "stop_loss",
+                        "credential_error",
+                        "duplicate",
+                        "insufficient_balance",
+                        "invalid_account",
+                    }:
                         self._set_account_execution_status(
                             int(row.id),
                             "disabled",
@@ -1442,6 +1465,11 @@ class TradingBot:
                         )
                     continue
                 if str(row.execution_status) == "credential_error":
+                    self.repository.quarantine_managed_account(
+                        int(row.id),
+                        "credential_error",
+                        row.execution_status_reason or "Deriv credential was rejected",
+                    )
                     self.logger.warning(
                         "Managed account %s remains isolated because its Deriv credential "
                         "was rejected; reconnect the account to retry it.",
@@ -1460,7 +1488,7 @@ class TradingBot:
                     if not refresh_token_value:
                         self._set_account_execution_status(
                             int(row.id),
-                            "error",
+                            "credential_error",
                             "OAuth refresh token is missing",
                         )
                         self.logger.error(
@@ -1474,7 +1502,18 @@ class TradingBot:
                             refresh_token=refresh_token_value,
                         )
                     except Exception as exc:
-                        self._set_account_execution_status(int(row.id), "error", str(exc))
+                        message = str(exc)
+                        permanent = is_permanent_credential_error(
+                            {"message": message}
+                        ) or any(
+                            marker in message.lower()
+                            for marker in ("invalid_grant", "invalid refresh", "expired")
+                        )
+                        self._set_account_execution_status(
+                            int(row.id),
+                            "credential_error" if permanent else "reconnecting",
+                            message,
+                        )
                         self.logger.error(
                             "Managed OAuth account %s could not refresh its token: %s",
                             row.id,
@@ -2591,7 +2630,7 @@ class TradingBot:
                 if matched and matched.get("account_type") != self.environment:
                     self._set_account_execution_status(
                         managed_account_id,
-                        "error",
+                        "invalid_account",
                         f"Account does not match {self.environment} mode",
                     )
                     self.logger.error(
@@ -2610,7 +2649,7 @@ class TradingBot:
             if not matched:
                 self._set_account_execution_status(
                     managed_account_id,
-                    "error",
+                    "invalid_account",
                     f"No Options {self.environment} account was found",
                 )
                 self.logger.error("No valid options %s account found for token", self.environment, extra={"token_tag": tag})
@@ -2649,13 +2688,48 @@ class TradingBot:
                         },
                     )
                 continue
-            account_indexes[account_id] = len(valid)
+            balance = optional_float(matched.get("balance"))
             self.repository.update_account_balance(
                 account_id=account_id,
-                balance=float(matched.get("balance", 0.0)),
+                balance=float(balance or 0.0),
                 currency=str(matched.get("currency", "USD")),
                 status=str(matched.get("status", "active")),
             )
+            configured_base_stake = float(
+                getattr(self, "cfg", {}).get("strategy", {}).get("initial_stake", 0.50)
+            )
+            required_balance = max(
+                float(
+                    profile.get("stake_amount", configured_base_stake)
+                    or configured_base_stake
+                ),
+                configured_base_stake,
+            ) + float(
+                getattr(
+                    getattr(self, "risk_config", None),
+                    "minimum_balance_reserve",
+                    0.50,
+                )
+            )
+            if balance is not None and balance + 1e-9 < required_balance:
+                self._set_account_execution_status(
+                    managed_account_id,
+                    "insufficient_balance",
+                    (
+                        f"Balance {balance:.2f} is below the required "
+                        f"{required_balance:.2f} account reserve"
+                    ),
+                )
+                self.logger.warning(
+                    "ACCOUNT_QUARANTINED account=%s status=insufficient_balance "
+                    "balance=%.2f required=%.2f; healthy accounts continue",
+                    mask_account_id(account_id),
+                    balance,
+                    required_balance,
+                    extra={"token_tag": tag},
+                )
+                continue
+            account_indexes[account_id] = len(valid)
             self._set_account_execution_status(
                 managed_account_id,
                 "connecting",
@@ -3449,6 +3523,18 @@ class TradingBot:
             )
 
         bulk_path = f"/trading/v1/options/contracts/bulk-purchase/{self.environment}"
+        self.logger.info(
+            "BULK_PURCHASE_REQUEST endpoint=%s app_id=%s account_count=%s "
+            "accounts=%s pat_fingerprints=%s symbol=%s contract_type=%s stake=%.2f",
+            bulk_path,
+            mask_app_id(self.app_id),
+            len(eligible_accounts),
+            [mask_account_id(account_id) for _token, account_id in eligible_accounts],
+            [token_tag(token) for token, _account_id in eligible_accounts],
+            signal.symbol,
+            signal.contract_type,
+            stake_amount,
+        )
         response = await _rest_request(
             "POST",
             bulk_path,
@@ -3500,6 +3586,22 @@ class TradingBot:
             for transaction in transactions
             if transaction.get("contract_id") and not transaction.get("error")
         ]
+        self.logger.info(
+            "BULK_PURCHASE_RESPONSE endpoint=%s app_id=%s purchased=%s errors=%s "
+            "accounts=%s contracts=%s",
+            bulk_path,
+            mask_app_id(self.app_id),
+            len(successful_transactions),
+            len(errors),
+            [
+                mask_account_id(str(transaction.get("account_id") or ""))
+                for transaction in successful_transactions
+            ],
+            [
+                str(transaction.get("contract_id"))
+                for transaction in successful_transactions
+            ],
+        )
         completed_account_ids = {
             str(transaction.get("account_id") or "")
             for transaction in successful_transactions
@@ -3555,6 +3657,15 @@ class TradingBot:
                 )
                 return {"account_id": account_id, "error": {"message": message}}
 
+            self.logger.info(
+                "PRIVATE_PURCHASE_REQUEST app_id=%s account=%s symbol=%s "
+                "contract_type=%s stake=%.2f transport=authenticated_websocket",
+                mask_app_id(self.app_id),
+                mask_account_id(account_id),
+                signal.symbol,
+                signal.contract_type,
+                stake_amount,
+            )
             response = await session.send_request(
                 self._direct_buy_request(signal, stake_amount)
             )
@@ -3598,6 +3709,15 @@ class TradingBot:
                 )
                 return {"account_id": account_id, "error": {"message": message}}
 
+            self.logger.info(
+                "PRIVATE_PURCHASE_RESPONSE app_id=%s account=%s contract_id=%s "
+                "buy_price=%s payout=%s",
+                mask_app_id(self.app_id),
+                mask_account_id(account_id),
+                contract_id,
+                buy.get("buy_price", "unavailable"),
+                buy.get("payout", "unavailable"),
+            )
             self._set_account_execution_status(
                 self._managed_account_id_for_token(token),
                 "active",
@@ -3666,11 +3786,6 @@ class TradingBot:
             stake_amount,
             symbol_key="underlying_symbol",
         )
-        if self.app_markup_percentage > 0:
-            parameters["app_markup_percentage"] = round(
-                self.app_markup_percentage,
-                2,
-            )
         return {
             "buy": "1",
             "price": round(float(stake_amount), 2),

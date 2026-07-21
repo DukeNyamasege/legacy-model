@@ -28,6 +28,7 @@ import json
 from app.config import load_test2_config
 from app.dashboard_metrics import build_execution_summary
 from app.database import Database
+from app.deriv.http import deriv_headers
 from app.oauth_client import (
     build_authorization_url,
     build_pkce_pair,
@@ -222,10 +223,7 @@ def code_verifier_from_state(state: str) -> str:
 def load_options_accounts(access_token: str) -> list[dict]:
     response = requests.get(
         f"{CONFIG.deriv.rest_base_url.rstrip('/')}/trading/v1/options/accounts",
-        headers={
-            "Deriv-App-ID": str(CONFIG.deriv.app_id),
-            "Authorization": f"Bearer {access_token}",
-        },
+        headers=deriv_headers(CONFIG.deriv.app_id, bearer_token=access_token),
         timeout=30,
     )
     response.raise_for_status()
@@ -1350,7 +1348,10 @@ def model_metrics() -> dict:
             "hmm_enabled": False,
             "martingale_enabled": CONFIG.risk.recovery_enabled,
             "recovery_trigger_losses": CONFIG.risk.recovery_trigger_losses,
-            "maximum_recovery_attempts": CONFIG.risk.maximum_recovery_attempts,
+            "recovery_mode": "cumulative_next_contract",
+            "maximum_recovery_balance_fraction": (
+                CONFIG.risk.maximum_recovery_balance_fraction
+            ),
             "automatic_loss_stop": False,
         },
     }
@@ -1361,6 +1362,8 @@ def rf_strategy_metrics() -> dict:
     return {
         "strategy": CONFIG.rf_strategy.name,
         "phase": "DIRECT_DEMO",
+        "direction": CONFIG.rf_strategy.allowed_direction,
+        "contract_type": "PUT",
         "markets": list(CONFIG.rf_strategy.markets),
         "duration_ticks": CONFIG.rf_strategy.demo_duration_ticks,
     }
@@ -1386,10 +1389,10 @@ def markup_statistics(
         response = requests.get(
             f"{CONFIG.deriv.rest_base_url.rstrip('/')}/applications/v1/markup-statistics",
             params={"date_from": start.isoformat(), "date_to": end.isoformat()},
-            headers={
-                "Deriv-App-ID": str(CONFIG.deriv.app_id),
-                "Authorization": f"Bearer {access_token}",
-            },
+            headers=deriv_headers(
+                CONFIG.deriv.app_id,
+                bearer_token=access_token,
+            ),
             timeout=30,
         )
         response.raise_for_status()

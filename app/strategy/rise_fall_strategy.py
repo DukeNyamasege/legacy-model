@@ -8,7 +8,7 @@ from statistics import median
 from typing import Sequence
 
 
-RF_DIR5_VERSION = "RF-DIR5-DEMO-V6"
+RF_DIR5_VERSION = "RF-PUT5-PREMIUM-V7"
 RF_SYMBOLS = (
     "1HZ100V",
     "1HZ10V",
@@ -127,7 +127,7 @@ def build_five_move_features(
     normal_values = [abs(value) for value in decimal_prices(normalization_movements) if value != 0]
     if not normal_values:
         raise ValueError("RF-DIR5 requires non-zero normalization movements")
-    normal_move = median(normal_values[-100:])
+    normal_move = median(normal_values)
     if normal_move <= 0:
         raise ValueError("RF-DIR5 normal movement must be positive")
 

@@ -23,7 +23,7 @@ class ModelIdentity(StrictModel):
 
 
 class DerivSettings(StrictModel):
-    app_id: str
+    app_id: str = Field(min_length=1)
     app_markup_percentage: float = Field(default=3.0, ge=0, le=3)
     environment: Literal["demo", "real"] = "demo"
     public_ws_url: str
@@ -34,6 +34,15 @@ class DerivSettings(StrictModel):
     oauth_client_id: str = ""
     oauth_redirect_url: str = ""
     token_encryption_key: str = ""
+
+    @model_validator(mode="after")
+    def validate_application_identity(self) -> "DerivSettings":
+        self.app_id = self.app_id.strip()
+        if not self.app_id:
+            raise ValueError("DERIV_APP_ID is required")
+        if self.oauth_client_id and self.oauth_client_id.strip() != self.app_id:
+            raise ValueError("OAuth client ID must match the registered Deriv App ID")
+        return self
 
 
 class StrategySettings(StrictModel):
@@ -163,8 +172,15 @@ class RecoverySettings(StrictModel):
 
 
 class RiseFallStrategySettings(StrictModel):
-    name: Literal["RF-DIR5-DEMO-V6"] = "RF-DIR5-DEMO-V6"
-    markets: tuple[str, ...] = RF_SYMBOLS
+    name: Literal["RF-PUT5-PREMIUM-V7"] = "RF-PUT5-PREMIUM-V7"
+    allowed_direction: Literal["FALL"] = "FALL"
+    markets: tuple[str, ...] = (
+        "R_10",
+        "R_100",
+        "R_75",
+        "1HZ10V",
+        "1HZ75V",
+    )
     analysis_movements: Literal[5] = 5
     required_quotes: Literal[6] = 6
     minimum_history_movements: int = Field(default=100, ge=50)
@@ -204,8 +220,18 @@ class RiseFallStrategySettings(StrictModel):
 class RiskSettings(StrictModel):
     recovery_enabled: bool = True
     recovery_trigger_losses: Literal[1] = 1
-    maximum_recovery_attempts: Literal[1] = 1
+    maximum_recovery_balance_fraction: float = Field(default=0.10, gt=0, le=0.25)
+    minimum_balance_reserve: float = Field(default=0.50, ge=0)
     maximum_open_contracts_per_account: Literal[1] = 1
+
+
+class TelegramSettings(StrictModel):
+    enabled: bool = False
+    bot_token_env: str = "TELEGRAM_BOT_TOKEN"
+    chat_id_env: str = "TELEGRAM_CHAT_ID"
+    interval_seconds: int = Field(default=3600, ge=60)
+    initial_delay_seconds: int = Field(default=15, ge=0)
+    request_timeout_seconds: float = Field(default=15.0, gt=0, le=60)
 
 
 class StorageSettings(StrictModel):
@@ -251,6 +277,7 @@ class Test2Config(StrictModel):
     recovery: RecoverySettings = Field(default_factory=RecoverySettings)
     rf_strategy: RiseFallStrategySettings = Field(default_factory=RiseFallStrategySettings)
     risk: RiskSettings = Field(default_factory=RiskSettings)
+    telegram: TelegramSettings = Field(default_factory=TelegramSettings)
     storage: StorageSettings
     trade: TradeSettings
 
@@ -328,6 +355,12 @@ def load_test2_config(path: str | Path = "config.yaml") -> Test2Config:
             for symbol in os.environ["MARKET_SYMBOLS"].split(",")
             if symbol.strip()
         )
+    if os.getenv("RF_MARKET_SYMBOLS"):
+        raw.setdefault("rf_strategy", {})["markets"] = tuple(
+            symbol.strip()
+            for symbol in os.environ["RF_MARKET_SYMBOLS"].split(",")
+            if symbol.strip()
+        )
     if os.getenv("REQUIRE_RISING_TICKS"):
         raw.setdefault("execution", {})["require_rising_ticks"] = os.environ[
             "REQUIRE_RISING_TICKS"
@@ -340,4 +373,12 @@ def load_test2_config(path: str | Path = "config.yaml") -> Test2Config:
         raw.setdefault("bayesian", {})[
             "minimum_probability_edge_confidence"
         ] = float(os.environ["BAYESIAN_MIN_EDGE_CONFIDENCE"])
+    if os.getenv("TELEGRAM_ALERTS_ENABLED"):
+        raw.setdefault("telegram", {})["enabled"] = os.environ[
+            "TELEGRAM_ALERTS_ENABLED"
+        ].lower() in {"1", "true", "yes"}
+    if os.getenv("TELEGRAM_ALERT_INTERVAL_SECONDS"):
+        raw.setdefault("telegram", {})["interval_seconds"] = int(
+            os.environ["TELEGRAM_ALERT_INTERVAL_SECONDS"]
+        )
     return Test2Config.model_validate(raw)

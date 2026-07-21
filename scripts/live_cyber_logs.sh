@@ -31,7 +31,7 @@ printf '\033[0m\n'
         *CONTRACT_SETTLED*result=LOSS*|*' LOSS '*|*'LOSS profit='*)
           printf '\033[2;37m[%s]\033[0m \033[1;97;101m[LOSS]\033[0m \033[1;91m%s\033[0m\n' "$now" "$line"
           ;;
-        *RF_ONE_SHOT_RECOVERY*)
+        *RF_CUMULATIVE_RECOVERY*)
           printf '\033[2;37m[%s]\033[0m \033[1;97;45m[RECOVERY]\033[0m \033[1;95m%s\033[0m\n' "$now" "$line"
           ;;
         *PURCHASE_REQUESTED*|*PURCHASE_CONFIRMED*|*CONTRACT_REGISTERED*)

@@ -14,11 +14,13 @@ from sqlalchemy import func, select
 
 from app.config import load_test2_config
 from app.database import Database
+from app.deriv.http import deriv_headers
 from app.model.bayesian_probability import BayesianGroupKey, KeyedBayesianProbability
 from app.models import ManagedAccount, ShadowContract, Trade
 from app.repositories.rf_dir5_repository import RFDir5Repository
 from app.repositories.test2_repository import Test2Repository
 from app.rf_dir5_bot import RFDir5TradingBot
+from app.services.telegram_alerts import TelegramAlertClient
 from app.strategy.decision_engine import (
     ProposalEconomics,
     RiseFallDecisionEngine,
@@ -148,9 +150,9 @@ class RiseFallContractTests(unittest.TestCase):
             self.assertNotIn("barrier", params)
             self.assertNotIn("prediction", params)
 
-    def test_direct_buy_uses_documented_markup_parameter_without_barrier(self) -> None:
+    def test_direct_buy_relies_on_registered_app_markup_without_undocumented_field(self) -> None:
         request = self.bot._direct_buy_request(signal("RISE"), 0.50)
-        self.assertEqual(request["parameters"]["app_markup_percentage"], 3.0)
+        self.assertNotIn("app_markup_percentage", request["parameters"])
         self.assertNotIn("barrier", request["parameters"])
 
     def test_rf_execution_has_no_artificial_post_trade_spacing(self) -> None:
@@ -160,12 +162,17 @@ class RiseFallContractTests(unittest.TestCase):
     def test_live_config_is_tight_direct_execution_with_immediate_recovery(self) -> None:
         config = load_test2_config(Path(__file__).with_name("config.yaml"))
 
-        self.assertEqual(config.rf_strategy.minimum_directional_moves, 4)
+        self.assertEqual(config.rf_strategy.allowed_direction, "FALL")
+        self.assertEqual(
+            config.rf_strategy.markets,
+            ("R_10", "R_100", "R_75", "1HZ10V", "1HZ75V"),
+        )
+        self.assertEqual(config.rf_strategy.minimum_directional_moves, 5)
         self.assertEqual(config.rf_strategy.minimum_recent_directional_moves, 3)
-        self.assertGreaterEqual(config.rf_strategy.minimum_efficiency, 0.72)
+        self.assertGreaterEqual(config.rf_strategy.minimum_efficiency, 0.80)
         self.assertTrue(config.risk.recovery_enabled)
         self.assertEqual(config.risk.recovery_trigger_losses, 1)
-        self.assertEqual(config.risk.maximum_recovery_attempts, 1)
+        self.assertEqual(config.risk.maximum_recovery_balance_fraction, 0.10)
 
     def test_proposal_values_accept_strings_numbers_and_missing_commission(self) -> None:
         economics = parse_proposal_economics(
@@ -201,6 +208,41 @@ class RiseFallContractTests(unittest.TestCase):
             self.bot._planned_stake_for_account("token", "DOT123", 0.01),
             0.75,
         )
+
+    def test_deriv_headers_require_and_preserve_exact_app_id(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "DERIV_APP_ID is required"):
+            deriv_headers("")
+        headers = deriv_headers(
+            "33MmAtDICSKcC7LAZj7JO",
+            bearer_token="oauth-token",
+        )
+        self.assertEqual(headers["Deriv-App-ID"], "33MmAtDICSKcC7LAZj7JO")
+        self.assertEqual(headers["Authorization"], "Bearer oauth-token")
+
+    def test_telegram_hourly_report_contains_execution_totals(self) -> None:
+        message = TelegramAlertClient.format_hourly_report(
+            {
+                "window_minutes": 60,
+                "mode": "demo",
+                "strategy": "RF-PUT5-PREMIUM-V7",
+                "direction": "FALL",
+                "contract_type": "PUT",
+                "active_accounts": 3,
+                "excluded_accounts": 2,
+                "master_account": "DOT***422",
+                "master_trades": 10,
+                "master_wins": 7,
+                "master_losses": 3,
+                "master_profit": 1.25,
+                "all_account_runs": 30,
+                "all_account_profit": 3.75,
+                "open_contracts": 0,
+                "generated_at": "2026-07-21T10:00:00+00:00",
+            }
+        )
+        self.assertIn("Direction: FALL (PUT)", message)
+        self.assertIn("Master results: 10 trades, 7 wins, 3 losses", message)
+        self.assertIn("All accounts: 30 contracts", message)
 
 
 class RFLiveMarketDisplayTests(unittest.TestCase):
@@ -355,7 +397,7 @@ class RFTickStreamTests(unittest.IsolatedAsyncioTestCase):
                     "tick": {
                         "symbol": market.symbol,
                         "epoch": 1_700_000_001 + offset,
-                        "quote": 100 + offset,
+                        "quote": 300 - offset,
                     }
                 }
             )
@@ -564,6 +606,24 @@ class RFRepositoryTests(unittest.TestCase):
         self.assertIsNone(stake)
         self.assertIn("insufficient account balance", reason)
 
+    def test_quarantine_disables_only_target_account_and_preserves_secret(self) -> None:
+        target_id = self.create_managed_account("Expired")
+        healthy_id = self.create_managed_account("Healthy")
+
+        self.base.quarantine_managed_account(
+            target_id,
+            "credential_error",
+            "Invalid or expired token",
+        )
+
+        with self.database.session() as session:
+            target = session.get(ManagedAccount, target_id)
+            healthy = session.get(ManagedAccount, healthy_id)
+            self.assertFalse(target.enabled)
+            self.assertEqual(target.execution_status, "credential_error")
+            self.assertEqual(target.token_secret, "encrypted")
+            self.assertTrue(healthy.enabled)
+
     def test_two_losses_arm_exactly_one_recovery_attempt(self) -> None:
         account_id = self.create_managed_account("Recovery")
         first = self.repository.record_account_outcome(
@@ -649,8 +709,8 @@ class RFRepositoryTests(unittest.TestCase):
         self.assertFalse(recovery["recovery_pending"])
         self.assertEqual(recovery["recovery_loss_debt"], 0.0)
 
-    def test_failed_recovery_is_not_chased_again(self) -> None:
-        account_id = self.create_managed_account("One attempt")
+    def test_failed_recovery_keeps_cumulative_debt_for_next_contract(self) -> None:
+        account_id = self.create_managed_account("Cumulative recovery")
         for balance in (999.50, 999.00):
             self.repository.record_account_outcome(
                 managed_account_id=account_id,
@@ -669,10 +729,22 @@ class RFRepositoryTests(unittest.TestCase):
         )
         self.assertTrue(settled["settled_recovery_attempt"])
         self.assertEqual(settled["consecutive_losses"], 3)
-        self.assertEqual(settled["recovery_loss_debt"], 0.0)
-        self.assertFalse(settled["recovery_pending"])
+        self.assertEqual(settled["recovery_loss_debt"], 3.5)
+        self.assertTrue(settled["recovery_pending"])
 
-    def test_unaffordable_recovery_continues_with_configured_stake(self) -> None:
+        next_plan = self.repository.plan_stake(
+            managed_account_id=account_id,
+            current_balance=996.50,
+            requested_stake=0.50,
+            proposal_profit_ratio=0.40,
+            recovery_enabled=True,
+            recovery_trigger_losses=2,
+            minimum_stake=0.50,
+        )
+        self.assertTrue(next_plan.is_recovery)
+        self.assertEqual(next_plan.stake, 8.75)
+
+    def test_unaffordable_recovery_is_quarantined_without_erasing_debt(self) -> None:
         account_id = self.create_managed_account("Recovery fallback")
         for balance in (1.50, 1.00):
             self.repository.record_account_outcome(
@@ -691,9 +763,10 @@ class RFRepositoryTests(unittest.TestCase):
             recovery_trigger_losses=2,
             minimum_stake=0.50,
         )
-        self.assertEqual(plan.stake, 0.50)
-        self.assertFalse(plan.is_recovery)
-        self.assertIn("continuing with configured stake", plan.reason)
+        self.assertIsNone(plan.stake)
+        self.assertTrue(plan.is_recovery)
+        self.assertIn("safety cap", plan.reason)
+        self.assertEqual(plan.recovery_debt, 1.0)
 
         next_plan = self.repository.plan_stake(
             managed_account_id=account_id,
@@ -704,9 +777,35 @@ class RFRepositoryTests(unittest.TestCase):
             recovery_trigger_losses=2,
             minimum_stake=0.50,
         )
-        self.assertEqual(next_plan.stake, 0.50)
-        self.assertFalse(next_plan.is_recovery)
-        self.assertEqual(next_plan.reason, "")
+        self.assertIsNone(next_plan.stake)
+        self.assertTrue(next_plan.is_recovery)
+        self.assertEqual(next_plan.recovery_debt, 1.0)
+
+    def test_seven_losses_are_carried_into_the_next_recovery_plan(self) -> None:
+        account_id = self.create_managed_account("Seven losses")
+        balance = 1000.0
+        for loss in (0.50, 1.00, 2.00, 4.00, 8.00, 16.00, 32.00):
+            balance -= loss
+            state = self.repository.record_account_outcome(
+                managed_account_id=account_id,
+                profit=-loss,
+                current_balance=balance,
+                recovery_enabled=True,
+                recovery_trigger_losses=1,
+            )
+
+        self.assertEqual(state["recovery_loss_debt"], 63.50)
+        plan = self.repository.plan_stake(
+            managed_account_id=account_id,
+            current_balance=balance,
+            requested_stake=0.50,
+            proposal_profit_ratio=0.80,
+            recovery_enabled=True,
+            recovery_trigger_losses=1,
+            minimum_stake=0.50,
+        )
+        self.assertTrue(plan.is_recovery)
+        self.assertEqual(plan.stake, 79.38)
 
     def test_three_losses_never_disable_the_account(self) -> None:
         bot = object.__new__(RFDir5TradingBot)

@@ -340,6 +340,8 @@ class RFDir5Repository:
         recovery_enabled: bool,
         recovery_trigger_losses: int,
         minimum_stake: float,
+        maximum_recovery_balance_fraction: float = 0.10,
+        minimum_balance_reserve: float = 0.50,
     ) -> StakePlan:
         today = datetime.now(timezone.utc).date().isoformat()
         balance = max(0.0, float(current_balance))
@@ -362,10 +364,6 @@ class RFDir5Repository:
                 state.trading_day = today
                 state.daily_start_balance = balance
                 state.session_profit = 0.0
-                state.consecutive_losses = 0
-                state.recovery_loss_debt = 0.0
-                state.recovery_pending = False
-                state.recovery_attempt_active = False
                 state.equity_high_water = balance
 
             state.equity_high_water = max(state.equity_high_water, balance)
@@ -373,14 +371,18 @@ class RFDir5Repository:
                 math.ceil(max(float(minimum_stake), float(requested_stake)) * 100.0 - 1e-9)
                 / 100.0
             )
-            if base_stake > balance + 1e-9:
-                return StakePlan(None, "insufficient account balance for configured stake")
+            spendable_balance = max(0.0, balance - float(minimum_balance_reserve))
+            if base_stake > spendable_balance + 1e-9:
+                return StakePlan(
+                    None,
+                    "insufficient account balance for configured stake and reserve",
+                    recovery_debt=state.recovery_loss_debt,
+                )
 
             is_recovery = bool(
                 recovery_enabled
                 and state.recovery_pending
                 and not state.recovery_attempt_active
-                and state.consecutive_losses >= int(recovery_trigger_losses)
                 and state.recovery_loss_debt > 0
             )
             required_recovery_stake = 0.0
@@ -389,25 +391,32 @@ class RFDir5Repository:
             if is_recovery:
                 ratio = float(proposal_profit_ratio)
                 if ratio <= 0:
-                    reason = "recovery economics unavailable; continuing with configured stake"
+                    return StakePlan(
+                        None,
+                        "recovery economics unavailable; debt retained",
+                        recovery_debt=state.recovery_loss_debt,
+                    )
                 else:
                     required_recovery_stake = (
                         math.ceil((state.recovery_loss_debt / ratio) * 100.0 - 1e-9)
                         / 100.0
                     )
                     target_stake = max(base_stake, required_recovery_stake)
-                    if target_stake > balance + 1e-9:
-                        reason = (
-                            "recovery target exceeds available balance; continuing with "
-                            "configured stake"
+                    recovery_safety_cap = min(
+                        spendable_balance,
+                        max(
+                            base_stake,
+                            balance * float(maximum_recovery_balance_fraction),
                         )
-                if reason:
-                    is_recovery = False
-                    target_stake = base_stake
-                    state.consecutive_losses = 0
-                    state.recovery_loss_debt = 0.0
-                    state.recovery_pending = False
-                    state.recovery_attempt_active = False
+                    )
+                    if target_stake > recovery_safety_cap + 1e-9:
+                        return StakePlan(
+                            None,
+                            "recovery stake exceeds account balance safety cap; debt retained",
+                            is_recovery=True,
+                            recovery_debt=state.recovery_loss_debt,
+                            required_recovery_stake=required_recovery_stake,
+                        )
 
             state.updated_at = utc_now()
             return StakePlan(
@@ -483,27 +492,27 @@ class RFDir5Repository:
                 session.add(state)
             state.session_profit += float(profit)
             was_recovery = bool(state.recovery_attempt_active)
-            if was_recovery:
-                state.consecutive_losses = (
-                    0 if profit > 0 else state.consecutive_losses + 1
-                )
-                # One attempt means neither a recovery win nor loss can start a
-                # second chase from the same debt cycle.
-                state.recovery_loss_debt = 0.0
-                state.recovery_pending = False
-                state.recovery_attempt_active = False
-            elif profit <= 0:
+            state.recovery_attempt_active = False
+            if profit <= 0:
                 state.consecutive_losses += 1
-                state.recovery_loss_debt += abs(float(profit))
+                state.recovery_loss_debt = round(
+                    state.recovery_loss_debt + abs(float(profit)),
+                    2,
+                )
                 state.recovery_pending = bool(
                     recovery_enabled
                     and state.consecutive_losses >= int(recovery_trigger_losses)
                 )
             else:
-                state.consecutive_losses = 0
-                state.recovery_loss_debt = 0.0
-                state.recovery_pending = False
-                state.recovery_attempt_active = False
+                state.recovery_loss_debt = max(
+                    0.0,
+                    round(state.recovery_loss_debt - float(profit), 2),
+                )
+                state.recovery_pending = bool(
+                    recovery_enabled and state.recovery_loss_debt >= 0.01
+                )
+                if not state.recovery_pending:
+                    state.consecutive_losses = 0
             state.equity_high_water = max(state.equity_high_water, float(current_balance))
             state.updated_at = utc_now()
             return {

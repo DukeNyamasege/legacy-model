@@ -484,7 +484,7 @@ class ContractTests(unittest.TestCase):
             0.50 / 0.69,
         )
 
-    def test_direct_buy_places_markup_only_in_documented_parameters(self) -> None:
+    def test_direct_buy_uses_registered_app_without_undocumented_markup_field(self) -> None:
         signal = Over2SignalDetector(run_id="test2").observe(
             pattern_ticks(),
             connection_session_id="connection-1",
@@ -501,7 +501,7 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(request["buy"], "1")
         self.assertEqual(request["price"], 0.50)
         self.assertNotIn("app_markup_percentage", request)
-        self.assertEqual(request["parameters"]["app_markup_percentage"], 3.0)
+        self.assertNotIn("app_markup_percentage", request["parameters"])
         self.assertEqual(request["parameters"]["duration"], 1)
         self.assertEqual(request["parameters"]["duration_unit"], "t")
 
@@ -957,6 +957,26 @@ class TimingAndModelTests(unittest.TestCase):
 
 
 class AccountIsolationTests(unittest.IsolatedAsyncioTestCase):
+    def test_quarantined_account_status_survives_runtime_reload(self) -> None:
+        bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
+        bot.repository = MagicMock()
+        bot.repository.list_managed_accounts.return_value = [
+            SimpleNamespace(
+                id=7,
+                enabled=False,
+                execution_status="credential_error",
+                execution_status_reason="Invalid or expired token",
+            )
+        ]
+        bot.logger = MagicMock()
+        bot._set_account_execution_status = MagicMock()
+
+        tokens, profiles = bot._load_runtime_accounts()
+
+        self.assertEqual(tokens, [])
+        self.assertEqual(profiles, {})
+        bot._set_account_execution_status.assert_not_called()
+
     def test_master_loss_rotates_only_the_losing_market(self) -> None:
         bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
         bot.loss_rotation_blocked_market = ""
