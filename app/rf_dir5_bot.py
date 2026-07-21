@@ -572,6 +572,19 @@ class RFDir5TradingBot(TradingBot):
 
         fresh_candidates: list[SignalEvent] = []
         for signal in candidates:
+            if self._market_rotation_blocks(signal.symbol):
+                self._mark_rf_decision(
+                    signal,
+                    "SKIP_LOSS_MARKET_ROTATION",
+                    "market suspended after master loss until another market wins",
+                )
+                self.logger.info(
+                    "RF_MARKET_SUSPENDED signal_id=%s symbol=%s suspended_markets=%s",
+                    signal.signal_id,
+                    signal.symbol,
+                    ",".join(self._loss_rotation_markets()),
+                )
+                continue
             market = self.market_states[signal.symbol]
             if market.tick_sequence != signal.tick_sequence:
                 self._mark_rf_decision(
@@ -866,6 +879,8 @@ class RFDir5TradingBot(TradingBot):
                     registered_account_masks=[],
                 )
                 return
+            self._complete_market_rotation_after_purchase(signal.symbol)
+            self._save_state()
             self.rf_last_purchase_monotonic = time.monotonic()
             missing_accounts = sorted(expected_account_ids - registered)
             final_status = "PURCHASE_PARTIAL" if missing_accounts else "PURCHASE_CONFIRMED"
@@ -1073,7 +1088,7 @@ class RFDir5TradingBot(TradingBot):
         del outcome
 
     def _register_master_market_outcome(self, symbol: str, outcome: str) -> None:
-        del symbol, outcome
+        super()._register_master_market_outcome(symbol, outcome)
 
     def _complete_market_rotation_after_purchase(self, symbol: str) -> None:
-        del symbol
+        super()._complete_market_rotation_after_purchase(symbol)

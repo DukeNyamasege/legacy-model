@@ -1325,11 +1325,26 @@ class TradingBot:
         self.regime_guard_reason = str(saved_bot_state.get("regime_guard_reason", ""))
         self.regime_consecutive_losses = int(saved_bot_state.get("regime_consecutive_losses", 0))
         self.shadow_consecutive_wins = int(saved_bot_state.get("shadow_consecutive_wins", 0))
-        saved_rotation_market = str(
+        saved_rotation_markets = saved_bot_state.get(
+            "loss_rotation_blocked_markets",
+            [],
+        )
+        if not isinstance(saved_rotation_markets, list):
+            saved_rotation_markets = []
+        legacy_rotation_market = str(
             saved_bot_state.get("loss_rotation_blocked_market", "")
         ).strip()
+        if legacy_rotation_market and legacy_rotation_market not in saved_rotation_markets:
+            saved_rotation_markets.append(legacy_rotation_market)
+        self.loss_rotation_blocked_markets = [
+            str(market)
+            for market in saved_rotation_markets
+            if str(market) in self.market_states
+        ]
         self.loss_rotation_blocked_market = (
-            saved_rotation_market if saved_rotation_market in self.market_states else ""
+            self.loss_rotation_blocked_markets[-1]
+            if self.loss_rotation_blocked_markets
+            else ""
         )
         self.pending_shadow_signals: List[Dict[str, Any]] = []
 
@@ -1809,6 +1824,9 @@ class TradingBot:
                 "shadow_outcomes": list(self.shadow_outcomes),
                 "shadow_consecutive_wins": self.shadow_consecutive_wins,
                 "loss_rotation_blocked_market": self.loss_rotation_blocked_market,
+                "loss_rotation_blocked_markets": list(
+                    self._loss_rotation_markets()
+                ),
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             },
             "clients": {},
@@ -2238,29 +2256,75 @@ class TradingBot:
         )
         self._save_state()
 
-    def _market_rotation_blocks(self, symbol: str) -> bool:
-        return bool(
-            self.loss_rotation_blocked_market
-            and str(symbol) == self.loss_rotation_blocked_market
+    def _loss_rotation_markets(self) -> List[str]:
+        blocked = getattr(self, "loss_rotation_blocked_markets", None)
+        if not isinstance(blocked, list):
+            blocked = []
+        legacy = str(getattr(self, "loss_rotation_blocked_market", "")).strip()
+        if legacy and legacy not in blocked:
+            blocked.append(legacy)
+        active_symbols = list(getattr(self, "symbols", []) or [])
+        configured = set(
+            active_symbols or (getattr(self, "market_states", {}) or {})
         )
+        if configured:
+            blocked = [market for market in blocked if market in configured]
+        self.loss_rotation_blocked_markets = blocked
+        self.loss_rotation_blocked_market = blocked[-1] if blocked else ""
+        return blocked
+
+    def _market_rotation_blocks(self, symbol: str) -> bool:
+        return str(symbol) in self._loss_rotation_markets()
 
     def _register_master_market_outcome(self, symbol: str, outcome: str) -> None:
-        if str(outcome).lower() != "loss":
+        normalized_outcome = str(outcome).lower()
+        blocked = self._loss_rotation_markets()
+        if normalized_outcome == "win":
+            if blocked:
+                released = list(blocked)
+                blocked.clear()
+                self.loss_rotation_blocked_market = ""
+                self.logger.info(
+                    "MARKET_ROTATION_RECOVERY_CONFIRMED winning_market=%s "
+                    "released_markets=%s",
+                    symbol,
+                    ",".join(released),
+                )
             return
-        self.loss_rotation_blocked_market = str(symbol)
+        if normalized_outcome != "loss":
+            return
+
+        lost_market = str(symbol)
+        if lost_market in blocked:
+            blocked.remove(lost_market)
+        blocked.append(lost_market)
+
+        configured_market_count = len(
+            list(getattr(self, "symbols", []) or [])
+            or (getattr(self, "market_states", {}) or {})
+        )
+        if configured_market_count > 1 and len(blocked) >= configured_market_count:
+            released_market = blocked.pop(0)
+            self.logger.warning(
+                "MARKET_ROTATION_FAILSAFE_RELEASED market=%s reason=keep_one_market_eligible",
+                released_market,
+            )
+        self.loss_rotation_blocked_market = blocked[-1] if blocked else ""
         self.logger.warning(
-            "MARKET_ROTATION_REQUIRED lost_market=%s; next purchase must use a different market",
-            symbol,
+            "MARKET_ROTATION_REQUIRED lost_market=%s suspended_markets=%s; "
+            "release_requires_master_win=true",
+            lost_market,
+            ",".join(blocked),
         )
 
     def _complete_market_rotation_after_purchase(self, symbol: str) -> None:
-        blocked = self.loss_rotation_blocked_market
-        if not blocked or str(symbol) == blocked:
+        blocked = self._loss_rotation_markets()
+        if not blocked or str(symbol) in blocked:
             return
-        self.loss_rotation_blocked_market = ""
         self.logger.info(
-            "MARKET_ROTATION_COMPLETED previous_lost_market=%s next_market=%s",
-            blocked,
+            "MARKET_ROTATION_ALTERNATE_PURCHASED suspended_markets=%s next_market=%s "
+            "waiting_for_master_win=true",
+            ",".join(blocked),
             symbol,
         )
 

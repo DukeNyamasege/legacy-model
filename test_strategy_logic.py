@@ -982,9 +982,11 @@ class AccountIsolationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(profiles, {})
         bot._set_account_execution_status.assert_not_called()
 
-    def test_master_loss_rotates_only_the_losing_market(self) -> None:
+    def test_master_loss_stays_suspended_until_another_market_wins(self) -> None:
         bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
-        bot.loss_rotation_blocked_market = ""
+        bot.loss_rotation_blocked_market = "INACTIVE_LEGACY_MARKET"
+        bot.loss_rotation_blocked_markets = ["INACTIVE_LEGACY_MARKET"]
+        bot.market_states = {"1HZ100V": object(), "R_10": object()}
         bot.logger = MagicMock()
 
         bot._register_master_market_outcome("1HZ100V", "loss")
@@ -994,12 +996,62 @@ class AccountIsolationTests(unittest.IsolatedAsyncioTestCase):
 
         bot._complete_market_rotation_after_purchase("R_10")
 
+        self.assertTrue(bot._market_rotation_blocks("1HZ100V"))
+        bot._register_master_market_outcome("R_10", "win")
         self.assertFalse(bot._market_rotation_blocks("1HZ100V"))
-        self.assertEqual(bot.loss_rotation_blocked_market, "")
+        self.assertEqual(bot.loss_rotation_blocked_markets, [])
+
+    def test_consecutive_market_losses_accumulate_until_recovery(self) -> None:
+        bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
+        bot.loss_rotation_blocked_market = ""
+        bot.loss_rotation_blocked_markets = []
+        bot.market_states = {
+            "1HZ100V": object(),
+            "R_10": object(),
+            "R_25": object(),
+        }
+        bot.logger = MagicMock()
+
+        bot._register_master_market_outcome("1HZ100V", "loss")
+        bot._register_master_market_outcome("R_10", "loss")
+
+        self.assertTrue(bot._market_rotation_blocks("1HZ100V"))
+        self.assertTrue(bot._market_rotation_blocks("R_10"))
+        self.assertFalse(bot._market_rotation_blocks("R_25"))
+
+        bot._register_master_market_outcome("R_25", "win")
+        self.assertEqual(bot.loss_rotation_blocked_markets, [])
+
+    def test_market_rotation_failsafe_always_leaves_one_market_eligible(self) -> None:
+        bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
+        bot.loss_rotation_blocked_market = "INACTIVE_LEGACY_MARKET"
+        bot.loss_rotation_blocked_markets = ["INACTIVE_LEGACY_MARKET"]
+        bot.symbols = ["1HZ100V", "R_10", "R_25"]
+        bot.market_states = {
+            "1HZ100V": object(),
+            "R_10": object(),
+            "R_25": object(),
+            "INACTIVE_LEGACY_MARKET": object(),
+        }
+        bot.logger = MagicMock()
+
+        bot._register_master_market_outcome("1HZ100V", "loss")
+        bot._register_master_market_outcome("R_10", "loss")
+        bot._register_master_market_outcome("R_25", "loss")
+
+        self.assertFalse(bot._market_rotation_blocks("1HZ100V"))
+        self.assertTrue(bot._market_rotation_blocks("R_10"))
+        self.assertTrue(bot._market_rotation_blocks("R_25"))
+        self.assertNotIn(
+            "INACTIVE_LEGACY_MARKET",
+            bot.loss_rotation_blocked_markets,
+        )
 
     def test_copier_outcome_cannot_rotate_master_market_state(self) -> None:
         bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
         bot.loss_rotation_blocked_market = ""
+        bot.loss_rotation_blocked_markets = []
+        bot.market_states = {"R_25": object()}
         bot.logger = MagicMock()
 
         copier_outcomes = {"DOT90000002": "loss"}

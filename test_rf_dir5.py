@@ -557,6 +557,26 @@ class RFTickStreamTests(unittest.IsolatedAsyncioTestCase):
 
 
 class RFCandidateArbitrationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_suspended_loss_market_is_rejected_before_proposal(self) -> None:
+        bot = object.__new__(RFDir5TradingBot)
+        blocked = signal("FALL", tick_sequence=20)
+        bot.rf_candidate_queue = [blocked]
+        bot.rf_config = SimpleNamespace(candidate_window_ms=0)
+        bot.market_states = {blocked.symbol: SimpleNamespace(tick_sequence=20)}
+        bot.loss_rotation_blocked_market = blocked.symbol
+        bot.loss_rotation_blocked_markets = [blocked.symbol]
+        bot._mark_rf_decision = MagicMock()
+        bot.logger = MagicMock()
+
+        await bot._arbitrate_candidates()
+
+        bot._mark_rf_decision.assert_called_once_with(
+            blocked,
+            "SKIP_LOSS_MARKET_ROTATION",
+            "market suspended after master loss until another market wins",
+        )
+        bot.logger.info.assert_called_once()
+
     async def test_only_highest_ranked_fresh_market_requests_a_proposal(self) -> None:
         bot = object.__new__(RFDir5TradingBot)
         weaker = signal("RISE", tick_sequence=10)
