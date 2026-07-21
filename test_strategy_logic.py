@@ -82,9 +82,14 @@ class DashboardMetricsTests(unittest.TestCase):
             "No contracts yet.",
             'id="contracts-count"',
             'id="user-info"',
+            'id="copy-gap"',
+            "Copy trade gap",
             "<th>Contract ID</th>",
         ):
             self.assertNotIn(removed, html)
+        self.assertIn('id="personal-settings-toggle"', html)
+        self.assertIn('aria-controls="personal-settings-content"', html)
+        self.assertIn('id="personal-settings-content"', html)
 
     def test_global_cards_use_master_stats_and_all_account_profit(self) -> None:
         master = {

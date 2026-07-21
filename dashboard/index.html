@@ -28,11 +28,15 @@
       --green-bright: #13a37c;
       --red: #b83838;
       --gold: #c69330;
+      --blue: #073b86;
+      --blue-deep: #05265e;
+      --blue-bright: #1267d7;
+      --blue-soft: rgba(7, 59, 134, .12);
       --muted: #6b5a44;
-      --shadow: 0 20px 50px rgba(52, 39, 21, .16);
+      --shadow: 0 20px 50px rgba(15, 37, 75, .15);
       --body-bg:
         radial-gradient(circle at 8% 4%, rgba(198,147,48,.22), transparent 30rem),
-        radial-gradient(circle at 92% 12%, rgba(11,107,79,.10), transparent 28rem),
+        radial-gradient(circle at 92% 12%, rgba(7,59,134,.18), transparent 30rem),
         linear-gradient(135deg, #fbf7ec 0%, #ece0c8 100%);
       --grid-pattern: repeating-linear-gradient(90deg, transparent 0 47px, rgba(10,36,28,.06) 48px);
       --pill-bg: rgba(255,255,255,.6);
@@ -53,12 +57,16 @@
       --green-bright: #3df0bb;
       --red: #ff8585;
       --gold: #f5c878;
+      --blue: #74a9ff;
+      --blue-deep: #0a2b63;
+      --blue-bright: #3787f2;
+      --blue-soft: rgba(55, 135, 242, .18);
       --muted: #c4b094;
       --shadow: 0 24px 60px rgba(0, 0, 0, .42);
       --body-bg:
-        radial-gradient(circle at 12% 2%, rgba(42,217,166,.18), transparent 28rem),
-        radial-gradient(circle at 88% 10%, rgba(245,200,120,.18), transparent 32rem),
-        linear-gradient(135deg, #0d1512 0%, #1a221c 54%, #2a2418 100%);
+        radial-gradient(circle at 12% 2%, rgba(55,135,242,.25), transparent 30rem),
+        radial-gradient(circle at 88% 10%, rgba(245,200,120,.15), transparent 32rem),
+        linear-gradient(135deg, #071225 0%, #101b2d 54%, #252218 100%);
       --grid-pattern: repeating-linear-gradient(90deg, transparent 0 47px, rgba(245,236,214,.06) 48px);
       --pill-bg: rgba(255,255,255,.08);
       --learning-bg: linear-gradient(135deg, rgba(36,41,31,.92), rgba(72,54,28,.78));
@@ -70,6 +78,7 @@
       --empty-bg: rgba(255,255,255,.04);
     }
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
     body {
       margin: 0;
       color: var(--ink);
@@ -79,15 +88,46 @@
       transition: background .22s ease, color .22s ease;
     }
     .personal-accent {
-      background: linear-gradient(135deg, rgba(30, 80, 150, 0.08), rgba(60, 120, 200, 0.12));
-      border: 1px solid rgba(60, 120, 200, 0.25);
+      position: relative;
+      overflow: hidden;
+      color: #fff;
+      background:
+        radial-gradient(circle at 86% 12%, rgba(72, 151, 255, .52), transparent 20rem),
+        linear-gradient(135deg, #05265e 0%, #073b86 48%, #0c55b6 100%);
+      border: 1px solid rgba(77, 151, 255, .72);
+      box-shadow: 0 24px 58px rgba(5, 38, 94, .32);
     }
+    .personal-accent::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      opacity: .2;
+      background: linear-gradient(115deg, transparent 30%, rgba(255,255,255,.32) 48%, transparent 64%);
+      transform: translateX(-45%);
+      animation: blue-sweep 1.1s ease-out both;
+    }
+    .personal-accent > * { position: relative; }
+    .personal-accent .positive { color: #72f0c2; }
+    .personal-accent .negative { color: #ffb0b0; }
+    .personal-accent .stop { box-shadow: 0 12px 28px rgba(74, 8, 15, .3); }
+    .personal-accent .api-token-panel { border-top-color: rgba(255,255,255,.25); }
+    .personal-accent .api-token-status { color: rgba(255,255,255,.75); }
+    .personal-accent .api-token-status strong { color: #fff; }
+    .personal-accent .api-token-message { color: rgba(255,255,255,.75); }
+    .personal-accent .api-token-form input {
+      color: #fff;
+      border-color: rgba(255,255,255,.28);
+      background: rgba(3, 22, 57, .5);
+    }
+    .personal-accent .api-token-form input::placeholder { color: rgba(255,255,255,.58); }
     html[data-theme="dark"] .personal-accent {
-      background: linear-gradient(135deg, rgba(30, 80, 150, 0.15), rgba(60, 120, 200, 0.22));
-      border: 1px solid rgba(60, 120, 200, 0.4);
+      border-color: rgba(96, 164, 255, .66);
+      background:
+        radial-gradient(circle at 86% 12%, rgba(62, 136, 242, .42), transparent 21rem),
+        linear-gradient(135deg, #041a42 0%, #062e6c 48%, #0a489f 100%);
     }
-    .text-blue { color: #2c75d8; }
-    html[data-theme="dark"] .text-blue { color: #5c9df5; }
+    .text-blue { color: var(--blue); }
     
     .btn-login {
       background: #ff444f; /* Deriv red-ish */
@@ -121,9 +161,9 @@
       position: relative;
       min-height: 38px;
       padding: 0 16px 0 42px;
-      color: var(--ink);
+      color: var(--blue);
       background: var(--pill-bg);
-      border-color: var(--line);
+      border-color: color-mix(in srgb, var(--blue) 38%, var(--line));
       border-radius: 999px;
       box-shadow: 0 10px 30px rgba(52, 39, 21, .08);
       font-size: .82rem;
@@ -223,17 +263,18 @@
       gap: 24px;
       margin-bottom: 16px;
       padding: 18px 20px;
-      border-bottom: 1px solid rgba(185,133,47,.34);
+      border-bottom: 1px solid color-mix(in srgb, var(--blue) 38%, transparent);
     }
     h1, h2, p { margin: 0; }
     h2 { font-size: 1.35rem; }
     .brand {
-      color: var(--gold);
+      color: var(--blue);
       text-transform: uppercase;
       letter-spacing: .12em;
       font: 700 clamp(1.1rem, 2.4vw, 1.9rem) Georgia, serif;
       margin-bottom: 4px;
       line-height: 1.1;
+      text-shadow: 0 8px 24px rgba(7, 59, 134, .16);
     }
     .tagline { color: var(--muted); margin-top: 7px; font-size: .82rem; }
     .version {
@@ -342,11 +383,15 @@
       border: 1px solid var(--line);
       font: 700 .95rem Georgia, serif;
     }
-    button { padding: 0 22px; cursor: pointer; color: white; background: linear-gradient(135deg, var(--green), var(--green-bright)); transition: transform .12s ease, opacity .12s ease, box-shadow .2s ease; box-shadow: 0 4px 16px rgba(11,107,79,.22); }
+    button { padding: 0 22px; cursor: pointer; color: white; background: linear-gradient(135deg, var(--blue-deep), var(--blue-bright)); transition: transform .12s ease, opacity .12s ease, box-shadow .2s ease; box-shadow: 0 7px 20px rgba(7,59,134,.24); }
     button:active { transform: scale(.97); }
     button:disabled { opacity: .55; cursor: wait; }
     button.stop { background: var(--red); }
     button.secondary { color: var(--ink); background: var(--secondary-bg); }
+    input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible {
+      outline: 3px solid color-mix(in srgb, var(--blue-bright) 55%, transparent);
+      outline-offset: 2px;
+    }
     .theme-toggle {
       position: relative;
       display: inline-flex;
@@ -374,7 +419,15 @@
     }
     .metrics { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin: 12px 0; }
     .global-dashboard-snapshot { display: flow-root; }
-    .metric { padding: 15px; min-height: 96px; animation: rise .38s both; }
+    .metric { position: relative; overflow: hidden; padding: 15px; min-height: 96px; animation: rise .38s both; }
+    .metric::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto;
+      height: 3px;
+      background: linear-gradient(90deg, var(--blue-deep), var(--blue-bright), transparent 82%);
+      opacity: .78;
+    }
     .metric span { display: block; color: var(--muted); font-size: .75rem; margin-bottom: 11px; overflow-wrap: anywhere; }
     .metric strong { font-size: clamp(1.25rem, 2.8vw, 1.9rem); line-height: 1; }
     .negative { color: var(--red); }
@@ -491,20 +544,85 @@
     .personal-settings {
       margin-top: 18px;
       padding-top: 18px;
-      border-top: 1px solid var(--line);
+      border-top: 1px solid rgba(255,255,255,.24);
+    }
+    .personal-settings-toggle {
+      display: flex;
+      align-items: center;
+      width: fit-content;
+      min-width: 168px;
+      margin-left: auto;
+      padding: 0 15px;
+      gap: 10px;
+      color: #fff;
+      border-color: rgba(255,255,255,.34);
+      background: rgba(2, 19, 50, .48);
+      box-shadow: 0 12px 26px rgba(2, 16, 44, .24);
+    }
+    .settings-toggle-icon {
+      position: relative;
+      width: 18px;
+      height: 14px;
+      flex: 0 0 auto;
+    }
+    .settings-toggle-icon::before,
+    .settings-toggle-icon::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      width: 18px;
+      height: 2px;
+      border-radius: 999px;
+      background: currentColor;
+      box-shadow: 0 6px 0 currentColor, 0 12px 0 currentColor;
+    }
+    .settings-toggle-icon::after {
+      left: 4px;
+      top: -2px;
+      width: 4px;
+      height: 6px;
+      border-radius: 4px;
+      color: #7fc0ff;
+      box-shadow: 7px 6px 0 currentColor, 2px 12px 0 currentColor;
+    }
+    .settings-chevron {
+      width: 8px;
+      height: 8px;
+      margin-left: 2px;
+      border-right: 2px solid currentColor;
+      border-bottom: 2px solid currentColor;
+      transform: rotate(45deg) translateY(-2px);
+      transition: transform .22s ease;
+    }
+    .personal-settings.open .settings-chevron {
+      transform: rotate(225deg) translate(-2px, -1px);
+    }
+    .personal-settings-content {
+      display: grid;
+      grid-template-rows: 0fr;
+      opacity: 0;
+      transition: grid-template-rows .28s ease, opacity .2s ease, margin-top .28s ease;
+    }
+    .personal-settings.open .personal-settings-content {
+      grid-template-rows: 1fr;
+      margin-top: 14px;
+      opacity: 1;
+    }
+    .personal-settings-inner {
+      min-height: 0;
+      overflow: hidden;
     }
     .personal-settings-head {
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      margin-bottom: 12px;
+      justify-content: flex-end;
+      margin-bottom: 10px;
     }
     .execution-state {
       padding: 6px 10px;
-      border: 1px solid var(--line);
+      border: 1px solid rgba(255,255,255,.3);
       border-radius: 999px;
-      color: var(--muted);
+      color: rgba(255,255,255,.78);
       font-size: .78rem;
       text-transform: capitalize;
     }
@@ -517,18 +635,19 @@
     .personal-settings-form label {
       display: grid;
       gap: 6px;
-      color: var(--muted);
+      color: rgba(255,255,255,.76);
       font-size: .78rem;
     }
     .personal-settings-form input {
       width: 100%;
       min-height: 44px;
       padding: 0 12px;
-      color: var(--ink);
-      background: var(--input-bg);
+      color: #fff;
+      border-color: rgba(255,255,255,.28);
+      background: rgba(3, 22, 57, .52);
       font-family: Georgia, serif;
     }
-    .settings-message { min-height: 18px; margin-top: 8px; color: var(--muted); font-size: .78rem; }
+    .settings-message { min-height: 18px; margin-top: 8px; color: rgba(255,255,255,.75); font-size: .78rem; }
     .access { margin-top: 14px; display: grid; gap: 10px; }
     .access input, .access textarea, .access select {
       width: 100%;
@@ -543,6 +662,7 @@
     .emergency { width: 100%; background: transparent; color: var(--red); border-color: rgba(170,52,52,.65); }
     .error { color: var(--red); min-height: 20px; margin-top: 12px; font-size: .85rem; }
     @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+    @keyframes blue-sweep { from { transform: translateX(-75%); } to { transform: translateX(75%); } }
     @keyframes pulse {
       0%, 100% { transform: scale(1); opacity: .8; }
       50% { transform: scale(1.32); opacity: 1; }
@@ -578,6 +698,7 @@
       .inline-actions { grid-template-columns: 1fr; }
       .api-token-form { grid-template-columns: 1fr; }
       .personal-settings-form { grid-template-columns: 1fr; }
+      .personal-settings-toggle { width: 100%; justify-content: center; }
     }
   </style>
 </head>
@@ -667,25 +788,42 @@
         </div>
       </div>
       <div id="personal-settings-panel" class="personal-settings" style="display: none;">
-        <div class="personal-settings-head">
-          <div>
-            <strong>Personal Trading Controls</strong>
+        <button
+          id="personal-settings-toggle"
+          class="personal-settings-toggle"
+          type="button"
+          aria-expanded="false"
+          aria-controls="personal-settings-content"
+        >
+          <span class="settings-toggle-icon" aria-hidden="true"></span>
+          <span>Settings</span>
+          <span class="settings-chevron" aria-hidden="true"></span>
+        </button>
+        <div
+          id="personal-settings-content"
+          class="personal-settings-content"
+          aria-hidden="true"
+          inert
+        >
+          <div class="personal-settings-inner">
+            <div class="personal-settings-head">
+              <span id="personal-execution-state" class="execution-state">Inactive</span>
+            </div>
+            <div class="personal-settings-form">
+              <label>Stake amount (USD)
+                <input id="personal-stake" type="number" min="0.50" step="0.01" inputmode="decimal">
+              </label>
+              <label>Take profit (USD)
+                <input id="personal-take-profit" type="number" min="0" step="0.01" inputmode="decimal">
+              </label>
+              <label>Stop loss (USD)
+                <input id="personal-stop-loss" type="number" min="0" step="0.01" inputmode="decimal">
+              </label>
+              <button id="btn-save-trading-settings" type="button">Save Controls</button>
+            </div>
+            <div id="personal-settings-message" class="settings-message"></div>
           </div>
-          <span id="personal-execution-state" class="execution-state">Inactive</span>
         </div>
-        <div class="personal-settings-form">
-          <label>Stake amount (USD)
-            <input id="personal-stake" type="number" min="0.50" step="0.01" inputmode="decimal">
-          </label>
-          <label>Take profit (USD)
-            <input id="personal-take-profit" type="number" min="0" step="0.01" inputmode="decimal">
-          </label>
-          <label>Stop loss (USD)
-            <input id="personal-stop-loss" type="number" min="0" step="0.01" inputmode="decimal">
-          </label>
-          <button id="btn-save-trading-settings" type="button">Save Controls</button>
-        </div>
-        <div id="personal-settings-message" class="settings-message"></div>
       </div>
     </div>
   </section>
@@ -724,7 +862,6 @@
     <article class="panel metric"><span>Open trades</span><strong id="open-trades">0</strong></article>
     <article class="panel metric"><span>Open trade age</span><strong id="open-trade-age">0s</strong></article>
     <article class="panel metric"><span>Skipped</span><strong id="skipped">0</strong></article>
-    <article class="panel metric" title="Difference between the master trade count and the furthest active account. Zero means active accounts have equal completed-trade counts."><span>Copy trade gap</span><strong id="copy-gap">0</strong><small>0 means counts match</small></article>
   </section>
   </section>
 
@@ -978,9 +1115,6 @@
     const maxOpenTradeSeconds = Number(data.max_open_trade_seconds || 6);
     $("open-trade-age").textContent = `${number(oldestOpenTradeSeconds)}s`;
     $("open-trade-age").className = staleOpenTrades > 0 || oldestOpenTradeSeconds > maxOpenTradeSeconds ? "negative" : "";
-    const copyGap = Number(data.copy_trade_gap || 0);
-    $("copy-gap").textContent = number(copyGap);
-    $("copy-gap").className = copyGap > 0 ? "negative" : "";
     const profit = Number(data.net_profit || 0);
     $("profit").textContent = number(profit, 2);
     $("profit").className = profit < 0 ? "negative" : profit > 0 ? "positive" : "";
@@ -1008,6 +1142,18 @@
   }
   let isAutoTrading = false;
   let hasTradingApiToken = false;
+
+  function setPersonalSettingsExpanded(expanded) {
+    const panel = $("personal-settings-panel");
+    const toggle = $("personal-settings-toggle");
+    const content = $("personal-settings-content");
+    if (!panel || !toggle || !content) return;
+    const shouldExpand = Boolean(expanded && hasTradingApiToken);
+    panel.classList.toggle("open", shouldExpand);
+    toggle.setAttribute("aria-expanded", String(shouldExpand));
+    content.setAttribute("aria-hidden", String(!shouldExpand));
+    content.inert = !shouldExpand;
+  }
 
   async function toggleAutoTrade() {
     if (!hasTradingApiToken && !isAutoTrading) {
@@ -1048,6 +1194,7 @@
     state.className = "negative";
     if (autoPanel) autoPanel.style.display = hasTradingApiToken ? "block" : "none";
     if (settingsPanel) settingsPanel.style.display = hasTradingApiToken ? "block" : "none";
+    if (!hasTradingApiToken) setPersonalSettingsExpanded(false);
     btn.disabled = !hasTradingApiToken;
     btn.title = hasTradingApiToken ? "" : "Save API token first";
   }
@@ -1138,6 +1285,10 @@
   $("btn-toggle-auto")?.addEventListener("click", toggleAutoTrade);
   $("btn-save-api-token")?.addEventListener("click", saveApiToken);
   $("btn-save-trading-settings")?.addEventListener("click", saveTradingSettings);
+  $("personal-settings-toggle")?.addEventListener("click", () => {
+    const panel = $("personal-settings-panel");
+    setPersonalSettingsExpanded(!panel?.classList.contains("open"));
+  });
   $("btn-logout")?.addEventListener("click", async () => {
     try {
       await api("/me/logout", { method: "POST" });
@@ -1218,6 +1369,7 @@
         if ($("api-token-panel")) $("api-token-panel").style.display = "none";
         if ($("auto-trade-panel")) $("auto-trade-panel").style.display = "none";
         if ($("personal-settings-panel")) $("personal-settings-panel").style.display = "none";
+        setPersonalSettingsExpanded(false);
       }
       
     } catch (error) {
