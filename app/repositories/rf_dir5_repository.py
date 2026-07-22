@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -13,10 +14,21 @@ from app.models import (
     AccountRiskState,
     DirectionalSignal,
     ShadowContract,
+    VirtualTrade,
     VirtualGuardState,
     utc_now,
 )
 from app.strategy.rise_fall_strategy import SignalEvent, shadow_outcome
+
+NORMAL_MODE = "NORMAL_MODE"
+VIRTUAL_MODE = "VIRTUAL_MODE"
+RECOVERY_PENDING = "RECOVERY_PENDING"
+VIRTUAL_WAITING_FOR_WIN = "VIRTUAL_WAITING_FOR_WIN"
+REAL_RECOVERY_PENDING = "REAL_RECOVERY_PENDING"
+ACTUAL_TRADE = "ACTUAL_TRADE"
+VIRTUAL_TRADE = "VIRTUAL_TRADE"
+VIRTUAL_WIN = "VIRTUAL_WIN"
+VIRTUAL_LOSS = "VIRTUAL_LOSS"
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +48,118 @@ class RFDir5Repository:
         with self.database.session() as session:
             if session.get(VirtualGuardState, self.run_id) is None:
                 session.add(VirtualGuardState(run_id=self.run_id, state="DEMO_LIVE"))
+
+    @staticmethod
+    def _mode_label(state: AccountRiskState | None) -> str:
+        if state is None:
+            return NORMAL_MODE
+        if state.protection_mode == VIRTUAL_WAITING_FOR_WIN:
+            return VIRTUAL_MODE
+        if state.protection_mode == REAL_RECOVERY_PENDING:
+            return RECOVERY_PENDING
+        return NORMAL_MODE
+
+    def _default_virtual_state(self, account_id_masked: str = "") -> dict[str, Any]:
+        return {
+            "mode": NORMAL_MODE,
+            "state": NORMAL_MODE,
+            "account": str(account_id_masked or ""),
+            "consecutive_actual_losses": 0,
+            "actual_recovery_debt": 0.0,
+            "virtual_observations": 0,
+            "virtual_wins": 0,
+            "virtual_losses": 0,
+            "current_virtual_loss_streak": 0,
+            "entered_virtual_mode_at": None,
+            "recovery_pending_since": None,
+            "next_action": "Trading normally",
+        }
+
+    def _protection_payload(self, state: AccountRiskState | None) -> dict[str, Any]:
+        if state is None:
+            return self._default_virtual_state()
+        mode = self._mode_label(state)
+        if mode == VIRTUAL_MODE:
+            next_action = "Waiting for a virtual win"
+        elif mode == RECOVERY_PENDING:
+            next_action = "Next qualifying entry will be a real recovery trade"
+        else:
+            next_action = "Trading normally"
+        return {
+            "mode": mode,
+            "state": state.protection_mode,
+            "account": state.account_id_masked,
+            "consecutive_actual_losses": int(state.consecutive_losses or 0),
+            "actual_recovery_debt": float(state.recovery_loss_debt or 0.0),
+            "virtual_observations": int(state.virtual_observation_count or 0),
+            "virtual_wins": int(state.virtual_win_count or 0),
+            "virtual_losses": int(state.virtual_loss_count or 0),
+            "current_virtual_loss_streak": int(
+                state.current_virtual_loss_streak or 0
+            ),
+            "entered_virtual_mode_at": (
+                state.entered_virtual_mode_at.isoformat()
+                if state.entered_virtual_mode_at
+                else None
+            ),
+            "recovery_pending_since": (
+                state.recovery_pending_since.isoformat()
+                if state.recovery_pending_since
+                else None
+            ),
+            "next_action": next_action,
+        }
+
+    def virtual_protection_for_account(
+        self,
+        *,
+        managed_account_id: int | None = None,
+        account_id_masked: str = "",
+    ) -> dict[str, Any]:
+        with self.database.session() as session:
+            state = None
+            if managed_account_id is not None:
+                state = session.get(AccountRiskState, int(managed_account_id))
+            elif account_id_masked:
+                state = session.scalar(
+                    select(AccountRiskState).where(
+                        AccountRiskState.account_id_masked == str(account_id_masked)
+                    )
+                )
+        if state is None:
+            return self._default_virtual_state(account_id_masked)
+        return self._protection_payload(state)
+
+    def virtual_totals(self) -> dict[str, Any]:
+        with self.database.session() as session:
+            row = session.execute(
+                select(
+                    func.count().label("observations"),
+                    func.sum(case((VirtualTrade.result == VIRTUAL_WIN, 1), else_=0)).label("wins"),
+                    func.sum(case((VirtualTrade.result == VIRTUAL_LOSS, 1), else_=0)).label("losses"),
+                ).where(VirtualTrade.run_id == self.run_id)
+            ).one()
+            active = session.scalar(
+                select(func.count())
+                .select_from(AccountRiskState)
+                .where(AccountRiskState.protection_mode == VIRTUAL_WAITING_FOR_WIN)
+            )
+            recovery_pending = session.scalar(
+                select(func.count())
+                .select_from(AccountRiskState)
+                .where(AccountRiskState.protection_mode == REAL_RECOVERY_PENDING)
+            )
+        observations = int(row.observations or 0)
+        wins = int(row.wins or 0)
+        losses = int(row.losses or 0)
+        return {
+            "observations": observations,
+            "wins": wins,
+            "losses": losses,
+            "win_rate": wins / (wins + losses) if wins + losses else 0.0,
+            "active_accounts": int(active or 0),
+            "recovery_pending_accounts": int(recovery_pending or 0),
+        }
 
     def record_signal(self, signal: SignalEvent) -> None:
         self.base.record_candidate(signal)
@@ -334,6 +458,7 @@ class RFDir5Repository:
         self,
         *,
         managed_account_id: int,
+        account_id_masked: str = "",
         current_balance: float,
         requested_stake: float,
         proposal_profit_ratio: float,
@@ -350,6 +475,7 @@ class RFDir5Repository:
             if state is None:
                 state = AccountRiskState(
                     managed_account_id=int(managed_account_id),
+                    account_id_masked=str(account_id_masked or ""),
                     trading_day=today,
                     daily_start_balance=balance,
                     session_profit=0.0,
@@ -360,6 +486,8 @@ class RFDir5Repository:
                     equity_high_water=balance,
                 )
                 session.add(state)
+            elif account_id_masked and state.account_id_masked != account_id_masked:
+                state.account_id_masked = str(account_id_masked)
             elif state.trading_day != today:
                 state.trading_day = today
                 state.daily_start_balance = balance
@@ -469,10 +597,13 @@ class RFDir5Repository:
         self,
         *,
         managed_account_id: int,
+        account_id_masked: str = "",
         profit: float,
         current_balance: float,
         recovery_enabled: bool = False,
         recovery_trigger_losses: int = 1,
+        virtual_protection_enabled: bool = True,
+        virtual_trigger_actual_losses: int = 2,
     ) -> dict[str, Any]:
         today = datetime.now(timezone.utc).date().isoformat()
         with self.database.session() as session:
@@ -480,6 +611,7 @@ class RFDir5Repository:
             if state is None:
                 state = AccountRiskState(
                     managed_account_id=int(managed_account_id),
+                    account_id_masked=str(account_id_masked or ""),
                     trading_day=today,
                     daily_start_balance=max(0.0, float(current_balance) - float(profit)),
                     session_profit=0.0,
@@ -490,9 +622,12 @@ class RFDir5Repository:
                     equity_high_water=max(0.0, float(current_balance)),
                 )
                 session.add(state)
+            elif account_id_masked and state.account_id_masked != account_id_masked:
+                state.account_id_masked = str(account_id_masked)
             state.session_profit += float(profit)
             was_recovery = bool(state.recovery_attempt_active)
             state.recovery_attempt_active = False
+            previous_mode = state.protection_mode
             if profit <= 0:
                 state.consecutive_losses += 1
                 state.recovery_loss_debt = round(
@@ -503,6 +638,13 @@ class RFDir5Repository:
                     recovery_enabled
                     and state.consecutive_losses >= int(recovery_trigger_losses)
                 )
+                if (
+                    virtual_protection_enabled
+                    and state.consecutive_losses >= int(virtual_trigger_actual_losses)
+                ):
+                    if state.protection_mode != VIRTUAL_WAITING_FOR_WIN:
+                        state.entered_virtual_mode_at = utc_now()
+                    state.protection_mode = VIRTUAL_WAITING_FOR_WIN
             else:
                 state.recovery_loss_debt = max(
                     0.0,
@@ -513,6 +655,13 @@ class RFDir5Repository:
                 )
                 if not state.recovery_pending:
                     state.consecutive_losses = 0
+                    state.recovery_pending_since = None
+                state.protection_mode = NORMAL_MODE
+                state.entered_virtual_mode_at = None
+            if state.recovery_pending and state.recovery_pending_since is None:
+                state.recovery_pending_since = utc_now()
+            if not state.recovery_pending:
+                state.recovery_pending_since = None
             state.equity_high_water = max(state.equity_high_water, float(current_balance))
             state.updated_at = utc_now()
             return {
@@ -524,4 +673,152 @@ class RFDir5Repository:
                 "settled_recovery_attempt": was_recovery,
                 "daily_start_balance": state.daily_start_balance,
                 "equity_high_water": state.equity_high_water,
+                "protection_mode": self._mode_label(state),
+                "raw_protection_state": state.protection_mode,
+                "protection_state_changed": previous_mode != state.protection_mode,
             }
+
+    def start_virtual_trade(
+        self,
+        *,
+        managed_account_id: int,
+        account_id_masked: str,
+        signal: SignalEvent,
+        configured_stake: float,
+        simulated_stake: float,
+        expected_payout: float | None,
+    ) -> dict[str, Any] | None:
+        now = utc_now()
+        with self.database.session() as session:
+            state = session.get(
+                AccountRiskState,
+                int(managed_account_id),
+                with_for_update=True,
+            )
+            if state is None or state.protection_mode != VIRTUAL_WAITING_FOR_WIN:
+                return None
+            existing = session.scalar(
+                select(VirtualTrade).where(
+                    VirtualTrade.managed_account_id == int(managed_account_id),
+                    VirtualTrade.signal_id == signal.signal_id,
+                )
+            )
+            if existing is not None:
+                return None
+            trade = VirtualTrade(
+                virtual_trade_id=f"virtual-{uuid.uuid4()}",
+                managed_account_id=int(managed_account_id),
+                account_id_masked=str(account_id_masked),
+                run_id=self.run_id,
+                signal_id=signal.signal_id,
+                execution_session_id=signal.connection_session_id,
+                strategy_id=signal.strategy_version,
+                market=signal.symbol,
+                direction=signal.direction,
+                contract_type=signal.contract_type,
+                barrier=str(signal.barrier or ""),
+                prediction_digit=None,
+                duration=int(signal.duration_ticks),
+                duration_unit="t",
+                signal_time=now,
+                entry_tick_sequence=int(signal.tick_sequence),
+                exit_tick_sequence=int(signal.tick_sequence) + int(signal.duration_ticks),
+                entry_tick_epoch=int(signal.signal_tick_epoch or 0),
+                entry_spot=float(signal.reference_entry_quote),
+                configured_stake=float(configured_stake),
+                simulated_stake=float(simulated_stake),
+                expected_payout=expected_payout,
+                result="OPEN",
+                reason="VIRTUAL_MODE",
+                amount_charged=0.0,
+                actual_profit_loss=0.0,
+                actual_payout=0.0,
+                recovery_debt_change=0.0,
+                created_at=now,
+            )
+            session.add(trade)
+            state.updated_at = now
+            return {
+                "virtual_trade_id": trade.virtual_trade_id,
+                "account": trade.account_id_masked,
+                "market": trade.market,
+                "simulated_stake": trade.simulated_stake,
+                "recovery_debt": float(state.recovery_loss_debt or 0.0),
+            }
+
+    def settle_due_virtual_trades(
+        self,
+        *,
+        symbol: str,
+        tick_sequence: int,
+        exit_quote: Decimal,
+        exit_epoch: int = 0,
+    ) -> list[dict[str, Any]]:
+        settled: list[dict[str, Any]] = []
+        now = utc_now()
+        with self.database.session() as session:
+            rows = session.scalars(
+                select(VirtualTrade)
+                .where(
+                    VirtualTrade.run_id == self.run_id,
+                    VirtualTrade.market == str(symbol),
+                    VirtualTrade.result == "OPEN",
+                    VirtualTrade.exit_tick_sequence <= int(tick_sequence),
+                )
+                .with_for_update()
+            ).all()
+            for trade in rows:
+                state = session.get(
+                    AccountRiskState,
+                    int(trade.managed_account_id),
+                    with_for_update=True,
+                )
+                outcome = shadow_outcome(
+                    trade.direction,
+                    Decimal(str(trade.entry_spot)),
+                    Decimal(str(exit_quote)),
+                )
+                result = VIRTUAL_WIN if outcome == "WIN" else VIRTUAL_LOSS
+                trade.exit_spot = float(exit_quote)
+                trade.exit_tick_epoch = int(exit_epoch or 0)
+                try:
+                    trade.actual_last_digit = int(str(exit_quote).replace(".", "")[-1])
+                except (TypeError, ValueError, IndexError):
+                    trade.actual_last_digit = None
+                trade.result = result
+                trade.reason = "Hypothetical Outcome - No Purchase"
+                trade.amount_charged = 0.0
+                trade.actual_profit_loss = 0.0
+                trade.actual_payout = 0.0
+                trade.recovery_debt_change = 0.0
+                trade.settled_at = now
+                if state is not None:
+                    state.virtual_observation_count += 1
+                    if result == VIRTUAL_WIN:
+                        state.virtual_win_count += 1
+                        state.current_virtual_loss_streak = 0
+                        state.protection_mode = REAL_RECOVERY_PENDING
+                        state.recovery_pending = bool(state.recovery_loss_debt >= 0.01)
+                        if state.recovery_pending_since is None:
+                            state.recovery_pending_since = now
+                    else:
+                        state.virtual_loss_count += 1
+                        state.current_virtual_loss_streak += 1
+                        state.protection_mode = VIRTUAL_WAITING_FOR_WIN
+                    state.updated_at = now
+                    payload = self._protection_payload(state)
+                else:
+                    payload = self._default_virtual_state(trade.account_id_masked)
+                settled.append(
+                    {
+                        "virtual_trade_id": trade.virtual_trade_id,
+                        "account": trade.account_id_masked,
+                        "market": trade.market,
+                        "result": result,
+                        "entry_spot": trade.entry_spot,
+                        "exit_spot": trade.exit_spot,
+                        "actual_financial_impact": 0.0,
+                        "protection": payload,
+                    }
+                )
+        return settled

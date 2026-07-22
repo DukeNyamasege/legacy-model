@@ -220,3 +220,13 @@ class TelegramAlertClient:
                 "TELEGRAM_DASHBOARD_ALERT_FALLBACK mode=text"
             )
         return await self._send_text(text)
+
+    async def send_announcement(self, text: str) -> bool:
+        if not self.enabled:
+            return False
+        if not self.chat_id and not await self.discover_channel():
+            return False
+        sent = await self._send_text(text)
+        if sent:
+            self.logger.info("TELEGRAM_ANNOUNCEMENT_SENT")
+        return sent

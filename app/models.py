@@ -365,6 +365,56 @@ class ShadowContract(Base):
     settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class VirtualTrade(Base):
+    __tablename__ = "virtual_trades"
+    __table_args__ = (
+        UniqueConstraint(
+            "managed_account_id",
+            "signal_id",
+            name="uq_virtual_trade_account_signal",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    virtual_trade_id: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    managed_account_id: Mapped[int] = mapped_column(
+        ForeignKey("managed_accounts.id"), index=True
+    )
+    account_id_masked: Mapped[str] = mapped_column(String(50), index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("test_runs.id"), index=True)
+    signal_id: Mapped[str] = mapped_column(
+        ForeignKey("directional_signals.signal_id"), index=True
+    )
+    execution_session_id: Mapped[str] = mapped_column(String(100), default="")
+    strategy_id: Mapped[str] = mapped_column(String(100), default="")
+    market: Mapped[str] = mapped_column(String(30), index=True)
+    direction: Mapped[str] = mapped_column(String(10), default="")
+    contract_type: Mapped[str] = mapped_column(String(30), default="")
+    barrier: Mapped[str] = mapped_column(String(20), default="")
+    prediction_digit: Mapped[int | None] = mapped_column(Integer)
+    duration: Mapped[int] = mapped_column(Integer, default=1)
+    duration_unit: Mapped[str] = mapped_column(String(10), default="t")
+    signal_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    entry_tick_sequence: Mapped[int] = mapped_column(Integer, index=True)
+    exit_tick_sequence: Mapped[int] = mapped_column(Integer, index=True)
+    entry_tick_epoch: Mapped[int] = mapped_column(Integer, default=0)
+    exit_tick_epoch: Mapped[int | None] = mapped_column(Integer)
+    entry_spot: Mapped[float] = mapped_column(Float)
+    exit_spot: Mapped[float | None] = mapped_column(Float)
+    actual_last_digit: Mapped[int | None] = mapped_column(Integer)
+    configured_stake: Mapped[float] = mapped_column(Float, default=0.0)
+    simulated_stake: Mapped[float] = mapped_column(Float, default=0.0)
+    expected_payout: Mapped[float | None] = mapped_column(Float)
+    result: Mapped[str] = mapped_column(String(30), default="OPEN", index=True)
+    reason: Mapped[str] = mapped_column(String(200), default="")
+    amount_charged: Mapped[float] = mapped_column(Float, default=0.0)
+    actual_profit_loss: Mapped[float] = mapped_column(Float, default=0.0)
+    actual_payout: Mapped[float] = mapped_column(Float, default=0.0)
+    recovery_debt_change: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class VirtualGuardState(Base):
     __tablename__ = "virtual_guard_state"
 
@@ -383,6 +433,7 @@ class AccountRiskState(Base):
     managed_account_id: Mapped[int] = mapped_column(
         ForeignKey("managed_accounts.id"), primary_key=True
     )
+    account_id_masked: Mapped[str] = mapped_column(String(50), default="", index=True)
     trading_day: Mapped[str] = mapped_column(String(10), default="")
     daily_start_balance: Mapped[float] = mapped_column(Float, default=0.0)
     session_profit: Mapped[float] = mapped_column(Float, default=0.0)
@@ -390,5 +441,16 @@ class AccountRiskState(Base):
     recovery_loss_debt: Mapped[float] = mapped_column(Float, default=0.0)
     recovery_pending: Mapped[bool] = mapped_column(Boolean, default=False)
     recovery_attempt_active: Mapped[bool] = mapped_column(Boolean, default=False)
+    protection_mode: Mapped[str] = mapped_column(String(40), default="NORMAL_MODE")
+    virtual_observation_count: Mapped[int] = mapped_column(Integer, default=0)
+    virtual_win_count: Mapped[int] = mapped_column(Integer, default=0)
+    virtual_loss_count: Mapped[int] = mapped_column(Integer, default=0)
+    current_virtual_loss_streak: Mapped[int] = mapped_column(Integer, default=0)
+    entered_virtual_mode_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    recovery_pending_since: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     equity_high_water: Mapped[float] = mapped_column(Float, default=0.0)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

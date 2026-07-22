@@ -120,6 +120,12 @@ risk:
   maximum_recovery_balance_fraction: 0.10
   minimum_balance_reserve: 0.50
   maximum_open_contracts_per_account: 1
+virtual_protection:
+  enabled: true
+  trigger_actual_losses: 2
+  exit_after_wins: 1
+  max_observations: 0
+  scope: PER_ACCOUNT
 telegram:
   enabled: true
   bot_token_env: TELEGRAM_BOT_TOKEN

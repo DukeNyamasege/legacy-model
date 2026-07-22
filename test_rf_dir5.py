@@ -17,7 +17,7 @@ from app.config import TelegramSettings, load_test2_config
 from app.database import Database
 from app.deriv.http import deriv_headers
 from app.model.bayesian_probability import BayesianGroupKey, KeyedBayesianProbability
-from app.models import ManagedAccount, ShadowContract, Trade
+from app.models import AccountRiskState, ManagedAccount, ShadowContract, Trade, VirtualTrade
 from app.repositories.rf_dir5_repository import RFDir5Repository
 from app.repositories.test2_repository import Test2Repository
 from app.rf_dir5_bot import RFDir5TradingBot
@@ -751,6 +751,191 @@ class RFRepositoryTests(unittest.TestCase):
         self.repository.reset_guard()
 
         self.assertEqual(self.repository.guard_state()["state"], "DEMO_LIVE")
+
+    def test_two_actual_losses_enter_account_virtual_mode(self) -> None:
+        account_id = self.create_managed_account("Virtual")
+
+        first = self.repository.record_account_outcome(
+            managed_account_id=account_id,
+            account_id_masked="DOT***422",
+            profit=-2.0,
+            current_balance=98.0,
+            recovery_enabled=True,
+            recovery_trigger_losses=1,
+            virtual_protection_enabled=True,
+            virtual_trigger_actual_losses=2,
+        )
+        second = self.repository.record_account_outcome(
+            managed_account_id=account_id,
+            account_id_masked="DOT***422",
+            profit=-2.0,
+            current_balance=96.0,
+            recovery_enabled=True,
+            recovery_trigger_losses=1,
+            virtual_protection_enabled=True,
+            virtual_trigger_actual_losses=2,
+        )
+
+        self.assertEqual(first["protection_mode"], "NORMAL_MODE")
+        self.assertEqual(second["protection_mode"], "VIRTUAL_MODE")
+        self.assertAlmostEqual(second["recovery_loss_debt"], 4.0)
+        protection = self.repository.virtual_protection_for_account(
+            managed_account_id=account_id
+        )
+        self.assertEqual(protection["mode"], "VIRTUAL_MODE")
+        self.assertEqual(protection["consecutive_actual_losses"], 2)
+
+    def test_virtual_losses_do_not_change_actual_recovery_debt(self) -> None:
+        account_id = self.create_managed_account("Virtual Losses")
+        for balance in (98.0, 96.0):
+            self.repository.record_account_outcome(
+                managed_account_id=account_id,
+                account_id_masked="DOT***422",
+                profit=-2.0,
+                current_balance=balance,
+                recovery_enabled=True,
+                recovery_trigger_losses=1,
+                virtual_protection_enabled=True,
+                virtual_trigger_actual_losses=2,
+            )
+        item = signal("RISE", tick_sequence=500)
+        self.repository.record_signal(item)
+
+        opened = self.repository.start_virtual_trade(
+            managed_account_id=account_id,
+            account_id_masked="DOT***422",
+            signal=item,
+            configured_stake=2.0,
+            simulated_stake=2.0,
+            expected_payout=3.6,
+        )
+        self.assertIsNotNone(opened)
+
+        settled = self.repository.settle_due_virtual_trades(
+            symbol=item.symbol,
+            tick_sequence=item.tick_sequence + item.duration_ticks,
+            exit_quote=Decimal("99.00"),
+        )
+        duplicate = self.repository.settle_due_virtual_trades(
+            symbol=item.symbol,
+            tick_sequence=item.tick_sequence + item.duration_ticks,
+            exit_quote=Decimal("99.00"),
+        )
+
+        self.assertEqual(len(settled), 1)
+        self.assertEqual(settled[0]["result"], "VIRTUAL_LOSS")
+        self.assertEqual(duplicate, [])
+        protection = self.repository.virtual_protection_for_account(
+            managed_account_id=account_id
+        )
+        self.assertEqual(protection["mode"], "VIRTUAL_MODE")
+        self.assertEqual(protection["virtual_losses"], 1)
+        self.assertAlmostEqual(protection["actual_recovery_debt"], 4.0)
+        with self.database.session() as session:
+            state = session.get(AccountRiskState, account_id)
+            virtual = session.scalar(select(VirtualTrade))
+            self.assertEqual(state.recovery_loss_debt, 4.0)
+            self.assertEqual(virtual.amount_charged, 0.0)
+            self.assertEqual(virtual.actual_profit_loss, 0.0)
+            self.assertEqual(virtual.recovery_debt_change, 0.0)
+
+    def test_virtual_win_arms_real_recovery_without_changing_debt(self) -> None:
+        account_id = self.create_managed_account("Virtual Win")
+        for balance in (98.0, 96.0):
+            self.repository.record_account_outcome(
+                managed_account_id=account_id,
+                account_id_masked="DOT***422",
+                profit=-2.0,
+                current_balance=balance,
+                recovery_enabled=True,
+                recovery_trigger_losses=1,
+                virtual_protection_enabled=True,
+                virtual_trigger_actual_losses=2,
+            )
+        item = signal("RISE", tick_sequence=700)
+        self.repository.record_signal(item)
+        self.repository.start_virtual_trade(
+            managed_account_id=account_id,
+            account_id_masked="DOT***422",
+            signal=item,
+            configured_stake=2.0,
+            simulated_stake=2.0,
+            expected_payout=3.6,
+        )
+
+        settled = self.repository.settle_due_virtual_trades(
+            symbol=item.symbol,
+            tick_sequence=item.tick_sequence + item.duration_ticks,
+            exit_quote=Decimal("101.00"),
+        )
+        protection = self.repository.virtual_protection_for_account(
+            managed_account_id=account_id
+        )
+        plan = self.repository.plan_stake(
+            managed_account_id=account_id,
+            account_id_masked="DOT***422",
+            current_balance=96.0,
+            requested_stake=2.0,
+            proposal_profit_ratio=0.50,
+            recovery_enabled=True,
+            recovery_trigger_losses=1,
+            minimum_stake=0.50,
+            maximum_recovery_balance_fraction=0.25,
+            minimum_balance_reserve=0.50,
+        )
+
+        self.assertEqual(settled[0]["result"], "VIRTUAL_WIN")
+        self.assertEqual(protection["mode"], "RECOVERY_PENDING")
+        self.assertEqual(protection["virtual_wins"], 1)
+        self.assertAlmostEqual(protection["actual_recovery_debt"], 4.0)
+        self.assertTrue(plan.is_recovery)
+        self.assertAlmostEqual(plan.required_recovery_stake, 8.0)
+
+    def test_recent_activity_separates_actual_and_virtual_rows(self) -> None:
+        account_id = self.create_managed_account("Feed")
+        for balance in (98.0, 96.0):
+            self.repository.record_account_outcome(
+                managed_account_id=account_id,
+                account_id_masked="DOT***422",
+                profit=-2.0,
+                current_balance=balance,
+                recovery_enabled=True,
+                recovery_trigger_losses=1,
+                virtual_protection_enabled=True,
+                virtual_trigger_actual_losses=2,
+            )
+        item = signal("RISE", tick_sequence=900)
+        self.repository.record_signal(item)
+        self.repository.start_virtual_trade(
+            managed_account_id=account_id,
+            account_id_masked="DOT***422",
+            signal=item,
+            configured_stake=2.0,
+            simulated_stake=2.0,
+            expected_payout=3.6,
+        )
+
+        virtual_rows = self.base.recent_activity(
+            50,
+            account_id="DOT123422",
+            activity_type="virtual",
+        )
+        actual_rows = self.base.recent_activity(
+            50,
+            account_id="DOT123422",
+            activity_type="actual",
+        )
+        all_rows = self.base.recent_activity(
+            50,
+            account_id="DOT123422",
+            activity_type="all",
+        )
+
+        self.assertEqual(len(virtual_rows), 1)
+        self.assertEqual(virtual_rows[0]["activity_type"], "VIRTUAL_TRADE")
+        self.assertEqual(virtual_rows[0]["profit"], 0.0)
+        self.assertEqual(actual_rows, [])
+        self.assertEqual(len(all_rows), 1)
 
     def test_configured_stake_is_not_reduced_by_automatic_drawdown_caps(self) -> None:
         account_id = self.create_managed_account()

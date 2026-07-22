@@ -14,6 +14,7 @@ from app.config import Test2Config
 from app.database import Database
 from app.models import (
     AccountSnapshot,
+    AccountRiskState,
     AuditEvent,
     BotState,
     CandidateSignalRecord,
@@ -28,6 +29,7 @@ from app.models import (
     Tick,
     Trade,
     TraderLease,
+    VirtualTrade,
     utc_now,
 )
 from app.model.bayesian_probability import BayesianSnapshot
@@ -102,6 +104,20 @@ class Test2Repository:
             row.preference_value = normalized
             row.updated_at = utc_now()
         return normalized
+
+    def runtime_preference(self, key: str) -> str:
+        with self.database.session() as session:
+            row = session.get(RuntimePreference, str(key))
+            return str(row.preference_value if row else "")
+
+    def set_runtime_preference(self, key: str, value: str) -> None:
+        with self.database.session() as session:
+            row = session.get(RuntimePreference, str(key))
+            if row is None:
+                row = RuntimePreference(preference_key=str(key))
+                session.add(row)
+            row.preference_value = str(value)
+            row.updated_at = utc_now()
 
     def managed_accounts_revision(self) -> str:
         with self.database.session() as session:
@@ -430,6 +446,62 @@ class Test2Repository:
                 )
             wins = int(trade_row.wins or 0)
             losses = int(trade_row.losses or 0)
+            protection_state = session.scalar(
+                select(AccountRiskState).where(
+                    AccountRiskState.account_id_masked == masked
+                )
+            )
+            virtual_protection = (
+                {
+                    "mode": (
+                        "VIRTUAL_MODE"
+                        if protection_state.protection_mode == "VIRTUAL_WAITING_FOR_WIN"
+                        else "RECOVERY_PENDING"
+                        if protection_state.protection_mode == "REAL_RECOVERY_PENDING"
+                        else "NORMAL_MODE"
+                    ),
+                    "state": protection_state.protection_mode,
+                    "account": masked,
+                    "consecutive_actual_losses": int(
+                        protection_state.consecutive_losses or 0
+                    ),
+                    "actual_recovery_debt": float(
+                        protection_state.recovery_loss_debt or 0.0
+                    ),
+                    "virtual_observations": int(
+                        protection_state.virtual_observation_count or 0
+                    ),
+                    "virtual_wins": int(protection_state.virtual_win_count or 0),
+                    "virtual_losses": int(protection_state.virtual_loss_count or 0),
+                    "current_virtual_loss_streak": int(
+                        protection_state.current_virtual_loss_streak or 0
+                    ),
+                    "entered_virtual_mode_at": (
+                        protection_state.entered_virtual_mode_at.isoformat()
+                        if protection_state.entered_virtual_mode_at
+                        else None
+                    ),
+                    "recovery_pending_since": (
+                        protection_state.recovery_pending_since.isoformat()
+                        if protection_state.recovery_pending_since
+                        else None
+                    ),
+                }
+                if protection_state is not None
+                else {
+                    "mode": "NORMAL_MODE",
+                    "state": "NORMAL_MODE",
+                    "account": masked,
+                    "consecutive_actual_losses": 0,
+                    "actual_recovery_debt": 0.0,
+                    "virtual_observations": 0,
+                    "virtual_wins": 0,
+                    "virtual_losses": 0,
+                    "current_virtual_loss_streak": 0,
+                    "entered_virtual_mode_at": None,
+                    "recovery_pending_since": None,
+                }
+            )
             return {
                 "account": masked,
                 "balance": float(snapshot.balance if snapshot else 0.0),
@@ -445,6 +517,7 @@ class Test2Repository:
                 "longest_loss_streak": longest_loss_streak,
                 "open_trades": len(open_rows),
                 "oldest_open_trade_seconds": oldest_open_trade_seconds,
+                "virtual_protection": virtual_protection,
             }
 
     def record_tick(
@@ -1003,6 +1076,57 @@ class Test2Repository:
                 }
                 for row in account_trade_rows
             }
+            protection_rows = session.scalars(select(AccountRiskState)).all()
+            protection_by_account = {
+                str(row.account_id_masked): {
+                    "mode": (
+                        "VIRTUAL_MODE"
+                        if row.protection_mode == "VIRTUAL_WAITING_FOR_WIN"
+                        else "RECOVERY_PENDING"
+                        if row.protection_mode == "REAL_RECOVERY_PENDING"
+                        else "NORMAL_MODE"
+                    ),
+                    "state": row.protection_mode,
+                    "account": row.account_id_masked,
+                    "consecutive_actual_losses": int(row.consecutive_losses or 0),
+                    "actual_recovery_debt": float(row.recovery_loss_debt or 0.0),
+                    "virtual_observations": int(row.virtual_observation_count or 0),
+                    "virtual_wins": int(row.virtual_win_count or 0),
+                    "virtual_losses": int(row.virtual_loss_count or 0),
+                    "current_virtual_loss_streak": int(
+                        row.current_virtual_loss_streak or 0
+                    ),
+                    "entered_virtual_mode_at": (
+                        row.entered_virtual_mode_at.isoformat()
+                        if row.entered_virtual_mode_at
+                        else None
+                    ),
+                    "recovery_pending_since": (
+                        row.recovery_pending_since.isoformat()
+                        if row.recovery_pending_since
+                        else None
+                    ),
+                }
+                for row in protection_rows
+                if row.account_id_masked
+            }
+            virtual_row = session.execute(
+                select(
+                    func.count().label("observations"),
+                    func.sum(case((VirtualTrade.result == "VIRTUAL_WIN", 1), else_=0)).label("wins"),
+                    func.sum(case((VirtualTrade.result == "VIRTUAL_LOSS", 1), else_=0)).label("losses"),
+                ).where(VirtualTrade.run_id == self.run_id)
+            ).one()
+            active_virtual_accounts = session.scalar(
+                select(func.count())
+                .select_from(AccountRiskState)
+                .where(AccountRiskState.protection_mode == "VIRTUAL_WAITING_FOR_WIN")
+            )
+            recovery_pending_accounts = session.scalar(
+                select(func.count())
+                .select_from(AccountRiskState)
+                .where(AccountRiskState.protection_mode == "REAL_RECOVERY_PENDING")
+            )
             settled_trades = session.scalars(
                 select(Trade)
                 .where(
@@ -1105,9 +1229,43 @@ class Test2Repository:
                             account.account_id_masked,
                             {"trades": 0, "wins": 0, "losses": 0, "profit": 0.0},
                         ),
+                        "virtual_protection": protection_by_account.get(
+                            account.account_id_masked,
+                            {
+                                "mode": "NORMAL_MODE",
+                                "state": "NORMAL_MODE",
+                                "account": account.account_id_masked,
+                                "consecutive_actual_losses": 0,
+                                "actual_recovery_debt": 0.0,
+                                "virtual_observations": 0,
+                                "virtual_wins": 0,
+                                "virtual_losses": 0,
+                                "current_virtual_loss_streak": 0,
+                                "entered_virtual_mode_at": None,
+                                "recovery_pending_since": None,
+                            },
+                        ),
                     }
                     for account in accounts
                 ],
+                "virtual_protection": {
+                    "enabled": bool(self.config.virtual_protection.enabled),
+                    "trigger_actual_losses": int(
+                        self.config.virtual_protection.trigger_actual_losses
+                    ),
+                    "exit_after_wins": int(
+                        self.config.virtual_protection.exit_after_wins
+                    ),
+                    "max_observations": int(
+                        self.config.virtual_protection.max_observations
+                    ),
+                    "scope": self.config.virtual_protection.scope,
+                    "observations": int(virtual_row.observations or 0),
+                    "wins": int(virtual_row.wins or 0),
+                    "losses": int(virtual_row.losses or 0),
+                    "active_accounts": int(active_virtual_accounts or 0),
+                    "recovery_pending_accounts": int(recovery_pending_accounts or 0),
+                },
                 "primary_account": primary_account.account_id_masked if primary_account else "",
                 "primary_account_balance": primary_account.balance if primary_account else 0.0,
                 "primary_account_currency": primary_account.currency if primary_account else "USD",
@@ -1346,6 +1504,103 @@ class Test2Repository:
                     "aligned_with_signal": trade.aligned_with_signal,
                 })
             return results
+
+    def recent_virtual_trades(
+        self,
+        limit: int = 50,
+        *,
+        account_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        account_masked = mask_account_id(account_id) if account_id else ""
+        with self.database.session() as session:
+            query = select(VirtualTrade).where(VirtualTrade.run_id == self.run_id)
+            if account_masked:
+                query = query.where(VirtualTrade.account_id_masked == account_masked)
+            rows = session.scalars(
+                query.order_by(VirtualTrade.created_at.desc()).limit(limit)
+            ).all()
+        def elapsed_seconds(start: datetime, end: datetime | None) -> float:
+            stop = end or utc_now()
+            if start.tzinfo is None and stop.tzinfo is not None:
+                start = start.replace(tzinfo=timezone.utc)
+            if stop.tzinfo is None and start.tzinfo is not None:
+                stop = stop.replace(tzinfo=timezone.utc)
+            return max(0.0, (stop - start).total_seconds())
+
+        return [
+            {
+                "contract_id": row.virtual_trade_id,
+                "symbol": row.market,
+                "contract_type": row.contract_type,
+                "account": row.account_id_masked,
+                "purchase_time": row.created_at.isoformat(),
+                "settlement_time": row.settled_at.isoformat() if row.settled_at else None,
+                "contract_duration": int(row.duration or 1),
+                "contract_duration_unit": row.duration_unit,
+                "duration_label": (
+                    f"{int(row.duration or 1)} tick"
+                    f"{'s' if int(row.duration or 1) != 1 else ''}"
+                ),
+                "outcome": row.result,
+                "mode": "VIRTUAL",
+                "activity_type": "VIRTUAL_TRADE",
+                "profit": 0.0,
+                "buy_price": 0.0,
+                "payout": None,
+                "app_markup_amount": None,
+                "commission": None,
+                "entry_tick": row.entry_spot,
+                "exit_tick": row.exit_spot,
+                "exit_digit": row.actual_last_digit,
+                "closure_summary": (
+                    f"{row.result.replace('_', ' ').title()} - $0 financial impact"
+                    if row.result != "OPEN"
+                    else "Virtual observation open"
+                ),
+                "age_seconds": round(elapsed_seconds(row.created_at, row.settled_at), 3),
+                "lifecycle_seconds": round(
+                    elapsed_seconds(row.created_at, row.settled_at),
+                    3,
+                ),
+                "provider_lifecycle_seconds": None,
+                "settlement_delivery_seconds": None,
+                "settlement_sla_seconds": float(self.config.trade.settlement_sla_seconds),
+                "settlement_sla_status": "VIRTUAL",
+                "aligned_with_signal": True,
+                "simulated_stake": row.simulated_stake,
+                "expected_payout": row.expected_payout,
+                "actual_profit_loss": row.actual_profit_loss,
+                "recovery_debt_change": row.recovery_debt_change,
+            }
+            for row in rows
+        ]
+
+    def recent_activity(
+        self,
+        limit: int = 50,
+        *,
+        account_id: str | None = None,
+        activity_type: str = "actual",
+    ) -> list[dict[str, Any]]:
+        normalized = str(activity_type or "actual").strip().lower()
+        if normalized == "virtual":
+            return self.recent_virtual_trades(limit, account_id=account_id)
+        if normalized == "all":
+            actual = [
+                {**row, "mode": "ACTUAL", "activity_type": "ACTUAL_TRADE"}
+                for row in self.recent_trades(limit, account_id=account_id)
+            ]
+            virtual = self.recent_virtual_trades(limit, account_id=account_id)
+            combined = actual + virtual
+            combined.sort(
+                key=lambda row: str(row.get("purchase_time") or ""),
+                reverse=True,
+            )
+            return combined[:limit]
+        return [
+            {**row, "mode": "ACTUAL", "activity_type": "ACTUAL_TRADE"}
+            for row in self.recent_trades(limit, account_id=account_id)
+        ]
 
     def markup_summary(self, *, account_id: str) -> dict[str, Any]:
         account_masked = mask_account_id(account_id)

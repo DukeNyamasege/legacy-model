@@ -8,7 +8,12 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
-from app.repositories.rf_dir5_repository import RFDir5Repository
+from app.repositories.rf_dir5_repository import (
+    RECOVERY_PENDING,
+    RFDir5Repository,
+    VIRTUAL_MODE,
+    VIRTUAL_WIN,
+)
 from app.services.telegram_alerts import TelegramAlertClient
 from app.strategy.decision_engine import (
     ProposalEconomics,
@@ -40,6 +45,7 @@ class RFDir5TradingBot(TradingBot):
         super().__init__(config_path)
         self.rf_config = self.test2_config.rf_strategy
         self.risk_config = self.test2_config.risk
+        self.virtual_config = self.test2_config.virtual_protection
         self.symbols = list(self.rf_config.markets)
         self.symbol = self.symbols[0]
         self.duration = self.rf_config.demo_duration_ticks
@@ -88,16 +94,19 @@ class RFDir5TradingBot(TradingBot):
         self._save_state()
         self.logger.info(
             "RF_PUT5_ACTIVE version=%s direction=%s markets=%s demo_duration=%s "
-            "cumulative_recovery=%s",
+            "cumulative_recovery=%s virtual_protection=%s trigger_actual_losses=%s",
             RF_DIR5_VERSION,
             self.rf_config.allowed_direction,
             ",".join(self.symbols),
             self.duration,
             self.risk_config.recovery_enabled,
+            self.virtual_config.enabled,
+            self.virtual_config.trigger_actual_losses,
         )
 
     async def _telegram_hourly_loop(self) -> None:
         await asyncio.sleep(self.test2_config.telegram.initial_delay_seconds)
+        await self._send_virtual_protection_announcement_once()
         while self.is_running:
             sent = False
             try:
@@ -116,6 +125,28 @@ class RFDir5TradingBot(TradingBot):
                 self.test2_config.telegram.interval_seconds
                 if sent
                 else retry_seconds
+            )
+
+    async def _send_virtual_protection_announcement_once(self) -> None:
+        key = "telegram_announcement_virtual_loss_protection_v1"
+        if self.repository.runtime_preference(key) == "sent":
+            return
+        text = "\n".join(
+            (
+                "Model update: Virtual loss protection is live.",
+                "After 2 actual losses, affected accounts switch to $0 virtual checks until a virtual win.",
+                "Then the next qualifying entry resumes real/demo recovery trading.",
+                "Test our model: https://derivadmin.site/",
+                "Join other traders and let's train the future.",
+            )
+        )
+        try:
+            if await self.telegram_alerts.send_announcement(text):
+                self.repository.set_runtime_preference(key, "sent")
+        except Exception as exc:
+            self.logger.warning(
+                "TELEGRAM_ANNOUNCEMENT_FAILED error=%s",
+                type(exc).__name__,
             )
 
     async def run(self) -> None:
@@ -418,6 +449,27 @@ class RFDir5TradingBot(TradingBot):
             connection_session_id=self.connection_session_id,
         )
         self._render_live_ticks()
+        for settled in self.rf_repository.settle_due_virtual_trades(
+            symbol=symbol,
+            tick_sequence=market.tick_sequence,
+            exit_quote=quote,
+            exit_epoch=epoch,
+        ):
+            self.logger.warning(
+                "VIRTUAL_TRADE_SETTLED account=%s market=%s result=%s "
+                "actual_financial_impact=0 recovery_debt=%.2f",
+                settled["account"],
+                settled["market"],
+                settled["result"],
+                float(settled["protection"].get("actual_recovery_debt") or 0.0),
+            )
+            if settled["result"] == VIRTUAL_WIN:
+                self.logger.warning(
+                    "VIRTUAL_WIN_CONFIRMED account=%s next_state=%s "
+                    "next_action=REAL_RECOVERY_TRADE",
+                    settled["account"],
+                    settled["protection"].get("mode"),
+                )
 
         if "PUT" not in self.rf_supported_contracts.get(symbol, set()):
             return
@@ -727,6 +779,7 @@ class RFDir5TradingBot(TradingBot):
         recovery_by_token: dict[str, bool] = {}
         managed_id_by_token: dict[str, int] = {}
         filtered: list[tuple[str, str]] = []
+        virtual_opened: list[dict[str, Any]] = []
         proposal_profit_ratio = economics.potential_profit / economics.stake
         for token, account_id in eligible:
             if signal.contract_type not in self.rf_account_supported_contracts.get(
@@ -759,6 +812,7 @@ class RFDir5TradingBot(TradingBot):
                 continue
             plan = self.rf_repository.plan_stake(
                 managed_account_id=managed_id,
+                account_id_masked=mask_account_id(account_id),
                 current_balance=float(summary.get("balance") or 0.0),
                 requested_stake=float(state.get("base_stake", self.base_stake)),
                 proposal_profit_ratio=proposal_profit_ratio,
@@ -794,6 +848,50 @@ class RFDir5TradingBot(TradingBot):
                         plan.reason,
                     )
                 continue
+            protection = self.rf_repository.virtual_protection_for_account(
+                managed_account_id=managed_id,
+                account_id_masked=mask_account_id(account_id),
+            )
+            if self.virtual_config.enabled and protection.get("mode") == VIRTUAL_MODE:
+                expected_payout = None
+                if economics.stake > 0:
+                    expected_payout = round(
+                        (float(economics.payout) / float(economics.stake))
+                        * float(plan.stake),
+                        2,
+                    )
+                virtual = self.rf_repository.start_virtual_trade(
+                    managed_account_id=managed_id,
+                    account_id_masked=mask_account_id(account_id),
+                    signal=signal,
+                    configured_stake=float(state.get("base_stake", self.base_stake)),
+                    simulated_stake=float(plan.stake),
+                    expected_payout=expected_payout,
+                )
+                if virtual is not None:
+                    virtual_opened.append(virtual)
+                    self.logger.warning(
+                        "VIRTUAL_TRADE_OPENED account=%s market=%s contract_type=%s "
+                        "simulated_stake=%.2f expected_payout=%s actual_buy=false "
+                        "actual_financial_impact=0 recovery_debt=%.2f",
+                        mask_account_id(account_id),
+                        signal.symbol,
+                        signal.contract_type,
+                        float(plan.stake),
+                        (
+                            f"{expected_payout:.2f}"
+                            if expected_payout is not None
+                            else "unavailable"
+                        ),
+                        float(virtual.get("recovery_debt") or 0.0),
+                    )
+                continue
+            if self.virtual_config.enabled and protection.get("mode") == RECOVERY_PENDING:
+                self.logger.warning(
+                    "REAL_RECOVERY_TRADE_ARMED account=%s actual_recovery_debt=%.2f",
+                    mask_account_id(account_id),
+                    float(protection.get("actual_recovery_debt") or 0.0),
+                )
             filtered.append((token, account_id))
             stake_by_token[token] = plan.stake
             recovery_by_token[token] = plan.is_recovery
@@ -807,6 +905,31 @@ class RFDir5TradingBot(TradingBot):
                     plan.stake,
                     proposal_profit_ratio,
                 )
+        if not filtered and virtual_opened:
+            self.repository.consume_signal(signal.signal_id)
+            signal.consumed = True
+            self.repository.mark_signal(
+                signal.signal_id,
+                status="VIRTUAL_TRADE",
+                purchase_requested=False,
+                expected_account_masks=[
+                    str(item.get("account") or "") for item in virtual_opened
+                ],
+                registered_account_masks=[],
+            )
+            self.rf_repository.set_signal_decision(
+                signal.signal_id,
+                "VIRTUAL_TRADE",
+                "VIRTUAL_MODE_NO_PURCHASE",
+                selected=True,
+                validated_edge=signal.validated_edge,
+            )
+            self.logger.warning(
+                "PURCHASE_BLOCKED_VIRTUAL_MODE signal_id=%s virtual_accounts=%s",
+                signal.signal_id,
+                len(virtual_opened),
+            )
+            return
         if not filtered:
             self._mark_rf_decision(signal, "SKIP_INSUFFICIENT_BALANCE", "no risk-eligible accounts", selected=True)
             return
@@ -904,7 +1027,11 @@ class RFDir5TradingBot(TradingBot):
             self.rf_repository.set_signal_decision(
                 signal.signal_id,
                 "BUY_DEMO",
-                "DIRECT_DEMO",
+                (
+                    "DIRECT_DEMO_WITH_VIRTUAL_ACCOUNTS"
+                    if virtual_opened
+                    else "DIRECT_DEMO"
+                ),
                 selected=True,
                 validated_edge=signal.validated_edge,
             )
@@ -1034,6 +1161,42 @@ class RFDir5TradingBot(TradingBot):
             started,
         )
 
+    async def _purchase_accounts_by_stake(
+        self,
+        *,
+        signal: SignalEvent,
+        eligible_accounts: list[tuple[str, str]],
+        stake_by_token: dict[str, float],
+    ) -> list[dict[str, Any]]:
+        guarded_accounts: list[tuple[str, str]] = []
+        guarded_stakes: dict[str, float] = {}
+        for token, account_id in eligible_accounts:
+            managed_id = self._managed_account_id_for_token(token)
+            protection = (
+                self.rf_repository.virtual_protection_for_account(
+                    managed_account_id=managed_id,
+                    account_id_masked=mask_account_id(account_id),
+                )
+                if managed_id is not None
+                else {"mode": "UNKNOWN"}
+            )
+            if protection.get("mode") == VIRTUAL_MODE:
+                self.logger.error(
+                    "PURCHASE_BLOCKED_VIRTUAL_MODE account=%s signal_id=%s",
+                    mask_account_id(account_id),
+                    signal.signal_id,
+                )
+                continue
+            guarded_accounts.append((token, account_id))
+            guarded_stakes[token] = stake_by_token[token]
+        if not guarded_accounts:
+            return []
+        return await super()._purchase_accounts_by_stake(
+            signal=signal,
+            eligible_accounts=guarded_accounts,
+            stake_by_token=guarded_stakes,
+        )
+
     def _update_client_recovery_state(
         self,
         state: dict[str, Any],
@@ -1049,13 +1212,29 @@ class RFDir5TradingBot(TradingBot):
             return
         summary = self.repository.account_summary(account_id)
         current_balance = float(summary.get("balance") or 0.0) + float(profit)
+        virtual_config = getattr(self, "virtual_config", None)
         risk = self.rf_repository.record_account_outcome(
             managed_account_id=int(managed_id),
+            account_id_masked=mask_account_id(account_id),
             profit=float(profit),
             current_balance=current_balance,
             recovery_enabled=self.risk_config.recovery_enabled,
             recovery_trigger_losses=self.risk_config.recovery_trigger_losses,
+            virtual_protection_enabled=getattr(virtual_config, "enabled", True),
+            virtual_trigger_actual_losses=getattr(
+                virtual_config,
+                "trigger_actual_losses",
+                2,
+            ),
         )
+        if risk.get("protection_state_changed") and risk.get("protection_mode") == VIRTUAL_MODE:
+            self.logger.warning(
+                "VIRTUAL_MODE_ENTERED account=%s reason=TWO_CONSECUTIVE_ACTUAL_LOSSES "
+                "actual_losses=%s actual_recovery_debt=%.2f",
+                mask_account_id(account_id),
+                risk["consecutive_losses"],
+                risk["recovery_loss_debt"],
+            )
         if risk["settled_recovery_attempt"]:
             self.logger.warning(
                 "RF_CUMULATIVE_RECOVERY_SETTLED account=%s result=%s profit=%.2f "

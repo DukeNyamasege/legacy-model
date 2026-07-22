@@ -388,6 +388,18 @@
     button:disabled { opacity: .55; cursor: wait; }
     button.stop { background: var(--red); }
     button.secondary { color: var(--ink); background: var(--secondary-bg); }
+    html[data-theme="light"] .panel,
+    html[data-theme="light"] .section,
+    html[data-theme="light"] .metric,
+    html[data-theme="light"] .contract-table td {
+      color: var(--ink);
+    }
+    html[data-theme="light"] .contract-table th,
+    html[data-theme="light"] .metric span,
+    html[data-theme="light"] .metric small,
+    html[data-theme="light"] .ai-mode-detail {
+      color: var(--muted);
+    }
     input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible {
       outline: 3px solid color-mix(in srgb, var(--blue-bright) 55%, transparent);
       outline-offset: 2px;
@@ -436,6 +448,67 @@
     .stack { display: grid; gap: 12px; }
     .section { padding: 19px; }
     .section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; }
+    .virtual-protection-card {
+      display: grid;
+      grid-template-columns: minmax(220px, .9fr) repeat(4, minmax(120px, 1fr));
+      gap: 10px;
+      margin: 12px 0;
+      padding: 14px;
+      border-color: color-mix(in srgb, var(--blue) 38%, var(--line));
+      background:
+        linear-gradient(135deg, rgba(7,59,134,.12), transparent 46%),
+        var(--card);
+    }
+    .virtual-state {
+      display: grid;
+      gap: 6px;
+      align-content: center;
+      min-height: 96px;
+      padding: 14px;
+      border-radius: 16px;
+      background: var(--glass-bg);
+      border: 1px solid color-mix(in srgb, var(--blue) 26%, transparent);
+    }
+    .virtual-state span,
+    .virtual-stat span {
+      color: var(--muted);
+      font-size: .72rem;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+    .virtual-state strong {
+      font-size: clamp(1.25rem, 3vw, 1.9rem);
+      line-height: 1;
+    }
+    .virtual-state p {
+      margin: 0;
+      color: var(--muted);
+      font-size: .82rem;
+    }
+    .virtual-stat {
+      min-height: 96px;
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: var(--row-bg);
+    }
+    .virtual-stat strong {
+      display: block;
+      margin-top: 9px;
+      font-size: clamp(1.2rem, 2.5vw, 1.7rem);
+    }
+    .virtual-protection-card.mode-virtual {
+      border-color: color-mix(in srgb, var(--gold) 70%, var(--line));
+      background:
+        linear-gradient(135deg, rgba(198,147,48,.22), transparent 48%),
+        var(--card);
+    }
+    .virtual-protection-card.mode-recovery {
+      border-color: color-mix(in srgb, var(--blue-bright) 70%, var(--line));
+      background:
+        linear-gradient(135deg, rgba(18,103,215,.22), transparent 48%),
+        var(--card);
+    }
     .trades { display: grid; gap: 9px; }
     .trade {
       display: grid;
@@ -466,6 +539,29 @@
     .contract-history .section-head {
       gap: 14px;
       align-items: flex-start;
+    }
+    .activity-filters {
+      display: inline-flex;
+      gap: 8px;
+      padding: 5px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--glass-bg);
+    }
+    .activity-filter {
+      min-height: 34px;
+      padding: 0 13px;
+      border-radius: 999px;
+      color: var(--muted);
+      background: transparent;
+      box-shadow: none;
+      border-color: transparent;
+      font-size: .75rem;
+    }
+    .activity-filter.active {
+      color: #fff;
+      background: linear-gradient(135deg, var(--blue-deep), var(--blue-bright));
+      box-shadow: 0 8px 18px rgba(7,59,134,.2);
     }
     .contract-table-wrap {
       width: 100%;
@@ -512,6 +608,20 @@
     .contract-status.win { color: var(--green); }
     .contract-status.loss { color: var(--red); }
     .contract-status.open { color: var(--gold); }
+    .contract-status.virtual { color: var(--blue-bright); }
+    .mode-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 0 8px;
+      border-radius: 999px;
+      color: #fff;
+      background: var(--blue);
+      font-size: .68rem;
+      font-weight: 800;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
     .model-grid { display: grid; gap: 10px; }
     .model-row { border-bottom: 1px solid var(--row-line); padding: 10px 0; }
     .model-row:last-child { border-bottom: 0; }
@@ -669,6 +779,8 @@
     }
     @media (max-width: 980px) {
       .metrics { grid-template-columns: repeat(3, 1fr); }
+      .virtual-protection-card { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .virtual-state { grid-column: 1 / -1; }
       .lower { grid-template-columns: 1fr; }
     }
     @media (max-width: 580px) {
@@ -693,8 +805,10 @@
       .control button { width: 100%; padding: 0 12px; }
       .metrics { grid-template-columns: repeat(2, 1fr); gap: 9px; }
       .metric { min-height: 92px; padding: 14px 13px; }
+      .virtual-protection-card { grid-template-columns: 1fr; }
       .trade, .account-row { grid-template-columns: 1fr 1fr; }
       .section-head { gap: 10px; }
+      .activity-filters { width: 100%; justify-content: center; flex-wrap: wrap; border-radius: 18px; }
       .inline-actions { grid-template-columns: 1fr; }
       .api-token-form { grid-template-columns: 1fr; }
       .personal-settings-form { grid-template-columns: 1fr; }
@@ -863,12 +977,29 @@
     <article class="panel metric"><span>Open trade age</span><strong id="open-trade-age">0s</strong></article>
     <article class="panel metric"><span>Skipped</span><strong id="skipped">0</strong></article>
   </section>
+  <section id="virtual-protection-card" class="panel virtual-protection-card">
+    <article class="virtual-state">
+      <span>Virtual Loss Protection</span>
+      <strong id="virtual-mode">Normal mode</strong>
+      <p id="virtual-next-action">Trading normally</p>
+    </article>
+    <article class="virtual-stat"><span>Virtual losses</span><strong id="virtual-losses">0</strong></article>
+    <article class="virtual-stat"><span>Virtual wins</span><strong id="virtual-wins">0</strong></article>
+    <article class="virtual-stat"><span>Current virtual streak</span><strong id="virtual-streak">0</strong></article>
+    <article class="virtual-stat"><span>Actual trigger</span><strong id="virtual-trigger">0 / 2</strong></article>
+    <article class="virtual-stat"><span>Real recovery debt</span><strong id="virtual-debt">0.00</strong></article>
+  </section>
   </section>
 
   <section class="panel section contract-history">
     <div class="section-head">
       <div>
         <h2>Recent Contracts</h2>
+      </div>
+      <div class="activity-filters" role="group" aria-label="Recent activity filter">
+        <button class="activity-filter active" type="button" data-activity-filter="all">All Activity</button>
+        <button class="activity-filter" type="button" data-activity-filter="actual">Actual Trades</button>
+        <button class="activity-filter" type="button" data-activity-filter="virtual">Virtual Trades</button>
       </div>
     </div>
     <div class="contract-table-wrap">
@@ -909,6 +1040,7 @@
   let currentAiActivityMode = "";
   let wsConnection = null;
   let wsReconnectTimer = 0;
+  let currentActivityFilter = "all";
   const themeKey = "legacy-dashboard-theme";
   const themeToggle = $("theme-toggle");
   const themeToggleLabel = $("theme-toggle-label");
@@ -1000,9 +1132,41 @@
   }
   function formatContractStatus(outcome) {
     const normalized = String(outcome || "OPEN").toUpperCase();
+    if (normalized === "VIRTUAL_WIN") return { label: "Virtual Win", className: "virtual" };
+    if (normalized === "VIRTUAL_LOSS") return { label: "Virtual Loss", className: "virtual" };
     if (normalized === "WIN") return { label: "Win", className: "win" };
     if (normalized === "LOSS") return { label: "Loss", className: "loss" };
     return { label: "Open", className: "open" };
+  }
+  function renderVirtualProtection(data) {
+    const card = $("virtual-protection-card");
+    if (!card) return;
+    const settings = data.virtual_protection || {};
+    const protection = data.primary_virtual_protection || {};
+    const mode = String(protection.mode || "NORMAL_MODE").toUpperCase();
+    const triggerActual = Number(protection.consecutive_actual_losses || 0);
+    const triggerRequired = Number(settings.trigger_actual_losses || 2);
+    const debt = Number(protection.actual_recovery_debt || 0);
+    let modeLabel = "Normal mode";
+    let nextAction = "Trading normally";
+    let modeClass = "";
+    if (mode === "VIRTUAL_MODE") {
+      modeLabel = "Virtual mode";
+      nextAction = "Waiting for a virtual win";
+      modeClass = "mode-virtual";
+    } else if (mode === "RECOVERY_PENDING") {
+      modeLabel = "Recovery pending";
+      nextAction = "Next qualifying entry will be real recovery";
+      modeClass = "mode-recovery";
+    }
+    card.className = `panel virtual-protection-card ${modeClass}`.trim();
+    $("virtual-mode").textContent = modeLabel;
+    $("virtual-next-action").textContent = protection.next_action || nextAction;
+    $("virtual-losses").textContent = number(protection.virtual_losses || settings.losses || 0);
+    $("virtual-wins").textContent = number(protection.virtual_wins || settings.wins || 0);
+    $("virtual-streak").textContent = number(protection.current_virtual_loss_streak || 0);
+    $("virtual-trigger").textContent = `${number(Math.min(triggerActual, triggerRequired))} / ${number(triggerRequired)}`;
+    $("virtual-debt").textContent = number(debt, 2);
   }
   function renderContracts(trades) {
     const body = $("contracts-body");
@@ -1014,20 +1178,27 @@
     }
     body.innerHTML = rows.map(trade => {
       const status = formatContractStatus(trade.outcome);
+      const mode = String(trade.mode || trade.activity_type || "ACTUAL").toUpperCase();
+      const isVirtual = mode.includes("VIRTUAL");
+      const stake = isVirtual ? trade.simulated_stake : trade.buy_price;
+      const payout = isVirtual ? null : trade.payout;
       return `
         <tr>
           <td>${escapeHtml(trade.symbol || "-")}</td>
           <td>${escapeHtml(trade.contract_type || "-")}</td>
-          <td>${trade.buy_price == null ? "-" : number(trade.buy_price, 2)}</td>
-          <td>${trade.payout == null ? "-" : number(trade.payout, 2)}</td>
-          <td><span class="contract-status ${status.className}">${status.label}</span></td>
+          <td>${stake == null ? "-" : number(stake, 2)}</td>
+          <td>${payout == null ? "-" : number(payout, 2)}</td>
+          <td>
+            ${isVirtual ? '<span class="mode-badge">Virtual</span> ' : ""}
+            <span class="contract-status ${status.className}">${status.label}</span>
+          </td>
         </tr>
       `;
     }).join("");
   }
   async function loadRecentContracts() {
     try {
-      const data = await api("/metrics/recent-trades?limit=50");
+      const data = await api(`/metrics/recent-trades?limit=50&activity_type=${encodeURIComponent(currentActivityFilter)}`);
       renderContracts(data.trades || []);
     } catch (_) {
       renderContracts([]);
@@ -1124,6 +1295,7 @@
     const currency = data.primary_account_currency || data.accounts?.[0]?.currency || "USD";
     $("balance").textContent = `${number(data.primary_account_balance || 0, 2)} ${currency}`;
     renderAiActivity(data);
+    renderVirtualProtection(data);
     $("global-dashboard-snapshot").dataset.snapshotReady = "true";
   }
   function applyReadOnlyMode() {
@@ -1285,6 +1457,15 @@
   $("btn-toggle-auto")?.addEventListener("click", toggleAutoTrade);
   $("btn-save-api-token")?.addEventListener("click", saveApiToken);
   $("btn-save-trading-settings")?.addEventListener("click", saveTradingSettings);
+  document.querySelectorAll("[data-activity-filter]").forEach(button => {
+    button.addEventListener("click", () => {
+      currentActivityFilter = button.getAttribute("data-activity-filter") || "all";
+      document.querySelectorAll("[data-activity-filter]").forEach(item => {
+        item.classList.toggle("active", item === button);
+      });
+      loadRecentContracts();
+    });
+  });
   $("personal-settings-toggle")?.addEventListener("click", () => {
     const panel = $("personal-settings-panel");
     setPersonalSettingsExpanded(!panel?.classList.contains("open"));

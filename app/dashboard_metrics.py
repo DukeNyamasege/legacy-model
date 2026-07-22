@@ -45,6 +45,20 @@ def build_execution_summary(
         result["oldest_open_trade_seconds"] = int(
             master.get("oldest_open_trade_seconds") or 0
         )
+        result["primary_virtual_protection"] = master.get(
+            "virtual_protection",
+            {
+                "mode": "NORMAL_MODE",
+                "state": "NORMAL_MODE",
+                "consecutive_actual_losses": 0,
+                "actual_recovery_debt": 0.0,
+                "virtual_observations": 0,
+                "virtual_wins": 0,
+                "virtual_losses": 0,
+                "current_virtual_loss_streak": 0,
+                "entered_virtual_mode_at": None,
+            },
+        )
         result["stale_open_trades"] = int(
             result["open_trades"] > 0
             and result["oldest_open_trade_seconds"]
@@ -66,6 +80,17 @@ def build_execution_summary(
                 "open_trades": 0,
                 "oldest_open_trade_seconds": 0,
                 "stale_open_trades": 0,
+                "primary_virtual_protection": {
+                    "mode": "NORMAL_MODE",
+                    "state": "NORMAL_MODE",
+                    "consecutive_actual_losses": 0,
+                    "actual_recovery_debt": 0.0,
+                    "virtual_observations": 0,
+                    "virtual_wins": 0,
+                    "virtual_losses": 0,
+                    "current_virtual_loss_streak": 0,
+                    "entered_virtual_mode_at": None,
+                },
             }
         )
 

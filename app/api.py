@@ -1096,6 +1096,7 @@ def get_me(request: Request) -> dict:
             "losses": personal["losses"],
             "profit": personal["profit"],
         },
+        "virtual_protection": personal.get("virtual_protection", {}),
     }
 
 @app.post("/me/auto-trade")
@@ -1313,7 +1314,7 @@ def metrics_summary() -> dict:
 
 
 @app.get("/metrics/recent-trades")
-def recent_trades(request: Request, limit: int = 50) -> dict:
+def recent_trades(request: Request, limit: int = 50, activity_type: str = "actual") -> dict:
     current = get_current_account(request)
     if current:
         account_id = str(current["account_id"])
@@ -1326,9 +1327,10 @@ def recent_trades(request: Request, limit: int = 50) -> dict:
     return {
         "viewer": viewer,
         "account": mask_account_id(account_id),
-        "trades": REPOSITORY.recent_trades(
+        "trades": REPOSITORY.recent_activity(
             max(1, min(limit, 50)),
             account_id=account_id,
+            activity_type=activity_type,
         ),
         "markup": REPOSITORY.markup_summary(account_id=account_id),
     }
@@ -1348,6 +1350,10 @@ def model_metrics() -> dict:
             "hmm_enabled": False,
             "martingale_enabled": CONFIG.risk.recovery_enabled,
             "recovery_trigger_losses": CONFIG.risk.recovery_trigger_losses,
+            "virtual_protection_enabled": CONFIG.virtual_protection.enabled,
+            "virtual_trigger_actual_losses": (
+                CONFIG.virtual_protection.trigger_actual_losses
+            ),
             "recovery_mode": "cumulative_next_contract",
             "maximum_recovery_balance_fraction": (
                 CONFIG.risk.maximum_recovery_balance_fraction

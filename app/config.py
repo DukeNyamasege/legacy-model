@@ -225,6 +225,14 @@ class RiskSettings(StrictModel):
     maximum_open_contracts_per_account: Literal[1] = 1
 
 
+class VirtualProtectionSettings(StrictModel):
+    enabled: bool = True
+    trigger_actual_losses: int = Field(default=2, ge=1, le=20)
+    exit_after_wins: int = Field(default=1, ge=1, le=10)
+    max_observations: int = Field(default=0, ge=0)
+    scope: Literal["PER_ACCOUNT", "EXECUTION_GROUP"] = "PER_ACCOUNT"
+
+
 class TelegramSettings(StrictModel):
     enabled: bool = True
     bot_token_env: str = "TELEGRAM_BOT_TOKEN"
@@ -282,6 +290,9 @@ class Test2Config(StrictModel):
     recovery: RecoverySettings = Field(default_factory=RecoverySettings)
     rf_strategy: RiseFallStrategySettings = Field(default_factory=RiseFallStrategySettings)
     risk: RiskSettings = Field(default_factory=RiskSettings)
+    virtual_protection: VirtualProtectionSettings = Field(
+        default_factory=VirtualProtectionSettings
+    )
     telegram: TelegramSettings = Field(default_factory=TelegramSettings)
     storage: StorageSettings
     trade: TradeSettings
@@ -378,6 +389,26 @@ def load_test2_config(path: str | Path = "config.yaml") -> Test2Config:
         raw.setdefault("bayesian", {})[
             "minimum_probability_edge_confidence"
         ] = float(os.environ["BAYESIAN_MIN_EDGE_CONFIDENCE"])
+    if os.getenv("VIRTUAL_PROTECTION_ENABLED"):
+        raw.setdefault("virtual_protection", {})["enabled"] = os.environ[
+            "VIRTUAL_PROTECTION_ENABLED"
+        ].lower() in {"1", "true", "yes"}
+    if os.getenv("VIRTUAL_TRIGGER_ACTUAL_LOSSES"):
+        raw.setdefault("virtual_protection", {})["trigger_actual_losses"] = int(
+            os.environ["VIRTUAL_TRIGGER_ACTUAL_LOSSES"]
+        )
+    if os.getenv("VIRTUAL_EXIT_AFTER_WINS"):
+        raw.setdefault("virtual_protection", {})["exit_after_wins"] = int(
+            os.environ["VIRTUAL_EXIT_AFTER_WINS"]
+        )
+    if os.getenv("VIRTUAL_MAX_OBSERVATIONS"):
+        raw.setdefault("virtual_protection", {})["max_observations"] = int(
+            os.environ["VIRTUAL_MAX_OBSERVATIONS"]
+        )
+    if os.getenv("VIRTUAL_MODE_SCOPE"):
+        raw.setdefault("virtual_protection", {})["scope"] = os.environ[
+            "VIRTUAL_MODE_SCOPE"
+        ].strip().upper()
     if os.getenv("TELEGRAM_ALERTS_ENABLED"):
         raw.setdefault("telegram", {})["enabled"] = os.environ[
             "TELEGRAM_ALERTS_ENABLED"
