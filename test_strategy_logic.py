@@ -147,6 +147,28 @@ class DashboardMetricsTests(unittest.TestCase):
             "Waiting for an active trading account",
         )
 
+    def test_enabled_token_ready_account_counts_even_when_heartbeat_is_stale(self) -> None:
+        import app.api as api
+
+        stale = datetime.now(timezone.utc) - timedelta(hours=1)
+        account = SimpleNamespace(
+            enabled=True,
+            execution_status="reconnecting",
+            execution_status_updated_at=stale,
+            token_secret="encrypted",
+        )
+
+        with (
+            patch.object(api.REPOSITORY, "list_managed_accounts", return_value=[account]),
+            patch.object(
+                api,
+                "decrypt_auth_payload",
+                return_value={"account_id": "DOT123422", "pat_token_set": True},
+            ),
+            patch.object(api, "has_personal_trading_api_token", return_value=True),
+        ):
+            self.assertEqual(api.actively_executing_account_ids(), {"DOT123422"})
+
 
 class CopyTradeAuditTests(unittest.TestCase):
     @staticmethod

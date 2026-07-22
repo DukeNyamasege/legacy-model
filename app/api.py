@@ -399,18 +399,21 @@ def linked_trading_account_ids() -> set[str]:
 
 
 def actively_executing_account_ids() -> set[str]:
-    stale_seconds = max(15, int(os.getenv("ACCOUNT_EXECUTION_STALE_SECONDS", "45")))
-    cutoff = datetime.now(timezone.utc) - timedelta(seconds=stale_seconds)
+    excluded_statuses = {
+        "credential_error",
+        "disabled",
+        "duplicate",
+        "insufficient_balance",
+        "invalid_account",
+        "stop_loss",
+        "take_profit",
+        "token_required",
+    }
     account_ids: set[str] = set()
     for row in REPOSITORY.list_managed_accounts():
-        if not row.enabled or str(row.execution_status) != "active":
+        if not row.enabled:
             continue
-        updated_at = row.execution_status_updated_at
-        if updated_at is None:
-            continue
-        if updated_at.tzinfo is None:
-            updated_at = updated_at.replace(tzinfo=timezone.utc)
-        if updated_at < cutoff:
+        if str(row.execution_status or "").strip().lower() in excluded_statuses:
             continue
         try:
             payload = decrypt_auth_payload(row.token_secret, CONFIG.deriv.token_encryption_key)
