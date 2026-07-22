@@ -9,7 +9,7 @@ from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from sqlalchemy import func, select
 
@@ -1476,7 +1476,7 @@ class RFDecisionTests(unittest.TestCase):
         bot.logger.warning.assert_called_once()
         bot.logger.error.assert_not_called()
 
-    def test_stale_account_pending_contract_releases_purchase_eligibility(self) -> None:
+    def test_stale_account_pending_contract_remains_isolated_until_settled(self) -> None:
         bot = object.__new__(RFDir5TradingBot)
         bot.valid_clients = [("token-a", "DOT90000001")]
         bot.sessions = {
@@ -1500,25 +1500,10 @@ class RFDecisionTests(unittest.TestCase):
         bot.signal_symbols = {"signal-1": "R_10"}
         bot.delayed_contracts_logged = {42}
         bot.logger = MagicMock()
-        bot._save_state = MagicMock()
         bot._copytrading_master_account_id = MagicMock(return_value="DOT90000001")
 
-        self.assertEqual(bot._eligible_purchase_accounts(), [("token-a", "DOT90000001")])
-        self.assertEqual(bot.sessions["token-a"].pending_contracts, set())
-        bot._save_state.assert_called_once()
-        bot.logger.warning.assert_any_call(
-            "STALE_ACCOUNT_PENDING_RELEASED account=%s contract_id=%s "
-            "age_seconds=%s reason=%s; account can join future cycles while "
-            "durable settlement review remains separate",
-            "DOT***001",
-            42,
-            ANY,
-            "rf_account_eligibility",
-            extra={
-                "token_tag": ANY,
-                "contract_id": "42",
-            },
-        )
+        self.assertEqual(bot._eligible_purchase_accounts(), [])
+        self.assertEqual(bot.sessions["token-a"].pending_contracts, {42})
 
     def test_log_sanitizer_redacts_pat_tokens(self) -> None:
         secret = "pat_" + "abcdefghijklmnopqrstuvwxyz0123456789"

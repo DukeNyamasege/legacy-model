@@ -1298,6 +1298,58 @@ class ContractRuntimeLockTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(signal_id, bot.outcomes_by_signal)
         bot._finish_contract_transport_cleanup.assert_awaited_once()
 
+    async def test_is_sold_snapshot_settles_even_when_status_is_open(self) -> None:
+        bot = self.make_bot()
+        contract_id = 123
+        session = MagicMock(account_id="DOT90000001")
+        session.pending_contracts = {contract_id}
+        bot.sessions = {"token": session}
+        bot.pending_contracts_for_current_cycle = set()
+        bot.contract_signal_ids = {contract_id: "signal-1"}
+        bot.contract_symbols = {contract_id: "1HZ100V"}
+        bot.pending_by_signal = {"signal-1": {contract_id}}
+        bot.outcomes_by_signal = {"signal-1": {}}
+        bot.signal_master_account_ids = {"signal-1": "DOT90000001"}
+        bot.signal_symbols = {"signal-1": "1HZ100V"}
+        bot.pending_contract_started_at = {contract_id: datetime.now(timezone.utc)}
+        bot.symbol = "1HZ100V"
+        bot.market_states = {"1HZ100V": MagicMock(pip_size=2)}
+        bot.app_markup_percentage = 0.0
+        bot.duration = 5
+        bot.settlement_sla_seconds = 15.0
+        bot.repository.settle_trade.return_value = True
+        bot._client_state_for_token = MagicMock(return_value=None)
+        bot._finish_contract_transport_cleanup = AsyncMock()
+        bot._register_trade_cycle_outcome = MagicMock()
+        bot._register_master_market_outcome = MagicMock()
+        bot._record_real_cycle_outcome = MagicMock()
+        bot.bayesian = MagicMock()
+
+        await bot.handle_contract_update(
+            "token",
+            contract_id,
+            {"status": "open", "is_sold": 1, "profit": 0.46, "exit_tick": 100.02},
+        )
+
+        bot.repository.settle_trade.assert_called_once()
+        self.assertEqual(session.pending_contracts, set())
+        bot._finish_contract_transport_cleanup.assert_awaited_once()
+
+    async def test_contract_snapshot_falls_back_to_fresh_authenticated_status(self) -> None:
+        bot = self.make_bot()
+        session = MagicMock(is_connected=False, account_id="DOT90000001")
+        session.request_contract_snapshot = AsyncMock()
+        session.request_contract_snapshot_once = AsyncMock(
+            return_value={"proposal_open_contract": {"contract_id": 123, "is_sold": 1}}
+        )
+        bot.sessions = {"token": session}
+
+        response = await bot._request_contract_snapshot("token", 123)
+
+        self.assertEqual(response["proposal_open_contract"]["contract_id"], 123)
+        session.request_contract_snapshot.assert_not_awaited()
+        session.request_contract_snapshot_once.assert_awaited_once_with(123)
+
     def test_durable_reconciliation_prunes_only_stale_contract_ids(self) -> None:
         bot = self.make_bot()
         session = MagicMock()

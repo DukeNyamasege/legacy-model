@@ -1040,6 +1040,48 @@ class ClientSession:
             }
         )
 
+    async def request_contract_snapshot_once(self, contract_id: int) -> Dict[str, Any]:
+        """Query one contract through a fresh authenticated OTP connection."""
+        url = await self.get_otp_url()
+        if not url:
+            return {
+                "error": {
+                    "message": "Authenticated contract status connection unavailable",
+                    "code": "OTP_UNAVAILABLE",
+                }
+            }
+        req_id = 920000 + int(contract_id) % 100000
+        try:
+            async with websockets.connect(url) as ws:
+                await ws.send(
+                    json.dumps(
+                        {
+                            "proposal_open_contract": 1,
+                            "contract_id": int(contract_id),
+                            "req_id": req_id,
+                        }
+                    )
+                )
+                while True:
+                    raw = await asyncio.wait_for(ws.recv(), timeout=10.0)
+                    response = json.loads(raw)
+                    if response.get("req_id") == req_id:
+                        return response
+        except asyncio.TimeoutError:
+            return {
+                "error": {
+                    "message": "Authenticated contract status request timed out",
+                    "code": "TIMEOUT",
+                }
+            }
+        except Exception as exc:
+            return {
+                "error": {
+                    "message": sanitize_account_ids(str(exc)),
+                    "code": "CONNECTION_ERROR",
+                }
+            }
+
     async def refresh_balance_snapshot(self) -> Dict[str, Any]:
         return await self.send_request({"balance": 1})
 
@@ -1049,20 +1091,11 @@ class ClientSession:
             for cid in list(self.pending_contracts):
                 if self.bot._contract_age_seconds(cid) < self.bot.settle_wait_seconds:
                     continue
-                snapshot = await self.request_contract_snapshot(cid)
-                if "error" in snapshot:
-                    self.bot.logger.warning(
-                        "Contract reconciliation request failed for %s: %s",
-                        cid,
-                        snapshot["error"].get("message"),
-                        extra={"token_tag": self.token_tag, "contract_id": str(cid)},
-                    )
-                    continue
-                contract = snapshot.get("proposal_open_contract")
-                if not contract:
-                    continue
                 try:
-                    await self.bot.handle_contract_update(self.token, int(cid), contract)
+                    await self.bot._reconcile_pending_contract(
+                        int(cid),
+                        "private_session_poll",
+                    )
                 except Exception as exc:
                     self.bot.logger.error(
                         "Account contract reconciliation failed for %s: %s",
@@ -2573,47 +2606,6 @@ class TradingBot:
         self._save_state()
         return True
 
-    def _release_stale_account_pending_contracts(
-        self,
-        reason: str,
-        *,
-        minimum_age_seconds: float | None = None,
-    ) -> int:
-        """Release stale in-memory account locks so one missed settlement cannot freeze execution."""
-        threshold = float(
-            minimum_age_seconds
-            if minimum_age_seconds is not None
-            else self.max_open_trade_seconds
-        )
-        released = 0
-        for token, session in list(self.sessions.items()):
-            for contract_id in list(session.pending_contracts):
-                age_seconds = self._contract_age_seconds(contract_id)
-                if age_seconds < threshold:
-                    continue
-                signal_id, cycle_closed = self._release_contract_runtime_state(
-                    contract_id
-                )
-                if cycle_closed:
-                    self._clear_closed_signal_runtime_state(signal_id)
-                released += 1
-                self.logger.warning(
-                    "STALE_ACCOUNT_PENDING_RELEASED account=%s contract_id=%s "
-                    "age_seconds=%s reason=%s; account can join future cycles while "
-                    "durable settlement review remains separate",
-                    mask_account_id(session.account_id),
-                    contract_id,
-                    int(age_seconds),
-                    reason,
-                    extra={
-                        "token_tag": token_tag(token),
-                        "contract_id": str(contract_id),
-                    },
-                )
-        if released:
-            self._save_state()
-        return released
-
     def _clear_closed_signal_runtime_state(self, signal_id: str) -> None:
         if not signal_id:
             return
@@ -2707,7 +2699,7 @@ class TradingBot:
             )
             return
         token, session = match
-        snapshot = await session.request_contract_snapshot(contract_id)
+        snapshot = await self._request_contract_snapshot(token, contract_id)
         if "error" in snapshot:
             self.logger.warning(
                 "Contract reconciliation failed for %s after %s seconds (%s): %s",
@@ -2726,7 +2718,7 @@ class TradingBot:
         contract = snapshot.get("proposal_open_contract")
         if not contract:
             return
-        if contract.get("is_sold"):
+        if self._contract_is_terminal(contract):
             try:
                 await self.handle_contract_update(token, int(contract_id), contract)
             except Exception as exc:
@@ -2752,6 +2744,78 @@ class TradingBot:
                 contract_id,
                 f"{reason}:provider_still_open",
             )
+
+    async def _request_contract_snapshot(
+        self,
+        token: str,
+        contract_id: int,
+    ) -> Dict[str, Any]:
+        """Read contract state on the persistent or a fresh authenticated socket."""
+        session = self.sessions.get(token)
+        response: Dict[str, Any] = {
+            "error": {"message": "Private session unavailable", "code": "NOT_CONNECTED"}
+        }
+        if session is not None and session.is_connected:
+            response = await session.request_contract_snapshot(contract_id)
+            if response.get("proposal_open_contract"):
+                return response
+        if session is None:
+            return response
+
+        semaphore = getattr(self, "_contract_reconcile_semaphore", None)
+        if semaphore is None:
+            semaphore = asyncio.Semaphore(5)
+            self._contract_reconcile_semaphore = semaphore
+        async with semaphore:
+            response = await session.request_contract_snapshot_once(contract_id)
+        if response.get("proposal_open_contract"):
+            self.logger.info(
+                "CONTRACT_RECONCILED_VIA_FRESH_AUTH contract_id=%s account=%s",
+                contract_id,
+                mask_account_id(session.account_id),
+                extra={"token_tag": token_tag(token), "contract_id": str(contract_id)},
+            )
+        return response
+
+    async def _reconcile_all_pending_contracts(self, reason: str) -> None:
+        """Retry every account-owned contract without coupling account failures."""
+        contract_ids = sorted(
+            {
+                int(contract_id)
+                for session in self.sessions.values()
+                for contract_id in session.pending_contracts
+                if self._contract_age_seconds(int(contract_id)) >= self.settle_wait_seconds
+            }
+        )
+        if not contract_ids:
+            return
+        results = await asyncio.gather(
+            *(
+                self._reconcile_pending_contract(contract_id, reason)
+                for contract_id in contract_ids
+            ),
+            return_exceptions=True,
+        )
+        for contract_id, result in zip(contract_ids, results):
+            if isinstance(result, Exception):
+                self.logger.error(
+                    "CONTRACT_RECONCILIATION_ISOLATED contract_id=%s error=%s; "
+                    "other accounts continue",
+                    contract_id,
+                    sanitize_account_ids(str(result)),
+                    extra={"contract_id": str(contract_id)},
+                )
+
+    @staticmethod
+    def _contract_is_terminal(contract: Dict[str, Any]) -> bool:
+        status = str(contract.get("status") or "").strip().lower()
+        sold_value = contract.get("is_sold")
+        is_sold = sold_value is True or str(sold_value).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        return is_sold or status in {"won", "lost", "sold", "cancelled"}
 
     async def validate_accounts(self) -> None:
         """Fetch and validate account IDs REST-side, sorting demo and real accounts."""
@@ -4348,8 +4412,8 @@ class TradingBot:
         return status
 
     async def handle_contract_update(self, token: str, contract_id: int, contract: Dict[str, Any]) -> None:
-        status = contract.get("status", "unknown")
-        if status not in {"won", "lost", "sold", "cancelled"}:
+        status = str(contract.get("status") or "unknown").strip().lower()
+        if not self._contract_is_terminal(contract):
             return # not settled
 
         if contract_id in self.unregistered_contracts:
@@ -4379,7 +4443,15 @@ class TradingBot:
         }
 
         # Prevent duplicate processing
-        if contract_id not in self.pending_contracts_for_current_cycle and contract_id not in self.unresolved_contracts_from_state:
+        account_pending = any(
+            contract_id in candidate.pending_contracts
+            for candidate in self.sessions.values()
+        )
+        if (
+            contract_id not in self.pending_contracts_for_current_cycle
+            and contract_id not in self.unresolved_contracts_from_state
+            and not account_pending
+        ):
             return
 
         profit = float(contract.get("profit", 0.0))
@@ -4595,6 +4667,10 @@ class TradingBot:
         refresh_interval = max(5, int(os.getenv("ACCOUNT_REFRESH_INTERVAL_SECONDS", "10")))
         refresh_timer = 0
         while self.is_running:
+            try:
+                await self._reconcile_all_pending_contracts("watchdog")
+            except Exception as exc:
+                self.logger.warning("Contract settlement reconciliation failed: %s", exc)
             try:
                 self._prune_stale_pending_contracts("watchdog")
             except Exception as exc:
