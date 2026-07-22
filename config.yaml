@@ -105,17 +105,17 @@ rf_strategy:
   demo_duration_ticks: 5
   minimum_directional_moves: 5
   minimum_recent_directional_moves: 3
-  minimum_efficiency: 0.80
-  minimum_impulse: 0.90
-  maximum_impulse: 2.30
-  maximum_move_ratio: 2.20
+  minimum_efficiency: 0.82
+  minimum_impulse: 1.00
+  maximum_impulse: 2.20
+  maximum_move_ratio: 2.00
   minimum_directional_score: 8
   candidate_window_ms: 75
   stale_signal_after_ms: 1800
   minimum_trade_interval_seconds: 0
   maximum_open_strategy_contracts: 1
 risk:
-  recovery_enabled: true
+  recovery_enabled: false
   recovery_trigger_losses: 1
   maximum_recovery_balance_fraction: 0.10
   minimum_balance_reserve: 0.50

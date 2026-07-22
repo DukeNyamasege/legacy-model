@@ -60,6 +60,7 @@ OAUTH_STATE_COOKIE = "deriv_oauth_state"
 OAUTH_VERIFIER_COOKIE = "deriv_oauth_code_verifier"
 CLIENT_SESSION_COOKIE = "client_session"
 CLIENT_SESSION_DAYS = int(os.getenv("CLIENT_SESSION_DAYS", "30"))
+FIXED_STAKE_AMOUNT = 0.50
 
 
 class DashboardBroadcaster:
@@ -250,6 +251,34 @@ def has_trading_api_token(payload: dict) -> bool:
     return bool(trading_api_token_from_payload(payload))
 
 
+def attach_pat_to_payload(
+    payload: dict,
+    *,
+    api_token: str,
+    account_id: str,
+    account_type: str,
+    verified_at: str,
+) -> dict:
+    updated = dict(payload)
+    if str(updated.get("auth_type", "")).strip().lower() == "oauth":
+        updated["oauth_access_token"] = str(updated.get("access_token", "")).strip()
+        updated["oauth_refresh_token"] = str(updated.get("refresh_token", "")).strip()
+        updated["oauth_expires_at"] = str(updated.get("expires_at", "")).strip()
+        updated["oauth_scope"] = str(updated.get("scope", "")).strip()
+    updated.update(
+        {
+            "auth_type": "pat",
+            "access_token": api_token,
+            "account_id": account_id,
+            "account_type": normalize_account_type(account_type),
+            "auth_source": "deriv_oauth_with_pat",
+            "pat_token_set": True,
+            "pat_verified_at": verified_at,
+        }
+    )
+    return updated
+
+
 def normalize_account_type(value: object, *, default: str = "demo") -> str:
     normalized = str(value or default or "demo").strip().lower()
     return normalized if normalized in {"demo", "real"} else "demo"
@@ -298,6 +327,27 @@ def personal_account_modes(current_payload: dict) -> list[str]:
     return sorted(modes, key=lambda item: {"demo": 0, "real": 1}.get(item, 9))
 
 
+def shared_trading_api_token(current_payload: dict) -> str:
+    identity = login_identity_from_payload(current_payload)
+    if not identity:
+        return ""
+    for row in REPOSITORY.list_managed_accounts():
+        try:
+            payload = managed_account_payload(row)
+        except Exception:
+            continue
+        if login_identity_from_payload(payload) != identity:
+            continue
+        token = trading_api_token_from_payload(payload)
+        if token:
+            return token
+    return ""
+
+
+def has_personal_trading_api_token(payload: dict) -> bool:
+    return has_trading_api_token(payload) or bool(shared_trading_api_token(payload))
+
+
 def find_linked_account_for_type(current_payload: dict, account_type: str):
     target_type = normalize_account_type(account_type)
     identity = login_identity_from_payload(current_payload)
@@ -325,7 +375,7 @@ def trading_ready_account_ids() -> set[str]:
             payload = decrypt_auth_payload(row.token_secret, CONFIG.deriv.token_encryption_key)
         except Exception:
             continue
-        if not has_trading_api_token(payload):
+        if not has_personal_trading_api_token(payload):
             continue
         account_id = str(payload.get("account_id", "")).strip()
         if account_id:
@@ -340,7 +390,7 @@ def linked_trading_account_ids() -> set[str]:
             payload = decrypt_auth_payload(row.token_secret, CONFIG.deriv.token_encryption_key)
         except Exception:
             continue
-        if not has_trading_api_token(payload):
+        if not has_personal_trading_api_token(payload):
             continue
         account_id = str(payload.get("account_id", "")).strip()
         if account_id:
@@ -366,7 +416,7 @@ def actively_executing_account_ids() -> set[str]:
             payload = decrypt_auth_payload(row.token_secret, CONFIG.deriv.token_encryption_key)
         except Exception:
             continue
-        if not has_trading_api_token(payload):
+        if not has_personal_trading_api_token(payload):
             continue
         account_id = str(payload.get("account_id", "")).strip()
         if account_id:
@@ -1120,7 +1170,7 @@ def get_current_account(request: Request) -> dict | None:
         account_id = str(stored.get("account_id", "")).strip()
         if not account_id:
             return None
-        token_ready = has_trading_api_token(stored)
+        token_ready = has_personal_trading_api_token(stored)
         account_type = account_type_from_payload(stored)
         return {
             "id": account["id"],
@@ -1130,7 +1180,7 @@ def get_current_account(request: Request) -> dict | None:
             "available_account_types": personal_account_modes(stored),
             "label": account["label"],
             "enabled": account["enabled"],
-            "stake_amount": float(account.get("stake_amount", 0.50)),
+            "stake_amount": FIXED_STAKE_AMOUNT,
             "take_profit": float(account.get("take_profit", 0.0)),
             "stop_loss": float(account.get("stop_loss", 0.0)),
             "execution_status": str(account.get("execution_status", "inactive")),
@@ -1157,7 +1207,7 @@ def get_current_account(request: Request) -> dict | None:
             except Exception:
                 continue
             if str(stored.get("account_id", "")).strip() == account_id:
-                token_ready = has_trading_api_token(stored)
+                token_ready = has_personal_trading_api_token(stored)
                 account_type = account_type_from_payload(stored)
                 return {
                     "id": row.id,
@@ -1167,7 +1217,7 @@ def get_current_account(request: Request) -> dict | None:
                     "available_account_types": personal_account_modes(stored),
                     "label": row.label,
                     "enabled": row.enabled,
-                    "stake_amount": float(row.stake_amount),
+                    "stake_amount": FIXED_STAKE_AMOUNT,
                     "take_profit": float(row.take_profit),
                     "stop_loss": float(row.stop_loss),
                     "execution_status": str(row.execution_status),
@@ -1296,19 +1346,9 @@ def update_personal_trading_settings(
     values = (body.stake_amount, body.take_profit, body.stop_loss)
     if not all(math.isfinite(float(value)) for value in values):
         raise HTTPException(status_code=400, detail="Trading settings must be finite numbers.")
-    minimum_stake = float(CONFIG.strategy.initial_stake)
-    maximum_stake = 1_000_000.0
-    stake_amount = round(float(body.stake_amount), 2)
+    stake_amount = FIXED_STAKE_AMOUNT
     take_profit = round(float(body.take_profit), 2)
     stop_loss = round(float(body.stop_loss), 2)
-    if not minimum_stake <= stake_amount <= maximum_stake:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Stake must be between {minimum_stake:.2f} and "
-                f"{maximum_stake:.2f} USD."
-            ),
-        )
     if take_profit < 0 or stop_loss < 0:
         raise HTTPException(
             status_code=400,
@@ -1391,44 +1431,72 @@ def save_personal_api_token(request: Request, body: PersonalApiTokenRequest) -> 
             ),
         )
 
-    if str(payload.get("auth_type", "")).strip().lower() == "oauth":
-        payload["oauth_access_token"] = str(payload.get("access_token", "")).strip()
-        payload["oauth_refresh_token"] = str(payload.get("refresh_token", "")).strip()
-        payload["oauth_expires_at"] = str(payload.get("expires_at", "")).strip()
-        payload["oauth_scope"] = str(payload.get("scope", "")).strip()
-    payload.update(
-        {
-            "auth_type": "pat",
-            "access_token": api_token,
-            "account_id": account_id,
-            "account_type": account_type_value,
-            "auth_source": "deriv_oauth_with_pat",
-            "pat_token_set": True,
-            "pat_verified_at": datetime.now(timezone.utc).isoformat(),
-        }
-    )
-    token_secret = encrypt_auth_payload(payload, CONFIG.deriv.token_encryption_key)
-    label_prefix = "Demo" if account_type_value == "demo" else "Real"
-    label = (
-        f"{label_prefix} {account_id[:3]}***{account_id[-3:]}"
-        if len(account_id) > 6
-        else f"{label_prefix} Account"
-    )
-    REPOSITORY.update_managed_account(
-        int(account["id"]),
-        label=label,
-        token_secret=token_secret,
-        enabled=bool(account.get("enabled", False)),
-    )
-    REPOSITORY.set_managed_account_execution_status(
-        int(account["id"]),
-        "connecting" if account.get("enabled", False) else "disabled",
+    verified_at = datetime.now(timezone.utc).isoformat()
+    deriv_accounts = {
         (
-            "Trading API token verified"
-            if account.get("enabled", False)
-            else "Trading API token verified; auto trading is disabled"
-        ),
-    )
+            str(item.get("account_id", "")).strip(),
+            normalize_account_type(item.get("account_type")),
+        ): item
+        for item in accounts
+        if str(item.get("account_id", "")).strip()
+    }
+    identity = login_identity_from_payload(payload)
+    shared_modes: set[str] = set()
+
+    for managed_row in REPOSITORY.list_managed_accounts():
+        try:
+            linked_payload = managed_account_payload(managed_row)
+        except Exception:
+            continue
+        if identity and login_identity_from_payload(linked_payload) != identity:
+            continue
+        linked_account_id = str(linked_payload.get("account_id", "")).strip()
+        linked_account_type = account_type_from_payload(linked_payload)
+        deriv_account = deriv_accounts.get((linked_account_id, linked_account_type))
+        if not deriv_account:
+            continue
+        updated_payload = attach_pat_to_payload(
+            linked_payload,
+            api_token=api_token,
+            account_id=linked_account_id,
+            account_type=linked_account_type,
+            verified_at=verified_at,
+        )
+        label_prefix = "Demo" if linked_account_type == "demo" else "Real"
+        label = (
+            f"{label_prefix} {linked_account_id[:3]}***{linked_account_id[-3:]}"
+            if len(linked_account_id) > 6
+            else f"{label_prefix} Account"
+        )
+        REPOSITORY.update_managed_account(
+            int(managed_row.id),
+            label=label,
+            token_secret=encrypt_auth_payload(
+                updated_payload,
+                CONFIG.deriv.token_encryption_key,
+            ),
+            enabled=bool(managed_row.enabled),
+        )
+        REPOSITORY.set_managed_account_execution_status(
+            int(managed_row.id),
+            "connecting" if bool(managed_row.enabled) else "disabled",
+            (
+                "Trading API token verified"
+                if bool(managed_row.enabled)
+                else "Trading API token verified; auto trading is disabled"
+            ),
+        )
+        shared_modes.add(linked_account_type)
+        try:
+            REPOSITORY.update_account_balance(
+                account_id=linked_account_id,
+                balance=float(deriv_account.get("balance", 0.0)),
+                currency=str(deriv_account.get("currency", "USD")),
+                status=str(deriv_account.get("status", "active")),
+            )
+        except (TypeError, ValueError):
+            pass
+
     try:
         REPOSITORY.update_account_balance(
             account_id=account_id,
@@ -1442,13 +1510,18 @@ def save_personal_api_token(request: Request, body: PersonalApiTokenRequest) -> 
         "PERSONAL_API_TOKEN_SAVED",
         "account-dashboard",
         request.client.host if request.client else "unknown",
-        {"account_id_masked": mask_account_id(account_id), "mode": account_type_value},
+        {
+            "account_id_masked": mask_account_id(account_id),
+            "mode": account_type_value,
+            "shared_modes": sorted(shared_modes),
+        },
     )
     return {
         "success": True,
         "has_trading_api_token": True,
         "requires_api_token": False,
         "account_id": mask_account_id(account_id),
+        "shared_account_types": sorted(shared_modes),
     }
 
 @app.post("/me/logout")

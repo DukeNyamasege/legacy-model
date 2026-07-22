@@ -184,6 +184,11 @@ def mask_account_id(account_id: str) -> str:
     return f"{value[:3]}***{value[-3:]}" if len(value) > 6 else "***"
 
 
+def runtime_account_key(token: str, account_id: str) -> str:
+    account = str(account_id or "account").strip() or "account"
+    return f"{token_tag(token)}:{account}"
+
+
 ACCOUNT_ID_PATTERN = re.compile(r"\b[A-Z]{2,6}\d{3,}\b")
 SENSITIVE_TOKEN_PATTERN = re.compile(
     r"\b(?:pat_|ory_at_)[A-Za-z0-9._-]{20,}\b",
@@ -199,6 +204,21 @@ def sanitize_account_ids(message: Any) -> str:
 def normalize_account_type(value: Any, default: str = "demo") -> str:
     normalized = str(value or default or "demo").strip().lower()
     return normalized if normalized in {"demo", "real"} else "demo"
+
+
+def login_identity_from_auth_payload(payload: Dict[str, Any]) -> str:
+    refresh_value = str(
+        payload.get("oauth_refresh_token") or payload.get("refresh_token") or ""
+    ).strip()
+    if refresh_value:
+        return f"oauth_refresh:{hashlib.sha256(refresh_value.encode('utf-8')).hexdigest()}"
+    access_value = str(
+        payload.get("oauth_access_token") or payload.get("access_token") or ""
+    ).strip()
+    if access_value and str(payload.get("auth_source", "")).startswith("deriv_oauth"):
+        return f"oauth_access:{hashlib.sha256(access_value.encode('utf-8')).hexdigest()}"
+    account_id = str(payload.get("account_id", "")).strip()
+    return f"account:{account_id}" if account_id else ""
 
 
 def sanitize_log_value(value: Any) -> Any:
@@ -832,12 +852,14 @@ class ClientSession:
         account_id: str,
         bot: 'TradingBot',
         managed_account_id: int | None = None,
+        credential: str | None = None,
     ):
         self.token = token
+        self.credential = credential or token
         self.account_id = account_id
         self.bot = bot
         self.managed_account_id = managed_account_id
-        self.token_tag = token_tag(token)
+        self.token_tag = token_tag(f"{self.credential}:{self.account_id}")
         self.ws: Optional[websockets.WebSocketClientProtocol] = None
         self.is_connected = False
         self.active_subscriptions: Dict[int, str] = {}  # contract_id -> subscription_id
@@ -851,7 +873,7 @@ class ClientSession:
         app_id = self.bot.app_id
         base_url = self.bot.rest_base_url
         path = f"/trading/v1/options/accounts/{self.account_id}/otp"
-        res = await _rest_request("POST", path, app_id, base_url, token=self.token)
+        res = await _rest_request("POST", path, app_id, base_url, token=self.credential)
         if "error" in res:
             error = res["error"]
             message = sanitize_account_ids(
@@ -1452,6 +1474,9 @@ class TradingBot:
         except (TypeError, ValueError):
             return None
 
+    def _credential_for_token(self, token: str) -> str:
+        return str(self.user_profiles.get(token, {}).get("api_token") or token)
+
     def _load_runtime_accounts(self) -> Tuple[List[str], Dict[str, Dict[str, Any]]]:
         managed_accounts = self.repository.list_managed_accounts()
         if not managed_accounts and legacy_global_tokens_enabled():
@@ -1461,13 +1486,27 @@ class TradingBot:
             profiles = {}
 
         def add_runtime_token(token: str, profile: Dict[str, Any]) -> None:
-            if token in profiles:
-                profiles[token].update({k: v for k, v in profile.items() if v not in {"", None}})
+            account_id = str(profile.get("account_id", "")).strip()
+            key = str(profile.get("runtime_key") or runtime_account_key(token, account_id))
+            profile["api_token"] = token
+            if key in profiles:
+                profiles[key].update({k: v for k, v in profile.items() if v not in {"", None}})
                 return
-            tokens.append(token)
-            profiles[token] = profile
+            tokens.append(key)
+            profiles[key] = profile
 
         if managed_accounts:
+            shared_tokens_by_identity: Dict[str, str] = {}
+            for row in managed_accounts:
+                try:
+                    payload = decrypt_auth_payload(row.token_secret, self.encryption_key)
+                except Exception:
+                    continue
+                identity = login_identity_from_auth_payload(payload)
+                token = self._purchase_token_from_payload(payload)
+                if identity and token:
+                    shared_tokens_by_identity.setdefault(identity, token)
+
             for row in managed_accounts:
                 if not row.enabled:
                     if str(row.execution_status) not in {
@@ -1503,7 +1542,17 @@ class TradingBot:
                     self.logger.error("Managed token %s could not be decrypted: %s", row.id, exc)
                     continue
                 auth_type = str(payload.get("auth_type", "pat")).strip() or "pat"
-                if auth_type == "oauth" and token_is_expiring(payload):
+                identity = login_identity_from_auth_payload(payload)
+                token = self._purchase_token_from_payload(payload)
+                shared_token = shared_tokens_by_identity.get(identity, "")
+                if not token and shared_token:
+                    token = shared_token
+                    auth_type = "pat"
+                    self.logger.info(
+                        "SHARED_PAT_RUNTIME account=%s source=sibling_login",
+                        mask_account_id(str(payload.get("account_id", ""))),
+                    )
+                if not token and auth_type == "oauth" and token_is_expiring(payload):
                     refresh_token_value = str(payload.get("refresh_token", "")).strip()
                     if not refresh_token_value:
                         self._set_account_execution_status(
@@ -1557,7 +1606,7 @@ class TradingBot:
                             exc,
                         )
                         continue
-                token = self._purchase_token_from_payload(payload)
+                    token = self._purchase_token_from_payload(payload)
                 if not token:
                     self._set_account_execution_status(
                         int(row.id),
@@ -1585,7 +1634,7 @@ class TradingBot:
                         "auth_type": "pat" if auth_type == "oauth" else auth_type,
                         "source": "private",
                         "managed_account_id": int(row.id),
-                        "stake_amount": float(row.stake_amount),
+                        "stake_amount": 0.50,
                         "take_profit": float(row.take_profit),
                         "stop_loss": float(row.stop_loss),
                     },
@@ -1696,16 +1745,8 @@ class TradingBot:
         tag = token_tag(token)
         user_id = str(profile.get("id", tag)).strip() or tag
         account_id = str(profile.get("account_id", existing.get("account_id", ""))).strip()
-        configured_base_stake = max(
-            self.base_stake,
-            round(float(profile.get("stake_amount", base_stake) or base_stake), 2),
-        )
-        recovery_pending = bool(existing.get("single_recovery_pending", False)) or float(
-            existing.get("recovery_loss_pool", 0.0)
-        ) > 0
-        current_stake = float(existing.get("current_stake", configured_base_stake))
-        if not recovery_pending:
-            current_stake = configured_base_stake
+        configured_base_stake = 0.50
+        current_stake = configured_base_stake
         st = {
             "token_tag": tag,
             "user_id": user_id,
@@ -2675,6 +2716,7 @@ class TradingBot:
         for token in self.tokens:
             tag = token_tag(token)
             profile = self.user_profiles.get(token, {})
+            credential = self._credential_for_token(token)
             managed_account_id = self._managed_account_id_for_token(token)
             preferred_account_id = str(profile.get("account_id", "")).strip()
             target_environment = normalize_account_type(
@@ -2689,7 +2731,13 @@ class TradingBot:
             self.logger.info("Validating account for token...", extra={"token_tag": tag})
 
             path = "/trading/v1/options/accounts"
-            resp = await _rest_request("GET", path, self.app_id, self.rest_base_url, token=token)
+            resp = await _rest_request(
+                "GET",
+                path,
+                self.app_id,
+                self.rest_base_url,
+                token=credential,
+            )
 
             if "error" in resp:
                 error = resp["error"]
@@ -2911,6 +2959,7 @@ class TradingBot:
                 account_id,
                 self,
                 self._managed_account_id_for_token(token),
+                credential=self._credential_for_token(token),
             )
             self.sessions[token] = session
             session.task = asyncio.create_task(session.connect_and_run())
@@ -3732,7 +3781,10 @@ class TradingBot:
                     symbol_key="underlying_symbol",
                 ),
                 "accounts": [
-                    {"token": token, "account_id": account_id}
+                    {
+                        "token": self._credential_for_token(token),
+                        "account_id": account_id,
+                    }
                     for token, account_id in eligible_accounts
                 ],
             },
@@ -4139,7 +4191,7 @@ class TradingBot:
             "/trading/v1/options/accounts",
             self.app_id,
             self.rest_base_url,
-            token=token,
+            token=self._credential_for_token(token),
         )
         if "error" in response:
             self.logger.warning(
@@ -4615,6 +4667,7 @@ class TradingBot:
                         account_id,
                         self,
                         self._managed_account_id_for_token(token),
+                        credential=self._credential_for_token(token),
                     )
                     self.sessions[token] = session
 

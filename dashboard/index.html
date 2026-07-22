@@ -903,8 +903,8 @@
               <span id="personal-execution-state" class="execution-state">Inactive</span>
             </div>
             <div class="personal-settings-form">
-              <label>Stake amount (USD)
-                <input id="personal-stake" type="number" min="0.50" step="0.01" inputmode="decimal">
+              <label>Stake amount (fixed USD)
+                <input id="personal-stake" type="number" min="0.50" max="0.50" step="0.01" inputmode="decimal" readonly>
               </label>
               <label>Take profit (USD)
                 <input id="personal-take-profit" type="number" min="0" step="0.01" inputmode="decimal">
@@ -1398,7 +1398,7 @@
     const button = $("btn-save-trading-settings");
     const message = $("personal-settings-message");
     const payload = {
-      stake_amount: Number($("personal-stake")?.value),
+      stake_amount: 0.50,
       take_profit: Number($("personal-take-profit")?.value),
       stop_loss: Number($("personal-stop-loss")?.value)
     };

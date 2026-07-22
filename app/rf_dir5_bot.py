@@ -815,11 +815,11 @@ class RFDir5TradingBot(TradingBot):
                 managed_account_id=managed_id,
                 account_id_masked=mask_account_id(account_id),
                 current_balance=float(summary.get("balance") or 0.0),
-                requested_stake=float(state.get("base_stake", self.base_stake)),
+                requested_stake=0.50,
                 proposal_profit_ratio=proposal_profit_ratio,
-                recovery_enabled=self.risk_config.recovery_enabled,
+                recovery_enabled=False,
                 recovery_trigger_losses=self.risk_config.recovery_trigger_losses,
-                minimum_stake=self.base_stake,
+                minimum_stake=0.50,
                 maximum_recovery_balance_fraction=(
                     self.risk_config.maximum_recovery_balance_fraction
                 ),
@@ -901,8 +901,8 @@ class RFDir5TradingBot(TradingBot):
                     float(protection.get("actual_recovery_debt") or 0.0),
                 )
             filtered.append((token, account_id))
-            stake_by_token[token] = plan.stake
-            recovery_by_token[token] = plan.is_recovery
+            stake_by_token[token] = 0.50
+            recovery_by_token[token] = False
             managed_id_by_token[token] = managed_id
             if plan.is_recovery:
                 self.logger.warning(
