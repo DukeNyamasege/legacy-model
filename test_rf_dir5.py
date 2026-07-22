@@ -4,12 +4,12 @@ import asyncio
 import time
 import unittest
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 from sqlalchemy import func, select
 
@@ -1475,6 +1475,50 @@ class RFDecisionTests(unittest.TestCase):
         bot._save_state.assert_called_once()
         bot.logger.warning.assert_called_once()
         bot.logger.error.assert_not_called()
+
+    def test_stale_account_pending_contract_releases_purchase_eligibility(self) -> None:
+        bot = object.__new__(RFDir5TradingBot)
+        bot.valid_clients = [("token-a", "DOT90000001")]
+        bot.sessions = {
+            "token-a": SimpleNamespace(
+                account_id="DOT90000001",
+                pending_contracts={42},
+            )
+        }
+        bot.pending_contract_started_at = {
+            42: datetime.now(timezone.utc) - timedelta(seconds=90)
+        }
+        bot.max_open_trade_seconds = 30
+        bot.pending_contracts_for_current_cycle = {42}
+        bot.unresolved_contracts_from_state = {42}
+        bot.unregistered_contracts = set()
+        bot.contract_symbols = {42: "R_10"}
+        bot.contract_signal_ids = {42: "signal-1"}
+        bot.pending_by_signal = {"signal-1": {42}}
+        bot.outcomes_by_signal = {"signal-1": {}}
+        bot.signal_master_account_ids = {"signal-1": "DOT90000001"}
+        bot.signal_symbols = {"signal-1": "R_10"}
+        bot.delayed_contracts_logged = {42}
+        bot.logger = MagicMock()
+        bot._save_state = MagicMock()
+        bot._copytrading_master_account_id = MagicMock(return_value="DOT90000001")
+
+        self.assertEqual(bot._eligible_purchase_accounts(), [("token-a", "DOT90000001")])
+        self.assertEqual(bot.sessions["token-a"].pending_contracts, set())
+        bot._save_state.assert_called_once()
+        bot.logger.warning.assert_any_call(
+            "STALE_ACCOUNT_PENDING_RELEASED account=%s contract_id=%s "
+            "age_seconds=%s reason=%s; account can join future cycles while "
+            "durable settlement review remains separate",
+            "DOT***001",
+            42,
+            ANY,
+            "rf_account_eligibility",
+            extra={
+                "token_tag": ANY,
+                "contract_id": "42",
+            },
+        )
 
     def test_log_sanitizer_redacts_pat_tokens(self) -> None:
         secret = "pat_" + "abcdefghijklmnopqrstuvwxyz0123456789"

@@ -2573,6 +2573,47 @@ class TradingBot:
         self._save_state()
         return True
 
+    def _release_stale_account_pending_contracts(
+        self,
+        reason: str,
+        *,
+        minimum_age_seconds: float | None = None,
+    ) -> int:
+        """Release stale in-memory account locks so one missed settlement cannot freeze execution."""
+        threshold = float(
+            minimum_age_seconds
+            if minimum_age_seconds is not None
+            else self.max_open_trade_seconds
+        )
+        released = 0
+        for token, session in list(self.sessions.items()):
+            for contract_id in list(session.pending_contracts):
+                age_seconds = self._contract_age_seconds(contract_id)
+                if age_seconds < threshold:
+                    continue
+                signal_id, cycle_closed = self._release_contract_runtime_state(
+                    contract_id
+                )
+                if cycle_closed:
+                    self._clear_closed_signal_runtime_state(signal_id)
+                released += 1
+                self.logger.warning(
+                    "STALE_ACCOUNT_PENDING_RELEASED account=%s contract_id=%s "
+                    "age_seconds=%s reason=%s; account can join future cycles while "
+                    "durable settlement review remains separate",
+                    mask_account_id(session.account_id),
+                    contract_id,
+                    int(age_seconds),
+                    reason,
+                    extra={
+                        "token_tag": token_tag(token),
+                        "contract_id": str(contract_id),
+                    },
+                )
+        if released:
+            self._save_state()
+        return released
+
     def _clear_closed_signal_runtime_state(self, signal_id: str) -> None:
         if not signal_id:
             return

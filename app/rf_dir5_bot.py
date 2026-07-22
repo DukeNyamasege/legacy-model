@@ -1168,6 +1168,7 @@ class RFDir5TradingBot(TradingBot):
         }
 
     def _eligible_purchase_accounts(self) -> list[tuple[str, str]]:
+        self._release_stale_account_pending_contracts("rf_account_eligibility")
         eligible = [
             (token, account_id)
             for token, account_id in super()._eligible_purchase_accounts()
