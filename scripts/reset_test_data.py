@@ -23,6 +23,7 @@ from app.models import (
     Trade,
     TraderLease,
     VirtualGuardState,
+    VirtualTrade,
     utc_now,
 )
 
@@ -134,6 +135,9 @@ def reset_database(
         )
         session.execute(
             delete(ShadowContract).where(ShadowContract.run_id.in_(run_ids))
+        )
+        session.execute(
+            delete(VirtualTrade).where(VirtualTrade.run_id.in_(run_ids))
         )
         session.execute(
             delete(DirectionalSignal).where(DirectionalSignal.run_id.in_(run_ids))
