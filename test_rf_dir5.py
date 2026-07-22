@@ -173,7 +173,7 @@ class RiseFallContractTests(unittest.TestCase):
         self.assertGreaterEqual(config.rf_strategy.minimum_efficiency, 0.80)
         self.assertTrue(config.risk.recovery_enabled)
         self.assertEqual(config.risk.recovery_trigger_losses, 1)
-        self.assertEqual(config.risk.maximum_recovery_balance_fraction, 0.10)
+        self.assertEqual(config.risk.maximum_recovery_balance_fraction, 1.0)
 
     def test_proposal_values_accept_strings_numbers_and_missing_commission(self) -> None:
         economics = parse_proposal_economics(
@@ -890,6 +890,48 @@ class RFRepositoryTests(unittest.TestCase):
         self.assertAlmostEqual(protection["actual_recovery_debt"], 4.0)
         self.assertTrue(plan.is_recovery)
         self.assertAlmostEqual(plan.required_recovery_stake, 8.0)
+
+    def test_affordable_recovery_takes_priority_over_virtual_mode(self) -> None:
+        account_id = self.create_managed_account("Recovery priority")
+        for balance in (99.50, 99.00):
+            self.repository.record_account_outcome(
+                managed_account_id=account_id,
+                account_id_masked="DOT***422",
+                profit=-0.50,
+                current_balance=balance,
+                recovery_enabled=True,
+                recovery_trigger_losses=1,
+                virtual_protection_enabled=True,
+                virtual_trigger_actual_losses=2,
+            )
+        self.assertEqual(
+            self.repository.virtual_protection_for_account(
+                managed_account_id=account_id
+            )["mode"],
+            "VIRTUAL_MODE",
+        )
+
+        plan = self.repository.plan_stake(
+            managed_account_id=account_id,
+            account_id_masked="DOT***422",
+            current_balance=99.00,
+            requested_stake=0.50,
+            proposal_profit_ratio=0.40,
+            recovery_enabled=True,
+            recovery_trigger_losses=1,
+            minimum_stake=0.50,
+            maximum_recovery_balance_fraction=1.0,
+            minimum_balance_reserve=0.50,
+        )
+
+        self.assertTrue(plan.is_recovery)
+        self.assertEqual(plan.stake, 2.50)
+        self.assertEqual(
+            self.repository.virtual_protection_for_account(
+                managed_account_id=account_id
+            )["mode"],
+            "RECOVERY_PENDING",
+        )
 
     def test_only_one_open_virtual_observation_per_account(self) -> None:
         account_id = self.create_managed_account("One Virtual")

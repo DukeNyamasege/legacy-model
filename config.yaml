@@ -117,7 +117,7 @@ rf_strategy:
 risk:
   recovery_enabled: true
   recovery_trigger_losses: 1
-  maximum_recovery_balance_fraction: 0.10
+  maximum_recovery_balance_fraction: 1.0
   minimum_balance_reserve: 0.50
   maximum_open_contracts_per_account: 1
 virtual_protection:

@@ -535,7 +535,7 @@ class RFDir5Repository:
                         max(
                             base_stake,
                             balance * float(maximum_recovery_balance_fraction),
-                        )
+                        ),
                     )
                     if target_stake > recovery_safety_cap + 1e-9:
                         return StakePlan(
@@ -545,6 +545,8 @@ class RFDir5Repository:
                             recovery_debt=state.recovery_loss_debt,
                             required_recovery_stake=required_recovery_stake,
                         )
+                    if state.protection_mode == VIRTUAL_WAITING_FOR_WIN:
+                        state.protection_mode = REAL_RECOVERY_PENDING
 
             state.updated_at = utc_now()
             return StakePlan(

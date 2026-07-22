@@ -220,7 +220,7 @@ class RiseFallStrategySettings(StrictModel):
 class RiskSettings(StrictModel):
     recovery_enabled: bool = True
     recovery_trigger_losses: Literal[1] = 1
-    maximum_recovery_balance_fraction: float = Field(default=0.10, gt=0, le=0.25)
+    maximum_recovery_balance_fraction: float = Field(default=1.0, gt=0, le=1.0)
     minimum_balance_reserve: float = Field(default=0.50, ge=0)
     maximum_open_contracts_per_account: Literal[1] = 1
 
