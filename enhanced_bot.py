@@ -4106,14 +4106,11 @@ class TradingBot:
         account_count: int,
         bulk_incompatible_accounts: List[str],
     ) -> bool:
-        return account_count == 1 or bool(bulk_incompatible_accounts)
+        del account_count
+        return bool(bulk_incompatible_accounts)
 
     def _eligible_purchase_accounts(self) -> List[Tuple[str, str]]:
-        accounts = [
-            (token, account_id)
-            for token, account_id in self.valid_clients
-            if token in self.sessions and self.sessions[token].is_connected
-        ]
+        accounts = list(self.valid_clients)
         unique_accounts: List[Tuple[str, str]] = []
         seen_account_ids: Set[str] = set()
         for token, account_id in accounts:

@@ -1116,21 +1116,15 @@ class RFDir5TradingBot(TradingBot):
         eligible = [
             (token, account_id)
             for token, account_id in super()._eligible_purchase_accounts()
-            if not self.sessions[token].pending_contracts
+            if not self.sessions.get(token)
+            or not self.sessions[token].pending_contracts
         ]
         eligible_tokens = {token for token, _account_id in eligible}
         for token, account_id in self.valid_clients:
             if token in eligible_tokens:
                 continue
             session = self.sessions.get(token)
-            if session is None or not session.is_connected:
-                reason = "private trading connection unavailable"
-                self._set_account_execution_status(
-                    self._managed_account_id_for_token(token),
-                    "reconnecting",
-                    reason,
-                )
-            elif session.pending_contracts:
+            if session is not None and session.pending_contracts:
                 reason = "previous account contract is still settling"
             else:
                 reason = "account is not eligible for this purchase cycle"

@@ -914,10 +914,10 @@ class TimingAndModelTests(unittest.TestCase):
         self.assertIn("DOT***422", sanitized)
         self.assertIn("CR1***456", sanitized)
 
-    def test_single_account_uses_direct_markup_transport(self) -> None:
+    def test_single_pat_account_can_use_rest_purchase_transport(self) -> None:
         bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
 
-        self.assertTrue(
+        self.assertFalse(
             bot._requires_private_purchase_transport(
                 account_count=1,
                 bulk_incompatible_accounts=[],
@@ -1370,22 +1370,28 @@ class ContractRuntimeLockTests(unittest.IsolatedAsyncioTestCase):
             "Invalid or expired token",
         )
 
-    async def test_disconnected_account_is_skipped_without_blocking_healthy_account(self) -> None:
+    async def test_rest_capable_account_stays_eligible_while_private_session_reconnects(self) -> None:
         bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
         bot.valid_clients = [
             ("healthy-token", "DOT90000001"),
-            ("broken-token", "DOT90000002"),
+            ("reconnecting-token", "DOT90000002"),
         ]
         bot.sessions = {
             "healthy-token": MagicMock(is_connected=True),
-            "broken-token": MagicMock(is_connected=False),
+            "reconnecting-token": MagicMock(is_connected=False),
         }
         bot.logger = MagicMock()
 
         with patch.dict(os.environ, {"COPYTRADING_INCLUDE_MASTER": "true"}):
             eligible = bot._eligible_purchase_accounts()
 
-        self.assertEqual(eligible, [("healthy-token", "DOT90000001")])
+        self.assertEqual(
+            eligible,
+            [
+                ("healthy-token", "DOT90000001"),
+                ("reconnecting-token", "DOT90000002"),
+            ],
+        )
 
     async def test_stake_group_failure_returns_errors_only_for_that_group(self) -> None:
         bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)

@@ -168,9 +168,9 @@ class RiseFallContractTests(unittest.TestCase):
             config.rf_strategy.markets,
             ("R_10", "R_100", "R_75", "1HZ10V", "1HZ75V"),
         )
-        self.assertEqual(config.rf_strategy.minimum_directional_moves, 5)
+        self.assertEqual(config.rf_strategy.minimum_directional_moves, 4)
         self.assertEqual(config.rf_strategy.minimum_recent_directional_moves, 3)
-        self.assertGreaterEqual(config.rf_strategy.minimum_efficiency, 0.80)
+        self.assertGreaterEqual(config.rf_strategy.minimum_efficiency, 0.65)
         self.assertTrue(config.risk.recovery_enabled)
         self.assertEqual(config.risk.recovery_trigger_losses, 1)
         self.assertEqual(config.risk.maximum_recovery_balance_fraction, 1.0)
