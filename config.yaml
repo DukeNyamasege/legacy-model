@@ -59,7 +59,7 @@ execution:
   maximum_signal_age_ms: 2500
   maximum_proposal_age_ms: 900
   demo_enabled: true
-  real_enabled: false
+  real_enabled: true
 bayesian:
   enabled: false
   mode: gate

@@ -196,6 +196,11 @@ def sanitize_account_ids(message: Any) -> str:
     return ACCOUNT_ID_PATTERN.sub(lambda match: mask_account_id(match.group(0)), value)
 
 
+def normalize_account_type(value: Any, default: str = "demo") -> str:
+    normalized = str(value or default or "demo").strip().lower()
+    return normalized if normalized in {"demo", "real"} else "demo"
+
+
 def sanitize_log_value(value: Any) -> Any:
     """Redact credentials without changing numeric logging arguments."""
     if isinstance(value, BaseException):
@@ -1572,6 +1577,11 @@ class TradingBot:
                         "name": row.label or f"Account {row.id}",
                         "enabled": True,
                         "account_id": str(payload.get("account_id", "")).strip(),
+                        "account_type": str(
+                            payload.get("account_type")
+                            or payload.get("environment")
+                            or self.environment
+                        ).strip().lower(),
                         "auth_type": "pat" if auth_type == "oauth" else auth_type,
                         "source": "private",
                         "managed_account_id": int(row.id),
@@ -2667,10 +2677,14 @@ class TradingBot:
             profile = self.user_profiles.get(token, {})
             managed_account_id = self._managed_account_id_for_token(token)
             preferred_account_id = str(profile.get("account_id", "")).strip()
+            target_environment = normalize_account_type(
+                profile.get("account_type"),
+                self.environment,
+            )
             self._set_account_execution_status(
                 managed_account_id,
                 "validating",
-                "Validating Deriv trading access",
+                f"Validating Deriv {target_environment} trading access",
             )
             self.logger.info("Validating account for token...", extra={"token_tag": tag})
 
@@ -2691,36 +2705,64 @@ class TradingBot:
             matched = None
             if preferred_account_id:
                 matched = next((acc for acc in accounts if acc.get("account_id") == preferred_account_id), None)
-                if matched and matched.get("account_type") != self.environment:
+                if matched:
+                    matched_environment = normalize_account_type(matched.get("account_type"))
+                    if not profile.get("account_type"):
+                        target_environment = matched_environment
+                    elif matched_environment != target_environment:
+                        self._set_account_execution_status(
+                            managed_account_id,
+                            "invalid_account",
+                            f"Account does not match {target_environment} mode",
+                        )
+                        self.logger.error(
+                            "Configured account %s does not match environment %s",
+                            mask_account_id(preferred_account_id),
+                            target_environment,
+                            extra={"token_tag": tag},
+                        )
+                        matched = None
+            if matched is None:
+                for acc in accounts:
+                    if normalize_account_type(acc.get("account_type")) == target_environment:
+                        matched = acc
+                        break
+            if matched is None and not profile.get("account_type"):
+                matched = accounts[0] if accounts else None
+                if matched is not None:
+                    target_environment = normalize_account_type(matched.get("account_type"))
+            if matched is not None:
+                matched_environment = normalize_account_type(matched.get("account_type"))
+                if matched_environment != target_environment:
                     self._set_account_execution_status(
                         managed_account_id,
                         "invalid_account",
-                        f"Account does not match {self.environment} mode",
+                        f"Account does not match {target_environment} mode",
                     )
                     self.logger.error(
                         "Configured account %s does not match environment %s",
                         mask_account_id(preferred_account_id),
-                        self.environment,
+                        target_environment,
                         extra={"token_tag": tag},
                     )
                     matched = None
-            if matched is None:
-                for acc in accounts:
-                    if acc.get("account_type") == self.environment:
-                        matched = acc
-                        break
 
             if not matched:
                 self._set_account_execution_status(
                     managed_account_id,
                     "invalid_account",
-                    f"No Options {self.environment} account was found",
+                    f"No Options {target_environment} account was found",
                 )
-                self.logger.error("No valid options %s account found for token", self.environment, extra={"token_tag": tag})
+                self.logger.error(
+                    "No valid options %s account found for token",
+                    target_environment,
+                    extra={"token_tag": tag},
+                )
                 continue
 
             account_id = matched["account_id"]
             profile["account_id"] = account_id
+            profile["account_type"] = target_environment
             existing_index = account_indexes.get(account_id)
             if existing_index is not None:
                 existing_token, _ = valid[existing_index]
@@ -2801,7 +2843,7 @@ class TradingBot:
             )
             self.logger.info(
                 "Successfully validated %s account: %s",
-                self.environment,
+                target_environment,
                 mask_account_id(account_id),
                 extra={
                     "token_tag": tag,
@@ -3575,6 +3617,84 @@ class TradingBot:
         eligible_accounts: List[Tuple[str, str]],
         stake_amount: float,
     ) -> List[Dict[str, Any]]:
+        environment_groups: Dict[str, List[Tuple[str, str]]] = {}
+        for token, account_id in eligible_accounts:
+            environment = self._account_environment_for_token(token)
+            environment_groups.setdefault(environment, []).append((token, account_id))
+        if len(environment_groups) > 1:
+            results = await asyncio.gather(
+                *(
+                    self._purchase_stake_group_for_environment(
+                        signal=signal,
+                        eligible_accounts=accounts,
+                        stake_amount=stake_amount,
+                        environment=environment,
+                    )
+                    for environment, accounts in environment_groups.items()
+                ),
+                return_exceptions=True,
+            )
+            transactions: List[Dict[str, Any]] = []
+            for environment, accounts, result in zip(
+                environment_groups.keys(),
+                environment_groups.values(),
+                results,
+            ):
+                if isinstance(result, Exception):
+                    message = sanitize_account_ids(str(result))
+                    self.logger.error(
+                        "Purchase environment group failed environment=%s signal_id=%s "
+                        "account_count=%s: %s; accounts in this environment only are skipped",
+                        environment,
+                        signal.signal_id,
+                        len(accounts),
+                        message,
+                    )
+                    transactions.extend(
+                        {
+                            "account_id": account_id,
+                            "error": {"message": message},
+                        }
+                        for _token, account_id in accounts
+                    )
+                else:
+                    transactions.extend(result)
+            return transactions
+        environment = next(iter(environment_groups.keys()), self.environment)
+        return await self._purchase_stake_group_for_environment(
+            signal=signal,
+            eligible_accounts=eligible_accounts,
+            stake_amount=stake_amount,
+            environment=environment,
+        )
+
+    async def _purchase_stake_group_for_environment(
+        self,
+        *,
+        signal: CandidateSignal,
+        eligible_accounts: List[Tuple[str, str]],
+        stake_amount: float,
+        environment: str,
+    ) -> List[Dict[str, Any]]:
+        environment = normalize_account_type(environment, self.environment)
+        if environment == "real" and not self._real_trading_allowed():
+            message = "Real trading is disabled on this VPS"
+            for token, account_id in eligible_accounts:
+                self._set_account_execution_status(
+                    self._managed_account_id_for_token(token),
+                    "real_disabled",
+                    message,
+                )
+                self.logger.warning(
+                    "REAL_PURCHASE_SKIPPED account=%s reason=%s",
+                    mask_account_id(account_id),
+                    message,
+                    extra={"token_tag": token_tag(token)},
+                )
+            return [
+                {"account_id": account_id, "error": {"message": message}}
+                for _token, account_id in eligible_accounts
+            ]
         incompatible = self._bulk_purchase_incompatible_accounts(eligible_accounts)
         if self._requires_private_purchase_transport(
             account_count=len(eligible_accounts),
@@ -3586,7 +3706,7 @@ class TradingBot:
                 stake_amount=stake_amount,
             )
 
-        bulk_path = f"/trading/v1/options/contracts/bulk-purchase/{self.environment}"
+        bulk_path = f"/trading/v1/options/contracts/bulk-purchase/{environment}"
         self.logger.info(
             "BULK_PURCHASE_REQUEST endpoint=%s app_id=%s account_count=%s "
             "accounts=%s pat_fingerprints=%s symbol=%s contract_type=%s stake=%.2f",
@@ -3893,6 +4013,23 @@ class TradingBot:
     def _auth_type_for_token(self, token: str) -> str:
         profile = self.user_profiles.get(token, {})
         return str(profile.get("auth_type", "pat")).strip().lower() or "pat"
+
+    def _account_environment_for_token(self, token: str) -> str:
+        profile = self.user_profiles.get(token, {})
+        return normalize_account_type(profile.get("account_type"), self.environment)
+
+    def _real_trading_allowed(self) -> bool:
+        env_mode = os.getenv("TRADING_MODE", self.environment).strip().lower()
+        env_allowed = os.getenv(
+            "ALLOW_REAL_TRADING",
+            str(getattr(self.test2_config.deriv, "allow_real_trading", False)),
+        ).strip().lower() in {"1", "true", "yes"}
+        return bool(
+            getattr(self.test2_config.execution, "real_enabled", False)
+            and getattr(self.test2_config.deriv, "allow_real_trading", False)
+            and env_allowed
+            and env_mode == "real"
+        )
 
     def _bulk_purchase_token_capable(self, token: str) -> bool:
         return self._auth_type_for_token(token) != "oauth"

@@ -121,6 +121,44 @@
       background: rgba(3, 22, 57, .5);
     }
     .personal-accent .api-token-form input::placeholder { color: rgba(255,255,255,.58); }
+    .account-mode-switch {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px;
+      border: 1px solid rgba(255,255,255,.24);
+      border-radius: 999px;
+      background: rgba(3, 20, 55, .38);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.08), 0 12px 28px rgba(0,0,0,.18);
+    }
+    .account-mode-switch button {
+      min-height: 34px;
+      padding: 0 15px;
+      border-radius: 999px;
+      border: 0;
+      color: rgba(255,255,255,.72);
+      background: transparent;
+      box-shadow: none;
+      font-size: .78rem;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .account-mode-switch button.active {
+      color: #fff;
+      background: linear-gradient(135deg, #0b4fb4, #1d7dff);
+      box-shadow: 0 8px 20px rgba(0, 57, 150, .38);
+    }
+    .account-mode-switch button:disabled {
+      opacity: .38;
+      cursor: not-allowed;
+    }
+    .account-mode-label {
+      margin-top: 8px;
+      color: rgba(255,255,255,.72);
+      font-size: .74rem;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
     html[data-theme="dark"] .personal-accent {
       border-color: rgba(96, 164, 255, .66);
       background:
@@ -798,6 +836,11 @@
         <div>
           <span style="display: block; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 4px; opacity: 0.8;">Account Balance</span>
           <strong id="personal-balance" style="font-size: 2.5rem; line-height: 1;">0.00</strong>
+          <div class="account-mode-label" id="account-mode-label">Demo account</div>
+          <div class="account-mode-switch" aria-label="Switch account type">
+            <button id="account-mode-demo" type="button" data-account-mode="demo">Demo</button>
+            <button id="account-mode-real" type="button" data-account-mode="real">Real</button>
+          </div>
         </div>
         <div style="display: flex; gap: 15px; text-align: center;">
           <div>
@@ -1207,6 +1250,8 @@
   }
   let isAutoTrading = false;
   let hasTradingApiToken = false;
+  let activeAccountType = "demo";
+  let availableAccountTypes = ["demo"];
 
   function setPersonalSettingsExpanded(expanded) {
     const panel = $("personal-settings-panel");
@@ -1218,6 +1263,44 @@
     toggle.setAttribute("aria-expanded", String(shouldExpand));
     content.setAttribute("aria-hidden", String(!shouldExpand));
     content.inert = !shouldExpand;
+  }
+
+  function updateAccountModeSwitch() {
+    const demoBtn = $("account-mode-demo");
+    const realBtn = $("account-mode-real");
+    const label = $("account-mode-label");
+    const modes = new Set(availableAccountTypes || []);
+    if (label) {
+      label.textContent = `${activeAccountType === "real" ? "Real" : "Demo"} account`;
+    }
+    for (const button of [demoBtn, realBtn]) {
+      if (!button) continue;
+      const mode = button.getAttribute("data-account-mode") || "demo";
+      button.classList.toggle("active", mode === activeAccountType);
+      button.disabled = !modes.has(mode) || mode === activeAccountType;
+      button.title = modes.has(mode)
+        ? ""
+        : `No linked ${mode} account found for this login`;
+    }
+  }
+
+  async function switchAccountMode(mode) {
+    if (!mode || mode === activeAccountType) return;
+    const buttons = [$("account-mode-demo"), $("account-mode-real")].filter(Boolean);
+    buttons.forEach(button => { button.disabled = true; });
+    try {
+      await api("/me/switch-account", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ account_type: mode })
+      });
+      activeAccountType = mode;
+      await refresh();
+    } catch (error) {
+      alert(error.message || `Could not switch to ${mode} account.`);
+    } finally {
+      updateAccountModeSwitch();
+    }
   }
 
   async function toggleAutoTrade() {
@@ -1350,6 +1433,8 @@
   $("btn-toggle-auto")?.addEventListener("click", toggleAutoTrade);
   $("btn-save-api-token")?.addEventListener("click", saveApiToken);
   $("btn-save-trading-settings")?.addEventListener("click", saveTradingSettings);
+  $("account-mode-demo")?.addEventListener("click", () => switchAccountMode("demo"));
+  $("account-mode-real")?.addEventListener("click", () => switchAccountMode("real"));
   document.querySelectorAll("[data-activity-filter]").forEach(button => {
     button.addEventListener("click", () => {
       currentActivityFilter = button.getAttribute("data-activity-filter") || "all";
@@ -1422,6 +1507,11 @@
         
         isAutoTrading = Boolean(me.enabled);
         hasTradingApiToken = Boolean(me.has_trading_api_token);
+        activeAccountType = me.account_type || "demo";
+        availableAccountTypes = Array.isArray(me.available_account_types)
+          ? me.available_account_types
+          : [activeAccountType];
+        updateAccountModeSwitch();
         const personalSettings = me.settings || {};
         setPersonalSettingValue("personal-stake", personalSettings.stake_amount ?? 0.50);
         setPersonalSettingValue("personal-take-profit", personalSettings.take_profit ?? 0);
@@ -1440,6 +1530,9 @@
         $("btn-login").style.display = "inline-flex";
         $("btn-logout").style.display = "none";
         hasTradingApiToken = false;
+        activeAccountType = "demo";
+        availableAccountTypes = ["demo"];
+        updateAccountModeSwitch();
         if ($("api-token-panel")) $("api-token-panel").style.display = "none";
         if ($("auto-trade-panel")) $("auto-trade-panel").style.display = "none";
         if ($("personal-settings-panel")) $("personal-settings-panel").style.display = "none";

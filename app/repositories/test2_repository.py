@@ -298,6 +298,17 @@ class Test2Repository:
             )
             session.merge(row)
 
+    def set_client_session_account(self, session_hash: str, managed_account_id: int) -> None:
+        with self.database.session() as session:
+            row = session.get(ClientSession, str(session_hash))
+            if row is None:
+                raise ValueError("Client session was not found")
+            account = session.get(ManagedAccount, int(managed_account_id))
+            if account is None:
+                raise ValueError("Managed account was not found")
+            row.managed_account_id = int(managed_account_id)
+            row.last_seen_at = utc_now()
+
     def client_session_account(self, session_hash: str) -> dict[str, Any] | None:
         with self.database.session() as session:
             row = session.get(ClientSession, str(session_hash))

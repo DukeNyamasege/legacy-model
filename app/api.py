@@ -105,6 +105,10 @@ class PersonalApiTokenRequest(BaseModel):
     api_token: str
 
 
+class PersonalAccountSwitchRequest(BaseModel):
+    account_type: str
+
+
 class PersonalTradingSettingsRequest(BaseModel):
     stake_amount: float
     take_profit: float = 0.0
@@ -244,6 +248,71 @@ def trading_api_token_from_payload(payload: dict) -> str:
 
 def has_trading_api_token(payload: dict) -> bool:
     return bool(trading_api_token_from_payload(payload))
+
+
+def normalize_account_type(value: object, *, default: str = "demo") -> str:
+    normalized = str(value or default or "demo").strip().lower()
+    return normalized if normalized in {"demo", "real"} else "demo"
+
+
+def account_type_from_payload(payload: dict) -> str:
+    return normalize_account_type(
+        payload.get("account_type")
+        or payload.get("environment")
+        or payload.get("trading_mode")
+        or REPOSITORY.runtime_mode()
+    )
+
+
+def login_identity_from_payload(payload: dict) -> str:
+    for key in (
+        "oauth_refresh_token",
+        "refresh_token",
+        "oauth_access_token",
+        "access_token",
+    ):
+        value = str(payload.get(key, "")).strip()
+        if value:
+            return f"{key}:{hashlib.sha256(value.encode('utf-8')).hexdigest()}"
+    account_id = str(payload.get("account_id", "")).strip()
+    return f"account:{account_id}" if account_id else ""
+
+
+def managed_account_payload(row) -> dict:
+    return decrypt_auth_payload(row.token_secret, CONFIG.deriv.token_encryption_key)
+
+
+def personal_account_modes(current_payload: dict) -> list[str]:
+    identity = login_identity_from_payload(current_payload)
+    modes: set[str] = set()
+    if not identity:
+        return [account_type_from_payload(current_payload)]
+    for row in REPOSITORY.list_managed_accounts():
+        try:
+            payload = managed_account_payload(row)
+        except Exception:
+            continue
+        if login_identity_from_payload(payload) == identity:
+            modes.add(account_type_from_payload(payload))
+    return sorted(modes, key=lambda item: {"demo": 0, "real": 1}.get(item, 9))
+
+
+def find_linked_account_for_type(current_payload: dict, account_type: str):
+    target_type = normalize_account_type(account_type)
+    identity = login_identity_from_payload(current_payload)
+    if not identity:
+        return None, {}
+    for row in REPOSITORY.list_managed_accounts():
+        try:
+            payload = managed_account_payload(row)
+        except Exception:
+            continue
+        if (
+            login_identity_from_payload(payload) == identity
+            and account_type_from_payload(payload) == target_type
+        ):
+            return row, payload
+    return None, {}
 
 
 def trading_ready_account_ids() -> set[str]:
@@ -434,9 +503,15 @@ def filter_summary_to_trading_ready_accounts(summary: dict) -> dict:
     )
 
 
-def merge_oauth_payload(existing: dict, oauth_payload: dict, account_id: str) -> dict:
+def merge_oauth_payload(
+    existing: dict,
+    oauth_payload: dict,
+    account_id: str,
+    account_type: str = "",
+) -> dict:
     merged = dict(oauth_payload)
     merged["account_id"] = account_id
+    merged["account_type"] = normalize_account_type(account_type)
     merged["auth_source"] = "deriv_oauth"
     trading_token = trading_api_token_from_payload(existing)
     if trading_token:
@@ -910,72 +985,108 @@ def oauth_callback(
         return redirect_with_oauth_error(f"OAuth account lookup failed: {detail}")
 
     runtime_mode_value = REPOSITORY.runtime_mode()
-    matched = next(
-        (account for account in accounts if account.get("account_type") == runtime_mode_value),
-        accounts[0] if accounts else None,
-    )
-    if not matched:
+    option_accounts = [
+        account
+        for account in accounts
+        if normalize_account_type(account.get("account_type")) in {"demo", "real"}
+        and str(account.get("account_id", "")).strip()
+    ]
+    if not option_accounts:
         raise HTTPException(
             status_code=400,
-            detail=f"No Options account is available for runtime mode {runtime_mode_value}",
+            detail="No demo or real Options account is available for this Deriv login",
         )
 
-    account_id = str(matched.get("account_id", "")).strip()
-    label = f"OAuth {account_id[:3]}***{account_id[-3:]}" if len(account_id) > 6 else "OAuth Account"
-
-    existing_id = None
-    existing_enabled = None
-    existing_payload: dict = {}
+    rows_by_account_id: dict[str, object] = {}
+    payloads_by_account_id: dict[str, dict] = {}
     for row in REPOSITORY.list_managed_accounts():
         try:
-            stored = decrypt_auth_payload(row.token_secret, CONFIG.deriv.token_encryption_key)
+            stored = managed_account_payload(row)
         except Exception:
             continue
-        if str(stored.get("account_id", "")).strip() == account_id:
-            existing_id = int(row.id)
-            existing_enabled = bool(row.enabled)
-            existing_payload = stored
-            break
-    token_secret = encrypt_auth_payload(
-        merge_oauth_payload(existing_payload, token_payload, account_id),
-        CONFIG.deriv.token_encryption_key,
-    )
-    if existing_id is None:
-        account_row = REPOSITORY.add_managed_account(
-            label=label,
-            token_secret=token_secret,
-            enabled=False,
-        )
-    else:
-        account_row = REPOSITORY.update_managed_account(
-            existing_id,
-            label=label,
-            token_secret=token_secret,
-            enabled=existing_enabled,
-        )
+        stored_account_id = str(stored.get("account_id", "")).strip()
+        if stored_account_id:
+            rows_by_account_id[stored_account_id] = row
+            payloads_by_account_id[stored_account_id] = stored
 
-    try:
-        REPOSITORY.update_account_balance(
-            account_id=account_id,
-            balance=float(matched.get("balance", 0.0)),
-            currency=str(matched.get("currency", "USD")),
-            status=str(matched.get("status", "active")),
+    created_rows: dict[str, dict] = {}
+    selected_account_row: dict | None = None
+    selected_account_type = normalize_account_type(runtime_mode_value)
+    preferred = next(
+        (
+            account
+            for account in option_accounts
+            if normalize_account_type(account.get("account_type")) == selected_account_type
+        ),
+        option_accounts[0],
+    )
+    preferred_account_id = str(preferred.get("account_id", "")).strip()
+
+    for item in option_accounts:
+        account_id = str(item.get("account_id", "")).strip()
+        account_type = normalize_account_type(item.get("account_type"))
+        label_prefix = "Demo" if account_type == "demo" else "Real"
+        label = (
+            f"{label_prefix} {account_id[:3]}***{account_id[-3:]}"
+            if len(account_id) > 6
+            else f"{label_prefix} Account"
         )
-    except (TypeError, ValueError):
-        pass
+        existing = rows_by_account_id.get(account_id)
+        existing_payload = payloads_by_account_id.get(account_id, {})
+        token_secret = encrypt_auth_payload(
+            merge_oauth_payload(existing_payload, token_payload, account_id, account_type),
+            CONFIG.deriv.token_encryption_key,
+        )
+        if existing is None:
+            account_row = REPOSITORY.add_managed_account(
+                label=label,
+                token_secret=token_secret,
+                enabled=False,
+            )
+        else:
+            account_row = REPOSITORY.update_managed_account(
+                int(existing.id),
+                label=label,
+                token_secret=token_secret,
+                enabled=bool(existing.enabled),
+            )
+        created_rows[account_id] = account_row
+        if account_id == preferred_account_id:
+            selected_account_row = account_row
+
+        try:
+            REPOSITORY.update_account_balance(
+                account_id=account_id,
+                balance=float(item.get("balance", 0.0)),
+                currency=str(item.get("currency", "USD")),
+                status=str(item.get("status", "active")),
+            )
+        except (TypeError, ValueError):
+            pass
+
+    if selected_account_row is None:
+        selected_account_row = next(iter(created_rows.values()))
 
     REPOSITORY.audit(
         "OAUTH_ACCOUNT_LINKED",
         "oauth-callback",
         request.client.host if request.client else "unknown",
-        {"account_id_masked": label, "mode": runtime_mode_value},
+        {
+            "account_id_masked": mask_account_id(preferred_account_id),
+            "modes": sorted(
+                {
+                    normalize_account_type(account.get("account_type"))
+                    for account in option_accounts
+                }
+            ),
+        },
     )
 
     raw_session_token = secrets.token_urlsafe(48)
     expires_at = datetime.now(timezone.utc) + timedelta(days=CLIENT_SESSION_DAYS)
     REPOSITORY.create_client_session(
         session_hash=session_hash(raw_session_token),
-        managed_account_id=int(account_row["id"]),
+        managed_account_id=int(selected_account_row["id"]),
         expires_at=expires_at,
     )
 
@@ -1009,10 +1120,13 @@ def get_current_account(request: Request) -> dict | None:
         if not account_id:
             return None
         token_ready = has_trading_api_token(stored)
+        account_type = account_type_from_payload(stored)
         return {
             "id": account["id"],
             "account_id": account_id,
             "account_id_masked": mask_account_id(account_id),
+            "account_type": account_type,
+            "available_account_types": personal_account_modes(stored),
             "label": account["label"],
             "enabled": account["enabled"],
             "stake_amount": float(account.get("stake_amount", 0.50)),
@@ -1043,10 +1157,13 @@ def get_current_account(request: Request) -> dict | None:
                 continue
             if str(stored.get("account_id", "")).strip() == account_id:
                 token_ready = has_trading_api_token(stored)
+                account_type = account_type_from_payload(stored)
                 return {
                     "id": row.id,
                     "account_id": account_id,
                     "account_id_masked": mask_account_id(account_id),
+                    "account_type": account_type,
+                    "available_account_types": personal_account_modes(stored),
                     "label": row.label,
                     "enabled": row.enabled,
                     "stake_amount": float(row.stake_amount),
@@ -1076,6 +1193,8 @@ def get_me(request: Request) -> dict:
     return {
         "authenticated": True,
         "account_id": personal["account"],
+        "account_type": account.get("account_type", "demo"),
+        "available_account_types": account.get("available_account_types", ["demo"]),
         "label": f"Account {account['account_id_masked']}",
         "enabled": account["enabled"],
         "has_trading_api_token": account.get("has_trading_api_token", False),
@@ -1098,6 +1217,47 @@ def get_me(request: Request) -> dict:
         },
         "virtual_protection": personal.get("virtual_protection", {}),
     }
+
+
+@app.post("/me/switch-account")
+def switch_personal_account(request: Request, body: PersonalAccountSwitchRequest) -> dict:
+    session_token = request.cookies.get(CLIENT_SESSION_COOKIE)
+    account = get_current_account(request)
+    if not account or not session_token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    row = REPOSITORY.managed_account(int(account["id"]))
+    if not row:
+        raise HTTPException(status_code=404, detail="Managed account was not found.")
+    try:
+        current_payload = decrypt_auth_payload(
+            row["token_secret"],
+            CONFIG.deriv.token_encryption_key,
+        )
+    except Exception:
+        raise HTTPException(status_code=409, detail="Current account credential is unreadable")
+    target_type = normalize_account_type(body.account_type)
+    target_row, _target_payload = find_linked_account_for_type(current_payload, target_type)
+    if target_row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No linked {target_type} account was found for this Deriv login.",
+        )
+    REPOSITORY.set_client_session_account(
+        session_hash(session_token),
+        int(target_row.id),
+    )
+    REPOSITORY.audit(
+        "PERSONAL_ACCOUNT_TYPE_SWITCHED",
+        str(account.get("account_id_masked", "account")),
+        request.client.host if request.client else "unknown",
+        {
+            "from": account.get("account_type", "demo"),
+            "to": target_type,
+            "managed_account_id": int(target_row.id),
+        },
+    )
+    return {"success": True, "account_type": target_type}
+
 
 @app.post("/me/auto-trade")
 def toggle_auto_trade(request: Request, body: AutoTradeRequest) -> dict:
@@ -1211,13 +1371,13 @@ def save_personal_api_token(request: Request, body: PersonalApiTokenRequest) -> 
         raise HTTPException(status_code=400, detail=f"API token verification failed: {exc}")
 
     account_id = str(account["account_id"]).strip()
-    runtime_mode_value = REPOSITORY.runtime_mode()
+    account_type_value = normalize_account_type(account.get("account_type"))
     matched = next(
         (
             item
             for item in accounts
             if str(item.get("account_id", "")).strip() == account_id
-            and str(item.get("account_type", "")).strip() == runtime_mode_value
+            and normalize_account_type(item.get("account_type")) == account_type_value
         ),
         None,
     )
@@ -1226,7 +1386,7 @@ def save_personal_api_token(request: Request, body: PersonalApiTokenRequest) -> 
             status_code=400,
             detail=(
                 "This API token does not match the logged-in Options "
-                f"{runtime_mode_value} account."
+                f"{account_type_value} account."
             ),
         )
 
@@ -1240,13 +1400,19 @@ def save_personal_api_token(request: Request, body: PersonalApiTokenRequest) -> 
             "auth_type": "pat",
             "access_token": api_token,
             "account_id": account_id,
+            "account_type": account_type_value,
             "auth_source": "deriv_oauth_with_pat",
             "pat_token_set": True,
             "pat_verified_at": datetime.now(timezone.utc).isoformat(),
         }
     )
     token_secret = encrypt_auth_payload(payload, CONFIG.deriv.token_encryption_key)
-    label = f"Account {account_id[:3]}***{account_id[-3:]}" if len(account_id) > 6 else "Account"
+    label_prefix = "Demo" if account_type_value == "demo" else "Real"
+    label = (
+        f"{label_prefix} {account_id[:3]}***{account_id[-3:]}"
+        if len(account_id) > 6
+        else f"{label_prefix} Account"
+    )
     REPOSITORY.update_managed_account(
         int(account["id"]),
         label=label,
@@ -1275,7 +1441,7 @@ def save_personal_api_token(request: Request, body: PersonalApiTokenRequest) -> 
         "PERSONAL_API_TOKEN_SAVED",
         "account-dashboard",
         request.client.host if request.client else "unknown",
-        {"account_id_masked": mask_account_id(account_id), "mode": runtime_mode_value},
+        {"account_id_masked": mask_account_id(account_id), "mode": account_type_value},
     )
     return {
         "success": True,
@@ -1557,15 +1723,18 @@ def settings_accounts() -> dict:
             auth_type = str(payload.get("auth_type", "pat")).strip() or "pat"
             token_ready = has_trading_api_token(payload)
             account_id = str(payload.get("account_id", "")).strip()
+            account_type = account_type_from_payload(payload)
             if len(account_id) > 6:
                 account_id_masked = f"{account_id[:3]}***{account_id[-3:]}"
         except Exception:
             token_ready = False
+            account_type = "demo"
         accounts.append(
             {
                 "id": row.id,
                 "label": row.label or f"Account {row.id}",
                 "enabled": row.enabled,
+                "account_type": account_type,
                 "token_masked": "Stored securely",
                 "auth_type": auth_type,
                 "has_trading_api_token": token_ready,
