@@ -1473,6 +1473,8 @@ class RFDecisionTests(unittest.TestCase):
         )
         self.assertNotIn(42, bot.pending_contracts_for_current_cycle)
         bot._save_state.assert_called_once()
+        bot.logger.warning.assert_called_once()
+        bot.logger.error.assert_not_called()
 
     def test_log_sanitizer_redacts_pat_tokens(self) -> None:
         secret = "pat_" + "abcdefghijklmnopqrstuvwxyz0123456789"

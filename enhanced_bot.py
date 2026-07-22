@@ -2562,7 +2562,7 @@ class TradingBot:
         if contract_id not in self.pending_contracts_for_current_cycle:
             return False
         self.pending_contracts_for_current_cycle.discard(contract_id)
-        self.logger.error(
+        self.logger.warning(
             "STALE_CONTRACT_ACCOUNT_ISOLATED contract_id=%s age_seconds=%s reason=%s; "
             "healthy accounts may continue while settlement reconciliation remains active",
             contract_id,

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections import deque
+from collections import Counter, deque
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
@@ -791,6 +791,7 @@ class RFDir5TradingBot(TradingBot):
         economics: ProposalEconomics,
     ) -> None:
         eligible = self._eligible_purchase_accounts()
+        skip_reasons: Counter[str] = Counter()
         stake_by_token: dict[str, float] = {}
         recovery_by_token: dict[str, bool] = {}
         managed_id_by_token: dict[str, int] = {}
@@ -810,11 +811,13 @@ class RFDir5TradingBot(TradingBot):
                     signal.symbol,
                     signal.contract_type,
                 )
+                skip_reasons["contract_not_verified"] += 1
                 continue
             state = self._client_state_for_token(token, account_id=account_id)
             managed_id = self._managed_account_id_for_token(token)
             summary = self.repository.account_summary(account_id)
             if managed_id is None:
+                skip_reasons["missing_managed_account"] += 1
                 continue
             if not summary.get("updated_at"):
                 self._set_account_execution_status(
@@ -827,6 +830,7 @@ class RFDir5TradingBot(TradingBot):
                     "healthy accounts continue",
                     mask_account_id(account_id),
                 )
+                skip_reasons["balance_snapshot_unavailable"] += 1
                 continue
             plan = self.rf_repository.plan_stake(
                 managed_account_id=managed_id,
@@ -858,6 +862,7 @@ class RFDir5TradingBot(TradingBot):
                         mask_account_id(account_id),
                         plan.reason,
                     )
+                    skip_reasons["insufficient_balance"] += 1
                 else:
                     self.logger.warning(
                         "RF_ACCOUNT_SKIPPED account=%s reason=%s; "
@@ -865,6 +870,7 @@ class RFDir5TradingBot(TradingBot):
                         mask_account_id(account_id),
                         plan.reason,
                     )
+                    skip_reasons["risk_plan_blocked"] += 1
                 continue
             protection = self.rf_repository.virtual_protection_for_account(
                 managed_account_id=managed_id,
@@ -973,7 +979,39 @@ class RFDir5TradingBot(TradingBot):
             )
             return
         if not filtered:
-            self._mark_rf_decision(signal, "SKIP_INSUFFICIENT_BALANCE", "no risk-eligible accounts", selected=True)
+            if not eligible:
+                self._mark_rf_decision(
+                    signal,
+                    "SKIP_NO_ELIGIBLE_ACCOUNTS",
+                    "all accounts disabled, settling, or unavailable",
+                    selected=True,
+                )
+                return
+            reason_summary = ",".join(
+                f"{name}={count}" for name, count in sorted(skip_reasons.items())
+            ) or "no risk-eligible accounts"
+            if set(skip_reasons) == {"insufficient_balance"}:
+                self._mark_rf_decision(
+                    signal,
+                    "SKIP_INSUFFICIENT_BALANCE",
+                    reason_summary,
+                    selected=True,
+                )
+                return
+            if set(skip_reasons) == {"contract_not_verified"}:
+                self._mark_rf_decision(
+                    signal,
+                    "SKIP_CONTRACT_NOT_VERIFIED",
+                    reason_summary,
+                    selected=True,
+                )
+                return
+            self._mark_rf_decision(
+                signal,
+                "SKIP_NO_RISK_ELIGIBLE_ACCTS",
+                reason_summary,
+                selected=True,
+            )
             return
 
         self.is_trading_locked = True
