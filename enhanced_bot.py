@@ -1746,7 +1746,12 @@ class TradingBot:
         user_id = str(profile.get("id", tag)).strip() or tag
         account_id = str(profile.get("account_id", existing.get("account_id", ""))).strip()
         configured_base_stake = 0.50
-        current_stake = configured_base_stake
+        recovery_pending = bool(existing.get("single_recovery_pending", False)) or float(
+            existing.get("recovery_loss_pool", 0.0)
+        ) > 0
+        current_stake = float(existing.get("current_stake", configured_base_stake))
+        if not recovery_pending:
+            current_stake = configured_base_stake
         st = {
             "token_tag": tag,
             "user_id": user_id,
