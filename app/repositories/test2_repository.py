@@ -7,6 +7,7 @@ import socket
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import case, func, select, update
 
@@ -85,6 +86,91 @@ class Test2Repository:
 
     def _current_run_trade_filter(self):
         return Trade.signal_id.in_(self._current_run_signal_ids())
+
+    def _reporting_timezone(self) -> ZoneInfo:
+        name = (
+            os.getenv("TRADING_REPORT_TIMEZONE")
+            or os.getenv("DASHBOARD_TIMEZONE")
+            or "Africa/Nairobi"
+        ).strip()
+        try:
+            return ZoneInfo(name)
+        except ZoneInfoNotFoundError:
+            return ZoneInfo("UTC")
+
+    def _local_period_bounds(
+        self,
+        period: str,
+        *,
+        now: datetime | None = None,
+    ) -> tuple[datetime, datetime]:
+        tz = self._reporting_timezone()
+        current = now or utc_now()
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=timezone.utc)
+        local_now = current.astimezone(tz)
+        today_start = datetime(
+            local_now.year,
+            local_now.month,
+            local_now.day,
+            tzinfo=tz,
+        )
+        normalized = str(period or "today").strip().lower()
+        if normalized == "yesterday":
+            start = today_start - timedelta(days=1)
+            end = today_start
+        elif normalized == "week":
+            start = today_start - timedelta(days=today_start.weekday())
+            end = local_now
+        elif normalized == "month":
+            start = datetime(local_now.year, local_now.month, 1, tzinfo=tz)
+            end = local_now
+        else:
+            start = today_start
+            end = local_now
+        return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
+
+    def _trade_period_filter(
+        self,
+        start: datetime,
+        end: datetime,
+        *,
+        account_masked: str = "",
+    ):
+        filters = [
+            self._current_run_trade_filter(),
+            Trade.purchase_time >= start,
+            Trade.purchase_time < end,
+        ]
+        if account_masked:
+            filters.append(Trade.account_id_masked == account_masked)
+        return filters
+
+    def _period_trade_stats(
+        self,
+        session,
+        start: datetime,
+        end: datetime,
+        *,
+        account_masked: str = "",
+    ) -> dict[str, Any]:
+        row = session.execute(
+            select(
+                func.count().label("trades"),
+                func.sum(case((Trade.outcome == "WIN", 1), else_=0)).label("wins"),
+                func.sum(case((Trade.outcome == "LOSS", 1), else_=0)).label("losses"),
+                func.sum(Trade.profit).label("profit"),
+            ).where(*self._trade_period_filter(start, end, account_masked=account_masked))
+        ).one()
+        wins = int(row.wins or 0)
+        losses = int(row.losses or 0)
+        return {
+            "trades": int(row.trades or 0),
+            "wins": wins,
+            "losses": losses,
+            "profit": float(row.profit or 0.0),
+            "win_rate": wins / (wins + losses) if wins + losses else 0.0,
+        }
 
     def runtime_mode(self) -> str:
         with self.database.session() as session:
@@ -397,6 +483,7 @@ class Test2Repository:
 
     def account_summary(self, account_id: str) -> dict[str, Any]:
         masked = mask_account_id(account_id)
+        today_start, today_end = self._local_period_bounds("today")
         with self.database.session() as session:
             snapshot = session.scalar(
                 select(AccountSnapshot).where(
@@ -404,23 +491,21 @@ class Test2Repository:
                     AccountSnapshot.account_id_masked == masked,
                 )
             )
-            trade_row = session.execute(
-                select(
-                    func.count().label("trades"),
-                    func.sum(case((Trade.outcome == "WIN", 1), else_=0)).label("wins"),
-                    func.sum(case((Trade.outcome == "LOSS", 1), else_=0)).label("losses"),
-                    func.sum(Trade.profit).label("profit"),
-                ).where(
-                    Trade.account_id_masked == masked,
-                    self._current_run_trade_filter(),
-                )
-            ).one()
+            trade_stats = self._period_trade_stats(
+                session,
+                today_start,
+                today_end,
+                account_masked=masked,
+            )
             settled_rows = session.execute(
                 select(Trade.outcome, Trade.settlement_time)
                 .where(
-                    Trade.account_id_masked == masked,
                     Trade.settlement_time.is_not(None),
-                    self._current_run_trade_filter(),
+                    *self._trade_period_filter(
+                        today_start,
+                        today_end,
+                        account_masked=masked,
+                    ),
                 )
                 .order_by(Trade.settlement_time.asc(), Trade.id.asc())
             ).all()
@@ -455,8 +540,8 @@ class Test2Repository:
                     0,
                     int(max((now - row.purchase_time).total_seconds() for row in open_rows)),
                 )
-            wins = int(trade_row.wins or 0)
-            losses = int(trade_row.losses or 0)
+            wins = int(trade_stats["wins"])
+            losses = int(trade_stats["losses"])
             protection_state = session.scalar(
                 select(AccountRiskState).where(
                     AccountRiskState.account_id_masked == masked
@@ -519,11 +604,11 @@ class Test2Repository:
                 "currency": str(snapshot.currency if snapshot else "USD"),
                 "status": str(snapshot.status if snapshot else "linked"),
                 "updated_at": snapshot.updated_at.isoformat() if snapshot else None,
-                "trades": int(trade_row.trades or 0),
+                "trades": int(trade_stats["trades"]),
                 "wins": wins,
                 "losses": losses,
-                "profit": float(trade_row.profit or 0.0),
-                "win_rate": wins / (wins + losses) if wins + losses else 0.0,
+                "profit": float(trade_stats["profit"]),
+                "win_rate": float(trade_stats["win_rate"]),
                 "longest_win_streak": longest_win_streak,
                 "longest_loss_streak": longest_loss_streak,
                 "open_trades": len(open_rows),
@@ -1002,6 +1087,16 @@ class Test2Repository:
         }
 
     def summary(self) -> dict[str, Any]:
+        today_start, today_end = self._local_period_bounds("today")
+        yesterday_start, yesterday_end = self._local_period_bounds("yesterday")
+        week_start, week_end = self._local_period_bounds("week")
+        month_start, month_end = self._local_period_bounds("month")
+        tz = self._reporting_timezone()
+        local_now = utc_now().astimezone(tz)
+        next_reset = (
+            datetime(local_now.year, local_now.month, local_now.day, tzinfo=tz)
+            + timedelta(days=1)
+        )
         with self.database.session() as session:
             state = session.get(BotState, self.run_id)
             status, pause_reason = (
@@ -1012,36 +1107,38 @@ class Test2Repository:
             runtime_guard_state = self._runtime_guard_state(status, pause_reason)
             candidates = session.scalar(
                 select(func.count()).select_from(CandidateSignalRecord).where(
-                    CandidateSignalRecord.run_id == self.run_id
+                    CandidateSignalRecord.run_id == self.run_id,
+                    CandidateSignalRecord.generated_timestamp >= today_start,
+                    CandidateSignalRecord.generated_timestamp < today_end,
                 )
             )
-            run_trade_filter = self._current_run_trade_filter()
+            today_trade_filter = self._trade_period_filter(today_start, today_end)
             purchased = session.scalar(
-                select(func.count()).select_from(Trade).where(run_trade_filter)
+                select(func.count()).select_from(Trade).where(*today_trade_filter)
             )
             wins = session.scalar(
                 select(func.count()).select_from(Trade).where(
                     Trade.outcome == "WIN",
-                    run_trade_filter,
+                    *today_trade_filter,
                 )
             )
             losses = session.scalar(
                 select(func.count()).select_from(Trade).where(
                     Trade.outcome == "LOSS",
-                    run_trade_filter,
+                    *today_trade_filter,
                 )
             )
             open_trades = session.scalar(
                 select(func.count()).select_from(Trade).where(
                     Trade.settlement_time.is_(None),
-                    run_trade_filter,
+                    self._current_run_trade_filter(),
                 )
             )
             open_trade_rows = session.scalars(
                 select(Trade)
                 .where(
                     Trade.settlement_time.is_(None),
-                    run_trade_filter,
+                    self._current_run_trade_filter(),
                 )
                 .order_by(Trade.purchase_time.asc())
             ).all()
@@ -1049,6 +1146,8 @@ class Test2Repository:
                 select(func.count()).select_from(CandidateSignalRecord).where(
                     CandidateSignalRecord.run_id == self.run_id,
                     CandidateSignalRecord.final_status.like("SKIP%"),
+                    CandidateSignalRecord.generated_timestamp >= today_start,
+                    CandidateSignalRecord.generated_timestamp < today_end,
                 )
             )
             total_managed_accounts = session.scalar(
@@ -1069,7 +1168,7 @@ class Test2Repository:
                     func.sum(case((Trade.outcome == "LOSS", 1), else_=0)).label("losses"),
                     func.sum(Trade.profit).label("profit"),
                 )
-                .where(run_trade_filter)
+                .where(*today_trade_filter)
                 .group_by(Trade.account_id_masked)
                 .order_by(Trade.account_id_masked)
             ).all()
@@ -1121,7 +1220,11 @@ class Test2Repository:
                     func.count().label("observations"),
                     func.sum(case((VirtualTrade.result == "VIRTUAL_WIN", 1), else_=0)).label("wins"),
                     func.sum(case((VirtualTrade.result == "VIRTUAL_LOSS", 1), else_=0)).label("losses"),
-                ).where(VirtualTrade.run_id == self.run_id)
+                ).where(
+                    VirtualTrade.run_id == self.run_id,
+                    VirtualTrade.created_at >= today_start,
+                    VirtualTrade.created_at < today_end,
+                )
             ).one()
             active_virtual_accounts = session.scalar(
                 select(func.count())
@@ -1137,7 +1240,7 @@ class Test2Repository:
                 select(Trade)
                 .where(
                     Trade.settlement_time.is_not(None),
-                    run_trade_filter,
+                    *today_trade_filter,
                 )
                 .order_by(Trade.settlement_time.asc(), Trade.id.asc())
             ).all()
@@ -1199,6 +1302,13 @@ class Test2Repository:
             )
             if primary_account is None:
                 primary_account = accounts[0] if accounts else None
+            yesterday_stats = self._period_trade_stats(
+                session,
+                yesterday_start,
+                yesterday_end,
+            )
+            week_stats = self._period_trade_stats(session, week_start, week_end)
+            month_stats = self._period_trade_stats(session, month_start, month_end)
             return {
                 "run_id": self.config.model.run_id,
                 "status": status,
@@ -1276,6 +1386,13 @@ class Test2Repository:
                 "primary_account_balance": primary_account.balance if primary_account else 0.0,
                 "primary_account_currency": primary_account.currency if primary_account else "USD",
                 "account_balance_total": sum(account.balance for account in accounts),
+                "reporting_timezone": str(tz.key),
+                "today_started_at": today_start.isoformat(),
+                "next_daily_reset_at": next_reset.astimezone(timezone.utc).isoformat(),
+                "yesterday_profit": float(yesterday_stats["profit"]),
+                "yesterday_combined_runs": int(yesterday_stats["trades"]),
+                "this_week_profit": float(week_stats["profit"]),
+                "this_month_profit": float(month_stats["profit"]),
                 "last_heartbeat": (
                     state.last_heartbeat.isoformat() if state and state.last_heartbeat else None
                 ),

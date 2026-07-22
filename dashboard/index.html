@@ -955,6 +955,10 @@
     <article class="panel metric"><span>Open trades</span><strong id="open-trades">0</strong></article>
     <article class="panel metric"><span>Open trade age</span><strong id="open-trade-age">0s</strong></article>
     <article class="panel metric"><span>Skipped</span><strong id="skipped">0</strong></article>
+    <article class="panel metric"><span>Yesterday P/L</span><strong id="yesterday-profit">0.00</strong></article>
+    <article class="panel metric"><span>Yesterday runs</span><strong id="yesterday-runs">0</strong></article>
+    <article class="panel metric"><span>This week P/L</span><strong id="week-profit">0.00</strong></article>
+    <article class="panel metric"><span>This month P/L</span><strong id="month-profit">0.00</strong></article>
   </section>
   </section>
 
@@ -1229,6 +1233,16 @@
     const allAccountsProfit = Number(data.all_accounts_profit || 0);
     $("global-profit").textContent = number(allAccountsProfit, 2);
     $("global-profit").className = allAccountsProfit < 0 ? "negative" : allAccountsProfit > 0 ? "positive" : "";
+    const yesterdayProfit = Number(data.yesterday_profit || 0);
+    $("yesterday-profit").textContent = number(yesterdayProfit, 2);
+    $("yesterday-profit").className = yesterdayProfit < 0 ? "negative" : yesterdayProfit > 0 ? "positive" : "";
+    $("yesterday-runs").textContent = number(data.yesterday_combined_runs || 0);
+    const weekProfit = Number(data.this_week_profit || 0);
+    $("week-profit").textContent = number(weekProfit, 2);
+    $("week-profit").className = weekProfit < 0 ? "negative" : weekProfit > 0 ? "positive" : "";
+    const monthProfit = Number(data.this_month_profit || 0);
+    $("month-profit").textContent = number(monthProfit, 2);
+    $("month-profit").className = monthProfit < 0 ? "negative" : monthProfit > 0 ? "positive" : "";
     const currency = data.primary_account_currency || data.accounts?.[0]?.currency || "USD";
     $("balance").textContent = `${number(data.primary_account_balance || 0, 2)} ${currency}`;
     renderAiActivity(data);
