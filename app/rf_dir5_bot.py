@@ -380,6 +380,22 @@ class RFDir5TradingBot(TradingBot):
             ),
         )
 
+    def _account_supports_contract(
+        self,
+        *,
+        account_id: str,
+        symbol: str,
+        contract_type: str,
+    ) -> bool:
+        required = str(contract_type or "").upper()
+        account_types = self.rf_account_supported_contracts.get(
+            (str(account_id), str(symbol)),
+            set(),
+        )
+        if required in account_types:
+            return True
+        return required in self.rf_supported_contracts.get(str(symbol), set())
+
     def _render_live_ticks(self, note: str = "") -> None:
         handler = self._get_live_console_handler()
         market = self.market_states.get(self.live_market_symbol, self.market_states[self.symbol])
@@ -783,9 +799,10 @@ class RFDir5TradingBot(TradingBot):
         virtual_waiting_accounts: set[str] = set()
         proposal_profit_ratio = economics.potential_profit / economics.stake
         for token, account_id in eligible:
-            if signal.contract_type not in self.rf_account_supported_contracts.get(
-                (account_id, signal.symbol),
-                set(),
+            if not self._account_supports_contract(
+                account_id=account_id,
+                symbol=signal.symbol,
+                contract_type=signal.contract_type,
             ):
                 self.logger.warning(
                     "RF_ACCOUNT_SKIPPED account=%s reason=contract_not_verified symbol=%s type=%s",

@@ -156,6 +156,25 @@ class RiseFallContractTests(unittest.TestCase):
         self.assertNotIn("app_markup_percentage", request["parameters"])
         self.assertNotIn("barrier", request["parameters"])
 
+    def test_public_contract_validation_allows_rest_purchase_when_private_cache_missing(self) -> None:
+        self.bot.rf_account_supported_contracts = {}
+        self.bot.rf_supported_contracts = {"R_100": {"PUT"}}
+
+        self.assertTrue(
+            self.bot._account_supports_contract(
+                account_id="DOT123422",
+                symbol="R_100",
+                contract_type="PUT",
+            )
+        )
+        self.assertFalse(
+            self.bot._account_supports_contract(
+                account_id="DOT123422",
+                symbol="R_100",
+                contract_type="CALL",
+            )
+        )
+
     def test_rf_execution_has_no_artificial_post_trade_spacing(self) -> None:
         config = load_test2_config(Path(__file__).with_name("config.yaml"))
         self.assertEqual(config.rf_strategy.minimum_trade_interval_seconds, 0)
