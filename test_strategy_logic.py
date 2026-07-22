@@ -1073,6 +1073,30 @@ class AccountIsolationTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
+    def test_oauth_identity_matches_after_pat_is_saved(self) -> None:
+        from app.api import login_identity_from_payload
+
+        oauth_only = {
+            "auth_type": "oauth",
+            "account_id": "VRTC90000001",
+            "account_type": "demo",
+            "refresh_token": "shared-refresh-token",
+            "access_token": "oauth-access-token",
+        }
+        pat_with_oauth_backup = {
+            "auth_type": "pat",
+            "account_id": "CR90000001",
+            "account_type": "real",
+            "access_token": "pat-token-for-real",
+            "oauth_refresh_token": "shared-refresh-token",
+            "oauth_access_token": "oauth-access-token",
+        }
+
+        self.assertEqual(
+            login_identity_from_payload(oauth_only),
+            login_identity_from_payload(pat_with_oauth_backup),
+        )
+
     async def test_invalid_token_is_quarantined_without_blocking_other_accounts(self) -> None:
         bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
         bot.repository = MagicMock()

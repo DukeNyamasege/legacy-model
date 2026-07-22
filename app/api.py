@@ -265,15 +265,16 @@ def account_type_from_payload(payload: dict) -> str:
 
 
 def login_identity_from_payload(payload: dict) -> str:
-    for key in (
-        "oauth_refresh_token",
-        "refresh_token",
-        "oauth_access_token",
-        "access_token",
-    ):
-        value = str(payload.get(key, "")).strip()
-        if value:
-            return f"{key}:{hashlib.sha256(value.encode('utf-8')).hexdigest()}"
+    refresh_value = str(
+        payload.get("oauth_refresh_token") or payload.get("refresh_token") or ""
+    ).strip()
+    if refresh_value:
+        return f"oauth_refresh:{hashlib.sha256(refresh_value.encode('utf-8')).hexdigest()}"
+    access_value = str(
+        payload.get("oauth_access_token") or payload.get("access_token") or ""
+    ).strip()
+    if access_value and str(payload.get("auth_source", "")).startswith("deriv_oauth"):
+        return f"oauth_access:{hashlib.sha256(access_value.encode('utf-8')).hexdigest()}"
     account_id = str(payload.get("account_id", "")).strip()
     return f"account:{account_id}" if account_id else ""
 
