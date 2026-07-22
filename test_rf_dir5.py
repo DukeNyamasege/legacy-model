@@ -891,6 +891,109 @@ class RFRepositoryTests(unittest.TestCase):
         self.assertTrue(plan.is_recovery)
         self.assertAlmostEqual(plan.required_recovery_stake, 8.0)
 
+    def test_only_one_open_virtual_observation_per_account(self) -> None:
+        account_id = self.create_managed_account("One Virtual")
+        for balance in (98.0, 96.0):
+            self.repository.record_account_outcome(
+                managed_account_id=account_id,
+                account_id_masked="DOT***422",
+                profit=-2.0,
+                current_balance=balance,
+                recovery_enabled=True,
+                recovery_trigger_losses=1,
+                virtual_protection_enabled=True,
+                virtual_trigger_actual_losses=2,
+            )
+        first = signal("RISE", tick_sequence=800)
+        second = signal("RISE", tick_sequence=801)
+        self.repository.record_signal(first)
+        self.repository.record_signal(second)
+
+        opened = self.repository.start_virtual_trade(
+            managed_account_id=account_id,
+            account_id_masked="DOT***422",
+            signal=first,
+            configured_stake=2.0,
+            simulated_stake=2.0,
+            expected_payout=3.6,
+        )
+        blocked = self.repository.start_virtual_trade(
+            managed_account_id=account_id,
+            account_id_masked="DOT***422",
+            signal=second,
+            configured_stake=2.0,
+            simulated_stake=2.0,
+            expected_payout=3.6,
+        )
+
+        self.assertIsNotNone(opened)
+        self.assertIsNone(blocked)
+        with self.database.session() as session:
+            self.assertEqual(session.scalar(select(func.count(VirtualTrade.id))), 1)
+
+    def test_recovery_loss_returns_to_virtual_mode_and_recovery_win_resets(self) -> None:
+        account_id = self.create_managed_account("Recovery Loop")
+        for balance in (98.0, 96.0):
+            self.repository.record_account_outcome(
+                managed_account_id=account_id,
+                account_id_masked="DOT***422",
+                profit=-2.0,
+                current_balance=balance,
+                recovery_enabled=True,
+                recovery_trigger_losses=1,
+                virtual_protection_enabled=True,
+                virtual_trigger_actual_losses=2,
+            )
+        item = signal("RISE", tick_sequence=850)
+        self.repository.record_signal(item)
+        self.repository.start_virtual_trade(
+            managed_account_id=account_id,
+            account_id_masked="DOT***422",
+            signal=item,
+            configured_stake=2.0,
+            simulated_stake=2.0,
+            expected_payout=3.6,
+        )
+        self.repository.settle_due_virtual_trades(
+            symbol=item.symbol,
+            tick_sequence=item.tick_sequence + item.duration_ticks,
+            exit_quote=Decimal("101.00"),
+        )
+        self.assertEqual(
+            self.repository.virtual_protection_for_account(
+                managed_account_id=account_id
+            )["mode"],
+            "RECOVERY_PENDING",
+        )
+
+        self.repository.mark_recovery_attempt_started(account_id)
+        loss = self.repository.record_account_outcome(
+            managed_account_id=account_id,
+            account_id_masked="DOT***422",
+            profit=-8.0,
+            current_balance=88.0,
+            recovery_enabled=True,
+            recovery_trigger_losses=1,
+            virtual_protection_enabled=True,
+            virtual_trigger_actual_losses=2,
+        )
+        self.assertEqual(loss["protection_mode"], "VIRTUAL_MODE")
+        self.assertAlmostEqual(loss["recovery_loss_debt"], 12.0)
+
+        win = self.repository.record_account_outcome(
+            managed_account_id=account_id,
+            account_id_masked="DOT***422",
+            profit=12.0,
+            current_balance=100.0,
+            recovery_enabled=True,
+            recovery_trigger_losses=1,
+            virtual_protection_enabled=True,
+            virtual_trigger_actual_losses=2,
+        )
+        self.assertEqual(win["protection_mode"], "NORMAL_MODE")
+        self.assertEqual(win["consecutive_losses"], 0)
+        self.assertAlmostEqual(win["recovery_loss_debt"], 0.0)
+
     def test_recent_activity_separates_actual_and_virtual_rows(self) -> None:
         account_id = self.create_managed_account("Feed")
         for balance in (98.0, 96.0):

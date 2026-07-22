@@ -780,6 +780,7 @@ class RFDir5TradingBot(TradingBot):
         managed_id_by_token: dict[str, int] = {}
         filtered: list[tuple[str, str]] = []
         virtual_opened: list[dict[str, Any]] = []
+        virtual_waiting_accounts: set[str] = set()
         proposal_profit_ratio = economics.potential_profit / economics.stake
         for token, account_id in eligible:
             if signal.contract_type not in self.rf_account_supported_contracts.get(
@@ -885,6 +886,13 @@ class RFDir5TradingBot(TradingBot):
                         ),
                         float(virtual.get("recovery_debt") or 0.0),
                     )
+                else:
+                    virtual_waiting_accounts.add(mask_account_id(account_id))
+                    self.logger.info(
+                        "VIRTUAL_TRADE_WAITING account=%s signal_id=%s reason=active_virtual_observation",
+                        mask_account_id(account_id),
+                        signal.signal_id,
+                    )
                 continue
             if self.virtual_config.enabled and protection.get("mode") == RECOVERY_PENDING:
                 self.logger.warning(
@@ -928,6 +936,23 @@ class RFDir5TradingBot(TradingBot):
                 "PURCHASE_BLOCKED_VIRTUAL_MODE signal_id=%s virtual_accounts=%s",
                 signal.signal_id,
                 len(virtual_opened),
+            )
+            return
+        if not filtered and virtual_waiting_accounts:
+            self.repository.consume_signal(signal.signal_id)
+            signal.consumed = True
+            self.repository.mark_signal(
+                signal.signal_id,
+                status="VIRTUAL_WAITING_SETTLEMENT",
+                expected_account_masks=sorted(virtual_waiting_accounts),
+                registered_account_masks=[],
+            )
+            self.rf_repository.set_signal_decision(
+                signal.signal_id,
+                "VIRTUAL_WAITING_SETTLEMENT",
+                "ACTIVE_VIRTUAL_OBSERVATION",
+                selected=True,
+                validated_edge=signal.validated_edge,
             )
             return
         if not filtered:

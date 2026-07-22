@@ -860,7 +860,7 @@ class Test2Repository:
 
     @staticmethod
     def _normalize_control_status(status: str, pause_reason: str = "") -> tuple[str, str]:
-        if str(status or "").upper() == "EMERGENCY_STOP":
+        if str(status or "").upper() in {"EMERGENCY_STOP", "MANUAL_PAUSE", "STOPPED"}:
             return "RUNNING", ""
         return str(status or "STOPPED"), str(pause_reason or "")
 
@@ -912,7 +912,7 @@ class Test2Repository:
         with self.database.session() as session:
             state = session.get(BotState, self.run_id)
             if not state:
-                return ("STOPPED", "")
+                return ("RUNNING", "")
             return self._normalize_control_status(state.status, state.pause_reason)
 
     def _runtime_guard_state(
@@ -969,16 +969,11 @@ class Test2Repository:
             activity_detail = (
                 "Trading waits for a fresh stream before evaluating another entry."
             )
-        elif status == "MANUAL_PAUSE":
-            activity_mode = "paused"
-            activity_label = "Paused"
-            activity_message = "Trading is paused"
-            activity_detail = pause_reason or "Trading was paused from the control panel."
         else:
-            activity_mode = "idle"
-            activity_label = "Standby"
-            activity_message = "Auto trading is off"
-            activity_detail = pause_reason or "The worker is not accepting new entries."
+            activity_mode = "trading"
+            activity_label = "Bot online"
+            activity_message = "Scanning all configured markets"
+            activity_detail = "The worker is online and evaluating incoming ticks."
 
         return {
             "regime_guard_paused": guard_paused,

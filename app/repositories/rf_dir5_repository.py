@@ -705,6 +705,14 @@ class RFDir5Repository:
             )
             if existing is not None:
                 return None
+            active = session.scalar(
+                select(VirtualTrade.id).where(
+                    VirtualTrade.managed_account_id == int(managed_account_id),
+                    VirtualTrade.result == "OPEN",
+                )
+            )
+            if active is not None:
+                return None
             trade = VirtualTrade(
                 virtual_trade_id=f"virtual-{uuid.uuid4()}",
                 managed_account_id=int(managed_account_id),
@@ -773,6 +781,15 @@ class RFDir5Repository:
                     int(trade.managed_account_id),
                     with_for_update=True,
                 )
+                if state is None or state.protection_mode != VIRTUAL_WAITING_FOR_WIN:
+                    trade.result = "VIRTUAL_STALE"
+                    trade.reason = "Virtual observation ignored after mode changed"
+                    trade.amount_charged = 0.0
+                    trade.actual_profit_loss = 0.0
+                    trade.actual_payout = 0.0
+                    trade.recovery_debt_change = 0.0
+                    trade.settled_at = now
+                    continue
                 outcome = shadow_outcome(
                     trade.direction,
                     Decimal(str(trade.entry_spot)),
@@ -792,23 +809,20 @@ class RFDir5Repository:
                 trade.actual_payout = 0.0
                 trade.recovery_debt_change = 0.0
                 trade.settled_at = now
-                if state is not None:
-                    state.virtual_observation_count += 1
-                    if result == VIRTUAL_WIN:
-                        state.virtual_win_count += 1
-                        state.current_virtual_loss_streak = 0
-                        state.protection_mode = REAL_RECOVERY_PENDING
-                        state.recovery_pending = bool(state.recovery_loss_debt >= 0.01)
-                        if state.recovery_pending_since is None:
-                            state.recovery_pending_since = now
-                    else:
-                        state.virtual_loss_count += 1
-                        state.current_virtual_loss_streak += 1
-                        state.protection_mode = VIRTUAL_WAITING_FOR_WIN
-                    state.updated_at = now
-                    payload = self._protection_payload(state)
+                state.virtual_observation_count += 1
+                if result == VIRTUAL_WIN:
+                    state.virtual_win_count += 1
+                    state.current_virtual_loss_streak = 0
+                    state.protection_mode = REAL_RECOVERY_PENDING
+                    state.recovery_pending = bool(state.recovery_loss_debt >= 0.01)
+                    if state.recovery_pending_since is None:
+                        state.recovery_pending_since = now
                 else:
-                    payload = self._default_virtual_state(trade.account_id_masked)
+                    state.virtual_loss_count += 1
+                    state.current_virtual_loss_streak += 1
+                    state.protection_mode = VIRTUAL_WAITING_FOR_WIN
+                state.updated_at = now
+                payload = self._protection_payload(state)
                 settled.append(
                     {
                         "virtual_trade_id": trade.virtual_trade_id,

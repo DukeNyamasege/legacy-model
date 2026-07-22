@@ -948,7 +948,7 @@ class TimingAndModelTests(unittest.TestCase):
                 bot._sync_running_status_after_validation()
                 self.assertEqual(
                     bot.repository.control_state(),
-                    ("MANUAL_PAUSE", "ADMIN_REQUEST"),
+                    ("RUNNING", ""),
                 )
 
                 bot.repository.set_status("EMERGENCY_STOP", "ADMIN_REQUEST")
