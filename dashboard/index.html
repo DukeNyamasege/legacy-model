@@ -1067,6 +1067,7 @@
 
   <section class="metrics">
     <article class="panel metric"><span>Total traders</span><strong id="traders">0</strong></article>
+    <article class="panel metric"><span>Trading now</span><strong id="active-traders">0</strong><small>Executing accounts</small></article>
     <article class="panel metric"><span>Master trades</span><strong id="trades">0</strong></article>
     <article class="panel metric"><span>Master wins</span><strong id="wins">0</strong></article>
     <article class="panel metric"><span>Master losses</span><strong id="losses">0</strong></article>
@@ -1365,6 +1366,7 @@
   function renderStatus(data) {
     currentStatus = data.status || "UNKNOWN";
     $("traders").textContent = number(data.total_traders);
+    $("active-traders").textContent = number(data.active_traders);
     $("trades").textContent = number(data.purchased_trades);
     $("all-account-runs").textContent = number(data.all_accounts_trades);
     $("wins").textContent = number(data.wins);
@@ -1705,11 +1707,9 @@
       }
       updateAccountModeSwitch();
 
-      const [summary, settings] = await Promise.all([
-        api(`/metrics/summary?mode=${encodeURIComponent(activeAccountType)}`),
-        api("/settings/accounts").catch(() => ({}))
-      ]);
-      readOnlyDashboard = Boolean(settings.read_only_dashboard);
+      const summary = await api(
+        `/metrics/summary?mode=${encodeURIComponent(activeAccountType)}`
+      );
       renderStatus(summary);
       applyReadOnlyMode();
       await loadRecentContracts();
@@ -1768,7 +1768,7 @@
     window.clearTimeout(refreshTimer);
     if (document.hidden) return;
     refreshTimer = window.setTimeout(async () => {
-      await refresh({ showLoader: true, blocking: false });
+      await refresh({ showLoader: false, blocking: false });
       scheduleRefresh();
     }, 30000);
   }

@@ -915,6 +915,10 @@ def dashboard_summary(
             REPOSITORY.summary(),
             account_type=target_type,
         )
+        # Registration is global and persistent. It must not fluctuate when an
+        # account switches environment, disconnects, or stops auto trading.
+        result["total_traders"] = REPOSITORY.managed_account_count()
+        result["registered_traders"] = result["total_traders"]
         mode_cache["last"] = now
         mode_cache["data"] = result
         return result

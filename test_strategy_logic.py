@@ -94,6 +94,10 @@ class DashboardMetricsTests(unittest.TestCase):
         self.assertIn('id="personal-settings-toggle"', html)
         self.assertIn('aria-controls="personal-settings-content"', html)
         self.assertIn('id="personal-settings-content"', html)
+        self.assertIn('id="active-traders"', html)
+        self.assertIn("<span>Trading now</span>", html)
+        self.assertNotIn('api("/settings/accounts").catch', html)
+        self.assertIn("refresh({ showLoader: false, blocking: false })", html)
 
     def test_real_execution_requires_explicit_server_acknowledgement(self) -> None:
         bot = object.__new__(enhanced_bot.TradingBot)
@@ -2010,6 +2014,22 @@ class PersistenceTests(unittest.TestCase):
         self.assertEqual(settings["take_profit"], 12.50)
         self.assertEqual(settings["stop_loss"], 4.00)
         self.assertTrue(stored["enabled"])
+
+    def test_registered_trader_count_persists_when_execution_stops(self) -> None:
+        first = self.repository.add_managed_account(
+            label="First trader",
+            token_secret="first-encrypted-token",
+            enabled=True,
+        )
+        self.repository.add_managed_account(
+            label="Second trader",
+            token_secret="second-encrypted-token",
+            enabled=False,
+        )
+
+        self.assertEqual(self.repository.managed_account_count(), 2)
+        self.repository.set_managed_account_enabled(first["id"], False)
+        self.assertEqual(self.repository.managed_account_count(), 2)
 
     def test_trade_reset_preserves_credentials_sessions_controls_and_enabled_state(self) -> None:
         account = self.repository.add_managed_account(

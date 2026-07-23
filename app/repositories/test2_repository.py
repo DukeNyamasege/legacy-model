@@ -218,6 +218,11 @@ class Test2Repository:
                 ).all()
             )
 
+    def managed_account_count(self) -> int:
+        """Return the persistent registered population without decrypting tokens."""
+        with self.database.session() as session:
+            return int(session.scalar(select(func.count(ManagedAccount.id))) or 0)
+
     def add_managed_account(
         self, *, label: str, token_secret: str, enabled: bool = True
     ) -> dict[str, Any]:
