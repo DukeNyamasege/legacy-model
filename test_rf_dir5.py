@@ -183,7 +183,7 @@ class RiseFallContractTests(unittest.TestCase):
         config = load_test2_config(Path(__file__).with_name("config.yaml"))
         self.assertEqual(config.rf_strategy.minimum_trade_interval_seconds, 0)
 
-    def test_live_config_is_tight_direct_execution_with_immediate_recovery(self) -> None:
+    def test_live_config_uses_bounded_ai_cadence_relaxation(self) -> None:
         config = load_test2_config(Path(__file__).with_name("config.yaml"))
 
         self.assertEqual(config.rf_strategy.allowed_direction, "FALL")
@@ -192,11 +192,21 @@ class RiseFallContractTests(unittest.TestCase):
             ("R_10", "R_100", "R_75", "1HZ10V", "1HZ75V"),
         )
         self.assertEqual(config.rf_strategy.minimum_directional_moves, 4)
-        self.assertEqual(config.rf_strategy.minimum_recent_directional_moves, 3)
-        self.assertGreaterEqual(config.rf_strategy.minimum_efficiency, 0.65)
+        self.assertEqual(config.rf_strategy.minimum_recent_directional_moves, 2)
+        self.assertGreaterEqual(config.rf_strategy.minimum_efficiency, 0.70)
+        self.assertEqual(config.rf_strategy.cadence_relax_after_seconds, 300)
+        self.assertGreater(
+            config.rf_strategy.bayesian_minimum_edge_confidence,
+            config.rf_strategy.relaxed_bayesian_minimum_edge_confidence,
+        )
+        self.assertGreater(
+            config.rf_strategy.hmm_minimum_fall_probability,
+            config.rf_strategy.relaxed_hmm_minimum_fall_probability,
+        )
         self.assertTrue(config.risk.recovery_enabled)
         self.assertEqual(config.risk.recovery_trigger_losses, 1)
         self.assertEqual(config.risk.maximum_recovery_balance_fraction, 1.0)
+        self.assertEqual(config.virtual_protection.exit_after_wins, 2)
 
     def test_proposal_values_accept_strings_numbers_and_missing_commission(self) -> None:
         economics = parse_proposal_economics(
@@ -655,12 +665,12 @@ class RFCandidateArbitrationTests(unittest.IsolatedAsyncioTestCase):
         bot._proposal_for_duration = AsyncMock(
             return_value=(economics, time.monotonic(), time.monotonic())
         )
-        bot._buy_selected_demo = AsyncMock()
+        bot._buy_selected_accounts = AsyncMock()
 
         await bot._arbitrate_candidates()
 
         bot._proposal_for_duration.assert_awaited_once_with(stronger, 5)
-        bot._buy_selected_demo.assert_awaited_once()
+        bot._buy_selected_accounts.assert_awaited_once()
         bot.repository.control_state.assert_not_called()
         bot.rf_repository.shadow_group_counts.assert_not_called()
         bot._mark_rf_decision.assert_any_call(
@@ -975,6 +985,58 @@ class RFRepositoryTests(unittest.TestCase):
         )
         self.assertEqual(protection["mode"], "RECOVERY_PENDING")
         self.assertEqual(protection["virtual_wins"], 2)
+
+    def test_virtual_loss_resets_two_win_confirmation_sequence(self) -> None:
+        account_id = self.create_managed_account("Consecutive confirmations")
+        for balance in (98.0, 96.0):
+            self.repository.record_account_outcome(
+                managed_account_id=account_id,
+                account_id_masked="DOT***422",
+                profit=-2.0,
+                current_balance=balance,
+                recovery_enabled=True,
+                recovery_trigger_losses=1,
+                virtual_protection_enabled=True,
+                virtual_trigger_actual_losses=2,
+            )
+
+        exit_quotes = (
+            Decimal("101.00"),
+            Decimal("99.00"),
+            Decimal("101.00"),
+            Decimal("101.00"),
+        )
+        expected_modes = (
+            "VIRTUAL_MODE",
+            "VIRTUAL_MODE",
+            "VIRTUAL_MODE",
+            "RECOVERY_PENDING",
+        )
+        expected_confirmations = (1, 0, 1, 2)
+        for index, (exit_quote, expected_mode, confirmations) in enumerate(
+            zip(exit_quotes, expected_modes, expected_confirmations, strict=True)
+        ):
+            item = signal("RISE", tick_sequence=800 + index * 10)
+            self.repository.record_signal(item)
+            self.repository.start_virtual_trade(
+                managed_account_id=account_id,
+                account_id_masked="DOT***422",
+                signal=item,
+                configured_stake=0.50,
+                simulated_stake=0.50,
+                expected_payout=0.90,
+            )
+            self.repository.settle_due_virtual_trades(
+                symbol=item.symbol,
+                tick_sequence=item.tick_sequence + item.duration_ticks,
+                exit_quote=exit_quote,
+                exit_after_wins=2,
+            )
+            protection = self.repository.virtual_protection_for_account(
+                managed_account_id=account_id
+            )
+            self.assertEqual(protection["mode"], expected_mode)
+            self.assertEqual(protection["virtual_wins"], confirmations)
 
     def test_virtual_mode_blocks_affordable_recovery_until_virtual_win(self) -> None:
         account_id = self.create_managed_account("Recovery priority")
@@ -1479,7 +1541,7 @@ class RFVirtualHookTests(unittest.IsolatedAsyncioTestCase):
             received_monotonic=time.monotonic(),
         )
 
-        await bot._buy_selected_demo(item, economics)
+        await bot._buy_selected_accounts(item, economics)
 
         bot.repository.account_summary.assert_not_called()
         bot.rf_repository.plan_stake.assert_not_called()
@@ -1582,8 +1644,8 @@ class RFDecisionTests(unittest.TestCase):
             execution_mode="demo",
             trading_locked=False,
         )
-        self.assertEqual(decision.action, "BUY_DEMO")
-        self.assertEqual(decision.reasons, ("direct_demo",))
+        self.assertEqual(decision.action, "BUY_EXECUTION")
+        self.assertEqual(decision.reasons, ("direct_execution",))
 
     def test_strict_model_gate_blocks_when_bayesian_is_not_ready(self) -> None:
         engine = RiseFallDecisionEngine(
@@ -1677,7 +1739,7 @@ class RFDecisionTests(unittest.TestCase):
             hmm=hmm,
         )
 
-        self.assertEqual(decision.action, "BUY_DEMO")
+        self.assertEqual(decision.action, "BUY_EXECUTION")
         self.assertEqual(decision.reasons, ("strict_model_agreement",))
         self.assertGreater(float(decision.expected_value or 0), 0)
 
@@ -1740,7 +1802,108 @@ class RFDecisionTests(unittest.TestCase):
 
         self.assertEqual(decision.action, "SKIP_HMM_NOT_FAVOURABLE")
 
-    def test_real_execution_is_disabled(self) -> None:
+    def test_idle_relaxation_keeps_positive_edge_and_hmm_direction_gates(self) -> None:
+        engine = RiseFallDecisionEngine(
+            minimum_score=6,
+            stale_signal_after_ms=900,
+            require_bayesian=True,
+            bayesian_safety_margin=0.01,
+            bayesian_minimum_edge_confidence=0.80,
+            require_hmm=True,
+            hmm_minimum_fall_probability=0.78,
+            cadence_relax_after_seconds=300,
+            relaxed_bayesian_safety_margin=0.0,
+            relaxed_bayesian_minimum_edge_confidence=0.65,
+            relaxed_hmm_minimum_fall_probability=0.60,
+        )
+        key = BayesianGroupKey(RF_DIR5_VERSION, "R_75", "FALL", 5)
+        model = KeyedBayesianProbability(
+            prior_alpha=1,
+            prior_beta=1,
+            minimum_completed_trades=40,
+        )
+        model.restore(key, wins=80, losses=20)
+        economics = ProposalEconomics(
+            proposal_id="cadence-p1",
+            stake=0.50,
+            payout=0.96,
+            potential_profit=0.46,
+            potential_loss=0.50,
+            break_even_probability=0.50 / 0.96,
+            predicted_win_probability=0.50,
+            expected_value=-0.02,
+            expected_return_on_stake=-0.04,
+            requested_monotonic=time.monotonic(),
+            received_monotonic=time.monotonic(),
+        )
+        bayesian = model.snapshot(
+            key,
+            break_even_probability=economics.break_even_probability,
+            safety_margin=0.0,
+        )
+        fall_hmm = DirectionalHmmInference(
+            ready=True,
+            state="FALL_CONTINUATION",
+            probabilities={
+                "FALL_CONTINUATION": 0.65,
+                "CHOPPY": 0.25,
+                "RISE_REVERSAL": 0.10,
+            },
+            observation_count=1000,
+        )
+
+        strict = engine.decide(
+            quality_score=7,
+            signal_age_ms=1,
+            proposal_age_ms=1,
+            proposal_economics=economics,
+            execution_mode="demo",
+            trading_locked=False,
+            bayesian=bayesian,
+            hmm=fall_hmm,
+            idle_seconds=60,
+        )
+        relaxed = engine.decide(
+            quality_score=7,
+            signal_age_ms=1,
+            proposal_age_ms=1,
+            proposal_economics=economics,
+            execution_mode="demo",
+            trading_locked=False,
+            bayesian=bayesian,
+            hmm=fall_hmm,
+            idle_seconds=600,
+        )
+        reversal = engine.decide(
+            quality_score=7,
+            signal_age_ms=1,
+            proposal_age_ms=1,
+            proposal_economics=economics,
+            execution_mode="demo",
+            trading_locked=False,
+            bayesian=bayesian,
+            hmm=DirectionalHmmInference(
+                ready=True,
+                state="RISE_REVERSAL",
+                probabilities={
+                    "FALL_CONTINUATION": 0.05,
+                    "CHOPPY": 0.10,
+                    "RISE_REVERSAL": 0.85,
+                },
+                observation_count=1000,
+            ),
+            idle_seconds=600,
+        )
+
+        self.assertEqual(strict.action, "SKIP_HMM_NOT_FAVOURABLE")
+        self.assertEqual(relaxed.action, "BUY_EXECUTION")
+        self.assertEqual(
+            relaxed.reasons,
+            ("cadence_relaxed_model_agreement",),
+        )
+        self.assertEqual(reversal.action, "SKIP_HMM_NOT_FAVOURABLE")
+
+    def test_real_execution_uses_the_same_model_decision(self) -> None:
         engine = RiseFallDecisionEngine(
             minimum_score=7,
             stale_signal_after_ms=900,
@@ -1768,8 +1931,8 @@ class RFDecisionTests(unittest.TestCase):
             trading_locked=False,
         )
 
-        self.assertEqual(decision.action, "SKIP_REAL_DISABLED")
-        self.assertEqual(decision.reasons, ("demo_only",))
+        self.assertEqual(decision.action, "BUY_EXECUTION")
+        self.assertEqual(decision.reasons, ("direct_execution",))
 
     def test_stale_contract_isolated_without_stopping_account_monitoring(self) -> None:
         bot = object.__new__(TradingBot)

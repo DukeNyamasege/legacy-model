@@ -839,35 +839,31 @@ class RFDir5Repository:
                         VirtualTrade.result.in_((VIRTUAL_WIN, VIRTUAL_LOSS)),
                     )
                 )
-                wins_query = (
-                    select(func.count())
-                    .select_from(VirtualTrade)
-                    .where(
-                        VirtualTrade.managed_account_id
-                        == int(trade.managed_account_id),
-                        VirtualTrade.result == VIRTUAL_WIN,
-                    )
-                )
                 if state.entered_virtual_mode_at is not None:
                     observations_query = observations_query.where(
                         VirtualTrade.created_at >= state.entered_virtual_mode_at
                     )
-                    wins_query = wins_query.where(
-                        VirtualTrade.created_at >= state.entered_virtual_mode_at
-                    )
                 observations_in_mode = int(session.scalar(observations_query) or 0)
-                wins_in_mode = int(session.scalar(wins_query) or 0)
+                consecutive_virtual_wins = (
+                    int(state.virtual_win_count or 0) + 1
+                    if result == VIRTUAL_WIN
+                    else 0
+                )
                 exit_virtual_mode = bool(
-                    (result == VIRTUAL_WIN and wins_in_mode >= required_virtual_wins)
+                    (
+                        result == VIRTUAL_WIN
+                        and consecutive_virtual_wins >= required_virtual_wins
+                    )
                     or (
                         observation_cap > 0
                         and observations_in_mode >= observation_cap
                     )
                 )
                 if result == VIRTUAL_WIN:
-                    state.virtual_win_count += 1
+                    state.virtual_win_count = consecutive_virtual_wins
                     state.current_virtual_loss_streak = 0
                 else:
+                    state.virtual_win_count = 0
                     state.virtual_loss_count += 1
                     state.current_virtual_loss_streak += 1
                 if exit_virtual_mode:

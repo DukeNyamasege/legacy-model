@@ -61,7 +61,10 @@ GLOBAL_ACCOUNT_REFRESH_LOCK = threading.Lock()
 PERSONAL_ACCOUNT_REFRESH: dict[str, float] = {}
 PERSONAL_ACCOUNT_REFRESH_INFLIGHT: set[str] = set()
 PERSONAL_ACCOUNT_REFRESH_LOCK = threading.Lock()
-DASHBOARD_SUMMARY_CACHE: dict[str, object] = {"last": 0.0, "data": None}
+DASHBOARD_SUMMARY_CACHE: dict[str, dict[str, object]] = {
+    "demo": {"last": 0.0, "data": None},
+    "real": {"last": 0.0, "data": None},
+}
 DASHBOARD_SUMMARY_LOCK = threading.Lock()
 OAUTH_STATE_COOKIE = "deriv_oauth_state"
 OAUTH_VERIFIER_COOKIE = "deriv_oauth_code_verifier"
@@ -434,6 +437,37 @@ def actively_executing_account_ids() -> set[str]:
     return account_ids
 
 
+def environment_account_contexts(account_type: str) -> list[tuple[object, dict, str]]:
+    target_type = normalize_account_type(account_type)
+    contexts: list[tuple[object, dict, str]] = []
+    for row in REPOSITORY.list_managed_accounts():
+        try:
+            payload = managed_account_payload(row)
+        except Exception:
+            continue
+        account_id = str(payload.get("account_id", "")).strip()
+        if not account_id or account_type_from_payload(payload) != target_type:
+            continue
+        contexts.append((row, payload, account_id))
+    return contexts
+
+
+def environment_master_context(
+    account_type: str,
+) -> tuple[object | None, dict, str]:
+    contexts = environment_account_contexts(account_type)
+    if not contexts:
+        return None, {}, ""
+    enabled = [context for context in contexts if bool(getattr(context[0], "enabled", False))]
+    candidates = enabled or contexts
+    return max(
+        candidates,
+        key=lambda context: float(
+            REPOSITORY.account_summary(context[2]).get("balance") or 0.0
+        ),
+    )
+
+
 def master_account_context() -> tuple[object | None, dict, str]:
     rows = REPOSITORY.list_managed_accounts()
     configured = os.getenv("COPYTRADING_MASTER_ACCOUNT_ID", "").strip()
@@ -521,7 +555,85 @@ def application_oauth_token() -> tuple[str, str]:
     return access_token, scope
 
 
-def filter_summary_to_trading_ready_accounts(summary: dict) -> dict:
+def filter_summary_to_trading_ready_accounts(
+    summary: dict,
+    *,
+    account_type: str | None = None,
+) -> dict:
+    if account_type is not None:
+        target_type = normalize_account_type(account_type)
+        excluded_statuses = {
+            "credential_error",
+            "disabled",
+            "duplicate",
+            "insufficient_balance",
+            "invalid_account",
+            "real_disabled",
+            "stop_loss",
+            "take_profit",
+            "token_required",
+        }
+        linked_contexts = [
+            context
+            for context in environment_account_contexts(target_type)
+            if has_personal_trading_api_token(context[1])
+        ]
+        active_contexts = [
+            context
+            for context in linked_contexts
+            if bool(getattr(context[0], "enabled", False))
+            and str(getattr(context[0], "execution_status", "") or "")
+            .strip()
+            .lower()
+            not in excluded_statuses
+        ]
+        linked_accounts = [
+            REPOSITORY.account_summary(account_id)
+            for _row, _payload, account_id in linked_contexts
+        ]
+        active_ids = {
+            account_id for _row, _payload, account_id in active_contexts
+        }
+        active_accounts = [
+            account
+            for account in linked_accounts
+            if any(
+                account["account"] == mask_account_id(account_id)
+                for account_id in active_ids
+            )
+        ]
+        master_candidates = active_accounts or linked_accounts
+        master = (
+            max(
+                master_candidates,
+                key=lambda account: float(account.get("balance") or 0.0),
+            )
+            if master_candidates
+            else None
+        )
+        result = build_execution_summary(
+            {**summary, "mode": target_type},
+            active_accounts=active_accounts,
+            linked_accounts=linked_accounts,
+            master=master,
+        )
+        periods = REPOSITORY.account_group_period_summary(
+            [account_id for _row, _payload, account_id in linked_contexts]
+        )
+        result.update(
+            {
+                "mode": target_type,
+                "dashboard_account_type": target_type,
+                "all_accounts_trades": int(periods["today_trades"]),
+                "all_accounts_profit": float(periods["today_profit"]),
+                "yesterday_combined_runs": int(periods["yesterday_trades"]),
+                "yesterday_profit": float(periods["yesterday_profit"]),
+                "this_week_profit": float(periods["week_profit"]),
+                "this_month_profit": float(periods["month_profit"]),
+            }
+        )
+        return result
+
     active_ids = actively_executing_account_ids()
     linked_ids = linked_trading_account_ids()
     summary_accounts = [
@@ -775,31 +887,41 @@ def refresh_global_account_snapshots(*, force: bool = False) -> list[dict]:
         GLOBAL_ACCOUNT_REFRESH_LOCK.release()
 
 
-def dashboard_summary(*, force: bool = False) -> dict:
+def dashboard_summary(
+    *,
+    force: bool = False,
+    account_type: str = "demo",
+) -> dict:
+    target_type = normalize_account_type(account_type)
     ttl_seconds = max(
         1.0, float(os.getenv("DASHBOARD_SUMMARY_CACHE_SECONDS", "3"))
     )
     now = time.monotonic()
-    cached = DASHBOARD_SUMMARY_CACHE.get("data")
+    mode_cache = DASHBOARD_SUMMARY_CACHE[target_type]
+    cached = mode_cache.get("data")
     if (
         not force
         and isinstance(cached, dict)
-        and now - float(DASHBOARD_SUMMARY_CACHE.get("last") or 0.0) < ttl_seconds
+        and now - float(mode_cache.get("last") or 0.0) < ttl_seconds
     ):
         return cached
 
     with DASHBOARD_SUMMARY_LOCK:
         now = time.monotonic()
-        cached = DASHBOARD_SUMMARY_CACHE.get("data")
+        mode_cache = DASHBOARD_SUMMARY_CACHE[target_type]
+        cached = mode_cache.get("data")
         if (
             not force
             and isinstance(cached, dict)
-            and now - float(DASHBOARD_SUMMARY_CACHE.get("last") or 0.0) < ttl_seconds
+            and now - float(mode_cache.get("last") or 0.0) < ttl_seconds
         ):
             return cached
-        result = filter_summary_to_trading_ready_accounts(REPOSITORY.summary())
-        DASHBOARD_SUMMARY_CACHE["last"] = now
-        DASHBOARD_SUMMARY_CACHE["data"] = result
+        result = filter_summary_to_trading_ready_accounts(
+            REPOSITORY.summary(),
+            account_type=target_type,
+        )
+        mode_cache["last"] = now
+        mode_cache["data"] = result
         return result
 
 
@@ -1418,10 +1540,8 @@ def toggle_auto_trade(request: Request, body: AutoTradeRequest) -> dict:
         )
     
     REPOSITORY.set_managed_account_enabled(account["id"], body.enabled)
-    if body.enabled:
-        REPOSITORY.set_status("RUNNING", "")
-    elif not trading_ready_account_ids():
-        REPOSITORY.set_status("STOPPED", "")
+    # Personal participation never controls the shared market-watching engine.
+    REPOSITORY.set_status("RUNNING", "")
     return {"success": True, "enabled": body.enabled}
 
 
@@ -1631,39 +1751,34 @@ def logout(request: Request) -> JSONResponse:
 
 
 @app.get("/metrics/summary")
-def metrics_summary() -> dict:
-    summary = dashboard_summary()
+def metrics_summary(mode: str = "demo") -> dict:
+    account_type = normalize_account_type(mode)
+    summary = dashboard_summary(account_type=account_type)
     summary.update(
         {
             "strategy_name": CONFIG.rf_strategy.name,
-            "execution_phase": "DIRECT_DEMO",
+            "execution_phase": "LIVE_EXECUTION",
+            "dashboard_account_type": account_type,
         }
     )
     return summary
 
 
 @app.get("/metrics/recent-trades")
-def recent_trades(request: Request, limit: int = 50, activity_type: str = "actual") -> dict:
+def recent_trades(
+    request: Request,
+    limit: int = 50,
+    activity_type: str = "actual",
+    mode: str = "demo",
+) -> dict:
     current = get_current_account(request)
     if current:
         account_id = str(current["account_id"])
         viewer = "personal"
     else:
-        _, _, account_id = master_account_context()
+        _, _, account_id = environment_master_context(normalize_account_type(mode))
         viewer = "master"
     if not account_id:
-        summary = REPOSITORY.summary()
-        primary = str(summary.get("primary_account") or "").strip()
-        if primary:
-            return {
-                "viewer": viewer,
-                "account": primary,
-                "trades": REPOSITORY.recent_activity(
-                    max(1, min(limit, 50)),
-                    activity_type=activity_type,
-                ),
-                "markup": {},
-            }
         return {"viewer": viewer, "account": "", "trades": [], "markup": {}}
     return {
         "viewer": viewer,

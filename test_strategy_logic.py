@@ -87,9 +87,44 @@ class DashboardMetricsTests(unittest.TestCase):
             "<th>Contract ID</th>",
         ):
             self.assertNotIn(removed, html)
+        self.assertIn('id="smart-loader"', html)
+        self.assertIn('id="personal-execution-alert"', html)
+        self.assertIn("metrics/summary?mode=", html)
+        self.assertIn("metrics/recent-trades?limit=50", html)
         self.assertIn('id="personal-settings-toggle"', html)
         self.assertIn('aria-controls="personal-settings-content"', html)
         self.assertIn('id="personal-settings-content"', html)
+
+    def test_real_execution_requires_explicit_server_acknowledgement(self) -> None:
+        bot = object.__new__(enhanced_bot.TradingBot)
+        bot.environment = "demo"
+        bot.test2_config = SimpleNamespace(
+            execution=SimpleNamespace(real_enabled=True),
+            deriv=SimpleNamespace(
+                allow_real_trading=False,
+                production_acknowledgement="",
+            ),
+        )
+
+        with patch.dict(
+            os.environ,
+            {
+                "ALLOW_REAL_TRADING": "true",
+                "PRODUCTION_ACKNOWLEDGEMENT": "I_ACKNOWLEDGE_REAL_MONEY_TRADING",
+            },
+            clear=False,
+        ):
+            self.assertTrue(bot._real_trading_allowed())
+
+        with patch.dict(
+            os.environ,
+            {
+                "ALLOW_REAL_TRADING": "true",
+                "PRODUCTION_ACKNOWLEDGEMENT": "",
+            },
+            clear=False,
+        ):
+            self.assertFalse(bot._real_trading_allowed())
 
     def test_global_cards_use_master_stats_and_all_account_profit(self) -> None:
         master = {
@@ -203,7 +238,85 @@ class DashboardMetricsTests(unittest.TestCase):
         self.assertEqual(result["all_accounts_trades"], 7)
         self.assertEqual(result["all_accounts_profit"], 2.35)
 
-    def test_recent_contracts_fall_back_to_primary_summary_account(self) -> None:
+    def test_environment_summary_uses_only_selected_mode_and_largest_master(self) -> None:
+        import app.api as api
+
+        real_small = SimpleNamespace(enabled=True, execution_status="active")
+        real_large = SimpleNamespace(enabled=True, execution_status="active")
+        contexts = [
+            (real_small, {"account_type": "real", "pat_token_set": True}, "CR1001"),
+            (real_large, {"account_type": "real", "pat_token_set": True}, "CR1002"),
+        ]
+        account_summaries = {
+            "CR1001": {
+                "account": api.mask_account_id("CR1001"),
+                "balance": 100.0,
+                "currency": "USD",
+                "trades": 3,
+                "wins": 2,
+                "losses": 1,
+                "win_rate": 2 / 3,
+                "profit": 0.25,
+            },
+            "CR1002": {
+                "account": api.mask_account_id("CR1002"),
+                "balance": 500.0,
+                "currency": "USD",
+                "trades": 4,
+                "wins": 3,
+                "losses": 1,
+                "win_rate": 0.75,
+                "profit": 0.75,
+            },
+        }
+        periods = {
+            "today_trades": 7,
+            "today_profit": 1.0,
+            "yesterday_trades": 6,
+            "yesterday_profit": 0.5,
+            "week_profit": 2.0,
+            "month_profit": 4.0,
+            "open_trades": 0,
+            "oldest_open_trade_seconds": 0,
+        }
+
+        with (
+            patch.object(api, "environment_account_contexts", return_value=contexts),
+            patch.object(api, "has_personal_trading_api_token", return_value=True),
+            patch.object(
+                api.REPOSITORY,
+                "account_summary",
+                side_effect=lambda account_id: account_summaries[account_id],
+            ),
+            patch.object(
+                api.REPOSITORY,
+                "account_group_period_summary",
+                return_value=periods,
+            ),
+        ):
+            result = api.filter_summary_to_trading_ready_accounts(
+                {
+                    "status": "RUNNING",
+                    "accounts": [
+                        {
+                            "account": "VRT***999",
+                            "balance": 99999.0,
+                            "profit": 999.0,
+                        }
+                    ],
+                },
+                account_type="real",
+            )
+
+        self.assertEqual(result["dashboard_account_type"], "real")
+        self.assertEqual(result["total_traders"], 2)
+        self.assertEqual(result["primary_account"], api.mask_account_id("CR1002"))
+        self.assertEqual(result["primary_account_balance"], 500.0)
+        self.assertEqual(result["all_accounts_trades"], 7)
+        self.assertEqual(result["all_accounts_profit"], 1.0)
+        self.assertNotIn("VRT***999", {row["account"] for row in result["accounts"]})
+
+    def test_recent_contracts_do_not_cross_environment_without_a_master(self) -> None:
         import app.api as api
 
         request = SimpleNamespace(cookies={})
@@ -211,7 +324,7 @@ class DashboardMetricsTests(unittest.TestCase):
 
         with (
             patch.object(api, "get_current_account", return_value=None),
-            patch.object(api, "master_account_context", return_value=(None, {}, "")),
+            patch.object(api, "environment_master_context", return_value=(None, {}, "")),
             patch.object(
                 api.REPOSITORY,
                 "summary",
@@ -221,10 +334,10 @@ class DashboardMetricsTests(unittest.TestCase):
         ):
             result = api.recent_trades(request, activity_type="all")
 
-        recent.assert_called_once_with(50, activity_type="all")
+        recent.assert_not_called()
         self.assertEqual(result["viewer"], "master")
-        self.assertEqual(result["account"], "DOT***422")
-        self.assertEqual(result["trades"], trades)
+        self.assertEqual(result["account"], "")
+        self.assertEqual(result["trades"], [])
 
 
 class CopyTradeAuditTests(unittest.TestCase):

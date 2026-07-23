@@ -616,6 +616,86 @@ class Test2Repository:
                 "virtual_protection": virtual_protection,
             }
 
+    def account_group_period_summary(
+        self,
+        account_ids: list[str] | set[str] | tuple[str, ...],
+    ) -> dict[str, Any]:
+        masked_accounts = sorted(
+            {
+                mask_account_id(str(account_id).strip())
+                for account_id in account_ids
+                if str(account_id).strip()
+            }
+        )
+        empty = {
+            "today_trades": 0,
+            "today_profit": 0.0,
+            "yesterday_trades": 0,
+            "yesterday_profit": 0.0,
+            "week_profit": 0.0,
+            "month_profit": 0.0,
+            "open_trades": 0,
+            "oldest_open_trade_seconds": 0,
+        }
+        if not masked_accounts:
+            return empty
+
+        periods = {
+            "today": self._local_period_bounds("today"),
+            "yesterday": self._local_period_bounds("yesterday"),
+            "week": self._local_period_bounds("week"),
+            "month": self._local_period_bounds("month"),
+        }
+        with self.database.session() as session:
+            aggregates: dict[str, dict[str, Any]] = {}
+            for name, (start, end) in periods.items():
+                row = session.execute(
+                    select(
+                        func.count().label("trades"),
+                        func.sum(Trade.profit).label("profit"),
+                    ).where(
+                        *self._trade_period_filter(start, end),
+                        Trade.account_id_masked.in_(masked_accounts),
+                    )
+                ).one()
+                aggregates[name] = {
+                    "trades": int(row.trades or 0),
+                    "profit": float(row.profit or 0.0),
+                }
+
+            open_rows = session.scalars(
+                select(Trade)
+                .where(
+                    self._current_run_trade_filter(),
+                    Trade.account_id_masked.in_(masked_accounts),
+                    Trade.settlement_time.is_(None),
+                )
+                .order_by(Trade.purchase_time.asc())
+            ).all()
+
+        oldest_open_trade_seconds = 0
+        if open_rows:
+            now = utc_now()
+            oldest_open_trade_seconds = max(
+                0,
+                int(
+                    max(
+                        (now - trade.purchase_time).total_seconds()
+                        for trade in open_rows
+                    )
+                ),
+            )
+        return {
+            "today_trades": aggregates["today"]["trades"],
+            "today_profit": aggregates["today"]["profit"],
+            "yesterday_trades": aggregates["yesterday"]["trades"],
+            "yesterday_profit": aggregates["yesterday"]["profit"],
+            "week_profit": aggregates["week"]["profit"],
+            "month_profit": aggregates["month"]["profit"],
+            "open_trades": len(open_rows),
+            "oldest_open_trade_seconds": oldest_open_trade_seconds,
+        }
+
     def record_tick(
         self,
         *,

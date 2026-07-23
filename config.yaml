@@ -104,26 +104,30 @@ rf_strategy:
   normalization_movements: 100
   demo_duration_ticks: 5
   minimum_directional_moves: 4
-  minimum_recent_directional_moves: 3
-  minimum_efficiency: 0.75
-  minimum_impulse: 0.75
-  maximum_impulse: 2.60
-  maximum_move_ratio: 2.40
-  minimum_directional_score: 7
+  minimum_recent_directional_moves: 2
+  minimum_efficiency: 0.70
+  minimum_impulse: 0.60
+  maximum_impulse: 3.00
+  maximum_move_ratio: 2.60
+  minimum_directional_score: 6
   candidate_window_ms: 75
   stale_signal_after_ms: 1800
   minimum_trade_interval_seconds: 0
   maximum_open_strategy_contracts: 1
   model_training_ticks: 2500
-  bayesian_minimum_samples: 60
+  bayesian_minimum_samples: 40
   bayesian_prior_alpha: 1.0
   bayesian_prior_beta: 1.0
   bayesian_credible_interval: 0.95
-  bayesian_safety_margin: 0.02
-  bayesian_minimum_edge_confidence: 0.90
+  bayesian_safety_margin: 0.01
+  bayesian_minimum_edge_confidence: 0.80
   hmm_minimum_observations: 500
   hmm_retrain_every_ticks: 250
-  hmm_minimum_fall_probability: 0.78
+  hmm_minimum_fall_probability: 0.70
+  cadence_relax_after_seconds: 300
+  relaxed_bayesian_safety_margin: 0.0
+  relaxed_bayesian_minimum_edge_confidence: 0.65
+  relaxed_hmm_minimum_fall_probability: 0.60
 risk:
   recovery_enabled: true
   recovery_trigger_losses: 1
@@ -133,7 +137,7 @@ risk:
 virtual_protection:
   enabled: true
   trigger_actual_losses: 2
-  exit_after_wins: 1
+  exit_after_wins: 2
   max_observations: 0
   scope: PER_ACCOUNT
 telegram:

@@ -4181,16 +4181,24 @@ class TradingBot:
         return normalize_account_type(profile.get("account_type"), self.environment)
 
     def _real_trading_allowed(self) -> bool:
-        env_mode = os.getenv("TRADING_MODE", self.environment).strip().lower()
         env_allowed = os.getenv(
             "ALLOW_REAL_TRADING",
             str(getattr(self.test2_config.deriv, "allow_real_trading", False)),
         ).strip().lower() in {"1", "true", "yes"}
+        acknowledgement = os.getenv(
+            "PRODUCTION_ACKNOWLEDGEMENT",
+            str(
+                getattr(
+                    self.test2_config.deriv,
+                    "production_acknowledgement",
+                    "",
+                )
+            ),
+        ).strip()
         return bool(
             getattr(self.test2_config.execution, "real_enabled", False)
-            and getattr(self.test2_config.deriv, "allow_real_trading", False)
             and env_allowed
-            and env_mode == "real"
+            and acknowledgement == "I_ACKNOWLEDGE_REAL_MONEY_TRADING"
         )
 
     def _bulk_purchase_token_capable(self, token: str) -> bool:

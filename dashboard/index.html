@@ -159,6 +159,118 @@
       letter-spacing: .08em;
       text-transform: uppercase;
     }
+    .smart-loader {
+      position: fixed;
+      z-index: 100;
+      top: 18px;
+      left: 50%;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 220px;
+      padding: 12px 18px;
+      border: 1px solid rgba(74, 145, 255, .55);
+      border-radius: 999px;
+      color: #fff;
+      background: rgba(3, 24, 62, .94);
+      box-shadow: 0 18px 48px rgba(2, 24, 65, .35);
+      opacity: 0;
+      pointer-events: none;
+      transform: translate(-50%, -18px);
+      transition: opacity .2s ease, transform .2s ease;
+    }
+    .smart-loader.active {
+      opacity: 1;
+      transform: translate(-50%, 0);
+    }
+    .smart-loader.blocking {
+      top: 50%;
+      border-radius: 22px;
+      transform: translate(-50%, calc(-50% - 12px));
+    }
+    .smart-loader.blocking.active {
+      transform: translate(-50%, -50%);
+    }
+    .smart-loader.blocking::before {
+      content: "";
+      position: fixed;
+      z-index: -1;
+      inset: -100vh -100vw;
+      background: rgba(2, 13, 34, .48);
+      backdrop-filter: blur(5px);
+    }
+    .loader-orbit {
+      position: relative;
+      width: 25px;
+      height: 25px;
+      flex: 0 0 25px;
+      border: 2px solid rgba(255,255,255,.18);
+      border-top-color: #62b1ff;
+      border-right-color: #35e5bb;
+      border-radius: 50%;
+      animation: loader-spin .72s linear infinite;
+    }
+    .loader-copy strong,
+    .loader-copy span { display: block; }
+    .loader-copy strong {
+      font-size: .78rem;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    .loader-copy span {
+      margin-top: 2px;
+      color: rgba(255,255,255,.7);
+      font-size: .7rem;
+    }
+    .personal-execution-alert {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 10px;
+      width: 100%;
+      margin-top: 16px;
+      padding: 13px 15px;
+      border: 1px solid rgba(255, 181, 181, .45);
+      border-radius: 14px;
+      color: #fff;
+      background: rgba(92, 10, 24, .42);
+    }
+    .personal-execution-alert::before {
+      content: "!";
+      display: grid;
+      width: 24px;
+      height: 24px;
+      place-items: center;
+      border-radius: 50%;
+      color: #71121c;
+      background: #ffd2d2;
+      font-weight: 800;
+    }
+    .personal-execution-alert strong,
+    .personal-execution-alert span { display: block; }
+    .personal-execution-alert strong {
+      margin-bottom: 3px;
+      font-size: .78rem;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .personal-execution-alert span {
+      color: rgba(255,255,255,.82);
+      font-size: .82rem;
+    }
+    .global-mode-chip {
+      display: inline-flex;
+      margin-left: 9px;
+      padding: 5px 10px;
+      vertical-align: middle;
+      border: 1px solid color-mix(in srgb, var(--blue) 35%, var(--line));
+      border-radius: 999px;
+      color: var(--blue);
+      background: var(--blue-soft);
+      font-size: .66rem;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+    @keyframes loader-spin { to { transform: rotate(360deg); } }
     html[data-theme="dark"] .personal-accent {
       border-color: rgba(96, 164, 255, .66);
       background:
@@ -791,6 +903,13 @@
   </style>
 </head>
 <body>
+<div id="smart-loader" class="smart-loader blocking active" role="status" aria-live="polite">
+  <span class="loader-orbit" aria-hidden="true"></span>
+  <span class="loader-copy">
+    <strong>Synchronizing</strong>
+    <span id="smart-loader-message">Opening your trading dashboard</span>
+  </span>
+</div>
 <main>
   <header>
     <div>
@@ -918,6 +1037,12 @@
           </div>
         </div>
       </div>
+      <div id="personal-execution-alert" class="personal-execution-alert" hidden>
+        <div>
+          <strong id="personal-execution-alert-title">Execution unavailable</strong>
+          <span id="personal-execution-alert-message"></span>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -927,7 +1052,10 @@
     data-snapshot-ready="false"
     aria-label="Global Bot Statistics"
   >
-  <h2 style="margin: 30px 0 10px; opacity: 0.5;">Global Bot Statistics</h2>
+  <h2 style="margin: 30px 0 10px; opacity: 0.72;">
+    Global Bot Statistics
+    <span id="global-account-mode" class="global-mode-chip">Demo</span>
+  </h2>
 
   <section id="ai-mode-card" class="panel ai-mode-card idle" aria-live="polite">
     <div>
@@ -1013,6 +1141,7 @@
   let wsReconnectTimer = 0;
   let refreshTimer = 0;
   let refreshInFlight = false;
+  let lastWebSocketRefresh = 0;
   let currentActivityFilter = "all";
   const themeKey = "legacy-dashboard-theme";
   const themeToggle = $("theme-toggle");
@@ -1020,6 +1149,16 @@
   const riskDisclaimerToggle = $("risk-disclaimer-toggle");
   const riskDisclaimerPanel = $("risk-disclaimer-panel");
   const riskDisclaimerClose = $("risk-disclaimer-close");
+
+  function setSmartLoader(active, message = "Synchronizing dashboard", blocking = false) {
+    const loader = $("smart-loader");
+    const messageNode = $("smart-loader-message");
+    if (!loader) return;
+    if (messageNode) messageNode.textContent = message;
+    loader.classList.toggle("active", Boolean(active));
+    loader.classList.toggle("blocking", Boolean(active && blocking));
+    loader.setAttribute("aria-hidden", String(!active));
+  }
 
   function setRiskDisclaimer(open) {
     if (!riskDisclaimerToggle || !riskDisclaimerPanel) return;
@@ -1141,7 +1280,9 @@
   }
   async function loadRecentContracts() {
     try {
-      const data = await api(`/metrics/recent-trades?limit=50&activity_type=${encodeURIComponent(currentActivityFilter)}`);
+      const data = await api(
+        `/metrics/recent-trades?limit=50&activity_type=${encodeURIComponent(currentActivityFilter)}&mode=${encodeURIComponent(activeAccountType)}`
+      );
       renderContracts(data.trades || []);
     } catch (_) {
       renderContracts([]);
@@ -1200,7 +1341,11 @@
       try {
         const msg = JSON.parse(event.data);
         if (msg.type === "snapshot" && msg.data) {
-          renderStatus(msg.data);
+          const now = Date.now();
+          if (now - lastWebSocketRefresh >= 5000) {
+            lastWebSocketRefresh = now;
+            refresh({ showLoader: false });
+          }
         }
       } catch (_) {}
     };
@@ -1294,6 +1439,11 @@
     if (label) {
       label.textContent = `${activeAccountType === "real" ? "Real" : "Demo"} account`;
     }
+    document.body.dataset.accountMode = activeAccountType;
+    const globalMode = $("global-account-mode");
+    if (globalMode) {
+      globalMode.textContent = activeAccountType === "real" ? "Real" : "Demo";
+    }
     for (const button of [demoBtn, realBtn]) {
       if (!button) continue;
       const mode = button.getAttribute("data-account-mode") || "demo";
@@ -1309,6 +1459,11 @@
     if (!mode || mode === activeAccountType) return;
     const buttons = [$("account-mode-demo"), $("account-mode-real")].filter(Boolean);
     buttons.forEach(button => { button.disabled = true; });
+    setSmartLoader(
+      true,
+      `Switching to your ${mode === "real" ? "Real" : "Demo"} dashboard`,
+      true
+    );
     try {
       await api("/me/switch-account", {
         method: "POST",
@@ -1316,12 +1471,35 @@
         body: JSON.stringify({ account_type: mode })
       });
       activeAccountType = mode;
-      await refresh();
+      while (refreshInFlight) {
+        await new Promise(resolve => window.setTimeout(resolve, 50));
+      }
+      await refresh({ showLoader: false });
     } catch (error) {
       alert(error.message || `Could not switch to ${mode} account.`);
     } finally {
+      setSmartLoader(false);
       updateAccountModeSwitch();
     }
+  }
+
+  function renderPersonalExecutionAlert(me) {
+    const alertNode = $("personal-execution-alert");
+    const title = $("personal-execution-alert-title");
+    const message = $("personal-execution-alert-message");
+    if (!alertNode || !title || !message) return;
+    const status = String(me.execution_status || "inactive").toLowerCase();
+    const reason = String(me.execution_status_reason || "").trim();
+    const healthyStatuses = new Set(["active", "connecting", "validating"]);
+    const shouldShow = Boolean(
+      reason
+      && !healthyStatuses.has(status)
+      && !(status === "disabled" && !me.enabled)
+    );
+    alertNode.hidden = !shouldShow;
+    if (!shouldShow) return;
+    title.textContent = status.replaceAll("_", " ");
+    message.textContent = reason;
   }
 
   async function toggleAutoTrade() {
@@ -1335,6 +1513,11 @@
     }
     const btn = $("btn-toggle-auto");
     btn.disabled = true;
+    setSmartLoader(
+      true,
+      isAutoTrading ? "Stopping your account execution" : "Joining auto trading",
+      false
+    );
     try {
       const res = await api("/me/auto-trade", {
         method: "POST",
@@ -1344,9 +1527,11 @@
       isAutoTrading = res.enabled;
       updateAutoTradeBtn();
       updateApiTokenPanel();
+      await refresh({ showLoader: false });
     } catch (e) {
       alert("Failed to toggle auto trading: " + e.message);
     }
+    setSmartLoader(false);
     btn.disabled = false;
     updateApiTokenPanel();
   }
@@ -1456,6 +1641,9 @@
   $("btn-save-trading-settings")?.addEventListener("click", saveTradingSettings);
   $("account-mode-demo")?.addEventListener("click", () => switchAccountMode("demo"));
   $("account-mode-real")?.addEventListener("click", () => switchAccountMode("real"));
+  $("btn-login")?.addEventListener("click", () => {
+    setSmartLoader(true, "Opening secure Deriv login", true);
+  });
   document.querySelectorAll("[data-activity-filter]").forEach(button => {
     button.addEventListener("click", () => {
       currentActivityFilter = button.getAttribute("data-activity-filter") || "all";
@@ -1495,14 +1683,30 @@
     errorElement.style.display = "none";
   }
 
-  async function refresh() {
+  async function refresh({
+    showLoader = true,
+    blocking = false,
+    message = "Refreshing live account data"
+  } = {}) {
     if (refreshInFlight || document.hidden) return;
     refreshInFlight = true;
+    if (showLoader) setSmartLoader(true, message, blocking);
     if ($("error")) $("error").textContent = "";
     try {
-      // Fetch global metrics
+      const me = await api("/me").catch(() => ({ authenticated: false }));
+      if (me.authenticated) {
+        activeAccountType = me.account_type || "demo";
+        availableAccountTypes = Array.isArray(me.available_account_types)
+          ? me.available_account_types
+          : [activeAccountType];
+      } else {
+        activeAccountType = "demo";
+        availableAccountTypes = ["demo"];
+      }
+      updateAccountModeSwitch();
+
       const [summary, settings] = await Promise.all([
-        api("/metrics/summary"),
+        api(`/metrics/summary?mode=${encodeURIComponent(activeAccountType)}`),
         api("/settings/accounts").catch(() => ({}))
       ]);
       readOnlyDashboard = Boolean(settings.read_only_dashboard);
@@ -1510,12 +1714,7 @@
       applyReadOnlyMode();
       await loadRecentContracts();
 
-      // Fetch personal metrics
-      try {
-        const me = await api("/me");
-        if (!me.authenticated) {
-          throw new Error("Not authenticated");
-        }
+      if (me.authenticated) {
         $("personal-section").style.display = "block";
         $("btn-login").style.display = "none";
         $("btn-logout").style.display = "inline-flex";
@@ -1530,10 +1729,6 @@
         
         isAutoTrading = Boolean(me.enabled);
         hasTradingApiToken = Boolean(me.has_trading_api_token);
-        activeAccountType = me.account_type || "demo";
-        availableAccountTypes = Array.isArray(me.available_account_types)
-          ? me.available_account_types
-          : [activeAccountType];
         updateAccountModeSwitch();
         const personalSettings = me.settings || {};
         setPersonalSettingValue("personal-stake", personalSettings.stake_amount ?? 0.50);
@@ -1545,10 +1740,10 @@
           executionState.title = me.execution_status_reason || "";
           executionState.className = `execution-state ${me.execution_status === "active" ? "positive" : me.execution_status === "error" ? "negative" : ""}`;
         }
+        renderPersonalExecutionAlert(me);
         updateAutoTradeBtn();
         updateApiTokenPanel();
-      } catch (authError) {
-        // Not logged in (401)
+      } else {
         $("personal-section").style.display = "none";
         $("btn-login").style.display = "inline-flex";
         $("btn-logout").style.display = "none";
@@ -1559,12 +1754,13 @@
         if ($("api-token-panel")) $("api-token-panel").style.display = "none";
         if ($("auto-trade-panel")) $("auto-trade-panel").style.display = "none";
         if ($("personal-settings-panel")) $("personal-settings-panel").style.display = "none";
+        if ($("personal-execution-alert")) $("personal-execution-alert").hidden = true;
         setPersonalSettingsExpanded(false);
       }
-      
     } catch (error) {
       if ($("error")) $("error").textContent = error.message || "Unable to reach the service.";
     } finally {
+      if (showLoader) setSmartLoader(false);
       refreshInFlight = false;
     }
   }
@@ -1572,7 +1768,7 @@
     window.clearTimeout(refreshTimer);
     if (document.hidden) return;
     refreshTimer = window.setTimeout(async () => {
-      await refresh();
+      await refresh({ showLoader: true, blocking: false });
       scheduleRefresh();
     }, 30000);
   }
@@ -1590,7 +1786,11 @@ async function initialize() {
     localControl = false;
   }
   connectWebSocket();
-  await refresh();
+  await refresh({
+    showLoader: true,
+    blocking: true,
+    message: "Opening your trading dashboard"
+  });
   scheduleRefresh();
 }
 
@@ -1604,7 +1804,7 @@ document.addEventListener("visibilitychange", () => {
     return;
   }
   connectWebSocket();
-  refresh().finally(scheduleRefresh);
+  refresh({ showLoader: true, blocking: false }).finally(scheduleRefresh);
 });
 
 // Parse URL parameters for OAuth errors

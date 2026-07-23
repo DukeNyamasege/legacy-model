@@ -108,8 +108,7 @@ def parse_proposal_economics(
 
 
 RF_ACTIONS = {
-    "BUY_DEMO",
-    "SKIP_REAL_DISABLED",
+    "BUY_EXECUTION",
     "SKIP_MARKET_ARBITRATION",
     "SKIP_TRADE_SPACING",
     "SKIP_LOW_SCORE",
@@ -118,6 +117,7 @@ RF_ACTIONS = {
     "SKIP_INSUFFICIENT_BALANCE",
     "SKIP_TRADING_LOCK",
     "SKIP_MARKET_QUARANTINED",
+    "SKIP_INVALID_EXECUTION_MODE",
     "SKIP_BAYESIAN_NOT_READY",
     "SKIP_BAYESIAN_EDGE_INSUFFICIENT",
     "SKIP_HMM_NOT_READY",
@@ -148,6 +148,10 @@ class RiseFallDecisionEngine:
         bayesian_minimum_edge_confidence: float = 0.0,
         require_hmm: bool = False,
         hmm_minimum_fall_probability: float = 0.0,
+        cadence_relax_after_seconds: float = 0.0,
+        relaxed_bayesian_safety_margin: float = 0.0,
+        relaxed_bayesian_minimum_edge_confidence: float = 0.0,
+        relaxed_hmm_minimum_fall_probability: float = 0.0,
     ) -> None:
         self.minimum_score = int(minimum_score)
         self.stale_signal_after_ms = int(stale_signal_after_ms)
@@ -159,6 +163,18 @@ class RiseFallDecisionEngine:
         self.require_hmm = bool(require_hmm)
         self.hmm_minimum_fall_probability = max(
             0.0, float(hmm_minimum_fall_probability)
+        )
+        self.cadence_relax_after_seconds = max(
+            0.0, float(cadence_relax_after_seconds)
+        )
+        self.relaxed_bayesian_safety_margin = max(
+            0.0, float(relaxed_bayesian_safety_margin)
+        )
+        self.relaxed_bayesian_minimum_edge_confidence = max(
+            0.0, float(relaxed_bayesian_minimum_edge_confidence)
+        )
+        self.relaxed_hmm_minimum_fall_probability = max(
+            0.0, float(relaxed_hmm_minimum_fall_probability)
         )
 
     def decide(
@@ -173,7 +189,27 @@ class RiseFallDecisionEngine:
         market_quarantined: bool = False,
         bayesian: BayesianSnapshot | None = None,
         hmm: DirectionalHmmInference | None = None,
+        idle_seconds: float = 0.0,
     ) -> RiseFallDecision:
+        cadence_relaxed = bool(
+            self.cadence_relax_after_seconds > 0
+            and float(idle_seconds) >= self.cadence_relax_after_seconds
+        )
+        bayesian_safety_margin = (
+            self.relaxed_bayesian_safety_margin
+            if cadence_relaxed
+            else self.bayesian_safety_margin
+        )
+        minimum_edge_confidence = (
+            self.relaxed_bayesian_minimum_edge_confidence
+            if cadence_relaxed
+            else self.bayesian_minimum_edge_confidence
+        )
+        minimum_hmm_probability = (
+            self.relaxed_hmm_minimum_fall_probability
+            if cadence_relaxed
+            else self.hmm_minimum_fall_probability
+        )
         posterior_mean = bayesian.posterior_mean if bayesian is not None else None
         edge = (
             posterior_mean - proposal_economics.break_even_probability
@@ -213,8 +249,8 @@ class RiseFallDecisionEngine:
             return decision("SKIP_UNPROFITABLE_QUOTE", "non_positive_payout")
         if trading_locked:
             return decision("SKIP_TRADING_LOCK", "open_strategy_contract")
-        if execution_mode != "demo":
-            return decision("SKIP_REAL_DISABLED", "demo_only")
+        if execution_mode not in {"demo", "real"}:
+            return decision("SKIP_INVALID_EXECUTION_MODE", "unsupported_environment")
         if self.require_bayesian:
             if bayesian is None or not bayesian.ready:
                 return decision(
@@ -224,12 +260,12 @@ class RiseFallDecisionEngine:
             required_probability = min(
                 1.0,
                 proposal_economics.break_even_probability
-                + self.bayesian_safety_margin,
+                + bayesian_safety_margin,
             )
             if (
                 bayesian.lower_credible_bound <= required_probability
                 or bayesian.probability_above_safety_threshold
-                < self.bayesian_minimum_edge_confidence
+                < minimum_edge_confidence
             ):
                 return decision(
                     "SKIP_BAYESIAN_EDGE_INSUFFICIENT",
@@ -246,19 +282,21 @@ class RiseFallDecisionEngine:
             if (
                 hmm.state != "FALL_CONTINUATION"
                 or float(hmm_fall_probability or 0.0)
-                < self.hmm_minimum_fall_probability
+                < minimum_hmm_probability
             ):
                 return decision(
                     "SKIP_HMM_NOT_FAVOURABLE",
                     "fall_regime_probability_below_threshold",
                 )
         success_reason = (
-            "strict_model_agreement"
+            "cadence_relaxed_model_agreement"
+            if cadence_relaxed
+            else "strict_model_agreement"
             if self.require_bayesian or self.require_hmm
-            else "direct_demo"
+            else "direct_execution"
         )
         return RiseFallDecision(
-            "BUY_DEMO",
+            "BUY_EXECUTION",
             (success_reason,),
             False,
             edge,

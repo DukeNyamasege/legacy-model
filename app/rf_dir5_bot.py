@@ -91,6 +91,18 @@ class RFDir5TradingBot(TradingBot):
             hmm_minimum_fall_probability=(
                 self.rf_config.hmm_minimum_fall_probability
             ),
+            cadence_relax_after_seconds=(
+                self.rf_config.cadence_relax_after_seconds
+            ),
+            relaxed_bayesian_safety_margin=(
+                self.rf_config.relaxed_bayesian_safety_margin
+            ),
+            relaxed_bayesian_minimum_edge_confidence=(
+                self.rf_config.relaxed_bayesian_minimum_edge_confidence
+            ),
+            relaxed_hmm_minimum_fall_probability=(
+                self.rf_config.relaxed_hmm_minimum_fall_probability
+            ),
         )
         # The legacy global posterior remains import-compatible but is never updated or
         # consulted by RF-DIR5 execution.
@@ -118,6 +130,7 @@ class RFDir5TradingBot(TradingBot):
         self.rf_pending_recovery_registrations: dict[str, int] = {}
         self.rf_last_epoch: dict[str, int] = {}
         self.rf_last_tick_id: dict[str, str] = {}
+        self.rf_started_monotonic = time.monotonic()
         self.rf_last_purchase_monotonic = 0.0
 
         for state in self.clients.values():
@@ -166,7 +179,7 @@ class RFDir5TradingBot(TradingBot):
         text = "\n".join(
             (
                 "Model update: Virtual loss protection is live.",
-                "After 2 actual losses, affected accounts switch to $0 virtual checks until a virtual win.",
+                "After 2 actual losses, affected accounts switch to $0 virtual checks until 2 consecutive virtual wins.",
                 "Then the next qualifying entry resumes real/demo recovery trading.",
                 "Test our model: https://derivadmin.site/",
                 "Join other traders and let's train the future.",
@@ -913,13 +926,28 @@ class RFDir5TradingBot(TradingBot):
 
         self._prune_stale_pending_contracts("rf_pre_decision")
         execution_mode = self.environment
+        now_monotonic = time.monotonic()
+        last_execution = float(
+            getattr(self, "rf_last_purchase_monotonic", 0.0)
+            or getattr(self, "rf_started_monotonic", now_monotonic)
+        )
+        idle_seconds = max(0.0, now_monotonic - last_execution)
+        cadence_relax_after_seconds = float(
+            getattr(self.rf_config, "cadence_relax_after_seconds", 300)
+        )
+        cadence_relaxed = idle_seconds >= cadence_relax_after_seconds
+        bayesian_safety_margin = (
+            getattr(self.rf_config, "relaxed_bayesian_safety_margin", 0.0)
+            if cadence_relaxed
+            else getattr(self.rf_config, "bayesian_safety_margin", 0.0)
+        )
         bayesian = None
         hmm = None
         if getattr(self.rf_decision_engine, "require_bayesian", False):
             bayesian = self.keyed_bayesian.snapshot(
                 self._bayesian_key(selected.symbol),
                 break_even_probability=economics.break_even_probability,
-                safety_margin=self.rf_config.bayesian_safety_margin,
+                safety_margin=bayesian_safety_margin,
             )
             predicted_probability = bayesian.posterior_mean
             expected_value = (
@@ -946,13 +974,14 @@ class RFDir5TradingBot(TradingBot):
             ),
             bayesian=bayesian,
             hmm=hmm,
+            idle_seconds=idle_seconds,
         )
         logger = getattr(self, "logger", None)
         if logger is not None:
             logger.info(
                 "RF_AI_DECISION signal_id=%s symbol=%s action=%s posterior_mean=%s "
                 "lower_bound=%s edge_confidence=%s break_even=%.5f expected_value=%.5f "
-                "hmm_state=%s hmm_fall_probability=%s",
+                "hmm_state=%s hmm_fall_probability=%s gate_mode=%s idle_seconds=%.1f",
                 selected.signal_id,
                 selected.symbol,
                 decision.action,
@@ -979,14 +1008,20 @@ class RFDir5TradingBot(TradingBot):
                     if hmm is not None
                     else "unavailable"
                 ),
+                "cadence_relaxed" if cadence_relaxed else "strict",
+                idle_seconds,
             )
-        if decision.action != "BUY_DEMO" or not self.test2_config.execution.demo_enabled:
+        execution_available = bool(
+            self.test2_config.execution.demo_enabled
+            or self.test2_config.execution.real_enabled
+        )
+        if decision.action != "BUY_EXECUTION" or not execution_available:
             self._mark_rf_decision(selected, decision.action, ",".join(decision.reasons), selected=True)
             return
         if market.tick_sequence != selected.tick_sequence:
             self._mark_rf_decision(selected, "SKIP_STALE_SIGNAL", "tick changed after decision", selected=True)
             return
-        await self._buy_selected_demo(selected, economics)
+        await self._buy_selected_accounts(selected, economics)
 
     def _mark_rf_decision(
         self,
@@ -1017,7 +1052,7 @@ class RFDir5TradingBot(TradingBot):
             reason,
         )
 
-    async def _buy_selected_demo(
+    async def _buy_selected_accounts(
         self,
         signal: SignalEvent,
         economics: ProposalEconomics,
@@ -1345,11 +1380,11 @@ class RFDir5TradingBot(TradingBot):
                 )
             self.rf_repository.set_signal_decision(
                 signal.signal_id,
-                "BUY_DEMO",
+                "BUY_EXECUTION",
                 (
-                    "DIRECT_DEMO_WITH_VIRTUAL_ACCOUNTS"
+                    "LIVE_EXECUTION_WITH_VIRTUAL_ACCOUNTS"
                     if virtual_opened
-                    else "DIRECT_DEMO"
+                    else "LIVE_EXECUTION"
                 ),
                 selected=True,
                 validated_edge=signal.validated_edge,
