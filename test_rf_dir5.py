@@ -17,6 +17,10 @@ from app.config import TelegramSettings, load_test2_config
 from app.database import Database
 from app.deriv.http import deriv_headers
 from app.model.bayesian_probability import BayesianGroupKey, KeyedBayesianProbability
+from app.model.directional_regime_hmm import (
+    DirectionalHmmInference,
+    DirectionalRegimeHmm,
+)
 from app.models import AccountRiskState, ManagedAccount, ShadowContract, Trade, VirtualTrade
 from app.repositories.rf_dir5_repository import RFDir5Repository, VIRTUAL_MODE
 from app.repositories.test2_repository import Test2Repository
@@ -1494,6 +1498,25 @@ class RFVirtualHookTests(unittest.IsolatedAsyncioTestCase):
 
 
 class RFDecisionTests(unittest.TestCase):
+    def test_directional_hmm_identifies_persistent_fall_regime(self) -> None:
+        model = DirectionalRegimeHmm(minimum_observations=100)
+        movements = (
+            [Decimal("-1")] * 180
+            + [Decimal("1"), Decimal("-1")] * 80
+            + [Decimal("1")] * 180
+            + [Decimal("-1")] * 220
+        )
+
+        self.assertTrue(model.train(movements))
+        inference = model.inference()
+
+        self.assertTrue(inference.ready)
+        self.assertEqual(inference.state, "FALL_CONTINUATION")
+        self.assertGreater(
+            inference.probabilities["FALL_CONTINUATION"],
+            inference.probabilities["RISE_REVERSAL"],
+        )
+
     def test_keyed_bayesian_groups_never_mix(self) -> None:
         model = KeyedBayesianProbability(minimum_completed_trades=2)
         rise = BayesianGroupKey(RF_DIR5_VERSION, "1HZ100V", "RISE", 5)
@@ -1561,6 +1584,161 @@ class RFDecisionTests(unittest.TestCase):
         )
         self.assertEqual(decision.action, "BUY_DEMO")
         self.assertEqual(decision.reasons, ("direct_demo",))
+
+    def test_strict_model_gate_blocks_when_bayesian_is_not_ready(self) -> None:
+        engine = RiseFallDecisionEngine(
+            minimum_score=7,
+            stale_signal_after_ms=900,
+            require_bayesian=True,
+            bayesian_safety_margin=0.02,
+            bayesian_minimum_edge_confidence=0.90,
+            require_hmm=True,
+            hmm_minimum_fall_probability=0.78,
+        )
+        economics = ProposalEconomics(
+            proposal_id="strict-p1",
+            stake=0.50,
+            payout=0.96,
+            potential_profit=0.46,
+            potential_loss=0.50,
+            break_even_probability=0.50 / 0.96,
+            predicted_win_probability=0.50,
+            expected_value=-0.02,
+            expected_return_on_stake=-0.04,
+            requested_monotonic=time.monotonic(),
+            received_monotonic=time.monotonic(),
+        )
+
+        decision = engine.decide(
+            quality_score=8,
+            signal_age_ms=1,
+            proposal_age_ms=1,
+            proposal_economics=economics,
+            execution_mode="demo",
+            trading_locked=False,
+        )
+
+        self.assertEqual(decision.action, "SKIP_BAYESIAN_NOT_READY")
+
+    def test_strict_model_gate_requires_bayesian_and_hmm_agreement(self) -> None:
+        engine = RiseFallDecisionEngine(
+            minimum_score=7,
+            stale_signal_after_ms=900,
+            require_bayesian=True,
+            bayesian_safety_margin=0.02,
+            bayesian_minimum_edge_confidence=0.90,
+            require_hmm=True,
+            hmm_minimum_fall_probability=0.78,
+        )
+        key = BayesianGroupKey(RF_DIR5_VERSION, "1HZ100V", "FALL", 5)
+        model = KeyedBayesianProbability(
+            prior_alpha=1,
+            prior_beta=1,
+            minimum_completed_trades=60,
+        )
+        model.restore(key, wins=90, losses=10)
+        economics = ProposalEconomics(
+            proposal_id="strict-p2",
+            stake=0.50,
+            payout=0.96,
+            potential_profit=0.46,
+            potential_loss=0.50,
+            break_even_probability=0.50 / 0.96,
+            predicted_win_probability=0.50,
+            expected_value=-0.02,
+            expected_return_on_stake=-0.04,
+            requested_monotonic=time.monotonic(),
+            received_monotonic=time.monotonic(),
+        )
+        bayesian = model.snapshot(
+            key,
+            break_even_probability=economics.break_even_probability,
+            safety_margin=0.02,
+        )
+        hmm = DirectionalHmmInference(
+            ready=True,
+            state="FALL_CONTINUATION",
+            probabilities={
+                "FALL_CONTINUATION": 0.90,
+                "CHOPPY": 0.07,
+                "RISE_REVERSAL": 0.03,
+            },
+            observation_count=1000,
+        )
+
+        decision = engine.decide(
+            quality_score=8,
+            signal_age_ms=1,
+            proposal_age_ms=1,
+            proposal_economics=economics,
+            execution_mode="demo",
+            trading_locked=False,
+            bayesian=bayesian,
+            hmm=hmm,
+        )
+
+        self.assertEqual(decision.action, "BUY_DEMO")
+        self.assertEqual(decision.reasons, ("strict_model_agreement",))
+        self.assertGreater(float(decision.expected_value or 0), 0)
+
+    def test_strict_model_gate_rejects_rising_hmm_regime(self) -> None:
+        engine = RiseFallDecisionEngine(
+            minimum_score=7,
+            stale_signal_after_ms=900,
+            require_bayesian=True,
+            bayesian_safety_margin=0.02,
+            bayesian_minimum_edge_confidence=0.90,
+            require_hmm=True,
+            hmm_minimum_fall_probability=0.78,
+        )
+        key = BayesianGroupKey(RF_DIR5_VERSION, "R_100", "FALL", 5)
+        model = KeyedBayesianProbability(
+            prior_alpha=1,
+            prior_beta=1,
+            minimum_completed_trades=60,
+        )
+        model.restore(key, wins=90, losses=10)
+        economics = ProposalEconomics(
+            proposal_id="strict-p3",
+            stake=0.50,
+            payout=0.96,
+            potential_profit=0.46,
+            potential_loss=0.50,
+            break_even_probability=0.50 / 0.96,
+            predicted_win_probability=0.50,
+            expected_value=-0.02,
+            expected_return_on_stake=-0.04,
+            requested_monotonic=time.monotonic(),
+            received_monotonic=time.monotonic(),
+        )
+        bayesian = model.snapshot(
+            key,
+            break_even_probability=economics.break_even_probability,
+            safety_margin=0.02,
+        )
+        hmm = DirectionalHmmInference(
+            ready=True,
+            state="RISE_REVERSAL",
+            probabilities={
+                "FALL_CONTINUATION": 0.05,
+                "CHOPPY": 0.10,
+                "RISE_REVERSAL": 0.85,
+            },
+            observation_count=1000,
+        )
+
+        decision = engine.decide(
+            quality_score=8,
+            signal_age_ms=1,
+            proposal_age_ms=1,
+            proposal_economics=economics,
+            execution_mode="demo",
+            trading_locked=False,
+            bayesian=bayesian,
+            hmm=hmm,
+        )
+
+        self.assertEqual(decision.action, "SKIP_HMM_NOT_FAVOURABLE")
 
     def test_real_execution_is_disabled(self) -> None:
         engine = RiseFallDecisionEngine(

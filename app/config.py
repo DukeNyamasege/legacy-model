@@ -172,7 +172,7 @@ class RecoverySettings(StrictModel):
 
 
 class RiseFallStrategySettings(StrictModel):
-    name: Literal["RF-PUT5-PREMIUM-V7"] = "RF-PUT5-PREMIUM-V7"
+    name: Literal["RF-PUT5-AI-V8"] = "RF-PUT5-AI-V8"
     allowed_direction: Literal["FALL"] = "FALL"
     markets: tuple[str, ...] = (
         "R_10",
@@ -200,6 +200,16 @@ class RiseFallStrategySettings(StrictModel):
     # minutes after every completed trade.
     minimum_trade_interval_seconds: Literal[0] = 0
     maximum_open_strategy_contracts: Literal[1] = 1
+    model_training_ticks: int = Field(default=2500, ge=500, le=5000)
+    bayesian_minimum_samples: int = Field(default=60, ge=20)
+    bayesian_prior_alpha: float = Field(default=1.0, gt=0)
+    bayesian_prior_beta: float = Field(default=1.0, gt=0)
+    bayesian_credible_interval: float = Field(default=0.95, gt=0, lt=1)
+    bayesian_safety_margin: float = Field(default=0.02, ge=0, lt=0.25)
+    bayesian_minimum_edge_confidence: float = Field(default=0.90, gt=0, le=1)
+    hmm_minimum_observations: int = Field(default=500, ge=100)
+    hmm_retrain_every_ticks: int = Field(default=250, ge=25)
+    hmm_minimum_fall_probability: float = Field(default=0.78, gt=0.5, le=1)
 
     @model_validator(mode="after")
     def validate_rf_strategy(self) -> "RiseFallStrategySettings":
@@ -213,6 +223,10 @@ class RiseFallStrategySettings(StrictModel):
         if self.minimum_recent_directional_moves > self.analysis_movements:
             raise ValueError(
                 "minimum_recent_directional_moves cannot exceed analysis_movements"
+            )
+        if self.hmm_minimum_observations > self.model_training_ticks:
+            raise ValueError(
+                "hmm_minimum_observations cannot exceed model_training_ticks"
             )
         return self
 

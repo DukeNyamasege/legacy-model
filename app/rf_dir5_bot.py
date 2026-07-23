@@ -4,10 +4,13 @@ import asyncio
 import json
 import time
 from collections import Counter, deque
+from dataclasses import replace
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
+from app.model.bayesian_probability import BayesianGroupKey, KeyedBayesianProbability
+from app.model.directional_regime_hmm import DirectionalRegimeHmm
 from app.repositories.rf_dir5_repository import (
     RECOVERY_PENDING,
     RFDir5Repository,
@@ -56,6 +59,12 @@ class RFDir5TradingBot(TradingBot):
         self.max_open_trade_seconds = max(self.max_open_trade_seconds, 30)
 
         history_size = self.rf_config.minimum_history_movements + 16
+        history_size = max(
+            history_size,
+            self.rf_config.model_training_ticks
+            + self.rf_config.demo_duration_ticks
+            + 16,
+        )
         for market in self.market_states.values():
             market.ticks_history = deque(maxlen=history_size)
             market.live_ticks_history = deque(maxlen=5)
@@ -73,10 +82,32 @@ class RFDir5TradingBot(TradingBot):
         self.rf_decision_engine = RiseFallDecisionEngine(
             minimum_score=self.rf_config.minimum_directional_score,
             stale_signal_after_ms=self.rf_config.stale_signal_after_ms,
+            require_bayesian=True,
+            bayesian_safety_margin=self.rf_config.bayesian_safety_margin,
+            bayesian_minimum_edge_confidence=(
+                self.rf_config.bayesian_minimum_edge_confidence
+            ),
+            require_hmm=True,
+            hmm_minimum_fall_probability=(
+                self.rf_config.hmm_minimum_fall_probability
+            ),
         )
         # The legacy global posterior remains import-compatible but is never updated or
         # consulted by RF-DIR5 execution.
         self.bayesian = _ExecutionDisabledBayesian()
+        self.keyed_bayesian = KeyedBayesianProbability(
+            prior_alpha=self.rf_config.bayesian_prior_alpha,
+            prior_beta=self.rf_config.bayesian_prior_beta,
+            credible_interval=self.rf_config.bayesian_credible_interval,
+            minimum_completed_trades=self.rf_config.bayesian_minimum_samples,
+        )
+        self.rf_hmms = {
+            symbol: DirectionalRegimeHmm(
+                minimum_observations=self.rf_config.hmm_minimum_observations,
+            )
+            for symbol in self.symbols
+        }
+        self.rf_model_ticks_since_train = {symbol: 0 for symbol in self.symbols}
         self.rf_candidate_queue: list[SignalEvent] = []
         self.rf_arbitration_task: asyncio.Task | None = None
         self.rf_supported_contracts: dict[str, set[str]] = {}
@@ -94,7 +125,8 @@ class RFDir5TradingBot(TradingBot):
         self._save_state()
         self.logger.info(
             "RF_PUT5_ACTIVE version=%s direction=%s markets=%s demo_duration=%s "
-            "cumulative_recovery=%s virtual_protection=%s trigger_actual_losses=%s",
+            "cumulative_recovery=%s virtual_protection=%s trigger_actual_losses=%s "
+            "bayesian_gate=true hmm_gate=true model_policy=strict_agreement",
             RF_DIR5_VERSION,
             self.rf_config.allowed_direction,
             ",".join(self.symbols),
@@ -202,7 +234,12 @@ class RFDir5TradingBot(TradingBot):
         self.rf_last_tick_id.clear()
 
     def _public_history_count(self) -> int:
-        return self.rf_config.minimum_history_movements + 1
+        return max(
+            self.rf_config.minimum_history_movements + 1,
+            self.rf_config.model_training_ticks
+            + self.rf_config.demo_duration_ticks
+            + 1,
+        )
 
     @staticmethod
     def _tick_identity(symbol: str, epoch: int, quote: Decimal) -> str:
@@ -239,6 +276,125 @@ class RFDir5TradingBot(TradingBot):
             latest = market.ticks_history[-1]
             self.rf_last_epoch[symbol] = int(latest["epoch"])
             self.rf_last_tick_id[symbol] = str(latest["tick_id"])
+        self._train_market_models(
+            symbol,
+            [Decimal(str(item)) for item in prices],
+        )
+
+    def _bayesian_key(self, symbol: str) -> BayesianGroupKey:
+        return BayesianGroupKey(
+            RF_DIR5_VERSION,
+            symbol,
+            "FALL",
+            self.rf_config.demo_duration_ticks,
+        )
+
+    def _historical_fall_outcomes(
+        self,
+        quotes: list[Decimal],
+    ) -> list[bool]:
+        duration = int(self.rf_config.demo_duration_ticks)
+        normalization_size = int(self.rf_config.normalization_movements)
+        outcomes: deque[bool] = deque(maxlen=500)
+        last_selected_index = -duration
+        first_end = normalization_size + 5
+        for end_index in range(first_end, len(quotes) - duration):
+            if end_index - last_selected_index < duration:
+                continue
+            historical_quotes = quotes[: end_index - 4]
+            normalization = [
+                later - earlier
+                for earlier, later in zip(
+                    historical_quotes[:-1],
+                    historical_quotes[1:],
+                )
+            ][-normalization_size:]
+            if len(normalization) < normalization_size:
+                continue
+            try:
+                features = build_five_move_features(
+                    quotes[end_index - 5 : end_index + 1],
+                    normalization_movements=normalization,
+                )
+            except ValueError:
+                continue
+            if not detect_fall_candidate(
+                features,
+                minimum_directional_moves=self.rf_config.minimum_directional_moves,
+                minimum_recent_directional_moves=(
+                    self.rf_config.minimum_recent_directional_moves
+                ),
+                minimum_efficiency=self.rf_config.minimum_efficiency,
+            ):
+                continue
+            volatility_ok = check_volatility_filter(
+                features,
+                minimum_impulse=self.rf_config.minimum_impulse,
+                maximum_impulse=self.rf_config.maximum_impulse,
+            )
+            exhaustion_ok = check_exhaustion_filter(
+                features,
+                maximum_move_ratio=self.rf_config.maximum_move_ratio,
+            )
+            if not volatility_ok or not exhaustion_ok:
+                continue
+            score = calculate_directional_score(
+                features,
+                direction="FALL",
+                volatility_ok=True,
+                exhaustion_ok=True,
+            )
+            if score < self.rf_config.minimum_directional_score:
+                continue
+            entry = quotes[end_index]
+            expiry = quotes[end_index + duration]
+            outcomes.append(expiry < entry)
+            last_selected_index = end_index
+        return list(outcomes)
+
+    def _train_market_models(
+        self,
+        symbol: str,
+        quotes: list[Decimal],
+    ) -> None:
+        if symbol not in getattr(self, "rf_hmms", {}):
+            return
+        training_quotes = quotes[-self.rf_config.model_training_ticks :]
+        movements = [
+            later - earlier
+            for earlier, later in zip(training_quotes[:-1], training_quotes[1:])
+        ]
+        hmm_ready = self.rf_hmms[symbol].train(movements)
+        outcomes = self._historical_fall_outcomes(training_quotes)
+        wins = sum(outcomes)
+        losses = len(outcomes) - wins
+        self.keyed_bayesian.restore(
+            self._bayesian_key(symbol),
+            wins=wins,
+            losses=losses,
+        )
+        self.rf_model_ticks_since_train[symbol] = 0
+        snapshot = self.keyed_bayesian.snapshot(
+            self._bayesian_key(symbol),
+            break_even_probability=0.5,
+            safety_margin=self.rf_config.bayesian_safety_margin,
+        )
+        inference = self.rf_hmms[symbol].inference()
+        self.logger.info(
+            "RF_AI_MODEL_TRAINED symbol=%s history_ticks=%s outcomes=%s wins=%s "
+            "losses=%s posterior_mean=%.5f lower_bound=%.5f bayesian_ready=%s "
+            "hmm_ready=%s hmm_state=%s",
+            symbol,
+            len(training_quotes),
+            len(outcomes),
+            wins,
+            losses,
+            snapshot.posterior_mean,
+            snapshot.lower_credible_bound,
+            snapshot.ready,
+            hmm_ready,
+            inference.state,
+        )
 
     def _on_public_connection_lost(self, error: Exception) -> None:
         if self.rf_contract_validation_task and not self.rf_contract_validation_task.done():
@@ -455,6 +611,23 @@ class RFDir5TradingBot(TradingBot):
         }
         market.live_ticks_history.append(snapshot)
         market.ticks_history.append(snapshot)
+        if symbol in getattr(self, "rf_hmms", {}) and len(market.ticks_history) >= 2:
+            previous_quote = Decimal(str(market.ticks_history[-2]["quote"]))
+            self.rf_hmms[symbol].observe(quote - previous_quote)
+            self.rf_model_ticks_since_train[symbol] = (
+                self.rf_model_ticks_since_train.get(symbol, 0) + 1
+            )
+            if (
+                self.rf_model_ticks_since_train[symbol]
+                >= self.rf_config.hmm_retrain_every_ticks
+            ):
+                self._train_market_models(
+                    symbol,
+                    [
+                        Decimal(str(item["quote"]))
+                        for item in market.ticks_history
+                    ],
+                )
         self.repository.record_tick(
             sequence_id=self.tick_sequence,
             symbol=symbol,
@@ -740,6 +913,27 @@ class RFDir5TradingBot(TradingBot):
 
         self._prune_stale_pending_contracts("rf_pre_decision")
         execution_mode = self.environment
+        bayesian = None
+        hmm = None
+        if getattr(self.rf_decision_engine, "require_bayesian", False):
+            bayesian = self.keyed_bayesian.snapshot(
+                self._bayesian_key(selected.symbol),
+                break_even_probability=economics.break_even_probability,
+                safety_margin=self.rf_config.bayesian_safety_margin,
+            )
+            predicted_probability = bayesian.posterior_mean
+            expected_value = (
+                predicted_probability * economics.potential_profit
+                - (1.0 - predicted_probability) * economics.potential_loss
+            )
+            economics = replace(
+                economics,
+                predicted_win_probability=predicted_probability,
+                expected_value=expected_value,
+                expected_return_on_stake=expected_value / economics.stake,
+            )
+        if getattr(self.rf_decision_engine, "require_hmm", False):
+            hmm = self.rf_hmms[selected.symbol].inference()
         decision = self.rf_decision_engine.decide(
             quality_score=selected.quality_score,
             signal_age_ms=signal_age_ms,
@@ -750,7 +944,42 @@ class RFDir5TradingBot(TradingBot):
                 self.is_trading_locked
                 or bool(self.pending_contracts_for_current_cycle)
             ),
+            bayesian=bayesian,
+            hmm=hmm,
         )
+        logger = getattr(self, "logger", None)
+        if logger is not None:
+            logger.info(
+                "RF_AI_DECISION signal_id=%s symbol=%s action=%s posterior_mean=%s "
+                "lower_bound=%s edge_confidence=%s break_even=%.5f expected_value=%.5f "
+                "hmm_state=%s hmm_fall_probability=%s",
+                selected.signal_id,
+                selected.symbol,
+                decision.action,
+                (
+                    f"{bayesian.posterior_mean:.5f}"
+                    if bayesian is not None
+                    else "unavailable"
+                ),
+                (
+                    f"{bayesian.lower_credible_bound:.5f}"
+                    if bayesian is not None
+                    else "unavailable"
+                ),
+                (
+                    f"{bayesian.probability_above_safety_threshold:.5f}"
+                    if bayesian is not None
+                    else "unavailable"
+                ),
+                economics.break_even_probability,
+                float(decision.expected_value or 0.0),
+                hmm.state if hmm is not None else "unavailable",
+                (
+                    f"{float(decision.hmm_fall_probability or 0.0):.5f}"
+                    if hmm is not None
+                    else "unavailable"
+                ),
+            )
         if decision.action != "BUY_DEMO" or not self.test2_config.execution.demo_enabled:
             self._mark_rf_decision(selected, decision.action, ",".join(decision.reasons), selected=True)
             return
@@ -1354,6 +1583,11 @@ class RFDir5TradingBot(TradingBot):
         del outcome
 
     def _register_master_market_outcome(self, symbol: str, outcome: str) -> None:
+        if hasattr(self, "keyed_bayesian") and symbol:
+            self.keyed_bayesian.update(
+                self._bayesian_key(symbol),
+                str(outcome).lower() == "win",
+            )
         super()._register_master_market_outcome(symbol, outcome)
 
     def _complete_market_rotation_after_purchase(self, symbol: str) -> None:

@@ -11,8 +11,8 @@ deriv:
   oauth_redirect_url: https://derivadmin.site/oauth/callback
   token_encryption_key: ''
 model:
-  name: RF-PUT5 Premium
-  version: 7.0.0-rf-put5-cumulative-recovery
+  name: RF-PUT5 AI
+  version: 8.0.0-rf-put5-ai-bayesian-hmm
   brand: Father of Automation Series
   run_id: rfdir5v1
 files:
@@ -90,7 +90,7 @@ recovery:
   pause_below_win_rate: 0.58
   pause_after_consecutive_losses: 3
 rf_strategy:
-  name: RF-PUT5-PREMIUM-V7
+  name: RF-PUT5-AI-V8
   allowed_direction: FALL
   markets:
     - R_10
@@ -105,15 +105,25 @@ rf_strategy:
   demo_duration_ticks: 5
   minimum_directional_moves: 4
   minimum_recent_directional_moves: 3
-  minimum_efficiency: 0.68
-  minimum_impulse: 0.60
-  maximum_impulse: 3.20
-  maximum_move_ratio: 2.80
-  minimum_directional_score: 6
+  minimum_efficiency: 0.75
+  minimum_impulse: 0.75
+  maximum_impulse: 2.60
+  maximum_move_ratio: 2.40
+  minimum_directional_score: 7
   candidate_window_ms: 75
   stale_signal_after_ms: 1800
   minimum_trade_interval_seconds: 0
   maximum_open_strategy_contracts: 1
+  model_training_ticks: 2500
+  bayesian_minimum_samples: 60
+  bayesian_prior_alpha: 1.0
+  bayesian_prior_beta: 1.0
+  bayesian_credible_interval: 0.95
+  bayesian_safety_margin: 0.02
+  bayesian_minimum_edge_confidence: 0.90
+  hmm_minimum_observations: 500
+  hmm_retrain_every_ticks: 250
+  hmm_minimum_fall_probability: 0.78
 risk:
   recovery_enabled: true
   recovery_trigger_losses: 1

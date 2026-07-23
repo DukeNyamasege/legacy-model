@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from app.model.bayesian_probability import BayesianSnapshot
+from app.model.directional_regime_hmm import DirectionalHmmInference
 from app.model.hmm_regime import HmmInference
 from app.strategy.signal_detector import CandidateSignal
 
@@ -117,6 +118,11 @@ RF_ACTIONS = {
     "SKIP_INSUFFICIENT_BALANCE",
     "SKIP_TRADING_LOCK",
     "SKIP_MARKET_QUARANTINED",
+    "SKIP_BAYESIAN_NOT_READY",
+    "SKIP_BAYESIAN_EDGE_INSUFFICIENT",
+    "SKIP_HMM_NOT_READY",
+    "SKIP_HMM_NOT_FAVOURABLE",
+    "SKIP_NEGATIVE_EXPECTED_VALUE",
 }
 
 
@@ -126,6 +132,9 @@ class RiseFallDecision:
     reasons: tuple[str, ...]
     exploration: bool
     validated_edge: float | None
+    predicted_win_probability: float | None = None
+    expected_value: float | None = None
+    hmm_fall_probability: float | None = None
 
 
 class RiseFallDecisionEngine:
@@ -134,9 +143,23 @@ class RiseFallDecisionEngine:
         *,
         minimum_score: int,
         stale_signal_after_ms: int,
+        require_bayesian: bool = False,
+        bayesian_safety_margin: float = 0.0,
+        bayesian_minimum_edge_confidence: float = 0.0,
+        require_hmm: bool = False,
+        hmm_minimum_fall_probability: float = 0.0,
     ) -> None:
         self.minimum_score = int(minimum_score)
         self.stale_signal_after_ms = int(stale_signal_after_ms)
+        self.require_bayesian = bool(require_bayesian)
+        self.bayesian_safety_margin = max(0.0, float(bayesian_safety_margin))
+        self.bayesian_minimum_edge_confidence = max(
+            0.0, float(bayesian_minimum_edge_confidence)
+        )
+        self.require_hmm = bool(require_hmm)
+        self.hmm_minimum_fall_probability = max(
+            0.0, float(hmm_minimum_fall_probability)
+        )
 
     def decide(
         self,
@@ -148,25 +171,100 @@ class RiseFallDecisionEngine:
         execution_mode: str,
         trading_locked: bool,
         market_quarantined: bool = False,
+        bayesian: BayesianSnapshot | None = None,
+        hmm: DirectionalHmmInference | None = None,
     ) -> RiseFallDecision:
-        edge = None
+        posterior_mean = bayesian.posterior_mean if bayesian is not None else None
+        edge = (
+            posterior_mean - proposal_economics.break_even_probability
+            if posterior_mean is not None
+            else None
+        )
+        expected_value = (
+            posterior_mean * proposal_economics.potential_profit
+            - (1.0 - posterior_mean) * proposal_economics.potential_loss
+            if posterior_mean is not None
+            else proposal_economics.expected_value
+        )
+        hmm_fall_probability = (
+            hmm.probabilities.get("FALL_CONTINUATION", 0.0)
+            if hmm is not None
+            else None
+        )
+
+        def decision(action: str, reason: str) -> RiseFallDecision:
+            return RiseFallDecision(
+                action,
+                (reason,),
+                False,
+                edge,
+                predicted_win_probability=posterior_mean,
+                expected_value=expected_value,
+                hmm_fall_probability=hmm_fall_probability,
+            )
+
         if market_quarantined:
-            return RiseFallDecision("SKIP_MARKET_QUARANTINED", ("market_quarantined",), True, edge)
+            return decision("SKIP_MARKET_QUARANTINED", "market_quarantined")
         if quality_score < self.minimum_score:
-            return RiseFallDecision("SKIP_LOW_SCORE", ("directional_score",), True, edge)
+            return decision("SKIP_LOW_SCORE", "directional_score")
         if signal_age_ms > self.stale_signal_after_ms or proposal_age_ms > self.stale_signal_after_ms:
-            return RiseFallDecision("SKIP_STALE_SIGNAL", ("stale_signal_or_proposal",), True, edge)
+            return decision("SKIP_STALE_SIGNAL", "stale_signal_or_proposal")
         if proposal_economics.potential_profit <= 0:
-            return RiseFallDecision("SKIP_UNPROFITABLE_QUOTE", ("non_positive_payout",), True, edge)
+            return decision("SKIP_UNPROFITABLE_QUOTE", "non_positive_payout")
         if trading_locked:
-            return RiseFallDecision("SKIP_TRADING_LOCK", ("open_strategy_contract",), True, edge)
+            return decision("SKIP_TRADING_LOCK", "open_strategy_contract")
         if execution_mode != "demo":
-            return RiseFallDecision("SKIP_REAL_DISABLED", ("demo_only",), False, None)
+            return decision("SKIP_REAL_DISABLED", "demo_only")
+        if self.require_bayesian:
+            if bayesian is None or not bayesian.ready:
+                return decision(
+                    "SKIP_BAYESIAN_NOT_READY",
+                    "insufficient_market_outcomes",
+                )
+            required_probability = min(
+                1.0,
+                proposal_economics.break_even_probability
+                + self.bayesian_safety_margin,
+            )
+            if (
+                bayesian.lower_credible_bound <= required_probability
+                or bayesian.probability_above_safety_threshold
+                < self.bayesian_minimum_edge_confidence
+            ):
+                return decision(
+                    "SKIP_BAYESIAN_EDGE_INSUFFICIENT",
+                    "credible_edge_below_required_margin",
+                )
+            if expected_value is None or expected_value <= 0:
+                return decision(
+                    "SKIP_NEGATIVE_EXPECTED_VALUE",
+                    "posterior_expected_value_not_positive",
+                )
+        if self.require_hmm:
+            if hmm is None or not hmm.ready:
+                return decision("SKIP_HMM_NOT_READY", "regime_model_not_ready")
+            if (
+                hmm.state != "FALL_CONTINUATION"
+                or float(hmm_fall_probability or 0.0)
+                < self.hmm_minimum_fall_probability
+            ):
+                return decision(
+                    "SKIP_HMM_NOT_FAVOURABLE",
+                    "fall_regime_probability_below_threshold",
+                )
+        success_reason = (
+            "strict_model_agreement"
+            if self.require_bayesian or self.require_hmm
+            else "direct_demo"
+        )
         return RiseFallDecision(
             "BUY_DEMO",
-            ("direct_demo",),
+            (success_reason,),
             False,
-            None,
+            edge,
+            predicted_win_probability=posterior_mean,
+            expected_value=expected_value,
+            hmm_fall_probability=hmm_fall_probability,
         )
 
 
