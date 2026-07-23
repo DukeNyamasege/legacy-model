@@ -1011,6 +1011,8 @@
   let currentAiActivityMode = "";
   let wsConnection = null;
   let wsReconnectTimer = 0;
+  let refreshTimer = 0;
+  let refreshInFlight = false;
   let currentActivityFilter = "all";
   const themeKey = "legacy-dashboard-theme";
   const themeToggle = $("theme-toggle");
@@ -1182,6 +1184,7 @@
     currentAiActivityMode = mode;
   }
   function connectWebSocket() {
+    if (document.hidden) return;
     if (wsConnection && wsConnection.readyState <= 1) return;
     const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = apiBase
@@ -1201,13 +1204,17 @@
         }
       } catch (_) {}
     };
-    wsConnection.onclose = () => scheduleWsReconnect();
+    wsConnection.onclose = () => {
+      wsConnection = null;
+      scheduleWsReconnect();
+    };
     wsConnection.onerror = () => {
       try { wsConnection.close(); } catch (_) {}
     };
   }
   function scheduleWsReconnect() {
     window.clearTimeout(wsReconnectTimer);
+    if (document.hidden) return;
     wsReconnectTimer = window.setTimeout(connectWebSocket, 5000);
   }
   function renderStatus(data) {
@@ -1489,6 +1496,8 @@
   }
 
   async function refresh() {
+    if (refreshInFlight || document.hidden) return;
+    refreshInFlight = true;
     if ($("error")) $("error").textContent = "";
     try {
       // Fetch global metrics
@@ -1555,7 +1564,17 @@
       
     } catch (error) {
       if ($("error")) $("error").textContent = error.message || "Unable to reach the service.";
+    } finally {
+      refreshInFlight = false;
     }
+  }
+  function scheduleRefresh() {
+    window.clearTimeout(refreshTimer);
+    if (document.hidden) return;
+    refreshTimer = window.setTimeout(async () => {
+      await refresh();
+      scheduleRefresh();
+    }, 30000);
   }
 async function initialize() {
   try {
@@ -1572,8 +1591,21 @@ async function initialize() {
   }
   connectWebSocket();
   await refresh();
-  setInterval(refresh, 10000);
+  scheduleRefresh();
 }
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    window.clearTimeout(refreshTimer);
+    window.clearTimeout(wsReconnectTimer);
+    if (wsConnection) {
+      try { wsConnection.close(); } catch (_) {}
+    }
+    return;
+  }
+  connectWebSocket();
+  refresh().finally(scheduleRefresh);
+});
 
 // Parse URL parameters for OAuth errors
 document.addEventListener('DOMContentLoaded', () => {

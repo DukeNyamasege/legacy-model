@@ -1309,11 +1309,19 @@ class Test2Repository:
             )
             week_stats = self._period_trade_stats(session, week_start, week_end)
             month_stats = self._period_trade_stats(session, month_start, month_end)
+            runtime_mode_row = session.get(RuntimePreference, "trading_mode")
+            runtime_mode = (
+                runtime_mode_row.preference_value
+                if runtime_mode_row
+                else self.config.deriv.environment
+            ).strip().lower()
+            if runtime_mode not in {"demo", "real"}:
+                runtime_mode = "demo"
             return {
                 "run_id": self.config.model.run_id,
                 "status": status,
                 "pause_reason": state.pause_reason if state else "",
-                "mode": self.runtime_mode(),
+                "mode": runtime_mode,
                 **runtime_guard_state,
                 "candidate_signals": int(candidates or 0),
                 "purchased_trades": int(purchased or 0),

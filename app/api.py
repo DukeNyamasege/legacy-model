@@ -6,6 +6,7 @@ import math
 import os
 import re
 import secrets
+import threading
 import time
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
@@ -56,6 +57,12 @@ REPOSITORY = Test2Repository(DATABASE, CONFIG)
 RF_REPOSITORY = RFDir5Repository(REPOSITORY)
 CONTROL_RATE: dict[str, deque[float]] = defaultdict(deque)
 GLOBAL_ACCOUNT_REFRESH: dict[str, object] = {"last": 0.0, "accounts": []}
+GLOBAL_ACCOUNT_REFRESH_LOCK = threading.Lock()
+PERSONAL_ACCOUNT_REFRESH: dict[str, float] = {}
+PERSONAL_ACCOUNT_REFRESH_INFLIGHT: set[str] = set()
+PERSONAL_ACCOUNT_REFRESH_LOCK = threading.Lock()
+DASHBOARD_SUMMARY_CACHE: dict[str, object] = {"last": 0.0, "data": None}
+DASHBOARD_SUMMARY_LOCK = threading.Lock()
 OAUTH_STATE_COOKIE = "deriv_oauth_state"
 OAUTH_VERIFIER_COOKIE = "deriv_oauth_code_verifier"
 CLIENT_SESSION_COOKIE = "client_session"
@@ -661,89 +668,139 @@ def refresh_global_account_snapshots(*, force: bool = False) -> list[dict]:
     ):
         return list(GLOBAL_ACCOUNT_REFRESH.get("accounts") or [])
 
-    runtime_mode_value = REPOSITORY.runtime_mode()
-    updated_accounts: list[dict] = []
-    seen_accounts: set[str] = set()
+    if not GLOBAL_ACCOUNT_REFRESH_LOCK.acquire(blocking=False):
+        return list(GLOBAL_ACCOUNT_REFRESH.get("accounts") or [])
+    try:
+        now = time.monotonic()
+        if (
+            not force
+            and now - float(GLOBAL_ACCOUNT_REFRESH.get("last") or 0.0) < ttl_seconds
+        ):
+            return list(GLOBAL_ACCOUNT_REFRESH.get("accounts") or [])
 
-    def refresh_from_token(token: str, preferred_account_id: str = "") -> None:
-        try:
-            accounts = load_options_accounts(token)
-        except requests.RequestException:
-            return
-        matched = None
-        if preferred_account_id:
-            matched = next(
-                (
-                    account
-                    for account in accounts
-                    if str(account.get("account_id", "")).strip() == preferred_account_id
-                ),
-                None,
-            )
-        if matched is None:
-            matched = next(
-                (account for account in accounts if account.get("account_type") == runtime_mode_value),
-                accounts[0] if accounts else None,
-            )
-        if not matched:
-            return
-        account_id = str(matched.get("account_id", "")).strip()
-        if not account_id or account_id in seen_accounts:
-            return
-        try:
-            REPOSITORY.update_account_balance(
-                account_id=account_id,
-                balance=float(matched.get("balance", 0.0)),
-                currency=str(matched.get("currency", "USD")),
-                status=str(matched.get("status", "active")),
-            )
-            updated_accounts.append(REPOSITORY.account_summary(account_id))
-            seen_accounts.add(account_id)
-        except (TypeError, ValueError):
-            return
+        runtime_mode_value = REPOSITORY.runtime_mode()
+        updated_accounts: list[dict] = []
+        seen_accounts: set[str] = set()
 
-    managed_accounts = REPOSITORY.list_managed_accounts()
-    if not managed_accounts and legacy_global_tokens_enabled():
-        for token in global_runtime_tokens():
-            refresh_from_token(token)
+        def refresh_from_token(token: str, preferred_account_id: str = "") -> None:
+            try:
+                accounts = load_options_accounts(token)
+            except requests.RequestException:
+                return
+            matched = None
+            if preferred_account_id:
+                matched = next(
+                    (
+                        account
+                        for account in accounts
+                        if str(account.get("account_id", "")).strip()
+                        == preferred_account_id
+                    ),
+                    None,
+                )
+            if matched is None:
+                matched = next(
+                    (
+                        account
+                        for account in accounts
+                        if account.get("account_type") == runtime_mode_value
+                    ),
+                    accounts[0] if accounts else None,
+                )
+            if not matched:
+                return
+            account_id = str(matched.get("account_id", "")).strip()
+            if not account_id or account_id in seen_accounts:
+                return
+            try:
+                REPOSITORY.update_account_balance(
+                    account_id=account_id,
+                    balance=float(matched.get("balance", 0.0)),
+                    currency=str(matched.get("currency", "USD")),
+                    status=str(matched.get("status", "active")),
+                )
+                updated_accounts.append(REPOSITORY.account_summary(account_id))
+                seen_accounts.add(account_id)
+            except (TypeError, ValueError):
+                return
 
-    for row in managed_accounts:
-        if not row.enabled:
-            continue
-        try:
-            payload = decrypt_auth_payload(row.token_secret, CONFIG.deriv.token_encryption_key)
-        except Exception:
-            continue
-        if str(payload.get("auth_type", "pat")).strip() == "oauth" and token_is_expiring(payload):
-            refresh_token_value = str(payload.get("refresh_token", "")).strip()
-            if refresh_token_value:
-                try:
-                    payload.update(
-                        refresh_access_token(
-                            client_id=oauth_client_id(),
-                            refresh_token=refresh_token_value,
+        managed_accounts = REPOSITORY.list_managed_accounts()
+        if not managed_accounts and legacy_global_tokens_enabled():
+            for token in global_runtime_tokens():
+                refresh_from_token(token)
+
+        for row in managed_accounts:
+            if not row.enabled:
+                continue
+            try:
+                payload = decrypt_auth_payload(
+                    row.token_secret, CONFIG.deriv.token_encryption_key
+                )
+            except Exception:
+                continue
+            if (
+                str(payload.get("auth_type", "pat")).strip() == "oauth"
+                and token_is_expiring(payload)
+            ):
+                refresh_token_value = str(payload.get("refresh_token", "")).strip()
+                if refresh_token_value:
+                    try:
+                        payload.update(
+                            refresh_access_token(
+                                client_id=oauth_client_id(),
+                                refresh_token=refresh_token_value,
+                            )
                         )
-                    )
-                    REPOSITORY.update_managed_account(
-                        int(row.id),
-                        token_secret=encrypt_auth_payload(
-                            payload,
-                            CONFIG.deriv.token_encryption_key,
-                        ),
-                        enabled=bool(row.enabled),
-                    )
-                except Exception:
-                    pass
-        token = trading_api_token_from_payload(payload)
-        if token:
-            refresh_from_token(
-                token,
-                preferred_account_id=str(payload.get("account_id", "")).strip(),
-            )
+                        REPOSITORY.update_managed_account(
+                            int(row.id),
+                            token_secret=encrypt_auth_payload(
+                                payload,
+                                CONFIG.deriv.token_encryption_key,
+                            ),
+                            enabled=bool(row.enabled),
+                        )
+                    except Exception:
+                        pass
+            token = trading_api_token_from_payload(payload)
+            if token:
+                refresh_from_token(
+                    token,
+                    preferred_account_id=str(payload.get("account_id", "")).strip(),
+                )
 
-    GLOBAL_ACCOUNT_REFRESH["last"] = now
-    GLOBAL_ACCOUNT_REFRESH["accounts"] = updated_accounts
-    return updated_accounts
+        GLOBAL_ACCOUNT_REFRESH["last"] = now
+        GLOBAL_ACCOUNT_REFRESH["accounts"] = updated_accounts
+        return updated_accounts
+    finally:
+        GLOBAL_ACCOUNT_REFRESH_LOCK.release()
+
+
+def dashboard_summary(*, force: bool = False) -> dict:
+    ttl_seconds = max(
+        1.0, float(os.getenv("DASHBOARD_SUMMARY_CACHE_SECONDS", "3"))
+    )
+    now = time.monotonic()
+    cached = DASHBOARD_SUMMARY_CACHE.get("data")
+    if (
+        not force
+        and isinstance(cached, dict)
+        and now - float(DASHBOARD_SUMMARY_CACHE.get("last") or 0.0) < ttl_seconds
+    ):
+        return cached
+
+    with DASHBOARD_SUMMARY_LOCK:
+        now = time.monotonic()
+        cached = DASHBOARD_SUMMARY_CACHE.get("data")
+        if (
+            not force
+            and isinstance(cached, dict)
+            and now - float(DASHBOARD_SUMMARY_CACHE.get("last") or 0.0) < ttl_seconds
+        ):
+            return cached
+        result = filter_summary_to_trading_ready_accounts(REPOSITORY.summary())
+        DASHBOARD_SUMMARY_CACHE["last"] = now
+        DASHBOARD_SUMMARY_CACHE["data"] = result
+        return result
 
 
 def refresh_account_snapshot(
@@ -791,27 +848,43 @@ def refresh_account_snapshot(
 
 
 def refresh_personal_account_snapshot(account: dict) -> dict | None:
+    account_id = str(account.get("account_id", "")).strip()
+    ttl_seconds = max(5, int(os.getenv("PERSONAL_ACCOUNT_REFRESH_SECONDS", "30")))
+    now = time.monotonic()
+    with PERSONAL_ACCOUNT_REFRESH_LOCK:
+        if now - PERSONAL_ACCOUNT_REFRESH.get(account_id, 0.0) < ttl_seconds:
+            return None
+        if account_id in PERSONAL_ACCOUNT_REFRESH_INFLIGHT:
+            return None
+        PERSONAL_ACCOUNT_REFRESH_INFLIGHT.add(account_id)
     try:
-        row = REPOSITORY.managed_account(int(account["id"]))
-    except Exception:
-        return None
-    if not row:
-        return None
-    try:
-        payload = decrypt_auth_payload(row["token_secret"], CONFIG.deriv.token_encryption_key)
-    except Exception:
-        return None
-    access_token = trading_api_token_from_payload(payload)
-    if not access_token:
-        access_token = str(payload.get("access_token", "")).strip()
-    if not access_token:
-        access_token = str(payload.get("token", "")).strip()
-    if not access_token:
-        return None
-    return refresh_account_snapshot(
-        access_token,
-        preferred_account_id=str(account.get("account_id", "")).strip(),
-    )
+        try:
+            row = REPOSITORY.managed_account(int(account["id"]))
+        except Exception:
+            return None
+        if not row:
+            return None
+        try:
+            payload = decrypt_auth_payload(
+                row["token_secret"], CONFIG.deriv.token_encryption_key
+            )
+        except Exception:
+            return None
+        access_token = trading_api_token_from_payload(payload)
+        if not access_token:
+            access_token = str(payload.get("access_token", "")).strip()
+        if not access_token:
+            access_token = str(payload.get("token", "")).strip()
+        if not access_token:
+            return None
+        return refresh_account_snapshot(
+            access_token,
+            preferred_account_id=account_id,
+        )
+    finally:
+        with PERSONAL_ACCOUNT_REFRESH_LOCK:
+            PERSONAL_ACCOUNT_REFRESH[account_id] = time.monotonic()
+            PERSONAL_ACCOUNT_REFRESH_INFLIGHT.discard(account_id)
 
 app = FastAPI(
     title="RF-DIR5 Guarded",
@@ -1559,21 +1632,14 @@ def logout(request: Request) -> JSONResponse:
 
 @app.get("/metrics/summary")
 def metrics_summary() -> dict:
-    summary = REPOSITORY.summary()
-    if not summary.get("accounts") or float(summary.get("account_balance_total") or 0.0) <= 0:
-        refresh_global_account_snapshots(force=True)
-        summary = REPOSITORY.summary()
-    else:
-        if refresh_global_account_snapshots():
-            summary = REPOSITORY.summary()
-    filtered = filter_summary_to_trading_ready_accounts(summary)
-    filtered.update(
+    summary = dashboard_summary()
+    summary.update(
         {
             "strategy_name": CONFIG.rf_strategy.name,
             "execution_phase": "DIRECT_DEMO",
         }
     )
-    return filtered
+    return summary
 
 
 @app.get("/metrics/recent-trades")
@@ -1933,7 +1999,7 @@ async def ws_dashboard(ws: WebSocket) -> None:
     try:
         await ws.send_json({
             "type": "snapshot",
-            "data": filter_summary_to_trading_ready_accounts(REPOSITORY.summary()),
+            "data": await asyncio.to_thread(dashboard_summary),
         })
         while True:
             await ws.receive_text()
@@ -1949,7 +2015,7 @@ async def _start_broadcaster_loop() -> None:
         interval = max(2, float(os.getenv("WS_BROADCAST_INTERVAL_SECONDS", "3")))
         while True:
             try:
-                summary = filter_summary_to_trading_ready_accounts(REPOSITORY.summary())
+                summary = await asyncio.to_thread(dashboard_summary)
                 await BROADCASTER.broadcast({"type": "snapshot", "data": summary})
             except Exception:
                 pass
