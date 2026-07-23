@@ -795,7 +795,7 @@ class ContractTests(unittest.TestCase):
             0.50 / 0.69,
         )
 
-    def test_direct_buy_uses_registered_app_without_undocumented_markup_field(self) -> None:
+    def test_direct_buy_places_markup_only_in_authenticated_buy_parameters(self) -> None:
         signal = Over2SignalDetector(run_id="test2").observe(
             pattern_ticks(),
             connection_session_id="connection-1",
@@ -812,7 +812,7 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(request["buy"], "1")
         self.assertEqual(request["price"], 0.50)
         self.assertNotIn("app_markup_percentage", request)
-        self.assertNotIn("app_markup_percentage", request["parameters"])
+        self.assertEqual(request["parameters"]["app_markup_percentage"], 3.0)
         self.assertEqual(request["parameters"]["duration"], 1)
         self.assertEqual(request["parameters"]["duration_unit"], "t")
 
@@ -1200,6 +1200,7 @@ class TimingAndModelTests(unittest.TestCase):
 
     def test_single_pat_account_can_use_rest_purchase_transport(self) -> None:
         bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
+        bot.app_markup_percentage = 0.0
 
         self.assertFalse(
             bot._requires_private_purchase_transport(
@@ -1217,6 +1218,14 @@ class TimingAndModelTests(unittest.TestCase):
             bot._requires_private_purchase_transport(
                 account_count=2,
                 bulk_incompatible_accounts=["DOT90000001"],
+            )
+        )
+
+        bot.app_markup_percentage = 3.0
+        self.assertTrue(
+            bot._requires_private_purchase_transport(
+                account_count=2,
+                bulk_incompatible_accounts=[],
             )
         )
 

@@ -154,10 +154,12 @@ class RiseFallContractTests(unittest.TestCase):
         for params in (rise_params, fall_params):
             self.assertNotIn("barrier", params)
             self.assertNotIn("prediction", params)
+            self.assertNotIn("app_markup_percentage", params)
 
-    def test_direct_buy_relies_on_registered_app_markup_without_undocumented_field(self) -> None:
+    def test_direct_buy_places_markup_only_in_authenticated_buy_parameters(self) -> None:
         request = self.bot._direct_buy_request(signal("RISE"), 0.50)
-        self.assertNotIn("app_markup_percentage", request["parameters"])
+        self.assertNotIn("app_markup_percentage", request)
+        self.assertEqual(request["parameters"]["app_markup_percentage"], 3.0)
         self.assertNotIn("barrier", request["parameters"])
 
     def test_public_contract_validation_allows_rest_purchase_when_private_cache_missing(self) -> None:

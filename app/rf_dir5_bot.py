@@ -1434,14 +1434,20 @@ class RFDir5TradingBot(TradingBot):
         return values
 
     def _direct_buy_request(self, signal: SignalEvent, stake_amount: float) -> dict[str, Any]:
+        parameters = self._contract_parameters_for(
+            signal,
+            stake_amount,
+            signal.duration_ticks,
+        )
+        if self.app_markup_percentage > 0:
+            parameters["app_markup_percentage"] = round(
+                self.app_markup_percentage,
+                2,
+            )
         return {
             "buy": "1",
             "price": round(float(stake_amount), 2),
-            "parameters": self._contract_parameters_for(
-                signal,
-                stake_amount,
-                signal.duration_ticks,
-            ),
+            "parameters": parameters,
         }
 
     def _eligible_purchase_accounts(self) -> list[tuple[str, str]]:

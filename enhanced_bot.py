@@ -3859,6 +3859,14 @@ class TradingBot:
             account_count=len(eligible_accounts),
             bulk_incompatible_accounts=incompatible,
         ):
+            self.logger.info(
+                "APP_MARKUP_DIRECT_TRANSPORT percentage=%.2f app_id=%s "
+                "account_count=%s environment=%s",
+                self.app_markup_percentage,
+                mask_app_id(self.app_id),
+                len(eligible_accounts),
+                environment,
+            )
             return await self._purchase_via_private_sessions(
                 signal=signal,
                 eligible_accounts=eligible_accounts,
@@ -4005,12 +4013,14 @@ class TradingBot:
 
             self.logger.info(
                 "PRIVATE_PURCHASE_REQUEST app_id=%s account=%s symbol=%s "
-                "contract_type=%s stake=%.2f transport=authenticated_websocket",
+                "contract_type=%s stake=%.2f markup_percentage=%.2f "
+                "transport=authenticated_websocket",
                 mask_app_id(self.app_id),
                 mask_account_id(account_id),
                 signal.symbol,
                 signal.contract_type,
                 stake_amount,
+                self.app_markup_percentage,
             )
             response = await session.send_request(
                 self._direct_buy_request(signal, stake_amount)
@@ -4132,6 +4142,14 @@ class TradingBot:
             stake_amount,
             symbol_key="underlying_symbol",
         )
+        # Deriv's bulk endpoint rejects this field, while authenticated direct
+        # buys apply it inside the buy parameters. Keep proposals and bulk
+        # contract_parameters clean and use the registered App ID on the OTP.
+        if self.app_markup_percentage > 0:
+            parameters["app_markup_percentage"] = round(
+                self.app_markup_percentage,
+                2,
+            )
         return {
             "buy": "1",
             "price": round(float(stake_amount), 2),
@@ -4213,14 +4231,17 @@ class TradingBot:
             if not self._bulk_purchase_token_capable(token)
         ]
 
-    @staticmethod
     def _requires_private_purchase_transport(
+        self,
         *,
         account_count: int,
         bulk_incompatible_accounts: List[str],
     ) -> bool:
         del account_count
-        return bool(bulk_incompatible_accounts)
+        return bool(
+            bulk_incompatible_accounts
+            or float(getattr(self, "app_markup_percentage", 0.0) or 0.0) > 0
+        )
 
     def _eligible_purchase_accounts(self) -> List[Tuple[str, str]]:
         accounts = list(self.valid_clients)
