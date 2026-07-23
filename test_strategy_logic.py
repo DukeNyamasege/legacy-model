@@ -169,6 +169,63 @@ class DashboardMetricsTests(unittest.TestCase):
         ):
             self.assertEqual(api.actively_executing_account_ids(), {"DOT123422"})
 
+    def test_summary_falls_back_to_repository_accounts_when_payload_ids_are_missing(self) -> None:
+        import app.api as api
+
+        summary = {
+            "status": "RUNNING",
+            "accounts": [
+                {
+                    "account": "DOT***422",
+                    "balance": 121.25,
+                    "currency": "USD",
+                    "trades": 7,
+                    "wins": 5,
+                    "losses": 2,
+                    "win_rate": 5 / 7,
+                    "profit": 2.35,
+                }
+            ],
+            "max_open_trade_seconds": 30,
+        }
+
+        with (
+            patch.object(api, "actively_executing_account_ids", return_value=set()),
+            patch.object(api, "linked_trading_account_ids", return_value=set()),
+            patch.object(api, "master_account_context", return_value=(None, {}, "")),
+        ):
+            result = api.filter_summary_to_trading_ready_accounts(summary)
+
+        self.assertEqual(result["total_traders"], 1)
+        self.assertEqual(result["primary_account"], "DOT***422")
+        self.assertEqual(result["primary_account_balance"], 121.25)
+        self.assertEqual(result["purchased_trades"], 7)
+        self.assertEqual(result["all_accounts_trades"], 7)
+        self.assertEqual(result["all_accounts_profit"], 2.35)
+
+    def test_recent_contracts_fall_back_to_primary_summary_account(self) -> None:
+        import app.api as api
+
+        request = SimpleNamespace(cookies={})
+        trades = [{"contract_id": "contract-1"}]
+
+        with (
+            patch.object(api, "get_current_account", return_value=None),
+            patch.object(api, "master_account_context", return_value=(None, {}, "")),
+            patch.object(
+                api.REPOSITORY,
+                "summary",
+                return_value={"primary_account": "DOT***422"},
+            ),
+            patch.object(api.REPOSITORY, "recent_activity", return_value=trades) as recent,
+        ):
+            result = api.recent_trades(request, activity_type="all")
+
+        recent.assert_called_once_with(50, activity_type="all")
+        self.assertEqual(result["viewer"], "master")
+        self.assertEqual(result["account"], "DOT***422")
+        self.assertEqual(result["trades"], trades)
+
 
 class CopyTradeAuditTests(unittest.TestCase):
     @staticmethod

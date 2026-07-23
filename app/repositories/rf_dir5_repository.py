@@ -465,6 +465,7 @@ class RFDir5Repository:
         recovery_enabled: bool,
         recovery_trigger_losses: int,
         minimum_stake: float,
+        virtual_protection_enabled: bool = True,
         maximum_recovery_balance_fraction: float = 0.10,
         minimum_balance_reserve: float = 0.50,
     ) -> StakePlan:
@@ -495,6 +496,21 @@ class RFDir5Repository:
                 state.equity_high_water = balance
 
             state.equity_high_water = max(state.equity_high_water, balance)
+            if (
+                virtual_protection_enabled
+                and state.protection_mode == VIRTUAL_WAITING_FOR_WIN
+            ):
+                state.updated_at = utc_now()
+                return StakePlan(
+                    None,
+                    "virtual protection waiting for virtual win; debt retained",
+                    is_recovery=bool(
+                        recovery_enabled
+                        and state.recovery_pending
+                        and state.recovery_loss_debt > 0
+                    ),
+                    recovery_debt=state.recovery_loss_debt,
+                )
             base_stake = (
                 math.ceil(max(float(minimum_stake), float(requested_stake)) * 100.0 - 1e-9)
                 / 100.0
@@ -545,8 +561,6 @@ class RFDir5Repository:
                             recovery_debt=state.recovery_loss_debt,
                             required_recovery_stake=required_recovery_stake,
                         )
-                    if state.protection_mode == VIRTUAL_WAITING_FOR_WIN:
-                        state.protection_mode = REAL_RECOVERY_PENDING
 
             state.updated_at = utc_now()
             return StakePlan(
@@ -763,9 +777,13 @@ class RFDir5Repository:
         tick_sequence: int,
         exit_quote: Decimal,
         exit_epoch: int = 0,
+        exit_after_wins: int = 1,
+        max_observations: int = 0,
     ) -> list[dict[str, Any]]:
         settled: list[dict[str, Any]] = []
         now = utc_now()
+        required_virtual_wins = max(1, int(exit_after_wins or 1))
+        observation_cap = max(0, int(max_observations or 0))
         with self.database.session() as session:
             rows = session.scalars(
                 select(VirtualTrade)
@@ -812,16 +830,52 @@ class RFDir5Repository:
                 trade.recovery_debt_change = 0.0
                 trade.settled_at = now
                 state.virtual_observation_count += 1
+                observations_query = (
+                    select(func.count())
+                    .select_from(VirtualTrade)
+                    .where(
+                        VirtualTrade.managed_account_id
+                        == int(trade.managed_account_id),
+                        VirtualTrade.result.in_((VIRTUAL_WIN, VIRTUAL_LOSS)),
+                    )
+                )
+                wins_query = (
+                    select(func.count())
+                    .select_from(VirtualTrade)
+                    .where(
+                        VirtualTrade.managed_account_id
+                        == int(trade.managed_account_id),
+                        VirtualTrade.result == VIRTUAL_WIN,
+                    )
+                )
+                if state.entered_virtual_mode_at is not None:
+                    observations_query = observations_query.where(
+                        VirtualTrade.created_at >= state.entered_virtual_mode_at
+                    )
+                    wins_query = wins_query.where(
+                        VirtualTrade.created_at >= state.entered_virtual_mode_at
+                    )
+                observations_in_mode = int(session.scalar(observations_query) or 0)
+                wins_in_mode = int(session.scalar(wins_query) or 0)
+                exit_virtual_mode = bool(
+                    (result == VIRTUAL_WIN and wins_in_mode >= required_virtual_wins)
+                    or (
+                        observation_cap > 0
+                        and observations_in_mode >= observation_cap
+                    )
+                )
                 if result == VIRTUAL_WIN:
                     state.virtual_win_count += 1
                     state.current_virtual_loss_streak = 0
+                else:
+                    state.virtual_loss_count += 1
+                    state.current_virtual_loss_streak += 1
+                if exit_virtual_mode:
                     state.protection_mode = REAL_RECOVERY_PENDING
                     state.recovery_pending = bool(state.recovery_loss_debt >= 0.01)
                     if state.recovery_pending_since is None:
                         state.recovery_pending_since = now
                 else:
-                    state.virtual_loss_count += 1
-                    state.current_virtual_loss_streak += 1
                     state.protection_mode = VIRTUAL_WAITING_FOR_WIN
                 state.updated_at = now
                 payload = self._protection_payload(state)

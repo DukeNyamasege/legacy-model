@@ -465,11 +465,14 @@ class RFDir5TradingBot(TradingBot):
             connection_session_id=self.connection_session_id,
         )
         self._render_live_ticks()
+        virtual_config = getattr(self, "virtual_config", None)
         for settled in self.rf_repository.settle_due_virtual_trades(
             symbol=symbol,
             tick_sequence=market.tick_sequence,
             exit_quote=quote,
             exit_epoch=epoch,
+            exit_after_wins=getattr(virtual_config, "exit_after_wins", 1),
+            max_observations=getattr(virtual_config, "max_observations", 0),
         ):
             self.logger.warning(
                 "VIRTUAL_TRADE_SETTLED account=%s market=%s result=%s "
@@ -815,10 +818,57 @@ class RFDir5TradingBot(TradingBot):
                 continue
             state = self._client_state_for_token(token, account_id=account_id)
             managed_id = self._managed_account_id_for_token(token)
-            summary = self.repository.account_summary(account_id)
             if managed_id is None:
                 skip_reasons["missing_managed_account"] += 1
                 continue
+            protection = self.rf_repository.virtual_protection_for_account(
+                managed_account_id=managed_id,
+                account_id_masked=mask_account_id(account_id),
+            )
+            if self.virtual_config.enabled and protection.get("mode") == VIRTUAL_MODE:
+                configured_stake = float(state.get("base_stake") or self.base_stake)
+                simulated_stake = round(configured_stake, 2)
+                expected_payout = None
+                if economics.stake > 0:
+                    expected_payout = round(
+                        (float(economics.payout) / float(economics.stake))
+                        * simulated_stake,
+                        2,
+                    )
+                virtual = self.rf_repository.start_virtual_trade(
+                    managed_account_id=managed_id,
+                    account_id_masked=mask_account_id(account_id),
+                    signal=signal,
+                    configured_stake=configured_stake,
+                    simulated_stake=simulated_stake,
+                    expected_payout=expected_payout,
+                )
+                if virtual is not None:
+                    virtual_opened.append(virtual)
+                    self.logger.warning(
+                        "VIRTUAL_TRADE_OPENED account=%s market=%s contract_type=%s "
+                        "simulated_stake=%.2f expected_payout=%s actual_buy=false "
+                        "actual_financial_impact=0 recovery_debt=%.2f",
+                        mask_account_id(account_id),
+                        signal.symbol,
+                        signal.contract_type,
+                        simulated_stake,
+                        (
+                            f"{expected_payout:.2f}"
+                            if expected_payout is not None
+                            else "unavailable"
+                        ),
+                        float(virtual.get("recovery_debt") or 0.0),
+                    )
+                else:
+                    virtual_waiting_accounts.add(mask_account_id(account_id))
+                    self.logger.info(
+                        "VIRTUAL_TRADE_WAITING account=%s signal_id=%s reason=active_virtual_observation",
+                        mask_account_id(account_id),
+                        signal.signal_id,
+                    )
+                continue
+            summary = self.repository.account_summary(account_id)
             if not summary.get("updated_at"):
                 self._set_account_execution_status(
                     managed_id,
@@ -841,6 +891,7 @@ class RFDir5TradingBot(TradingBot):
                 recovery_enabled=self.risk_config.recovery_enabled,
                 recovery_trigger_losses=self.risk_config.recovery_trigger_losses,
                 minimum_stake=0.50,
+                virtual_protection_enabled=self.virtual_config.enabled,
                 maximum_recovery_balance_fraction=(
                     self.risk_config.maximum_recovery_balance_fraction
                 ),
@@ -876,47 +927,6 @@ class RFDir5TradingBot(TradingBot):
                 managed_account_id=managed_id,
                 account_id_masked=mask_account_id(account_id),
             )
-            if self.virtual_config.enabled and protection.get("mode") == VIRTUAL_MODE:
-                expected_payout = None
-                if economics.stake > 0:
-                    expected_payout = round(
-                        (float(economics.payout) / float(economics.stake))
-                        * float(plan.stake),
-                        2,
-                    )
-                virtual = self.rf_repository.start_virtual_trade(
-                    managed_account_id=managed_id,
-                    account_id_masked=mask_account_id(account_id),
-                    signal=signal,
-                    configured_stake=float(state.get("base_stake", self.base_stake)),
-                    simulated_stake=float(plan.stake),
-                    expected_payout=expected_payout,
-                )
-                if virtual is not None:
-                    virtual_opened.append(virtual)
-                    self.logger.warning(
-                        "VIRTUAL_TRADE_OPENED account=%s market=%s contract_type=%s "
-                        "simulated_stake=%.2f expected_payout=%s actual_buy=false "
-                        "actual_financial_impact=0 recovery_debt=%.2f",
-                        mask_account_id(account_id),
-                        signal.symbol,
-                        signal.contract_type,
-                        float(plan.stake),
-                        (
-                            f"{expected_payout:.2f}"
-                            if expected_payout is not None
-                            else "unavailable"
-                        ),
-                        float(virtual.get("recovery_debt") or 0.0),
-                    )
-                else:
-                    virtual_waiting_accounts.add(mask_account_id(account_id))
-                    self.logger.info(
-                        "VIRTUAL_TRADE_WAITING account=%s signal_id=%s reason=active_virtual_observation",
-                        mask_account_id(account_id),
-                        signal.signal_id,
-                    )
-                continue
             if self.virtual_config.enabled and protection.get("mode") == RECOVERY_PENDING:
                 self.logger.warning(
                     "REAL_RECOVERY_TRADE_ARMED account=%s actual_recovery_debt=%.2f",
@@ -1254,7 +1264,10 @@ class RFDir5TradingBot(TradingBot):
                 if managed_id is not None
                 else {"mode": "UNKNOWN"}
             )
-            if protection.get("mode") == VIRTUAL_MODE:
+            virtual_enabled = bool(
+                getattr(getattr(self, "virtual_config", None), "enabled", True)
+            )
+            if virtual_enabled and protection.get("mode") == VIRTUAL_MODE:
                 self.logger.error(
                     "PURCHASE_BLOCKED_VIRTUAL_MODE account=%s signal_id=%s",
                     mask_account_id(account_id),

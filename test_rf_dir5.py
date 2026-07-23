@@ -18,7 +18,7 @@ from app.database import Database
 from app.deriv.http import deriv_headers
 from app.model.bayesian_probability import BayesianGroupKey, KeyedBayesianProbability
 from app.models import AccountRiskState, ManagedAccount, ShadowContract, Trade, VirtualTrade
-from app.repositories.rf_dir5_repository import RFDir5Repository
+from app.repositories.rf_dir5_repository import RFDir5Repository, VIRTUAL_MODE
 from app.repositories.test2_repository import Test2Repository
 from app.rf_dir5_bot import RFDir5TradingBot
 from app.services.telegram_alerts import TelegramAlertClient
@@ -910,7 +910,69 @@ class RFRepositoryTests(unittest.TestCase):
         self.assertTrue(plan.is_recovery)
         self.assertAlmostEqual(plan.required_recovery_stake, 8.0)
 
-    def test_affordable_recovery_takes_priority_over_virtual_mode(self) -> None:
+    def test_exit_after_wins_can_require_multiple_virtual_wins(self) -> None:
+        account_id = self.create_managed_account("Virtual Confirmations")
+        for balance in (98.0, 96.0):
+            self.repository.record_account_outcome(
+                managed_account_id=account_id,
+                account_id_masked="DOT***422",
+                profit=-2.0,
+                current_balance=balance,
+                recovery_enabled=True,
+                recovery_trigger_losses=1,
+                virtual_protection_enabled=True,
+                virtual_trigger_actual_losses=2,
+            )
+        first = signal("RISE", tick_sequence=720)
+        second = signal("RISE", tick_sequence=730)
+        self.repository.record_signal(first)
+        self.repository.record_signal(second)
+
+        self.repository.start_virtual_trade(
+            managed_account_id=account_id,
+            account_id_masked="DOT***422",
+            signal=first,
+            configured_stake=0.50,
+            simulated_stake=0.50,
+            expected_payout=0.90,
+        )
+        first_settled = self.repository.settle_due_virtual_trades(
+            symbol=first.symbol,
+            tick_sequence=first.tick_sequence + first.duration_ticks,
+            exit_quote=Decimal("101.00"),
+            exit_after_wins=2,
+        )
+        self.assertEqual(first_settled[0]["result"], "VIRTUAL_WIN")
+        self.assertEqual(
+            self.repository.virtual_protection_for_account(
+                managed_account_id=account_id
+            )["mode"],
+            "VIRTUAL_MODE",
+        )
+
+        self.repository.start_virtual_trade(
+            managed_account_id=account_id,
+            account_id_masked="DOT***422",
+            signal=second,
+            configured_stake=0.50,
+            simulated_stake=0.50,
+            expected_payout=0.90,
+        )
+        second_settled = self.repository.settle_due_virtual_trades(
+            symbol=second.symbol,
+            tick_sequence=second.tick_sequence + second.duration_ticks,
+            exit_quote=Decimal("101.00"),
+            exit_after_wins=2,
+        )
+
+        self.assertEqual(second_settled[0]["result"], "VIRTUAL_WIN")
+        protection = self.repository.virtual_protection_for_account(
+            managed_account_id=account_id
+        )
+        self.assertEqual(protection["mode"], "RECOVERY_PENDING")
+        self.assertEqual(protection["virtual_wins"], 2)
+
+    def test_virtual_mode_blocks_affordable_recovery_until_virtual_win(self) -> None:
         account_id = self.create_managed_account("Recovery priority")
         for balance in (99.50, 99.00):
             self.repository.record_account_outcome(
@@ -943,13 +1005,14 @@ class RFRepositoryTests(unittest.TestCase):
             minimum_balance_reserve=0.50,
         )
 
+        self.assertIsNone(plan.stake)
         self.assertTrue(plan.is_recovery)
-        self.assertEqual(plan.stake, 2.50)
+        self.assertIn("virtual protection waiting for virtual win", plan.reason)
         self.assertEqual(
             self.repository.virtual_protection_for_account(
                 managed_account_id=account_id
             )["mode"],
-            "RECOVERY_PENDING",
+            "VIRTUAL_MODE",
         )
 
     def test_only_one_open_virtual_observation_per_account(self) -> None:
@@ -1149,6 +1212,7 @@ class RFRepositoryTests(unittest.TestCase):
             current_balance=999.50,
             recovery_enabled=True,
             recovery_trigger_losses=2,
+            virtual_protection_enabled=False,
         )
         second = self.repository.record_account_outcome(
             managed_account_id=account_id,
@@ -1156,6 +1220,7 @@ class RFRepositoryTests(unittest.TestCase):
             current_balance=999.00,
             recovery_enabled=True,
             recovery_trigger_losses=2,
+            virtual_protection_enabled=False,
         )
         self.assertFalse(first["recovery_pending"])
         self.assertTrue(second["recovery_pending"])
@@ -1180,6 +1245,7 @@ class RFRepositoryTests(unittest.TestCase):
             current_balance=1000.00,
             recovery_enabled=True,
             recovery_trigger_losses=2,
+            virtual_protection_enabled=False,
         )
         self.assertTrue(settled["settled_recovery_attempt"])
         self.assertFalse(settled["recovery_pending"])
@@ -1235,6 +1301,7 @@ class RFRepositoryTests(unittest.TestCase):
                 current_balance=balance,
                 recovery_enabled=True,
                 recovery_trigger_losses=2,
+                virtual_protection_enabled=False,
             )
         self.assertTrue(self.repository.mark_recovery_attempt_started(account_id))
         settled = self.repository.record_account_outcome(
@@ -1243,6 +1310,7 @@ class RFRepositoryTests(unittest.TestCase):
             current_balance=996.50,
             recovery_enabled=True,
             recovery_trigger_losses=2,
+            virtual_protection_enabled=False,
         )
         self.assertTrue(settled["settled_recovery_attempt"])
         self.assertEqual(settled["consecutive_losses"], 3)
@@ -1270,6 +1338,7 @@ class RFRepositoryTests(unittest.TestCase):
                 current_balance=balance,
                 recovery_enabled=True,
                 recovery_trigger_losses=2,
+                virtual_protection_enabled=False,
             )
         plan = self.repository.plan_stake(
             managed_account_id=account_id,
@@ -1309,6 +1378,7 @@ class RFRepositoryTests(unittest.TestCase):
                 current_balance=balance,
                 recovery_enabled=True,
                 recovery_trigger_losses=1,
+                virtual_protection_enabled=False,
             )
 
         self.assertEqual(state["recovery_loss_debt"], 63.50)
@@ -1356,6 +1426,70 @@ class RFRepositoryTests(unittest.TestCase):
                 and "RF_ACCOUNT_CONTINUES_AFTER_LOSSES" in str(call.args[0])
                 for call in bot.logger.warning.call_args_list
             )
+        )
+
+
+class RFVirtualHookTests(unittest.IsolatedAsyncioTestCase):
+    async def test_virtual_mode_opens_observation_before_stake_plan(self) -> None:
+        bot = object.__new__(RFDir5TradingBot)
+        bot.cfg = {"strategy": {"initial_stake": 0.50}}
+        bot.virtual_config = SimpleNamespace(enabled=True)
+        bot.risk_config = SimpleNamespace(
+            recovery_enabled=True,
+            recovery_trigger_losses=1,
+            maximum_recovery_balance_fraction=1.0,
+            minimum_balance_reserve=0.50,
+        )
+        bot.logger = MagicMock()
+        bot.repository = MagicMock()
+        bot.repository.account_summary = MagicMock()
+        bot.rf_repository = MagicMock()
+        bot.rf_repository.virtual_protection_for_account.return_value = {
+            "mode": VIRTUAL_MODE,
+        }
+        bot.rf_repository.start_virtual_trade.return_value = {
+            "account": "DOT***422",
+            "recovery_debt": 1.0,
+        }
+        bot.rf_repository.plan_stake = MagicMock()
+        bot._eligible_purchase_accounts = MagicMock(
+            return_value=[("token-1", "DOT123422")]
+        )
+        bot._account_supports_contract = MagicMock(return_value=True)
+        bot._client_state_for_token = MagicMock(return_value={"base_stake": 0.50})
+        bot._managed_account_id_for_token = MagicMock(return_value=7)
+        bot._set_account_execution_status = MagicMock()
+
+        item = signal("RISE", tick_sequence=1400)
+        economics = ProposalEconomics(
+            proposal_id="proposal-1",
+            stake=0.50,
+            payout=0.90,
+            potential_profit=0.40,
+            potential_loss=0.50,
+            break_even_probability=0.50 / 0.90,
+            predicted_win_probability=0.50,
+            expected_value=-0.05,
+            expected_return_on_stake=-0.10,
+            requested_monotonic=time.monotonic(),
+            received_monotonic=time.monotonic(),
+        )
+
+        await bot._buy_selected_demo(item, economics)
+
+        bot.repository.account_summary.assert_not_called()
+        bot.rf_repository.plan_stake.assert_not_called()
+        kwargs = bot.rf_repository.start_virtual_trade.call_args.kwargs
+        self.assertEqual(kwargs["configured_stake"], 0.50)
+        self.assertEqual(kwargs["simulated_stake"], 0.50)
+        self.assertEqual(kwargs["expected_payout"], 0.90)
+        bot.repository.mark_signal.assert_called_once()
+        self.assertEqual(
+            bot.repository.mark_signal.call_args.kwargs["status"],
+            "VIRTUAL_TRADE",
+        )
+        self.assertFalse(
+            bot.repository.mark_signal.call_args.kwargs["purchase_requested"]
         )
 
 

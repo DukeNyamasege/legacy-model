@@ -19,15 +19,16 @@ separate shadow ledger evaluates both 5-tick and 10-tick outcomes.
 
 ## Safety
 
-- After two consecutive account losses, one recovery attempt targets the
-  recorded loss debt using the current proposal profit ratio. It never chains.
+- After two consecutive account losses, that account switches to $0 virtual
+  observations until a virtual win confirms the next recovery entry.
+- After the virtual win, one recovery attempt targets the recorded loss debt
+  using the current proposal profit ratio. It never chains.
+- Virtual contracts never increase stake, never change recovery debt, and their
+  results never enter the demo execution ledger.
 - A recovery stake may exceed the user's normal stake, but neither normal nor
-  recovery execution can exceed 0.5% of current balance or the remaining 2%
-  daily loss allowance. If full recovery does not fit, that account is skipped.
-- Accounts stop individually after three consecutive losses, TP, or SL.
+  recovery execution can exceed the configured account balance cap and reserve.
+  If full recovery does not fit, that account is skipped.
 - One strategy contract can be open globally and one contract per account.
-- A demo loss activates the persistent virtual guard. Virtual contracts never
-  increase stake and their results never enter the demo execution ledger.
 - Real execution remains disabled. Promotion requires at least 1,000 settled
   shadow outcomes for the exact market/direction/duration group plus a positive
   95% lower confidence-bound edge and forward validation.

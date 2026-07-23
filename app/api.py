@@ -517,9 +517,14 @@ def application_oauth_token() -> tuple[str, str]:
 def filter_summary_to_trading_ready_accounts(summary: dict) -> dict:
     active_ids = actively_executing_account_ids()
     linked_ids = linked_trading_account_ids()
+    summary_accounts = [
+        dict(account)
+        for account in list(summary.get("accounts") or [])
+        if str(account.get("account", "")).strip()
+    ]
     summaries_by_mask = {
         str(account.get("account", "")): dict(account)
-        for account in list(summary.get("accounts") or [])
+        for account in summary_accounts
     }
 
     def existing_account_summary(account_id: str) -> dict:
@@ -548,7 +553,22 @@ def filter_summary_to_trading_ready_accounts(summary: dict) -> dict:
     _, _, master_account_id = master_account_context()
     if not master_account_id and linked_ids:
         master_account_id = sorted(linked_ids)[0]
+    if not active_accounts and summary_accounts:
+        active_accounts = summary_accounts
+    if not all_linked_accounts and summary_accounts:
+        all_linked_accounts = summary_accounts
     master = REPOSITORY.account_summary(master_account_id) if master_account_id else None
+    if master is None and summary_accounts:
+        configured = os.getenv("COPYTRADING_MASTER_ACCOUNT_ID", "").strip()
+        configured_mask = mask_account_id(configured) if configured else ""
+        master = next(
+            (
+                account
+                for account in summary_accounts
+                if configured_mask and account.get("account") == configured_mask
+            ),
+            summary_accounts[0],
+        )
     return build_execution_summary(
         summary,
         active_accounts=active_accounts,
@@ -1566,6 +1586,18 @@ def recent_trades(request: Request, limit: int = 50, activity_type: str = "actua
         _, _, account_id = master_account_context()
         viewer = "master"
     if not account_id:
+        summary = REPOSITORY.summary()
+        primary = str(summary.get("primary_account") or "").strip()
+        if primary:
+            return {
+                "viewer": viewer,
+                "account": primary,
+                "trades": REPOSITORY.recent_activity(
+                    max(1, min(limit, 50)),
+                    activity_type=activity_type,
+                ),
+                "markup": {},
+            }
         return {"viewer": viewer, "account": "", "trades": [], "markup": {}}
     return {
         "viewer": viewer,
