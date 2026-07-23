@@ -107,8 +107,8 @@ rf_strategy:
   minimum_recent_directional_moves: 2
   minimum_efficiency: 0.70
   minimum_impulse: 0.60
-  maximum_impulse: 3.00
-  maximum_move_ratio: 2.60
+  maximum_impulse: 3.50
+  maximum_move_ratio: 3.20
   minimum_directional_score: 6
   candidate_window_ms: 75
   stale_signal_after_ms: 1800
@@ -124,10 +124,11 @@ rf_strategy:
   hmm_minimum_observations: 500
   hmm_retrain_every_ticks: 250
   hmm_minimum_fall_probability: 0.70
-  cadence_relax_after_seconds: 300
+  cadence_relax_after_seconds: 120
+  relaxed_bayesian_minimum_samples: 20
   relaxed_bayesian_safety_margin: 0.0
-  relaxed_bayesian_minimum_edge_confidence: 0.65
-  relaxed_hmm_minimum_fall_probability: 0.60
+  relaxed_bayesian_minimum_edge_confidence: 0.60
+  relaxed_hmm_minimum_fall_probability: 0.30
 risk:
   recovery_enabled: true
   recovery_trigger_losses: 1

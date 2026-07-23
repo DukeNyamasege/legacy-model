@@ -94,6 +94,9 @@ class RFDir5TradingBot(TradingBot):
             cadence_relax_after_seconds=(
                 self.rf_config.cadence_relax_after_seconds
             ),
+            relaxed_bayesian_minimum_samples=(
+                self.rf_config.relaxed_bayesian_minimum_samples
+            ),
             relaxed_bayesian_safety_margin=(
                 self.rf_config.relaxed_bayesian_safety_margin
             ),

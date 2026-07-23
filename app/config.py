@@ -211,12 +211,13 @@ class RiseFallStrategySettings(StrictModel):
     hmm_retrain_every_ticks: int = Field(default=250, ge=25)
     hmm_minimum_fall_probability: float = Field(default=0.70, gt=0.5, le=1)
     cadence_relax_after_seconds: int = Field(default=300, ge=60, le=3600)
+    relaxed_bayesian_minimum_samples: int = Field(default=20, ge=10)
     relaxed_bayesian_safety_margin: float = Field(default=0.0, ge=0, lt=0.25)
     relaxed_bayesian_minimum_edge_confidence: float = Field(
         default=0.65, gt=0, le=1
     )
     relaxed_hmm_minimum_fall_probability: float = Field(
-        default=0.60, gt=0.5, le=1
+        default=0.30, gt=0, le=1
     )
 
     @model_validator(mode="after")
@@ -237,7 +238,9 @@ class RiseFallStrategySettings(StrictModel):
                 "hmm_minimum_observations cannot exceed model_training_ticks"
             )
         if (
-            self.relaxed_bayesian_safety_margin
+            self.relaxed_bayesian_minimum_samples
+            > self.bayesian_minimum_samples
+            or self.relaxed_bayesian_safety_margin
             > self.bayesian_safety_margin
             or self.relaxed_bayesian_minimum_edge_confidence
             > self.bayesian_minimum_edge_confidence

@@ -149,6 +149,7 @@ class RiseFallDecisionEngine:
         require_hmm: bool = False,
         hmm_minimum_fall_probability: float = 0.0,
         cadence_relax_after_seconds: float = 0.0,
+        relaxed_bayesian_minimum_samples: int = 0,
         relaxed_bayesian_safety_margin: float = 0.0,
         relaxed_bayesian_minimum_edge_confidence: float = 0.0,
         relaxed_hmm_minimum_fall_probability: float = 0.0,
@@ -166,6 +167,9 @@ class RiseFallDecisionEngine:
         )
         self.cadence_relax_after_seconds = max(
             0.0, float(cadence_relax_after_seconds)
+        )
+        self.relaxed_bayesian_minimum_samples = max(
+            0, int(relaxed_bayesian_minimum_samples)
         )
         self.relaxed_bayesian_safety_margin = max(
             0.0, float(relaxed_bayesian_safety_margin)
@@ -252,41 +256,77 @@ class RiseFallDecisionEngine:
         if execution_mode not in {"demo", "real"}:
             return decision("SKIP_INVALID_EXECUTION_MODE", "unsupported_environment")
         if self.require_bayesian:
-            if bayesian is None or not bayesian.ready:
+            if bayesian is None:
                 return decision(
                     "SKIP_BAYESIAN_NOT_READY",
                     "insufficient_market_outcomes",
                 )
-            required_probability = min(
-                1.0,
-                proposal_economics.break_even_probability
-                + bayesian_safety_margin,
+            observed_outcomes = bayesian.observed_wins + bayesian.observed_losses
+            relaxed_sample_ready = bool(
+                cadence_relaxed
+                and observed_outcomes >= self.relaxed_bayesian_minimum_samples
             )
-            if (
-                bayesian.lower_credible_bound <= required_probability
-                or bayesian.probability_above_safety_threshold
-                < minimum_edge_confidence
-            ):
+            if not bayesian.ready and not relaxed_sample_ready:
                 return decision(
-                    "SKIP_BAYESIAN_EDGE_INSUFFICIENT",
-                    "credible_edge_below_required_margin",
+                    "SKIP_BAYESIAN_NOT_READY",
+                    "insufficient_market_outcomes",
                 )
             if expected_value is None or expected_value <= 0:
                 return decision(
                     "SKIP_NEGATIVE_EXPECTED_VALUE",
                     "posterior_expected_value_not_positive",
                 )
+            required_probability = min(
+                1.0,
+                proposal_economics.break_even_probability
+                + bayesian_safety_margin,
+            )
+            credible_edge_failed = (
+                bayesian.posterior_mean <= required_probability
+                or bayesian.probability_above_safety_threshold
+                < minimum_edge_confidence
+                or (
+                    not cadence_relaxed
+                    and bayesian.lower_credible_bound <= required_probability
+                )
+            )
+            if credible_edge_failed:
+                return decision(
+                    "SKIP_BAYESIAN_EDGE_INSUFFICIENT",
+                    "credible_edge_below_required_margin",
+                )
         if self.require_hmm:
             if hmm is None or not hmm.ready:
                 return decision("SKIP_HMM_NOT_READY", "regime_model_not_ready")
+            hmm_probability_failed = (
+                float(hmm_fall_probability or 0.0) < minimum_hmm_probability
+            )
+            strict_state_failed = (
+                not cadence_relaxed and hmm.state != "FALL_CONTINUATION"
+            )
+            relaxed_state_failed = (
+                cadence_relaxed and hmm.state == "RISE_REVERSAL"
+            )
             if (
-                hmm.state != "FALL_CONTINUATION"
-                or float(hmm_fall_probability or 0.0)
-                < minimum_hmm_probability
+                hmm_probability_failed
+                or strict_state_failed
+                or relaxed_state_failed
             ):
                 return decision(
                     "SKIP_HMM_NOT_FAVOURABLE",
                     "fall_regime_probability_below_threshold",
+                )
+            if (
+                cadence_relaxed
+                and (
+                    not bayesian.ready
+                    or hmm.state != "FALL_CONTINUATION"
+                )
+                and quality_score < self.minimum_score + 1
+            ):
+                return decision(
+                    "SKIP_LOW_SCORE",
+                    "cadence_fallback_requires_extra_quality",
                 )
         success_reason = (
             "cadence_relaxed_model_agreement"
