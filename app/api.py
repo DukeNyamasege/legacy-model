@@ -587,20 +587,15 @@ def filter_summary_to_trading_ready_accounts(
             .lower()
             not in excluded_statuses
         ]
-        linked_accounts = [
-            REPOSITORY.account_summary(account_id)
+        linked_summaries_by_id = {
+            account_id: REPOSITORY.account_summary(account_id)
             for _row, _payload, account_id in linked_contexts
-        ]
-        active_ids = {
-            account_id for _row, _payload, account_id in active_contexts
         }
+        linked_accounts = list(linked_summaries_by_id.values())
         active_accounts = [
-            account
-            for account in linked_accounts
-            if any(
-                account["account"] == mask_account_id(account_id)
-                for account_id in active_ids
-            )
+            linked_summaries_by_id[account_id]
+            for _row, _payload, account_id in active_contexts
+            if account_id in linked_summaries_by_id
         ]
         master_candidates = active_accounts or linked_accounts
         master = (

@@ -13,7 +13,10 @@ def build_execution_summary(
     """Shape global cards around the master while retaining an all-account P/L."""
     result = dict(summary)
     result["accounts"] = active_accounts
-    result["total_traders"] = len(active_accounts)
+    # The dashboard population is every PAT-linked trader in the selected
+    # environment. Execution health remains an account-isolated count.
+    result["total_traders"] = len(linked_accounts)
+    result["active_traders"] = len(active_accounts)
     result["account_balance_total"] = sum(
         float(account.get("balance") or 0.0) for account in active_accounts
     )

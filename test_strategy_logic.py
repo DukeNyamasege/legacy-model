@@ -157,7 +157,8 @@ class DashboardMetricsTests(unittest.TestCase):
             master=master,
         )
 
-        self.assertEqual(result["total_traders"], 2)
+        self.assertEqual(result["total_traders"], 3)
+        self.assertEqual(result["active_traders"], 2)
         self.assertEqual(result["purchased_trades"], 4)
         self.assertEqual(result["wins"], 3)
         self.assertEqual(result["losses"], 1)
@@ -310,11 +311,120 @@ class DashboardMetricsTests(unittest.TestCase):
 
         self.assertEqual(result["dashboard_account_type"], "real")
         self.assertEqual(result["total_traders"], 2)
+        self.assertEqual(result["active_traders"], 2)
         self.assertEqual(result["primary_account"], api.mask_account_id("CR1002"))
         self.assertEqual(result["primary_account_balance"], 500.0)
         self.assertEqual(result["all_accounts_trades"], 7)
         self.assertEqual(result["all_accounts_profit"], 1.0)
         self.assertNotIn("VRT***999", {row["account"] for row in result["accounts"]})
+
+    def test_environment_total_includes_pat_linked_trader_who_has_not_joined(self) -> None:
+        import app.api as api
+
+        active = SimpleNamespace(enabled=True, execution_status="active")
+        not_joined = SimpleNamespace(enabled=False, execution_status="disabled")
+        contexts = [
+            (
+                active,
+                {"account_type": "real", "pat_token_set": True},
+                "CR1001",
+            ),
+            (
+                not_joined,
+                {"account_type": "real", "pat_token_set": True},
+                "CR1002",
+            ),
+        ]
+        summaries = {
+            "CR1001": {
+                "account": api.mask_account_id("CR1001"),
+                "balance": 100.0,
+                "currency": "USD",
+                "trades": 0,
+                "wins": 0,
+                "losses": 0,
+                "profit": 0.0,
+            },
+            "CR1002": {
+                "account": api.mask_account_id("CR1002"),
+                "balance": 200.0,
+                "currency": "USD",
+                "trades": 0,
+                "wins": 0,
+                "losses": 0,
+                "profit": 0.0,
+            },
+        }
+        periods = {
+            "today_trades": 0,
+            "today_profit": 0.0,
+            "yesterday_trades": 0,
+            "yesterday_profit": 0.0,
+            "week_profit": 0.0,
+            "month_profit": 0.0,
+        }
+
+        with (
+            patch.object(api, "environment_account_contexts", return_value=contexts),
+            patch.object(api, "has_personal_trading_api_token", return_value=True),
+            patch.object(
+                api.REPOSITORY,
+                "account_summary",
+                side_effect=lambda account_id: summaries[account_id],
+            ),
+            patch.object(
+                api.REPOSITORY,
+                "account_group_period_summary",
+                return_value=periods,
+            ),
+        ):
+            result = api.filter_summary_to_trading_ready_accounts(
+                {"status": "RUNNING"},
+                account_type="real",
+            )
+
+        self.assertEqual(result["total_traders"], 2)
+        self.assertEqual(result["active_traders"], 1)
+        self.assertEqual(result["primary_account"], api.mask_account_id("CR1001"))
+
+    def test_pat_is_shared_between_demo_and_real_sibling_accounts(self) -> None:
+        import app.api as api
+
+        oauth_refresh = "same-login-refresh-token"
+        demo = SimpleNamespace(token_secret="demo-secret")
+        real = SimpleNamespace(token_secret="real-secret")
+        payloads = {
+            "demo-secret": {
+                "account_id": "VRT1001",
+                "account_type": "demo",
+                "auth_type": "pat",
+                "access_token": "shared-pat",
+                "oauth_refresh_token": oauth_refresh,
+            },
+            "real-secret": {
+                "account_id": "CR1001",
+                "account_type": "real",
+                "auth_type": "oauth",
+                "access_token": "oauth-access",
+                "refresh_token": oauth_refresh,
+            },
+        }
+
+        with (
+            patch.object(api.REPOSITORY, "list_managed_accounts", return_value=[demo, real]),
+            patch.object(
+                api,
+                "managed_account_payload",
+                side_effect=lambda row: payloads[row.token_secret],
+            ),
+        ):
+            self.assertEqual(
+                api.shared_trading_api_token(payloads["real-secret"]),
+                "shared-pat",
+            )
+            self.assertTrue(
+                api.has_personal_trading_api_token(payloads["real-secret"])
+            )
 
     def test_recent_contracts_do_not_cross_environment_without_a_master(self) -> None:
         import app.api as api
