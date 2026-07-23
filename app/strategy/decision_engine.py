@@ -152,6 +152,8 @@ class RiseFallDecisionEngine:
         relaxed_bayesian_minimum_samples: int = 0,
         relaxed_bayesian_safety_margin: float = 0.0,
         relaxed_bayesian_minimum_edge_confidence: float = 0.0,
+        relaxed_bayesian_minimum_probability: float = 0.0,
+        relaxed_minimum_expected_return_on_stake: float = 0.0,
         relaxed_hmm_minimum_fall_probability: float = 0.0,
     ) -> None:
         self.minimum_score = int(minimum_score)
@@ -176,6 +178,14 @@ class RiseFallDecisionEngine:
         )
         self.relaxed_bayesian_minimum_edge_confidence = max(
             0.0, float(relaxed_bayesian_minimum_edge_confidence)
+        )
+        self.relaxed_bayesian_minimum_probability = min(
+            1.0,
+            max(0.0, float(relaxed_bayesian_minimum_probability)),
+        )
+        self.relaxed_minimum_expected_return_on_stake = min(
+            0.0,
+            max(-1.0, float(relaxed_minimum_expected_return_on_stake)),
         )
         self.relaxed_hmm_minimum_fall_probability = max(
             0.0, float(relaxed_hmm_minimum_fall_probability)
@@ -226,6 +236,11 @@ class RiseFallDecisionEngine:
             if posterior_mean is not None
             else proposal_economics.expected_value
         )
+        expected_return_on_stake = (
+            expected_value / proposal_economics.stake
+            if expected_value is not None and proposal_economics.stake > 0
+            else None
+        )
         hmm_fall_probability = (
             hmm.probabilities.get("FALL_CONTINUATION", 0.0)
             if hmm is not None
@@ -271,7 +286,19 @@ class RiseFallDecisionEngine:
                     "SKIP_BAYESIAN_NOT_READY",
                     "insufficient_market_outcomes",
                 )
-            if expected_value is None or expected_value <= 0:
+            cadence_negative_edge_allowed = bool(
+                cadence_relaxed
+                and expected_return_on_stake is not None
+                and expected_return_on_stake
+                >= self.relaxed_minimum_expected_return_on_stake
+                and bayesian.posterior_mean
+                >= self.relaxed_bayesian_minimum_probability
+                and quality_score >= self.minimum_score + 1
+            )
+            if (
+                expected_value is None
+                or (expected_value <= 0 and not cadence_negative_edge_allowed)
+            ):
                 return decision(
                     "SKIP_NEGATIVE_EXPECTED_VALUE",
                     "posterior_expected_value_not_positive",
@@ -282,12 +309,18 @@ class RiseFallDecisionEngine:
                 + bayesian_safety_margin,
             )
             credible_edge_failed = (
-                bayesian.posterior_mean <= required_probability
-                or bayesian.probability_above_safety_threshold
-                < minimum_edge_confidence
-                or (
-                    not cadence_relaxed
-                    and bayesian.lower_credible_bound <= required_probability
+                (
+                    bayesian.posterior_mean
+                    < self.relaxed_bayesian_minimum_probability
+                    or bayesian.probability_above_safety_threshold
+                    < minimum_edge_confidence
+                )
+                if cadence_relaxed
+                else (
+                    bayesian.posterior_mean <= required_probability
+                    or bayesian.probability_above_safety_threshold
+                    < minimum_edge_confidence
+                    or bayesian.lower_credible_bound <= required_probability
                 )
             )
             if credible_edge_failed:
@@ -329,7 +362,9 @@ class RiseFallDecisionEngine:
                     "cadence_fallback_requires_extra_quality",
                 )
         success_reason = (
-            "cadence_relaxed_model_agreement"
+            "cadence_relaxed_bounded_fallback"
+            if cadence_relaxed and expected_value is not None and expected_value <= 0
+            else "cadence_relaxed_model_agreement"
             if cadence_relaxed
             else "strict_model_agreement"
             if self.require_bayesian or self.require_hmm

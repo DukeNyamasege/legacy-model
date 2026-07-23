@@ -103,6 +103,12 @@ class RFDir5TradingBot(TradingBot):
             relaxed_bayesian_minimum_edge_confidence=(
                 self.rf_config.relaxed_bayesian_minimum_edge_confidence
             ),
+            relaxed_bayesian_minimum_probability=(
+                self.rf_config.relaxed_bayesian_minimum_probability
+            ),
+            relaxed_minimum_expected_return_on_stake=(
+                self.rf_config.relaxed_minimum_expected_return_on_stake
+            ),
             relaxed_hmm_minimum_fall_probability=(
                 self.rf_config.relaxed_hmm_minimum_fall_probability
             ),
@@ -836,7 +842,7 @@ class RFDir5TradingBot(TradingBot):
                 self._mark_rf_decision(
                     signal,
                     "SKIP_LOSS_MARKET_ROTATION",
-                    "market suspended after master loss until another market wins",
+                    "market waits for one purchase on a different market",
                 )
                 self.logger.info(
                     "RF_MARKET_SUSPENDED signal_id=%s symbol=%s suspended_markets=%s",

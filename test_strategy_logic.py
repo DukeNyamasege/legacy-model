@@ -453,6 +453,82 @@ class DashboardMetricsTests(unittest.TestCase):
         self.assertEqual(result["account"], "")
         self.assertEqual(result["trades"], [])
 
+    def test_cross_site_personal_mutation_is_rejected(self) -> None:
+        import app.api as api
+
+        allowed = SimpleNamespace(
+            headers={
+                "origin": "https://derivadmin.site",
+                "sec-fetch-site": "same-origin",
+            }
+        )
+        blocked = SimpleNamespace(
+            headers={
+                "origin": "https://attacker.example",
+                "sec-fetch-site": "cross-site",
+            }
+        )
+
+        api.enforce_mutation_origin(allowed)
+        with self.assertRaises(api.HTTPException) as context:
+            api.enforce_mutation_origin(blocked)
+
+        self.assertEqual(context.exception.status_code, 403)
+
+    def test_control_auth_uses_constant_time_secret_comparison(self) -> None:
+        import app.api as api
+
+        request = SimpleNamespace(client=SimpleNamespace(host="203.0.113.10"))
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "CONTROL_API_KEY": "correct-control-secret",
+                    "LOCAL_CONTROL_ENABLED": "false",
+                },
+                clear=False,
+            ),
+            patch.object(
+                api.hmac,
+                "compare_digest",
+                wraps=api.hmac.compare_digest,
+            ) as compare_digest,
+        ):
+            actor = api.require_control_auth(
+                request,
+                x_api_key="correct-control-secret",
+            )
+
+        self.assertEqual(actor, "administrator")
+        compare_digest.assert_called_once()
+
+    def test_account_inventory_and_strategy_internals_require_control_auth(self) -> None:
+        import app.api as api
+
+        routes = {
+            route.path: route
+            for route in api.app.routes
+            if hasattr(route, "dependant")
+        }
+        for path in (
+            "/settings/accounts",
+            "/metrics/recent-signals",
+            "/metrics/model",
+            "/metrics/rf-strategy",
+        ):
+            self.assertGreater(
+                len(routes[path].dependant.dependencies),
+                0,
+                path,
+            )
+
+    def test_personal_api_tokens_have_a_strict_input_size_limit(self) -> None:
+        import app.api as api
+        from pydantic import ValidationError
+
+        with self.assertRaises(ValidationError):
+            api.PersonalApiTokenRequest(api_token="x" * 4097)
+
 
 class CopyTradeAuditTests(unittest.TestCase):
     @staticmethod
@@ -1297,7 +1373,7 @@ class AccountIsolationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(profiles, {})
         bot._set_account_execution_status.assert_not_called()
 
-    def test_master_loss_stays_suspended_until_another_market_wins(self) -> None:
+    def test_master_loss_requires_one_alternate_market_purchase(self) -> None:
         bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
         bot.loss_rotation_blocked_market = "INACTIVE_LEGACY_MARKET"
         bot.loss_rotation_blocked_markets = ["INACTIVE_LEGACY_MARKET"]
@@ -1311,12 +1387,11 @@ class AccountIsolationTests(unittest.IsolatedAsyncioTestCase):
 
         bot._complete_market_rotation_after_purchase("R_10")
 
-        self.assertTrue(bot._market_rotation_blocks("1HZ100V"))
-        bot._register_master_market_outcome("R_10", "win")
         self.assertFalse(bot._market_rotation_blocks("1HZ100V"))
         self.assertEqual(bot.loss_rotation_blocked_markets, [])
+        bot.logger.info.assert_called_once()
 
-    def test_consecutive_market_losses_accumulate_until_recovery(self) -> None:
+    def test_alternate_purchase_prevents_rotation_deadlock(self) -> None:
         bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
         bot.loss_rotation_blocked_market = ""
         bot.loss_rotation_blocked_markets = []
@@ -1328,13 +1403,14 @@ class AccountIsolationTests(unittest.IsolatedAsyncioTestCase):
         bot.logger = MagicMock()
 
         bot._register_master_market_outcome("1HZ100V", "loss")
+        bot._complete_market_rotation_after_purchase("R_10")
         bot._register_master_market_outcome("R_10", "loss")
 
-        self.assertTrue(bot._market_rotation_blocks("1HZ100V"))
+        self.assertFalse(bot._market_rotation_blocks("1HZ100V"))
         self.assertTrue(bot._market_rotation_blocks("R_10"))
         self.assertFalse(bot._market_rotation_blocks("R_25"))
 
-        bot._register_master_market_outcome("R_25", "win")
+        bot._complete_market_rotation_after_purchase("R_25")
         self.assertEqual(bot.loss_rotation_blocked_markets, [])
 
     def test_market_rotation_failsafe_always_leaves_one_market_eligible(self) -> None:

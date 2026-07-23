@@ -2401,7 +2401,7 @@ class TradingBot:
         self.loss_rotation_blocked_market = blocked[-1] if blocked else ""
         self.logger.warning(
             "MARKET_ROTATION_REQUIRED lost_market=%s suspended_markets=%s; "
-            "release_requires_master_win=true",
+            "release_requires_alternate_market_purchase=true",
             lost_market,
             ",".join(blocked),
         )
@@ -2410,10 +2410,13 @@ class TradingBot:
         blocked = self._loss_rotation_markets()
         if not blocked or str(symbol) in blocked:
             return
+        released = list(blocked)
+        blocked.clear()
+        self.loss_rotation_blocked_market = ""
         self.logger.info(
-            "MARKET_ROTATION_ALTERNATE_PURCHASED suspended_markets=%s next_market=%s "
-            "waiting_for_master_win=true",
-            ",".join(blocked),
+            "MARKET_ROTATION_ALTERNATE_PURCHASED released_markets=%s next_market=%s "
+            "rotation_requirement_satisfied=true",
+            ",".join(released),
             symbol,
         )
 

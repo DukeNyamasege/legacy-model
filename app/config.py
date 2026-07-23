@@ -214,10 +214,16 @@ class RiseFallStrategySettings(StrictModel):
     relaxed_bayesian_minimum_samples: int = Field(default=20, ge=10)
     relaxed_bayesian_safety_margin: float = Field(default=0.0, ge=0, lt=0.25)
     relaxed_bayesian_minimum_edge_confidence: float = Field(
-        default=0.65, gt=0, le=1
+        default=0.0, ge=0, le=1
+    )
+    relaxed_bayesian_minimum_probability: float = Field(
+        default=0.35, ge=0, le=1
+    )
+    relaxed_minimum_expected_return_on_stake: float = Field(
+        default=-0.25, ge=-1, le=0
     )
     relaxed_hmm_minimum_fall_probability: float = Field(
-        default=0.30, gt=0, le=1
+        default=0.20, gt=0, le=1
     )
 
     @model_validator(mode="after")

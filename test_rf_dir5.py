@@ -193,13 +193,22 @@ class RiseFallContractTests(unittest.TestCase):
             config.rf_strategy.markets,
             ("R_10", "R_100", "R_75", "1HZ10V", "1HZ75V"),
         )
-        self.assertEqual(config.rf_strategy.minimum_directional_moves, 4)
+        self.assertEqual(config.rf_strategy.minimum_directional_moves, 3)
         self.assertEqual(config.rf_strategy.minimum_recent_directional_moves, 2)
-        self.assertGreaterEqual(config.rf_strategy.minimum_efficiency, 0.70)
-        self.assertEqual(config.rf_strategy.cadence_relax_after_seconds, 120)
+        self.assertEqual(config.rf_strategy.minimum_efficiency, 0.45)
+        self.assertEqual(config.rf_strategy.minimum_directional_score, 5)
+        self.assertEqual(config.rf_strategy.cadence_relax_after_seconds, 60)
         self.assertEqual(
             config.rf_strategy.relaxed_bayesian_minimum_samples,
-            20,
+            10,
+        )
+        self.assertEqual(
+            config.rf_strategy.relaxed_bayesian_minimum_probability,
+            0.35,
+        )
+        self.assertEqual(
+            config.rf_strategy.relaxed_minimum_expected_return_on_stake,
+            -0.25,
         )
         self.assertGreater(
             config.rf_strategy.bayesian_minimum_edge_confidence,
@@ -612,7 +621,7 @@ class RFCandidateArbitrationTests(unittest.IsolatedAsyncioTestCase):
         bot._mark_rf_decision.assert_called_once_with(
             blocked,
             "SKIP_LOSS_MARKET_ROTATION",
-            "market suspended after master loss until another market wins",
+            "market waits for one purchase on a different market",
         )
         bot.logger.info.assert_called_once()
 
@@ -2036,6 +2045,138 @@ class RFDecisionTests(unittest.TestCase):
             trading_locked=False,
             bayesian=bayesian,
             idle_seconds=121,
+        )
+
+        self.assertEqual(decision.action, "SKIP_NEGATIVE_EXPECTED_VALUE")
+
+    def test_bounded_cadence_fallback_allows_logged_idle_case(self) -> None:
+        engine = RiseFallDecisionEngine(
+            minimum_score=5,
+            stale_signal_after_ms=1800,
+            require_bayesian=True,
+            bayesian_minimum_edge_confidence=0.65,
+            require_hmm=True,
+            hmm_minimum_fall_probability=0.60,
+            cadence_relax_after_seconds=60,
+            relaxed_bayesian_minimum_samples=10,
+            relaxed_bayesian_minimum_edge_confidence=0.0,
+            relaxed_bayesian_minimum_probability=0.35,
+            relaxed_minimum_expected_return_on_stake=-0.25,
+            relaxed_hmm_minimum_fall_probability=0.20,
+        )
+        key = BayesianGroupKey(RF_DIR5_VERSION, "R_10", "FALL", 5)
+        model = KeyedBayesianProbability(
+            prior_alpha=1,
+            prior_beta=1,
+            minimum_completed_trades=40,
+        )
+        model.restore(key, wins=10, losses=16)
+        economics = ProposalEconomics(
+            proposal_id="bounded-cadence",
+            stake=0.50,
+            payout=0.96,
+            potential_profit=0.46,
+            potential_loss=0.50,
+            break_even_probability=0.50 / 0.96,
+            predicted_win_probability=0.50,
+            expected_value=-0.02,
+            expected_return_on_stake=-0.04,
+            requested_monotonic=time.monotonic(),
+            received_monotonic=time.monotonic(),
+        )
+        bayesian = model.snapshot(
+            key,
+            break_even_probability=economics.break_even_probability,
+            safety_margin=0.0,
+        )
+        choppy_hmm = DirectionalHmmInference(
+            ready=True,
+            state="CHOPPY",
+            probabilities={
+                "FALL_CONTINUATION": 0.28,
+                "CHOPPY": 0.62,
+                "RISE_REVERSAL": 0.10,
+            },
+            observation_count=1000,
+        )
+
+        strict = engine.decide(
+            quality_score=7,
+            signal_age_ms=1,
+            proposal_age_ms=1,
+            proposal_economics=economics,
+            execution_mode="demo",
+            trading_locked=False,
+            bayesian=bayesian,
+            hmm=choppy_hmm,
+            idle_seconds=30,
+        )
+        relaxed = engine.decide(
+            quality_score=7,
+            signal_age_ms=1,
+            proposal_age_ms=1,
+            proposal_economics=economics,
+            execution_mode="demo",
+            trading_locked=False,
+            bayesian=bayesian,
+            hmm=choppy_hmm,
+            idle_seconds=61,
+        )
+
+        self.assertEqual(strict.action, "SKIP_BAYESIAN_NOT_READY")
+        self.assertEqual(relaxed.action, "BUY_EXECUTION")
+        self.assertEqual(
+            relaxed.reasons,
+            ("cadence_relaxed_bounded_fallback",),
+        )
+        self.assertLess(float(relaxed.expected_value or 0), 0)
+
+    def test_bounded_cadence_fallback_rejects_excessive_negative_edge(self) -> None:
+        engine = RiseFallDecisionEngine(
+            minimum_score=5,
+            stale_signal_after_ms=1800,
+            require_bayesian=True,
+            require_hmm=False,
+            cadence_relax_after_seconds=60,
+            relaxed_bayesian_minimum_samples=10,
+            relaxed_bayesian_minimum_probability=0.35,
+            relaxed_minimum_expected_return_on_stake=-0.25,
+        )
+        key = BayesianGroupKey(RF_DIR5_VERSION, "R_100", "FALL", 5)
+        model = KeyedBayesianProbability(
+            prior_alpha=1,
+            prior_beta=1,
+            minimum_completed_trades=40,
+        )
+        model.restore(key, wins=6, losses=20)
+        economics = ProposalEconomics(
+            proposal_id="excessive-negative-edge",
+            stake=0.50,
+            payout=0.96,
+            potential_profit=0.46,
+            potential_loss=0.50,
+            break_even_probability=0.50 / 0.96,
+            predicted_win_probability=0.50,
+            expected_value=-0.02,
+            expected_return_on_stake=-0.04,
+            requested_monotonic=time.monotonic(),
+            received_monotonic=time.monotonic(),
+        )
+        bayesian = model.snapshot(
+            key,
+            break_even_probability=economics.break_even_probability,
+            safety_margin=0.0,
+        )
+
+        decision = engine.decide(
+            quality_score=8,
+            signal_age_ms=1,
+            proposal_age_ms=1,
+            proposal_economics=economics,
+            execution_mode="demo",
+            trading_locked=False,
+            bayesian=bayesian,
+            idle_seconds=61,
         )
 
         self.assertEqual(decision.action, "SKIP_NEGATIVE_EXPECTED_VALUE")

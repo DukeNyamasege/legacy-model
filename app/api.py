@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import math
 import os
 import re
@@ -21,8 +22,9 @@ except Exception:
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, RedirectResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import requests
 import json
 
@@ -56,6 +58,9 @@ DATABASE.create_schema()
 REPOSITORY = Test2Repository(DATABASE, CONFIG)
 RF_REPOSITORY = RFDir5Repository(REPOSITORY)
 CONTROL_RATE: dict[str, deque[float]] = defaultdict(deque)
+PERSONAL_MUTATION_RATE: dict[str, deque[float]] = defaultdict(deque)
+CONTROL_RATE_LOCK = threading.Lock()
+PERSONAL_MUTATION_RATE_LOCK = threading.Lock()
 GLOBAL_ACCOUNT_REFRESH: dict[str, object] = {"last": 0.0, "accounts": []}
 GLOBAL_ACCOUNT_REFRESH_LOCK = threading.Lock()
 PERSONAL_ACCOUNT_REFRESH: dict[str, float] = {}
@@ -104,20 +109,24 @@ BROADCASTER = DashboardBroadcaster()
 
 
 class ModeUpdateRequest(BaseModel):
-    mode: str
+    mode: str = Field(min_length=4, max_length=4, pattern="^(demo|real)$")
 
 
 class TokenImportRequest(BaseModel):
-    tokens_text: str
-    label_prefix: str = "Account"
+    tokens_text: str = Field(min_length=1, max_length=100_000)
+    label_prefix: str = Field(default="Account", max_length=64)
 
 
 class PersonalApiTokenRequest(BaseModel):
-    api_token: str
+    api_token: str = Field(min_length=8, max_length=4096)
 
 
 class PersonalAccountSwitchRequest(BaseModel):
-    account_type: str
+    account_type: str = Field(
+        min_length=4,
+        max_length=4,
+        pattern="^(demo|real)$",
+    )
 
 
 class PersonalTradingSettingsRequest(BaseModel):
@@ -1022,6 +1031,15 @@ frontend_origins = [
     if origin.strip()
 ]
 frontend_origin_regex = os.getenv("FRONTEND_ORIGIN_REGEX", "").strip() or None
+trusted_hosts = [
+    host.strip()
+    for host in os.getenv(
+        "TRUSTED_HOSTS",
+        "derivadmin.site,www.derivadmin.site,localhost,127.0.0.1,::1,api,testserver",
+    ).split(",")
+    if host.strip()
+]
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=trusted_hosts)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=frontend_origins,
@@ -1030,6 +1048,87 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-API-Key"],
 )
+
+
+def enforce_mutation_origin(request: Request) -> None:
+    fetch_site = request.headers.get("sec-fetch-site", "").strip().lower()
+    if fetch_site == "cross-site":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cross-site account changes are not allowed",
+        )
+    origin = request.headers.get("origin", "").strip().rstrip("/")
+    if origin and origin not in set(frontend_origins):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Request origin is not allowed",
+        )
+
+
+def _enforce_rate_limit(
+    *,
+    store: dict[str, deque[float]],
+    lock: threading.Lock,
+    key: str,
+    limit: int,
+    detail: str,
+) -> None:
+    now = time.monotonic()
+    with lock:
+        history = store[key]
+        while history and now - history[0] > 60:
+            history.popleft()
+        if len(history) >= limit:
+            raise HTTPException(status_code=429, detail=detail)
+        history.append(now)
+
+
+def enforce_personal_mutation_rate_limit(request: Request) -> None:
+    session_token = request.cookies.get(CLIENT_SESSION_COOKIE, "")
+    client = request.client.host if request.client else "unknown"
+    key = session_hash(session_token) if session_token else f"ip:{client}"
+    _enforce_rate_limit(
+        store=PERSONAL_MUTATION_RATE,
+        lock=PERSONAL_MUTATION_RATE_LOCK,
+        key=key,
+        limit=30,
+        detail="Personal account change rate limit exceeded",
+    )
+
+
+@app.middleware("http")
+async def enforce_request_security(request: Request, call_next):
+    path = request.url.path
+    try:
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+            enforce_mutation_origin(request)
+            if path.startswith("/me/"):
+                enforce_personal_mutation_rate_limit(request)
+    except HTTPException as exc:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail},
+        )
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = (
+        "camera=(), microphone=(), geolocation=(), payment=()"
+    )
+    response.headers["Strict-Transport-Security"] = (
+        "max-age=31536000; includeSubDomains"
+    )
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; "
+        "form-action 'self'; object-src 'none'; img-src 'self' data:; "
+        "style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; "
+        "connect-src 'self' wss:"
+    )
+    if path.startswith(("/me", "/settings", "/control", "/oauth")):
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+    return response
 
 
 def require_control_auth(
@@ -1051,7 +1150,14 @@ def require_control_auth(
         if authorization and authorization.startswith("Bearer ")
         else ""
     )
-    if not expected or supplied != expected:
+    if (
+        not expected
+        or not supplied
+        or not hmac.compare_digest(
+            supplied.encode("utf-8"),
+            expected.encode("utf-8"),
+        )
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Valid control API authentication is required",
@@ -1061,13 +1167,13 @@ def require_control_auth(
 
 def enforce_control_rate_limit(request: Request) -> None:
     client = request.client.host if request.client else "unknown"
-    now = time.monotonic()
-    history = CONTROL_RATE[client]
-    while history and now - history[0] > 60:
-        history.popleft()
-    if len(history) >= 20:
-        raise HTTPException(status_code=429, detail="Control rate limit exceeded")
-    history.append(now)
+    _enforce_rate_limit(
+        store=CONTROL_RATE,
+        lock=CONTROL_RATE_LOCK,
+        key=client,
+        limit=20,
+        detail="Control rate limit exceeded",
+    )
 
 
 @app.get("/")
@@ -1541,6 +1647,15 @@ def toggle_auto_trade(request: Request, body: AutoTradeRequest) -> dict:
     REPOSITORY.set_managed_account_enabled(account["id"], body.enabled)
     # Personal participation never controls the shared market-watching engine.
     REPOSITORY.set_status("RUNNING", "")
+    REPOSITORY.audit(
+        "PERSONAL_AUTO_TRADE_UPDATED",
+        str(account.get("account_id_masked", "account")),
+        request.client.host if request.client else "unknown",
+        {
+            "managed_account_id": int(account["id"]),
+            "enabled": bool(body.enabled),
+        },
+    )
     return {"success": True, "enabled": body.enabled}
 
 
@@ -1792,12 +1907,15 @@ def recent_trades(
 
 
 @app.get("/metrics/recent-signals")
-def recent_signals(limit: int = 50) -> dict:
+def recent_signals(
+    limit: int = 50,
+    _: str = Depends(require_control_auth),
+) -> dict:
     return {"signals": REPOSITORY.recent_signals(max(1, min(limit, 200)))}
 
 
 @app.get("/metrics/model")
-def model_metrics() -> dict:
+def model_metrics(_: str = Depends(require_control_auth)) -> dict:
     return {
         "strategy": {
             "name": CONFIG.rf_strategy.name,
@@ -1819,7 +1937,7 @@ def model_metrics() -> dict:
 
 
 @app.get("/metrics/rf-strategy")
-def rf_strategy_metrics() -> dict:
+def rf_strategy_metrics(_: str = Depends(require_control_auth)) -> dict:
     return {
         "strategy": CONFIG.rf_strategy.name,
         "phase": "DIRECT_DEMO",
@@ -2002,7 +2120,7 @@ def emergency_stop(
 
 
 @app.get("/settings/accounts")
-def settings_accounts() -> dict:
+def settings_accounts(_: str = Depends(require_control_auth)) -> dict:
     accounts = []
     for row in REPOSITORY.list_managed_accounts():
         auth_type = "pat"

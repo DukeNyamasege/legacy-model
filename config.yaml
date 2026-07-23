@@ -103,13 +103,13 @@ rf_strategy:
   minimum_history_movements: 100
   normalization_movements: 100
   demo_duration_ticks: 5
-  minimum_directional_moves: 4
+  minimum_directional_moves: 3
   minimum_recent_directional_moves: 2
-  minimum_efficiency: 0.70
-  minimum_impulse: 0.60
-  maximum_impulse: 3.50
-  maximum_move_ratio: 3.20
-  minimum_directional_score: 6
+  minimum_efficiency: 0.45
+  minimum_impulse: 0.25
+  maximum_impulse: 4.50
+  maximum_move_ratio: 5.00
+  minimum_directional_score: 5
   candidate_window_ms: 75
   stale_signal_after_ms: 1800
   minimum_trade_interval_seconds: 0
@@ -120,15 +120,17 @@ rf_strategy:
   bayesian_prior_beta: 1.0
   bayesian_credible_interval: 0.95
   bayesian_safety_margin: 0.01
-  bayesian_minimum_edge_confidence: 0.80
+  bayesian_minimum_edge_confidence: 0.65
   hmm_minimum_observations: 500
   hmm_retrain_every_ticks: 250
-  hmm_minimum_fall_probability: 0.70
-  cadence_relax_after_seconds: 120
-  relaxed_bayesian_minimum_samples: 20
+  hmm_minimum_fall_probability: 0.60
+  cadence_relax_after_seconds: 60
+  relaxed_bayesian_minimum_samples: 10
   relaxed_bayesian_safety_margin: 0.0
-  relaxed_bayesian_minimum_edge_confidence: 0.60
-  relaxed_hmm_minimum_fall_probability: 0.30
+  relaxed_bayesian_minimum_edge_confidence: 0.0
+  relaxed_bayesian_minimum_probability: 0.35
+  relaxed_minimum_expected_return_on_stake: -0.25
+  relaxed_hmm_minimum_fall_probability: 0.20
 risk:
   recovery_enabled: true
   recovery_trigger_losses: 1
