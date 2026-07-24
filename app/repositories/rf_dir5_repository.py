@@ -660,6 +660,8 @@ class RFDir5Repository:
                 ):
                     if state.protection_mode != VIRTUAL_WAITING_FOR_WIN:
                         state.entered_virtual_mode_at = utc_now()
+                        state.virtual_win_count = 0
+                        state.current_virtual_loss_streak = 0
                     state.protection_mode = VIRTUAL_WAITING_FOR_WIN
             else:
                 state.recovery_loss_debt = max(
@@ -669,16 +671,19 @@ class RFDir5Repository:
                 state.recovery_pending = bool(
                     recovery_enabled and state.recovery_loss_debt >= 0.01
                 )
+                state.consecutive_losses = 0
                 if not state.recovery_pending:
-                    state.consecutive_losses = 0
                     state.recovery_pending_since = None
-                # Only clear virtual protection when we are NOT actively waiting
-                # for virtual confirmation wins — a real win that slips through
-                # while the account is in virtual-guard mode must not cancel it.
-                if state.protection_mode not in (
-                    VIRTUAL_WAITING_FOR_WIN,
-                    REAL_RECOVERY_PENDING,
-                ):
+                # Virtual guard can only be exited by 2 consecutive virtual wins,
+                # never by a real win. Recovery-pending clears only when the
+                # recovery debt is fully repaid.
+                if state.protection_mode == VIRTUAL_WAITING_FOR_WIN:
+                    pass
+                elif state.protection_mode == REAL_RECOVERY_PENDING:
+                    if state.recovery_loss_debt <= 0:
+                        state.protection_mode = NORMAL_MODE
+                        state.entered_virtual_mode_at = None
+                else:
                     state.protection_mode = NORMAL_MODE
                     state.entered_virtual_mode_at = None
             if state.recovery_pending and state.recovery_pending_since is None:
@@ -790,7 +795,6 @@ class RFDir5Repository:
         settled: list[dict[str, Any]] = []
         now = utc_now()
         required_virtual_wins = max(1, int(exit_after_wins or 1))
-        observation_cap = max(0, int(max_observations or 0))
         with self.database.session() as session:
             rows = session.scalars(
                 select(VirtualTrade)
@@ -837,34 +841,14 @@ class RFDir5Repository:
                 trade.recovery_debt_change = 0.0
                 trade.settled_at = now
                 state.virtual_observation_count += 1
-                observations_query = (
-                    select(func.count())
-                    .select_from(VirtualTrade)
-                    .where(
-                        VirtualTrade.managed_account_id
-                        == int(trade.managed_account_id),
-                        VirtualTrade.result.in_((VIRTUAL_WIN, VIRTUAL_LOSS)),
-                    )
-                )
-                if state.entered_virtual_mode_at is not None:
-                    observations_query = observations_query.where(
-                        VirtualTrade.created_at >= state.entered_virtual_mode_at
-                    )
-                observations_in_mode = int(session.scalar(observations_query) or 0)
                 consecutive_virtual_wins = (
                     int(state.virtual_win_count or 0) + 1
                     if result == VIRTUAL_WIN
                     else 0
                 )
                 exit_virtual_mode = bool(
-                    (
-                        result == VIRTUAL_WIN
-                        and consecutive_virtual_wins >= required_virtual_wins
-                    )
-                    or (
-                        observation_cap > 0
-                        and observations_in_mode >= observation_cap
-                    )
+                    result == VIRTUAL_WIN
+                    and consecutive_virtual_wins >= required_virtual_wins
                 )
                 if result == VIRTUAL_WIN:
                     state.virtual_win_count = consecutive_virtual_wins
