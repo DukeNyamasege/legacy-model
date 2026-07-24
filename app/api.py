@@ -133,6 +133,7 @@ class PersonalTradingSettingsRequest(BaseModel):
     stake_amount: float
     take_profit: float = 0.0
     stop_loss: float = 0.0
+    martingale_enabled: bool = True
 
 
 def oauth_client_id() -> str:
@@ -1503,9 +1504,10 @@ def get_current_account(request: Request) -> dict | None:
             "available_account_types": personal_account_modes(stored),
             "label": account["label"],
             "enabled": account["enabled"],
-            "stake_amount": FIXED_STAKE_AMOUNT,
+            "stake_amount": float(account.get("stake_amount", 0.50) or 0.50),
             "take_profit": float(account.get("take_profit", 0.0)),
             "stop_loss": float(account.get("stop_loss", 0.0)),
+            "martingale_enabled": bool(account.get("martingale_enabled", True)),
             "execution_status": str(account.get("execution_status", "inactive")),
             "execution_status_reason": str(
                 account.get("execution_status_reason", "")
@@ -1540,9 +1542,10 @@ def get_current_account(request: Request) -> dict | None:
                     "available_account_types": personal_account_modes(stored),
                     "label": row.label,
                     "enabled": row.enabled,
-                    "stake_amount": FIXED_STAKE_AMOUNT,
+                    "stake_amount": float(row.stake_amount),
                     "take_profit": float(row.take_profit),
                     "stop_loss": float(row.stop_loss),
+                    "martingale_enabled": bool(getattr(row, "martingale_enabled", True)),
                     "execution_status": str(row.execution_status),
                     "execution_status_reason": str(row.execution_status_reason),
                     "has_trading_api_token": token_ready,
@@ -1579,9 +1582,10 @@ def get_me(request: Request) -> dict:
         "execution_status": account.get("execution_status", "inactive"),
         "execution_status_reason": account.get("execution_status_reason", ""),
         "settings": {
-            "stake_amount": float(account.get("stake_amount", 0.50)),
+            "stake_amount": float(account.get("stake_amount", 0.50) or 0.50),
             "take_profit": float(account.get("take_profit", 0.0)),
             "stop_loss": float(account.get("stop_loss", 0.0)),
+            "martingale_enabled": bool(account.get("martingale_enabled", True)),
         },
         "stats": {
             "trades": personal["trades"],
@@ -1676,7 +1680,14 @@ def update_personal_trading_settings(
     values = (body.stake_amount, body.take_profit, body.stop_loss)
     if not all(math.isfinite(float(value)) for value in values):
         raise HTTPException(status_code=400, detail="Trading settings must be finite numbers.")
-    stake_amount = FIXED_STAKE_AMOUNT
+    stake_amount = round(float(body.stake_amount), 2)
+    if stake_amount < 0.01:
+        raise HTTPException(
+            status_code=400,
+            detail="Stake amount must be at least 0.01.",
+        )
+    if stake_amount > 1_000_000:
+        raise HTTPException(status_code=400, detail="Stake amount is too large.")
     take_profit = round(float(body.take_profit), 2)
     stop_loss = round(float(body.stop_loss), 2)
     if take_profit < 0 or stop_loss < 0:
@@ -1692,6 +1703,7 @@ def update_personal_trading_settings(
         stake_amount=stake_amount,
         take_profit=take_profit,
         stop_loss=stop_loss,
+        martingale_enabled=bool(body.martingale_enabled),
     )
     REPOSITORY.audit(
         "PERSONAL_TRADING_SETTINGS_UPDATED",

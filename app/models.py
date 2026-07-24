@@ -272,6 +272,7 @@ class ManagedAccount(Base):
     stake_amount: Mapped[float] = mapped_column(Float, default=0.50)
     take_profit: Mapped[float] = mapped_column(Float, default=0.0)
     stop_loss: Mapped[float] = mapped_column(Float, default=0.0)
+    martingale_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     execution_status: Mapped[str] = mapped_column(String(30), default="inactive")
     execution_status_reason: Mapped[str] = mapped_column(String(160), default="")
     execution_status_updated_at: Mapped[datetime] = mapped_column(

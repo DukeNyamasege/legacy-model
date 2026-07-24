@@ -1667,9 +1667,12 @@ class TradingBot:
                         "auth_type": "pat" if auth_type == "oauth" else auth_type,
                         "source": "private",
                         "managed_account_id": int(row.id),
-                        "stake_amount": 0.50,
+                        "stake_amount": float(getattr(row, "stake_amount", 0.50)),
                         "take_profit": float(row.take_profit),
                         "stop_loss": float(row.stop_loss),
+                        "martingale_enabled": bool(
+                            getattr(row, "martingale_enabled", True)
+                        ),
                     },
                 )
             if tokens:
@@ -1778,7 +1781,11 @@ class TradingBot:
         tag = token_tag(token)
         user_id = str(profile.get("id", tag)).strip() or tag
         account_id = str(profile.get("account_id", existing.get("account_id", ""))).strip()
-        configured_base_stake = 0.50
+        configured_base_stake = float(
+            profile.get("stake_amount")
+            or self.cfg.get("strategy", {}).get("initial_stake", 0.50)
+            or 0.50
+        )
         recovery_pending = bool(existing.get("single_recovery_pending", False)) or float(
             existing.get("recovery_loss_pool", 0.0)
         ) > 0

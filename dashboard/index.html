@@ -20,62 +20,62 @@
   </script>
   <style>
     :root {
-      --ink: #0a241c;
-      --paper: #f5edda;
-      --card: rgba(255, 252, 244, .92);
-      --line: #d4c098;
-      --green: #0b6b4f;
-      --green-bright: #13a37c;
-      --red: #b83838;
-      --gold: #c69330;
-      --blue: #073b86;
-      --blue-deep: #05265e;
-      --blue-bright: #1267d7;
-      --blue-soft: rgba(7, 59, 134, .12);
-      --muted: #6b5a44;
-      --shadow: 0 20px 50px rgba(15, 37, 75, .15);
-      --body-bg:
-        radial-gradient(circle at 8% 4%, rgba(198,147,48,.22), transparent 30rem),
-        radial-gradient(circle at 92% 12%, rgba(7,59,134,.18), transparent 30rem),
-        linear-gradient(135deg, #fbf7ec 0%, #ece0c8 100%);
-      --grid-pattern: repeating-linear-gradient(90deg, transparent 0 47px, rgba(10,36,28,.06) 48px);
-      --pill-bg: rgba(255,255,255,.6);
-      --learning-bg: linear-gradient(135deg, rgba(255,252,244,.95), rgba(248,228,180,.9));
-      --glass-bg: rgba(255,255,255,.5);
-      --input-bg: rgba(255,255,255,.72);
-      --secondary-bg: #ebe0c6;
-      --row-bg: rgba(255,255,255,.64);
-      --row-line: #e2d3b3;
-      --empty-bg: rgba(247,240,223,.4);
-    }
-    html[data-theme="dark"] {
-      --ink: #f5ecd6;
-      --paper: #0e1714;
-      --card: rgba(22, 33, 28, .93);
-      --line: rgba(218, 185, 120, .42);
+      --ink: #e8f0ff;
+      --paper: #0a1a3a;
+      --card: rgba(12, 28, 68, .88);
+      --line: rgba(56, 110, 200, .35);
       --green: #2ad9a6;
       --green-bright: #3df0bb;
-      --red: #ff8585;
+      --red: #ff6b6b;
       --gold: #f5c878;
-      --blue: #74a9ff;
-      --blue-deep: #0a2b63;
-      --blue-bright: #3787f2;
-      --blue-soft: rgba(55, 135, 242, .18);
-      --muted: #c4b094;
-      --shadow: 0 24px 60px rgba(0, 0, 0, .42);
+      --blue: #2e6df6;
+      --blue-deep: #031a42;
+      --blue-bright: #4d8cff;
+      --blue-soft: rgba(46, 109, 246, .15);
+      --muted: #8fa8d4;
+      --shadow: 0 20px 50px rgba(3, 10, 30, .45);
       --body-bg:
-        radial-gradient(circle at 12% 2%, rgba(55,135,242,.25), transparent 30rem),
-        radial-gradient(circle at 88% 10%, rgba(245,200,120,.15), transparent 32rem),
-        linear-gradient(135deg, #071225 0%, #101b2d 54%, #252218 100%);
-      --grid-pattern: repeating-linear-gradient(90deg, transparent 0 47px, rgba(245,236,214,.06) 48px);
+        radial-gradient(circle at 8% 4%, rgba(46,109,246,.18), transparent 30rem),
+        radial-gradient(circle at 92% 12%, rgba(77,140,255,.12), transparent 30rem),
+        linear-gradient(135deg, #020b22 0%, #051640 40%, #0a2156 100%);
+      --grid-pattern: repeating-linear-gradient(90deg, transparent 0 47px, rgba(77,140,255,.06) 48px);
       --pill-bg: rgba(255,255,255,.08);
-      --learning-bg: linear-gradient(135deg, rgba(36,41,31,.92), rgba(72,54,28,.78));
+      --learning-bg: linear-gradient(135deg, rgba(12,28,68,.92), rgba(20,50,120,.85));
       --glass-bg: rgba(255,255,255,.06);
       --input-bg: rgba(255,255,255,.08);
-      --secondary-bg: rgba(241,189,103,.14);
-      --row-bg: rgba(255,255,255,.06);
-      --row-line: rgba(212,179,117,.25);
-      --empty-bg: rgba(255,255,255,.04);
+      --secondary-bg: rgba(46,109,246,.14);
+      --row-bg: rgba(255,255,255,.05);
+      --row-line: rgba(56,110,200,.22);
+      --empty-bg: rgba(255,255,255,.03);
+    }
+    html[data-theme="dark"] {
+      --ink: #e8f0ff;
+      --paper: #020b22;
+      --card: rgba(8, 20, 52, .94);
+      --line: rgba(56, 110, 200, .3);
+      --green: #2ad9a6;
+      --green-bright: #3df0bb;
+      --red: #ff6b6b;
+      --gold: #f5c878;
+      --blue: #4d8cff;
+      --blue-deep: #021030;
+      --blue-bright: #5e9aff;
+      --blue-soft: rgba(77,140,255,.16);
+      --muted: #7a9bc8;
+      --shadow: 0 24px 60px rgba(0, 0, 0, .55);
+      --body-bg:
+        radial-gradient(circle at 12% 2%, rgba(46,109,246,.2), transparent 30rem),
+        radial-gradient(circle at 88% 10%, rgba(77,140,255,.1), transparent 32rem),
+        linear-gradient(135deg, #010820 0%, #041036 50%, #081d4e 100%);
+      --grid-pattern: repeating-linear-gradient(90deg, transparent 0 47px, rgba(77,140,255,.05) 48px);
+      --pill-bg: rgba(255,255,255,.08);
+      --learning-bg: linear-gradient(135deg, rgba(8,20,52,.94), rgba(16,40,100,.82));
+      --glass-bg: rgba(255,255,255,.05);
+      --input-bg: rgba(255,255,255,.07);
+      --secondary-bg: rgba(46,109,246,.12);
+      --row-bg: rgba(255,255,255,.04);
+      --row-line: rgba(56,110,200,.18);
+      --empty-bg: rgba(255,255,255,.03);
     }
     * { box-sizing: border-box; }
     [hidden] { display: none !important; }
@@ -84,8 +84,10 @@
       color: var(--ink);
       font-family: "Book Antiqua", Palatino, Georgia, serif;
       background: var(--body-bg);
+      background-attachment: fixed;
       min-height: 100vh;
       transition: background .22s ease, color .22s ease;
+      -webkit-text-size-adjust: 100%;
     }
     .personal-accent {
       position: relative;
@@ -827,9 +829,54 @@
     }
     .personal-settings-form {
       display: grid;
-      grid-template-columns: repeat(3, minmax(120px, 1fr)) auto;
+      grid-template-columns: repeat(4, minmax(120px, 1fr)) auto;
       gap: 10px;
       align-items: end;
+    }
+    .martingale-toggle {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 44px;
+      padding: 0 14px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,.28);
+      background: rgba(3, 22, 57, .52);
+      color: rgba(255,255,255,.76);
+      font-size: .78rem;
+      cursor: pointer;
+      user-select: none;
+    }
+    .martingale-toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
+    .martingale-toggle .toggle-track {
+      position: relative;
+      width: 38px;
+      height: 22px;
+      flex: 0 0 38px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.2);
+      transition: background .2s ease;
+    }
+    .martingale-toggle .toggle-track::after {
+      content: "";
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #fff;
+      transition: transform .2s ease;
+    }
+    .martingale-toggle input:checked + .toggle-track {
+      background: linear-gradient(135deg, #0b4fb4, #1d7dff);
+    }
+    .martingale-toggle input:checked + .toggle-track::after {
+      transform: translateX(16px);
+    }
+    .martingale-toggle input:focus-visible + .toggle-track {
+      outline: 3px solid rgba(77,140,255,.55);
+      outline-offset: 2px;
     }
     .personal-settings-form label {
       display: grid;
@@ -869,36 +916,60 @@
     @media (max-width: 980px) {
       .metrics { grid-template-columns: repeat(3, 1fr); }
       .lower { grid-template-columns: 1fr; }
+      .personal-settings-form { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
+    }
+    @media (max-width: 768px) {
+      .metrics { grid-template-columns: repeat(2, 1fr); }
+      .personal-settings-form { grid-template-columns: 1fr; }
+      .personal-section .panel > div:first-child {
+        flex-direction: column !important;
+        align-items: stretch !important;
+      }
+      .personal-section .panel > div:first-child > div:nth-child(2) {
+        justify-content: flex-start !important;
+        flex-wrap: wrap !important;
+        gap: 12px !important;
+      }
+      .contract-table { min-width: 420px; }
     }
     @media (max-width: 580px) {
-      main { width: calc(100% - 18px); padding-top: 20px; overflow: hidden; }
-      header { display: block; padding: 10px 4px 16px; }
-      .auth-controls { margin-top: 14px; flex-wrap: wrap; }
+      main { width: calc(100% - 16px); padding-top: 16px; overflow: hidden; }
+      header { display: block; padding: 10px 4px 14px; }
+      .auth-controls { margin-top: 12px; flex-wrap: wrap; gap: 8px; }
       .risk-disclaimer-toggle { flex: 1 1 auto; }
       .risk-disclaimer-panel {
         position: fixed;
         top: 72px;
-        right: 12px;
-        left: 12px;
+        right: 8px;
+        left: 8px;
         width: auto;
         max-height: calc(100vh - 88px);
         overflow-y: auto;
       }
-      .version { display: inline-block; margin-top: 13px; }
-      .theme-toggle { width: 100%; margin-top: 14px; justify-content: center; }
+      .version { display: inline-block; margin-top: 10px; }
+      .theme-toggle { width: 100%; margin-top: 10px; justify-content: center; }
       .control { grid-template-columns: 1fr 1fr; }
       .status-line { grid-column: 1 / -1; min-height: 42px; }
-      .ai-mode-card { grid-template-columns: 1fr; padding: 17px; gap: 14px; }
+      .ai-mode-card { grid-template-columns: 1fr; padding: 15px; gap: 12px; }
       .control button { width: 100%; padding: 0 12px; }
-      .metrics { grid-template-columns: repeat(2, 1fr); gap: 9px; }
-      .metric { min-height: 92px; padding: 14px 13px; }
+      .metrics { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+      .metric { min-height: 88px; padding: 12px 11px; }
+      .metric strong { font-size: clamp(1.1rem, 5vw, 1.5rem); }
       .trade, .account-row { grid-template-columns: 1fr 1fr; }
-      .section-head { gap: 10px; }
+      .section-head { gap: 8px; flex-direction: column; align-items: flex-start; }
       .activity-filters { width: 100%; justify-content: center; flex-wrap: wrap; border-radius: 18px; }
       .inline-actions { grid-template-columns: 1fr; }
       .api-token-form { grid-template-columns: 1fr; }
-      .personal-settings-form { grid-template-columns: 1fr; }
+      .personal-settings-form { grid-template-columns: 1fr; gap: 8px; }
       .personal-settings-toggle { width: 100%; justify-content: center; }
+      .btn-login, .btn-logout { width: 100%; justify-content: center; }
+      .contract-table { min-width: 360px; font-size: .78rem; }
+      .contract-table th, .contract-table td { padding: 8px 9px; }
+      .martingale-toggle { justify-content: space-between; }
+    }
+    @media (max-width: 380px) {
+      .metrics { grid-template-columns: 1fr; }
+      main { width: calc(100% - 10px); }
     }
   </style>
 </head>
@@ -1022,8 +1093,8 @@
               <span id="personal-execution-state" class="execution-state">Inactive</span>
             </div>
             <div class="personal-settings-form">
-              <label>Stake amount (fixed USD)
-                <input id="personal-stake" type="number" min="0.50" max="0.50" step="0.01" inputmode="decimal" readonly>
+              <label>Stake amount (USD)
+                <input id="personal-stake" type="number" min="0.01" step="0.01" inputmode="decimal">
               </label>
               <label>Take profit (USD)
                 <input id="personal-take-profit" type="number" min="0" step="0.01" inputmode="decimal">
@@ -1031,7 +1102,12 @@
               <label>Stop loss (USD)
                 <input id="personal-stop-loss" type="number" min="0" step="0.01" inputmode="decimal">
               </label>
-              <button id="btn-save-trading-settings" type="button">Save Controls</button>
+              <label class="martingale-toggle" title="When enabled, the bot increases the stake after losses to recover them. Turn off for flat staking.">
+                <input id="personal-martingale" type="checkbox" checked>
+                <span class="toggle-track"></span>
+                <span>Recovery (Martingale)</span>
+              </label>
+              <button id="btn-save-trading-settings" type="button" style="grid-column: 1 / -1;">Save Controls</button>
             </div>
             <div id="personal-settings-message" class="settings-message"></div>
           </div>
@@ -1606,9 +1682,10 @@
     const button = $("btn-save-trading-settings");
     const message = $("personal-settings-message");
     const payload = {
-      stake_amount: 0.50,
+      stake_amount: Number($("personal-stake")?.value || 0.50),
       take_profit: Number($("personal-take-profit")?.value),
-      stop_loss: Number($("personal-stop-loss")?.value)
+      stop_loss: Number($("personal-stop-loss")?.value),
+      martingale_enabled: $("personal-martingale")?.checked ?? true,
     };
     if (button) button.disabled = true;
     if (message) {
@@ -1625,6 +1702,10 @@
       setPersonalSettingValue("personal-stake", settings.stake_amount);
       setPersonalSettingValue("personal-take-profit", settings.take_profit);
       setPersonalSettingValue("personal-stop-loss", settings.stop_loss);
+      const martingaleCheckbox = $("personal-martingale");
+      if (martingaleCheckbox) {
+        martingaleCheckbox.checked = settings.martingale_enabled ?? true;
+      }
       if (message) {
         message.textContent = "Controls saved. Changes apply from the next contract.";
         message.className = "settings-message positive";
@@ -1734,6 +1815,10 @@
         setPersonalSettingValue("personal-stake", personalSettings.stake_amount ?? 0.50);
         setPersonalSettingValue("personal-take-profit", personalSettings.take_profit ?? 0);
         setPersonalSettingValue("personal-stop-loss", personalSettings.stop_loss ?? 0);
+        const martingaleCheckbox = $("personal-martingale");
+        if (martingaleCheckbox) {
+          martingaleCheckbox.checked = personalSettings.martingale_enabled ?? true;
+        }
         const executionState = $("personal-execution-state");
         if (executionState) {
           executionState.textContent = String(me.execution_status || "inactive").replaceAll("_", " ");

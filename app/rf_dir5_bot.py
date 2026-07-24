@@ -230,6 +230,12 @@ class RFDir5TradingBot(TradingBot):
         state["single_recovery_active"] = False
         state["current_stake"] = float(state.get("base_stake", 0.50))
 
+    def _managed_account_profile(self, managed_id: int) -> dict[str, Any]:
+        try:
+            return self.repository.managed_account(int(managed_id)) or {}
+        except Exception:
+            return {}
+
     def _reset_session_runtime_state(self) -> None:
         super()._reset_session_runtime_state()
         if self.rf_arbitration_task and not self.rf_arbitration_task.done():
@@ -666,7 +672,7 @@ class RFDir5TradingBot(TradingBot):
             tick_sequence=market.tick_sequence,
             exit_quote=quote,
             exit_epoch=epoch,
-            exit_after_wins=getattr(virtual_config, "exit_after_wins", 1),
+            exit_after_wins=getattr(virtual_config, "exit_after_wins", 2),
             max_observations=getattr(virtual_config, "max_observations", 0),
         ):
             self.logger.warning(
@@ -1155,15 +1161,26 @@ class RFDir5TradingBot(TradingBot):
                 )
                 skip_reasons["balance_snapshot_unavailable"] += 1
                 continue
+            configured_stake = float(
+                self._managed_account_profile(managed_id).get("stake_amount")
+                or self.base_stake
+            )
+            account_martingale = bool(
+                self._managed_account_profile(managed_id).get(
+                    "martingale_enabled", True
+                )
+            )
             plan = self.rf_repository.plan_stake(
                 managed_account_id=managed_id,
                 account_id_masked=mask_account_id(account_id),
                 current_balance=float(summary.get("balance") or 0.0),
-                requested_stake=0.50,
+                requested_stake=configured_stake,
                 proposal_profit_ratio=proposal_profit_ratio,
-                recovery_enabled=self.risk_config.recovery_enabled,
+                recovery_enabled=(
+                    self.risk_config.recovery_enabled and account_martingale
+                ),
                 recovery_trigger_losses=self.risk_config.recovery_trigger_losses,
-                minimum_stake=0.50,
+                minimum_stake=max(0.01, configured_stake),
                 virtual_protection_enabled=self.virtual_config.enabled,
                 maximum_recovery_balance_fraction=(
                     self.risk_config.maximum_recovery_balance_fraction
@@ -1579,12 +1596,19 @@ class RFDir5TradingBot(TradingBot):
         summary = self.repository.account_summary(account_id)
         current_balance = float(summary.get("balance") or 0.0) + float(profit)
         virtual_config = getattr(self, "virtual_config", None)
+        account_martingale = bool(
+            self._managed_account_profile(int(managed_id)).get(
+                "martingale_enabled", True
+            )
+        )
         risk = self.rf_repository.record_account_outcome(
             managed_account_id=int(managed_id),
             account_id_masked=mask_account_id(account_id),
             profit=float(profit),
             current_balance=current_balance,
-            recovery_enabled=self.risk_config.recovery_enabled,
+            recovery_enabled=(
+                self.risk_config.recovery_enabled and account_martingale
+            ),
             recovery_trigger_losses=self.risk_config.recovery_trigger_losses,
             virtual_protection_enabled=getattr(virtual_config, "enabled", True),
             virtual_trigger_actual_losses=getattr(

@@ -241,6 +241,7 @@ class Test2Repository:
                 "stake_amount": float(row.stake_amount),
                 "take_profit": float(row.take_profit),
                 "stop_loss": float(row.stop_loss),
+                "martingale_enabled": bool(row.martingale_enabled),
                 "execution_status": row.execution_status,
                 "execution_status_reason": row.execution_status_reason,
                 "created_at": row.created_at.isoformat(),
@@ -273,6 +274,7 @@ class Test2Repository:
                 "stake_amount": float(row.stake_amount),
                 "take_profit": float(row.take_profit),
                 "stop_loss": float(row.stop_loss),
+                "martingale_enabled": bool(row.martingale_enabled),
                 "execution_status": row.execution_status,
                 "execution_status_reason": row.execution_status_reason,
                 "created_at": row.created_at.isoformat(),
@@ -292,6 +294,7 @@ class Test2Repository:
                 "stake_amount": float(row.stake_amount),
                 "take_profit": float(row.take_profit),
                 "stop_loss": float(row.stop_loss),
+                "martingale_enabled": bool(row.martingale_enabled),
                 "execution_status": row.execution_status,
                 "execution_status_reason": row.execution_status_reason,
                 "execution_status_updated_at": row.execution_status_updated_at,
@@ -315,6 +318,7 @@ class Test2Repository:
         stake_amount: float,
         take_profit: float,
         stop_loss: float,
+        martingale_enabled: bool = True,
     ) -> dict[str, Any]:
         with self.database.session() as session:
             row = session.get(ManagedAccount, int(account_id))
@@ -323,11 +327,13 @@ class Test2Repository:
             row.stake_amount = float(stake_amount)
             row.take_profit = float(take_profit)
             row.stop_loss = float(stop_loss)
+            row.martingale_enabled = bool(martingale_enabled)
             row.updated_at = utc_now()
             return {
                 "stake_amount": float(row.stake_amount),
                 "take_profit": float(row.take_profit),
                 "stop_loss": float(row.stop_loss),
+                "martingale_enabled": bool(row.martingale_enabled),
             }
 
     def set_managed_account_execution_status(
@@ -425,6 +431,7 @@ class Test2Repository:
                 "stake_amount": float(account.stake_amount),
                 "take_profit": float(account.take_profit),
                 "stop_loss": float(account.stop_loss),
+                "martingale_enabled": bool(account.martingale_enabled),
                 "execution_status": account.execution_status,
                 "execution_status_reason": account.execution_status_reason,
                 "execution_status_updated_at": account.execution_status_updated_at,

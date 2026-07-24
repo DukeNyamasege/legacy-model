@@ -777,7 +777,7 @@ class RFDir5Repository:
         tick_sequence: int,
         exit_quote: Decimal,
         exit_epoch: int = 0,
-        exit_after_wins: int = 1,
+        exit_after_wins: int = 2,
         max_observations: int = 0,
     ) -> list[dict[str, Any]]:
         settled: list[dict[str, Any]] = []
