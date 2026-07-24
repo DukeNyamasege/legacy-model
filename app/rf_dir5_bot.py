@@ -715,6 +715,18 @@ class RFDir5TradingBot(TradingBot):
                     settled["protection"].get("mode"),
                 )
 
+        for settled_shadow in self.rf_repository.settle_due_shadows(
+            symbol=symbol,
+            tick_sequence=market.tick_sequence,
+            expiry_quote=quote,
+        ):
+            self.logger.info(
+                "SHADOW_SETTLED signal_id=%s symbol=%s outcome=%s",
+                settled_shadow.get("signal_id", ""),
+                symbol,
+                settled_shadow.get("outcome", ""),
+            )
+
         if "PUT" not in self.rf_supported_contracts.get(symbol, set()):
             return
         if len(market.ticks_history) < self.rf_config.minimum_history_movements + 1:
@@ -1096,6 +1108,15 @@ class RFDir5TradingBot(TradingBot):
         signal: SignalEvent,
         economics: ProposalEconomics,
     ) -> None:
+        self.repository.record_system_model_trade(
+            signal_id=signal.signal_id,
+            symbol=signal.symbol,
+            direction=signal.direction,
+            contract_type=signal.contract_type,
+            duration_ticks=int(signal.duration_ticks),
+            reference_base_stake=self.base_stake,
+            is_virtual=False,
+        )
         eligible = self._eligible_purchase_accounts()
         skip_reasons: Counter[str] = Counter()
         stake_by_token: dict[str, float] = {}

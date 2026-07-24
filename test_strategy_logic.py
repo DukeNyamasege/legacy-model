@@ -95,7 +95,7 @@ class DashboardMetricsTests(unittest.TestCase):
         self.assertIn('aria-controls="personal-settings-content"', html)
         self.assertIn('id="personal-settings-content"', html)
         self.assertIn('id="active-traders"', html)
-        self.assertIn("<span>Trading now</span>", html)
+        self.assertIn("<span>Trading Now</span>", html)
         self.assertNotIn('api("/settings/accounts").catch', html)
         self.assertIn("refresh({ showLoader: false, blocking: false })", html)
 

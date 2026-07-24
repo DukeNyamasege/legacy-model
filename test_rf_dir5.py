@@ -545,7 +545,6 @@ class RFTickStreamTests(unittest.IsolatedAsyncioTestCase):
             [Decimal(value) for value in range(101, 106)],
         )
         self.assertEqual(bot.repository.record_tick.call_count, 6)
-        bot.rf_repository.settle_due_shadows.assert_not_called()
         bot.logger.warning.assert_not_called()
 
     async def test_qualified_live_signal_never_creates_shadow_contracts(self) -> None:
@@ -601,7 +600,6 @@ class RFTickStreamTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(bot.rf_repository.record_signal.call_count, 0)
         self.assertGreater(len(bot.rf_candidate_queue), 0)
         bot.rf_repository.create_shadow_contracts.assert_not_called()
-        bot.rf_repository.settle_due_shadows.assert_not_called()
 
 
 class RFCandidateArbitrationTests(unittest.IsolatedAsyncioTestCase):
@@ -910,11 +908,32 @@ class RFRepositoryTests(unittest.TestCase):
             simulated_stake=2.0,
             expected_payout=3.6,
         )
-
         settled = self.repository.settle_due_virtual_trades(
             symbol=item.symbol,
             tick_sequence=item.tick_sequence + item.duration_ticks,
             exit_quote=Decimal("101.00"),
+            exit_after_wins=2,
+        )
+        protection = self.repository.virtual_protection_for_account(
+            managed_account_id=account_id
+        )
+        self.assertEqual(protection["mode"], "VIRTUAL_MODE")
+        self.assertEqual(protection["virtual_wins"], 1)
+        second = signal("RISE", tick_sequence=710)
+        self.repository.record_signal(second)
+        self.repository.start_virtual_trade(
+            managed_account_id=account_id,
+            account_id_masked="DOT***422",
+            signal=second,
+            configured_stake=2.0,
+            simulated_stake=2.0,
+            expected_payout=3.6,
+        )
+        second_settled = self.repository.settle_due_virtual_trades(
+            symbol=second.symbol,
+            tick_sequence=second.tick_sequence + second.duration_ticks,
+            exit_quote=Decimal("101.00"),
+            exit_after_wins=2,
         )
         protection = self.repository.virtual_protection_for_account(
             managed_account_id=account_id
@@ -932,9 +951,9 @@ class RFRepositoryTests(unittest.TestCase):
             minimum_balance_reserve=0.50,
         )
 
-        self.assertEqual(settled[0]["result"], "VIRTUAL_WIN")
+        self.assertEqual(second_settled[0]["result"], "VIRTUAL_WIN")
         self.assertEqual(protection["mode"], "RECOVERY_PENDING")
-        self.assertEqual(protection["virtual_wins"], 1)
+        self.assertEqual(protection["virtual_wins"], 2)
         self.assertAlmostEqual(protection["actual_recovery_debt"], 4.0)
         self.assertTrue(plan.is_recovery)
         self.assertAlmostEqual(plan.required_recovery_stake, 8.0)
@@ -1163,6 +1182,23 @@ class RFRepositoryTests(unittest.TestCase):
             symbol=item.symbol,
             tick_sequence=item.tick_sequence + item.duration_ticks,
             exit_quote=Decimal("101.00"),
+            exit_after_wins=2,
+        )
+        second = signal("RISE", tick_sequence=860)
+        self.repository.record_signal(second)
+        self.repository.start_virtual_trade(
+            managed_account_id=account_id,
+            account_id_masked="DOT***422",
+            signal=second,
+            configured_stake=2.0,
+            simulated_stake=2.0,
+            expected_payout=3.6,
+        )
+        self.repository.settle_due_virtual_trades(
+            symbol=second.symbol,
+            tick_sequence=second.tick_sequence + second.duration_ticks,
+            exit_quote=Decimal("101.00"),
+            exit_after_wins=2,
         )
         self.assertEqual(
             self.repository.virtual_protection_for_account(
@@ -1195,7 +1231,7 @@ class RFRepositoryTests(unittest.TestCase):
             virtual_protection_enabled=True,
             virtual_trigger_actual_losses=2,
         )
-        self.assertEqual(win["protection_mode"], "NORMAL_MODE")
+        self.assertEqual(win["protection_mode"], "VIRTUAL_MODE")
         self.assertEqual(win["consecutive_losses"], 0)
         self.assertAlmostEqual(win["recovery_loss_debt"], 0.0)
 

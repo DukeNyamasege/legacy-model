@@ -13,6 +13,7 @@ from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlencode
+from zoneinfo import ZoneInfo
 
 try:
     from dotenv import load_dotenv
@@ -925,10 +926,63 @@ def dashboard_summary(
             REPOSITORY.summary(),
             account_type=target_type,
         )
-        # Registration is global and persistent. It must not fluctuate when an
-        # account switches environment, disconnects, or stops auto trading.
         result["total_traders"] = REPOSITORY.managed_account_count()
         result["registered_traders"] = result["total_traders"]
+        try:
+            tz = ZoneInfo(
+                os.getenv("TRADING_REPORT_TIMEZONE")
+                or os.getenv("DASHBOARD_TIMEZONE")
+                or "Africa/Nairobi"
+            )
+        except ZoneInfoNotFoundError:
+            tz = ZoneInfo("UTC")
+        utc_now_value = datetime.now(timezone.utc)
+        today_start = datetime(
+            utc_now_value.year,
+            utc_now_value.month,
+            utc_now_value.day,
+            tzinfo=tz,
+        ).astimezone(timezone.utc)
+        yesterday_start = today_start - timedelta(days=1)
+        week_start = today_start - timedelta(days=today_start.weekday())
+        month_start = datetime(
+            utc_now_value.year,
+            utc_now_value.month,
+            1,
+            tzinfo=tz,
+        ).astimezone(timezone.utc)
+        system_today = REPOSITORY.system_performance_summary(
+            start=today_start,
+            end=utc_now_value,
+            simulated_base_stake=0.50,
+            include_virtual=False,
+        )
+        system_yesterday = REPOSITORY.system_performance_summary(
+            start=yesterday_start,
+            end=today_start,
+            simulated_base_stake=0.50,
+            include_virtual=False,
+        )
+        system_week = REPOSITORY.system_performance_summary(
+            start=week_start,
+            end=utc_now_value,
+            simulated_base_stake=0.50,
+            include_virtual=False,
+        )
+        system_month = REPOSITORY.system_performance_summary(
+            start=month_start,
+            end=utc_now_value,
+            simulated_base_stake=0.50,
+            include_virtual=False,
+        )
+        result["system_performance"] = {
+            "today": system_today,
+            "yesterday": system_yesterday,
+            "week": system_week,
+            "month": system_month,
+            "timezone": str(tz),
+            "daily_reset_hour": today_start.astimezone(tz).hour,
+        }
         mode_cache["last"] = now
         mode_cache["data"] = result
         return result
@@ -2266,6 +2320,67 @@ def import_accounts(
         **settings_accounts(),
         "imported_count": len(imported),
     }
+
+
+def _system_period_bounds(period: str, tz: ZoneInfo | None = None) -> tuple[datetime, datetime]:
+    tz = tz or ZoneInfo("Africa/Nairobi")
+    now = datetime.now(timezone.utc).astimezone(tz)
+    today_start = datetime(now.year, now.month, now.day, tzinfo=tz)
+    normalized = str(period or "today").strip().lower()
+    if normalized == "yesterday":
+        start = today_start - timedelta(days=1)
+        end = today_start
+    elif normalized == "week":
+        start = today_start - timedelta(days=today_start.weekday())
+        end = now
+    elif normalized == "month":
+        start = datetime(now.year, now.month, 1, tzinfo=tz)
+        end = now
+    else:
+        start = today_start
+        end = now
+    return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
+
+
+@app.get("/metrics/system-trades")
+def system_model_trades(
+    period: str = "today",
+    include_virtual: bool = False,
+    _: str = Depends(require_control_auth),
+) -> dict:
+    start, end = _system_period_bounds(period)
+    return {
+        "period": period,
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "include_virtual": include_virtual,
+        "trades": REPOSITORY.system_model_trades(start=start, end=end, include_virtual=include_virtual),
+    }
+
+
+@app.get("/metrics/system-performance")
+def system_performance(
+    period: str = "today",
+    simulated_base_stake: float = 0.50,
+    include_virtual: bool = False,
+    _: str = Depends(require_control_auth),
+) -> dict:
+    start, end = _system_period_bounds(period)
+    stake = max(0.35, float(simulated_base_stake))
+    summary = REPOSITORY.system_performance_summary(
+        start=start,
+        end=end,
+        simulated_base_stake=stake,
+        include_virtual=include_virtual,
+    )
+    summary.update(
+        {
+            "period": period,
+            "timezone": "Africa/Nairobi",
+            "minimum_stake": 0.35,
+        }
+    )
+    return summary
 
 
 @app.websocket("/ws/dashboard")

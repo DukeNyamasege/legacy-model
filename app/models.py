@@ -455,3 +455,30 @@ class AccountRiskState(Base):
     )
     equity_high_water: Mapped[float] = mapped_column(Float, default=0.0)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class SystemModelTrade(Base):
+    __tablename__ = "system_model_trades"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("test_runs.id"), index=True)
+    signal_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("directional_signals.signal_id"), unique=True, index=True
+    )
+    symbol: Mapped[str] = mapped_column(String(30), index=True)
+    direction: Mapped[str] = mapped_column(String(10), index=True)
+    contract_type: Mapped[str] = mapped_column(String(30))
+    duration_ticks: Mapped[int] = mapped_column(Integer)
+    signal_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    entry_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    settlement_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    outcome: Mapped[str] = mapped_column(String(10))
+    is_virtual: Mapped[bool] = mapped_column(Boolean, default=False)
+    reference_base_stake: Mapped[float] = mapped_column(Float, default=0.50)
+    fixed_stake_profit: Mapped[float] = mapped_column(Float, default=0.0)
+    martingale_stake: Mapped[float] = mapped_column(Float, default=0.0)
+    martingale_profit: Mapped[float] = mapped_column(Float, default=0.0)
+    martingale_level: Mapped[int] = mapped_column(Integer, default=0)
+    recovery_debt_before: Mapped[float] = mapped_column(Float, default=0.0)
+    recovery_debt_after: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

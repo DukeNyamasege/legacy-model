@@ -14,6 +14,7 @@ from app.models import (
     AccountRiskState,
     DirectionalSignal,
     ShadowContract,
+    SystemModelTrade,
     VirtualTrade,
     VirtualGuardState,
     utc_now,
@@ -277,6 +278,21 @@ class RFDir5Repository:
                         "execution_state": row.execution_state,
                     }
                 )
+                system_trade = session.scalar(
+                    select(SystemModelTrade).where(
+                        SystemModelTrade.signal_id == row.signal_id,
+                        SystemModelTrade.run_id == self.run_id,
+                    )
+                )
+                if system_trade is not None and system_trade.settlement_timestamp is None:
+                    system_trade.outcome = result
+                    system_trade.settlement_timestamp = utc_now()
+                    if hypothetical is not None:
+                        system_trade.fixed_stake_profit = hypothetical
+                    if row.proposal_ask_price is not None:
+                        system_trade.martingale_stake = float(row.proposal_ask_price)
+                    if hypothetical is not None:
+                        system_trade.martingale_profit = hypothetical
         return settled
 
     def set_signal_decision(

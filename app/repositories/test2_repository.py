@@ -26,6 +26,7 @@ from app.models import (
     OAuthLoginState,
     ProposalRecord,
     RuntimePreference,
+    SystemModelTrade,
     TestRun,
     Tick,
     Trade,
@@ -304,6 +305,8 @@ class Test2Repository:
 
     def set_managed_account_enabled(self, account_id: int, enabled: bool) -> dict[str, Any]:
         result = self.update_managed_account(account_id, enabled=bool(enabled))
+        if not enabled:
+            self.resume_managed_account(account_id, reset_recovery=True)
         self.set_managed_account_execution_status(
             account_id,
             "connecting" if enabled else "disabled",
@@ -2000,3 +2003,199 @@ class Test2Repository:
             lease = session.get(TraderLease, lease_key)
             if lease and lease.worker_id == worker_id:
                 session.delete(lease)
+
+    def record_system_model_trade(
+        self,
+        *,
+        signal_id: str,
+        symbol: str,
+        direction: str,
+        contract_type: str,
+        duration_ticks: int,
+        reference_base_stake: float = 0.50,
+        is_virtual: bool = False,
+    ) -> None:
+        now = utc_now()
+        with self.database.session() as session:
+            trade = SystemModelTrade(
+                run_id=self.run_id,
+                signal_id=str(signal_id),
+                symbol=str(symbol),
+                direction=str(direction),
+                contract_type=str(contract_type),
+                duration_ticks=int(duration_ticks),
+                signal_timestamp=now,
+                entry_timestamp=now,
+                reference_base_stake=float(reference_base_stake),
+                is_virtual=bool(is_virtual),
+            )
+            session.merge(trade)
+
+    def settle_system_model_trade(
+        self,
+        *,
+        signal_id: str,
+        outcome: str,
+        fixed_stake_profit: float,
+        martingale_stake: float,
+        martingale_profit: float,
+        martingale_level: int,
+        recovery_debt_before: float,
+        recovery_debt_after: float,
+        settlement_timestamp: datetime | None = None,
+    ) -> None:
+        now = settlement_timestamp or utc_now()
+        with self.database.session() as session:
+            trade = session.scalar(
+                select(SystemModelTrade).where(
+                    SystemModelTrade.signal_id == str(signal_id),
+                    SystemModelTrade.run_id == self.run_id,
+                )
+            )
+            if trade is None:
+                return
+            trade.outcome = str(outcome or "").upper()
+            trade.settlement_timestamp = now
+            trade.fixed_stake_profit = float(fixed_stake_profit)
+            trade.martingale_stake = float(martingale_stake)
+            trade.martingale_profit = float(martingale_profit)
+            trade.martingale_level = int(martingale_level)
+            trade.recovery_debt_before = float(recovery_debt_before)
+            trade.recovery_debt_after = float(recovery_debt_after)
+
+    def system_model_trades(
+        self,
+        *,
+        start: datetime,
+        end: datetime,
+        include_virtual: bool = True,
+    ) -> list[dict[str, Any]]:
+        with self.database.session() as session:
+            rows = session.scalars(
+                select(SystemModelTrade)
+                .where(
+                    SystemModelTrade.run_id == self.run_id,
+                    SystemModelTrade.signal_timestamp >= start,
+                    SystemModelTrade.signal_timestamp < end,
+                    SystemModelTrade.outcome.in_(["WIN", "LOSS"]),
+                )
+                .order_by(SystemModelTrade.signal_timestamp.asc(), SystemModelTrade.id.asc())
+            ).all()
+        results = []
+        for row in rows:
+            if row.is_virtual and not include_virtual:
+                continue
+            results.append(
+                {
+                    "signal_id": row.signal_id,
+                    "symbol": row.symbol,
+                    "direction": row.direction,
+                    "contract_type": row.contract_type,
+                    "duration_ticks": row.duration_ticks,
+                    "signal_timestamp": row.signal_timestamp.isoformat() if row.signal_timestamp else None,
+                    "settlement_timestamp": row.settlement_timestamp.isoformat() if row.settlement_timestamp else None,
+                    "outcome": row.outcome,
+                    "is_virtual": bool(row.is_virtual),
+                    "reference_base_stake": float(row.reference_base_stake or 0.0),
+                    "fixed_stake_profit": float(row.fixed_stake_profit or 0.0),
+                    "martingale_stake": float(row.martingale_stake or 0.0),
+                    "martingale_profit": float(row.martingale_profit or 0.0),
+                    "martingale_level": int(row.martingale_level or 0),
+                    "recovery_debt_before": float(row.recovery_debt_before or 0.0),
+                    "recovery_debt_after": float(row.recovery_debt_after or 0.0),
+                }
+            )
+        return results
+
+    def system_performance_summary(
+        self,
+        *,
+        start: datetime,
+        end: datetime,
+        simulated_base_stake: float = 0.50,
+        include_virtual: bool = False,
+    ) -> dict[str, Any]:
+        trades = self.system_model_trades(
+            start=start,
+            end=end,
+            include_virtual=include_virtual,
+        )
+        real_trades = [trade for trade in trades if not trade["is_virtual"]]
+        fixed_profit = 0.0
+        martingale_profit = 0.0
+        current_fixed_drawdown = 0.0
+        current_martingale_drawdown = 0.0
+        fixed_peak = 0.0
+        martingale_peak = 0.0
+        max_fixed_drawdown = 0.0
+        max_martingale_drawdown = 0.0
+        real_wins = 0
+        real_losses = 0
+        current_real_loss_streak = 0
+        longest_real_loss_streak = 0
+        fixed_stake = max(0.35, float(simulated_base_stake))
+        recovery_debt = 0.0
+        recovery_wins_remaining = 2
+        martingale_level = 0
+        profit_ratio = 0.9
+        for trade in real_trades:
+            outcome = str(trade["outcome"]).upper()
+            ref_stake = max(0.35, float(trade.get("reference_base_stake") or 0.0))
+            fixed_pnl = fixed_stake * (float(trade.get("fixed_stake_profit") or 0.0) / ref_stake) if ref_stake > 1e-9 else 0.0
+            fixed_profit += fixed_pnl
+            fixed_peak = max(fixed_peak, fixed_profit)
+            current_fixed_drawdown = fixed_peak - fixed_profit
+            max_fixed_drawdown = max(max_fixed_drawdown, current_fixed_drawdown)
+            if outcome == "WIN":
+                real_wins += 1
+                current_real_loss_streak = 0
+                if recovery_debt > 0.01:
+                    recovered = max(0.0, fixed_pnl)
+                    recovery_debt = max(0.0, round(recovery_debt - recovered, 2))
+                    recovery_wins_remaining = max(0, recovery_wins_remaining - 1)
+                    if recovery_debt <= 0.01:
+                        recovery_debt = 0.0
+                        recovery_wins_remaining = 2
+                        martingale_level = 0
+                    else:
+                        martingale_level = max(1, martingale_level - 1)
+                else:
+                    martingale_level = 0
+            else:
+                real_losses += 1
+                current_real_loss_streak += 1
+                longest_real_loss_streak = max(longest_real_loss_streak, current_real_loss_streak)
+                recovery_debt = round(recovery_debt + fixed_stake, 2)
+                recovery_wins_remaining = 2
+                martingale_level = min(martingale_level + 1, 10)
+            if recovery_debt > 0.01 and martingale_level > 0:
+                required_recovery_stake = (
+                    math.ceil((recovery_debt / profit_ratio) * 100.0 - 1e-9) / 100.0
+                )
+                martingale_stake = max(fixed_stake, required_recovery_stake)
+            else:
+                martingale_stake = fixed_stake
+            martingale_pnl = fixed_pnl * (martingale_stake / fixed_stake) if fixed_stake > 1e-9 else 0.0
+            martingale_profit += martingale_pnl
+            martingale_peak = max(martingale_peak, martingale_profit)
+            current_martingale_drawdown = martingale_peak - martingale_profit
+            max_martingale_drawdown = max(max_martingale_drawdown, current_martingale_drawdown)
+        total = real_wins + real_losses
+        return {
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "simulated_base_stake": round(fixed_stake, 2),
+            "total_trades": total,
+            "wins": real_wins,
+            "losses": real_losses,
+            "win_rate": real_wins / total if total else 0.0,
+            "fixed_pnl": round(fixed_profit, 2),
+            "martingale_pnl": round(martingale_profit, 2),
+            "max_drawdown_fixed": round(max_fixed_drawdown, 2),
+            "max_drawdown_martingale": round(max_martingale_drawdown, 2),
+            "current_drawdown_fixed": round(current_fixed_drawdown, 2),
+            "current_drawdown_martingale": round(current_martingale_drawdown, 2),
+            "longest_win_streak": 0,
+            "longest_loss_streak": longest_real_loss_streak,
+            "current_loss_streak": current_real_loss_streak,
+        }
