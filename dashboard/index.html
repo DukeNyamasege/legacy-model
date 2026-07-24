@@ -1054,6 +1054,18 @@
           <button id="btn-toggle-auto" style="min-height: 54px; font-size: 1.1rem; border-radius: 16px; min-width: 220px;">
             Join Auto Trading
           </button>
+          <div id="resume-panel" style="display: none; flex-direction: column; gap: 10px; min-width: 220px;">
+            <button id="btn-continue-trading" type="button" style="min-height: 48px; font-size: 1rem; border-radius: 14px; background: linear-gradient(135deg, #0b4fb4, #1d7dff); color: #fff; border: none; cursor: pointer;">
+              Continue Trading
+            </button>
+            <button id="btn-start-again" type="button" style="min-height: 48px; font-size: 1rem; border-radius: 14px; background: rgba(255,255,255,.1); color: var(--ink); border: 1px solid var(--line); cursor: pointer;">
+              Start Again
+            </button>
+            <div style="font-size: 0.72rem; opacity: 0.65; text-align: center; line-height: 1.4;">
+              <strong>Continue</strong> keeps your current recovery stake.<br>
+              <strong>Start Again</strong> resets to your saved stake.
+            </div>
+          </div>
           <div style="margin-top: 8px; font-size: 0.75rem; opacity: 0.7; max-width: 220px; text-align: center;">
             When joined, the bot trades for you automatically.
           </div>
@@ -1094,7 +1106,7 @@
             </div>
             <div class="personal-settings-form">
               <label>Stake amount (USD)
-                <input id="personal-stake" type="number" min="0.01" step="0.01" inputmode="decimal">
+                <input id="personal-stake" type="number" min="0.35" step="0.01" inputmode="decimal">
               </label>
               <label>Take profit (USD)
                 <input id="personal-take-profit" type="number" min="0" step="0.01" inputmode="decimal">
@@ -1720,6 +1732,8 @@
   }
 
   $("btn-toggle-auto")?.addEventListener("click", toggleAutoTrade);
+  $("btn-continue-trading")?.addEventListener("click", () => resumeTrading("continue"));
+  $("btn-start-again")?.addEventListener("click", () => resumeTrading("start_again"));
   $("btn-save-api-token")?.addEventListener("click", saveApiToken);
   $("btn-save-trading-settings")?.addEventListener("click", saveTradingSettings);
   $("account-mode-demo")?.addEventListener("click", () => switchAccountMode("demo"));
@@ -1749,13 +1763,51 @@
 
   function updateAutoTradeBtn() {
     const btn = $("btn-toggle-auto");
+    const resumePanel = $("resume-panel");
     if (!btn) return;
     if (isAutoTrading) {
       btn.textContent = "Stop Auto Trading";
       btn.className = "stop";
+      if (resumePanel) resumePanel.style.display = "none";
     } else {
-      btn.textContent = "Join Auto Trading";
-      btn.className = "";
+      const wasStopped = lastExecutionStatus === "stopped" || lastExecutionStatus === "disabled";
+      const hasRecovery = hasRecoveryState;
+      if (wasStopped && hasTradingApiToken && hasRecovery) {
+        btn.textContent = "Join Auto Trading";
+        btn.className = "";
+        if (resumePanel) resumePanel.style.display = "flex";
+      } else {
+        btn.textContent = "Join Auto Trading";
+        btn.className = "";
+        if (resumePanel) resumePanel.style.display = "none";
+      }
+    }
+  }
+
+  let lastExecutionStatus = "inactive";
+  let hasRecoveryState = false;
+
+  async function resumeTrading(mode) {
+    if (!hasTradingApiToken) {
+      const message = $("api-token-message");
+      if (message) {
+        message.textContent = "Save API token first.";
+        message.className = "api-token-message negative";
+      }
+      return;
+    }
+    setSmartLoader(true, mode === "continue" ? "Continuing with recovery stake" : "Resetting to base stake", false);
+    try {
+      await api("/me/resume-trading", {
+        method: "POST",
+        body: JSON.stringify({ mode }),
+        headers: { "Content-Type": "application/json" },
+      });
+      await refresh({ showLoader: false, blocking: false });
+    } catch (error) {
+      if ($("error")) $("error").textContent = error.message || "Unable to resume trading.";
+    } finally {
+      setSmartLoader(false);
     }
   }
 
@@ -1810,6 +1862,12 @@
         
         isAutoTrading = Boolean(me.enabled);
         hasTradingApiToken = Boolean(me.has_trading_api_token);
+        lastExecutionStatus = String(me.execution_status || "inactive");
+        hasRecoveryState = Boolean(
+          me.virtual_protection &&
+          (me.virtual_protection.actual_recovery_debt > 0 ||
+            me.virtual_protection.consecutive_actual_losses > 0)
+        );
         updateAccountModeSwitch();
         const personalSettings = me.settings || {};
         setPersonalSettingValue("personal-stake", personalSettings.stake_amount ?? 0.50);

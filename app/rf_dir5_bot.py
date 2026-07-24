@@ -203,10 +203,34 @@ class RFDir5TradingBot(TradingBot):
                 type(exc).__name__,
             )
 
+    async def _send_deploy_announcement(self) -> None:
+        text = "\n".join(
+            (
+                "Bot Update Deployed",
+                "",
+                "What's new in this update:",
+                "• Custom stake amount — set any stake (min $0.35)",
+                "• Recovery (Martingale) toggle — turn off for flat staking",
+                "• Virtual protection now requires 2 consecutive virtual wins",
+                "• Continue / Start Again buttons when resuming after a stop",
+                "• Deep-blue dashboard redesign with mobile-friendly layout",
+                "",
+                "Test our model: https://derivadmin.site/",
+            )
+        )
+        try:
+            await self.telegram_alerts.send_announcement(text)
+        except Exception as exc:
+            self.logger.warning(
+                "TELEGRAM_DEPLOY_ANNOUNCEMENT_FAILED error=%s",
+                type(exc).__name__,
+            )
+
     async def run(self) -> None:
         if not self.telegram_alerts.enabled:
             await super().run()
             return
+        await self._send_deploy_announcement()
         alert_task = asyncio.create_task(
             self._telegram_hourly_loop(),
             name="telegram_hourly_alerts",
@@ -1180,7 +1204,7 @@ class RFDir5TradingBot(TradingBot):
                     self.risk_config.recovery_enabled and account_martingale
                 ),
                 recovery_trigger_losses=self.risk_config.recovery_trigger_losses,
-                minimum_stake=max(0.01, configured_stake),
+                minimum_stake=max(0.35, configured_stake),
                 virtual_protection_enabled=self.virtual_config.enabled,
                 maximum_recovery_balance_fraction=(
                     self.risk_config.maximum_recovery_balance_fraction

@@ -1559,6 +1559,10 @@ def get_current_account(request: Request) -> dict | None:
 class AutoTradeRequest(BaseModel):
     enabled: bool
 
+
+class ResumeTradeRequest(BaseModel):
+    mode: str = Field(pattern="^(start_again|continue)$")
+
 @app.get("/me")
 def get_me(request: Request) -> dict:
     account = get_current_account(request)
@@ -1663,6 +1667,33 @@ def toggle_auto_trade(request: Request, body: AutoTradeRequest) -> dict:
     return {"success": True, "enabled": body.enabled}
 
 
+@app.post("/me/resume-trading")
+def resume_trading(request: Request, body: ResumeTradeRequest) -> dict:
+    account = get_current_account(request)
+    if not account:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if not account.get("has_trading_api_token", False):
+        raise HTTPException(
+            status_code=409,
+            detail="Save a Deriv API token before resuming auto trading.",
+        )
+    reset_stake = body.mode == "start_again"
+    REPOSITORY.resume_managed_account(int(account["id"]), reset_recovery=reset_stake)
+    REPOSITORY.set_managed_account_enabled(int(account["id"]), True)
+    REPOSITORY.set_status("RUNNING", "")
+    REPOSITORY.audit(
+        "PERSONAL_RESUME_TRADING",
+        str(account.get("account_id_masked", "account")),
+        request.client.host if request.client else "unknown",
+        {
+            "managed_account_id": int(account["id"]),
+            "mode": body.mode,
+            "recovery_reset": reset_stake,
+        },
+    )
+    return {"success": True, "mode": body.mode, "recovery_reset": reset_stake}
+
+
 @app.post("/me/trading-settings")
 def update_personal_trading_settings(
     request: Request,
@@ -1681,10 +1712,10 @@ def update_personal_trading_settings(
     if not all(math.isfinite(float(value)) for value in values):
         raise HTTPException(status_code=400, detail="Trading settings must be finite numbers.")
     stake_amount = round(float(body.stake_amount), 2)
-    if stake_amount < 0.01:
+    if stake_amount < 0.35:
         raise HTTPException(
             status_code=400,
-            detail="Stake amount must be at least 0.01.",
+            detail="Stake amount must be at least 0.35.",
         )
     if stake_amount > 1_000_000:
         raise HTTPException(status_code=400, detail="Stake amount is too large.")

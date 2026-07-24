@@ -672,8 +672,15 @@ class RFDir5Repository:
                 if not state.recovery_pending:
                     state.consecutive_losses = 0
                     state.recovery_pending_since = None
-                state.protection_mode = NORMAL_MODE
-                state.entered_virtual_mode_at = None
+                # Only clear virtual protection when we are NOT actively waiting
+                # for virtual confirmation wins — a real win that slips through
+                # while the account is in virtual-guard mode must not cancel it.
+                if state.protection_mode not in (
+                    VIRTUAL_WAITING_FOR_WIN,
+                    REAL_RECOVERY_PENDING,
+                ):
+                    state.protection_mode = NORMAL_MODE
+                    state.entered_virtual_mode_at = None
             if state.recovery_pending and state.recovery_pending_since is None:
                 state.recovery_pending_since = utc_now()
             if not state.recovery_pending:

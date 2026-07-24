@@ -311,6 +311,21 @@ class Test2Repository:
         )
         return result
 
+    def resume_managed_account(self, account_id: int, *, reset_recovery: bool) -> None:
+        with self.database.session() as session:
+            state = session.get(AccountRiskState, int(account_id))
+            if state is None:
+                return
+            if reset_recovery:
+                state.consecutive_losses = 0
+                state.recovery_loss_debt = 0.0
+                state.recovery_pending = False
+                state.recovery_attempt_active = False
+                state.recovery_pending_since = None
+            state.protection_mode = "NORMAL_MODE"
+            state.entered_virtual_mode_at = None
+            state.updated_at = utc_now()
+
     def update_account_execution_settings(
         self,
         account_id: int,
