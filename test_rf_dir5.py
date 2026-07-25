@@ -720,6 +720,65 @@ class RFRepositoryTests(unittest.TestCase):
             session.flush()
             return account.id
 
+    def settle_model_sequence(self, outcomes: str) -> list[bool]:
+        virtual_flags = []
+        for index, outcome in enumerate(outcomes):
+            item = signal("RISE", tick_sequence=2_000 + index * 10)
+            self.repository.record_signal(item)
+            virtual_flags.append(self.base.record_system_model_trade(
+                signal_id=item.signal_id,
+                symbol=item.symbol,
+                direction=item.direction,
+                contract_type=item.contract_type,
+                duration_ticks=item.duration_ticks,
+                entry_tick_sequence=item.tick_sequence,
+                entry_spot=100.0,
+                expected_profit_ratio=0.82,
+                reference_base_stake=0.50,
+            ))
+            self.base.settle_due_system_model_trades(
+                symbol=item.symbol,
+                tick_sequence=item.tick_sequence + item.duration_ticks,
+                exit_spot=101.0 if outcome == "W" else 99.0,
+            )
+        return virtual_flags
+
+    def test_canonical_model_ledger_enforces_exact_virtual_boundaries(self) -> None:
+        # L, W, L cannot enter; only the following second consecutive L does.
+        flags = self.settle_model_sequence("LWLLLWLWWW")
+        self.assertEqual(flags[:4], [False, False, False, False])
+        self.assertTrue(all(flags[4:9]))
+        self.assertFalse(flags[9])
+
+    def test_model_statistics_exclude_virtual_runs_and_are_idempotent(self) -> None:
+        self.settle_model_sequence("LLLWW")
+        start = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2100, 1, 1, tzinfo=timezone.utc)
+        summary = self.base.system_performance_summary(start=start, end=end)
+        self.assertEqual(summary["total_trades"], 2)
+        self.assertEqual(summary["total_trades"], summary["wins"] + summary["losses"])
+        self.assertEqual(summary["losses"], 2)
+        self.assertEqual(self.base.open_system_model_trade_count(), 0)
+
+    def test_model_stake_simulation_is_read_only_and_replays_requested_stake(self) -> None:
+        account_id = self.create_managed_account("Independent user")
+        with self.database.session() as session:
+            session.get(ManagedAccount, account_id).stake_amount = 300.0
+        self.settle_model_sequence("WL")
+        start = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2100, 1, 1, tzinfo=timezone.utc)
+        reference = self.base.system_performance_summary(
+            start=start, end=end, simulated_base_stake=0.50
+        )
+        simulated = self.base.system_performance_summary(
+            start=start, end=end, simulated_base_stake=300.0
+        )
+        self.assertEqual(reference["simulated_base_stake"], 0.50)
+        self.assertEqual(simulated["simulated_base_stake"], 300.0)
+        self.assertNotEqual(reference["fixed_pnl"], simulated["fixed_pnl"])
+        account = self.base.managed_account(account_id)
+        self.assertEqual(account["stake_amount"], 300.0)
+
     def test_five_and_ten_tick_shadows_expire_on_exact_market_ticks(self) -> None:
         item = self.create_signal_and_shadows()
         self.assertEqual(
@@ -830,6 +889,20 @@ class RFRepositoryTests(unittest.TestCase):
         )
         self.assertEqual(protection["mode"], "VIRTUAL_MODE")
         self.assertEqual(protection["consecutive_actual_losses"], 2)
+
+    def test_real_win_resets_virtual_entry_loss_sequence(self) -> None:
+        account_id = self.create_managed_account("Loss win loss")
+        for profit, balance in ((-1.0, 99.0), (1.0, 100.0), (-1.0, 99.0)):
+            result = self.repository.record_account_outcome(
+                managed_account_id=account_id,
+                profit=profit,
+                current_balance=balance,
+                recovery_enabled=True,
+                virtual_protection_enabled=True,
+                virtual_trigger_actual_losses=2,
+            )
+        self.assertEqual(result["protection_mode"], "NORMAL_MODE")
+        self.assertEqual(result["consecutive_losses"], 1)
 
     def test_virtual_losses_do_not_change_actual_recovery_debt(self) -> None:
         account_id = self.create_managed_account("Virtual Losses")
@@ -988,7 +1061,8 @@ class RFRepositoryTests(unittest.TestCase):
             symbol=first.symbol,
             tick_sequence=first.tick_sequence + first.duration_ticks,
             exit_quote=Decimal("101.00"),
-            exit_after_wins=2,
+            # Even a stale/unsafe caller setting cannot weaken the exact rule.
+            exit_after_wins=1,
         )
         self.assertEqual(first_settled[0]["result"], "VIRTUAL_WIN")
         self.assertEqual(

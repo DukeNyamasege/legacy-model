@@ -690,6 +690,17 @@ class RFDir5TradingBot(TradingBot):
             connection_session_id=self.connection_session_id,
         )
         self._render_live_ticks()
+        for model_trade in self.repository.settle_due_system_model_trades(
+            symbol=symbol,
+            tick_sequence=market.tick_sequence,
+            exit_spot=float(quote),
+        ):
+            self.logger.info(
+                "SYSTEM_MODEL_SETTLED signal_id=%s outcome=%s virtual=%s",
+                model_trade["signal_id"],
+                model_trade["outcome"],
+                model_trade["is_virtual"],
+            )
         virtual_config = getattr(self, "virtual_config", None)
         for settled in self.rf_repository.settle_due_virtual_trades(
             symbol=symbol,
@@ -1120,8 +1131,10 @@ class RFDir5TradingBot(TradingBot):
             direction=signal.direction,
             contract_type=signal.contract_type,
             duration_ticks=int(signal.duration_ticks),
-            reference_base_stake=self.base_stake,
-            is_virtual=False,
+            entry_tick_sequence=int(signal.tick_sequence),
+            entry_spot=float(signal.reference_entry_quote),
+            expected_profit_ratio=float(economics.potential_profit / economics.stake),
+            reference_base_stake=0.50,
         )
         eligible = self._eligible_purchase_accounts()
         skip_reasons: Counter[str] = Counter()

@@ -469,12 +469,17 @@ class SystemModelTrade(Base):
     direction: Mapped[str] = mapped_column(String(10), index=True)
     contract_type: Mapped[str] = mapped_column(String(30))
     duration_ticks: Mapped[int] = mapped_column(Integer)
+    entry_tick_sequence: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    expiry_tick_sequence: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    entry_spot: Mapped[float] = mapped_column(Float, default=0.0)
+    exit_spot: Mapped[float | None] = mapped_column(Float)
     signal_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     entry_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     settlement_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     outcome: Mapped[str | None] = mapped_column(String(10), nullable=True)
     is_virtual: Mapped[bool] = mapped_column(Boolean, default=False)
     reference_base_stake: Mapped[float] = mapped_column(Float, default=0.50)
+    expected_profit_ratio: Mapped[float] = mapped_column(Float, default=0.90)
     fixed_stake_profit: Mapped[float] = mapped_column(Float, default=0.0)
     martingale_stake: Mapped[float] = mapped_column(Float, default=0.0)
     martingale_profit: Mapped[float] = mapped_column(Float, default=0.0)
@@ -482,3 +487,15 @@ class SystemModelTrade(Base):
     recovery_debt_before: Mapped[float] = mapped_column(Float, default=0.0)
     recovery_debt_after: Mapped[float] = mapped_column(Float, default=0.0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class SystemModelState(Base):
+    """Account-independent execution state for the canonical model ledger."""
+
+    __tablename__ = "system_model_states"
+
+    run_id: Mapped[int] = mapped_column(ForeignKey("test_runs.id"), primary_key=True)
+    mode: Mapped[str] = mapped_column(String(30), default="REAL")
+    consecutive_real_losses: Mapped[int] = mapped_column(Integer, default=0)
+    consecutive_virtual_wins: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
