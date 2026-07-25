@@ -2429,6 +2429,7 @@
   }
   let isAutoTrading = false;
   let hasTradingApiToken = false;
+  let tradingApiTokenInvalid = false;
   let activeAccountType = "demo";
   let availableAccountTypes = ["demo"];
 
@@ -2556,14 +2557,22 @@
     const autoPanel = $("auto-trade-panel");
     const settingsPanel = $("personal-settings-panel");
     if (!panel || !state || !btn) return;
-    panel.style.display = hasTradingApiToken ? "none" : "grid";
-    state.textContent = "Required";
+    const needsToken = !hasTradingApiToken || tradingApiTokenInvalid;
+    panel.style.display = needsToken ? "grid" : "none";
+    state.textContent = tradingApiTokenInvalid ? "Expired or rejected" : "Required";
     state.className = "negative";
-    if (autoPanel) autoPanel.style.display = hasTradingApiToken ? "block" : "none";
-    if (settingsPanel) settingsPanel.style.display = hasTradingApiToken ? "block" : "none";
-    if (!hasTradingApiToken) setPersonalSettingsExpanded(false);
-    btn.disabled = !hasTradingApiToken;
-    btn.title = hasTradingApiToken ? "" : "Save API token first";
+    if (autoPanel) autoPanel.style.display = needsToken ? "none" : "block";
+    if (settingsPanel) settingsPanel.style.display = needsToken ? "none" : "block";
+    if (needsToken) setPersonalSettingsExpanded(false);
+    btn.disabled = needsToken;
+    btn.title = needsToken ? "Save a new active API token first" : "";
+    const message = $("api-token-message");
+    if (message && tradingApiTokenInvalid && !message.textContent.trim()) {
+      message.textContent = lastExecutionStatus === "credential_error"
+        ? "Your previous Deriv API token expired or was rejected. Enter a new active token."
+        : "A new active Deriv API token is required before AutoTrade can resume.";
+      message.className = "api-token-message negative";
+    }
   }
 
   async function saveApiToken() {
@@ -2591,6 +2600,8 @@
       });
       if (input) input.value = "";
       hasTradingApiToken = true;
+      tradingApiTokenInvalid = false;
+      lastExecutionStatus = "connecting";
       updateApiTokenPanel();
       if (message) {
         message.textContent = "";
@@ -2806,6 +2817,7 @@
         
         isAutoTrading = Boolean(me.enabled);
         hasTradingApiToken = Boolean(me.has_trading_api_token);
+        tradingApiTokenInvalid = Boolean(me.trading_api_token_invalid);
         lastExecutionStatus = String(me.execution_status || "inactive");
         hasRecoveryState = Boolean(
           me.virtual_protection &&
@@ -2835,6 +2847,7 @@
         $("btn-login").style.display = "inline-flex";
         $("btn-logout").style.display = "none";
         hasTradingApiToken = false;
+        tradingApiTokenInvalid = false;
         activeAccountType = "demo";
         availableAccountTypes = ["demo"];
         updateAccountModeSwitch();

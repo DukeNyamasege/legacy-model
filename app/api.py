@@ -49,6 +49,7 @@ from app.token_store import (
     encrypt_token,
     has_encryption_key,
     parse_token_lines,
+    remove_trading_api_token,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -367,6 +368,22 @@ def shared_trading_api_token(current_payload: dict) -> str:
 
 def has_personal_trading_api_token(payload: dict) -> bool:
     return has_trading_api_token(payload) or bool(shared_trading_api_token(payload))
+
+
+def execution_requires_new_token(status: object) -> bool:
+    return str(status or "").strip().lower() in {
+        "credential_error",
+        "token_required",
+    }
+
+
+def execution_token_was_rejected(status: object, reason: object = "") -> bool:
+    normalized = str(status or "").strip().lower()
+    message = str(reason or "").strip().lower()
+    return normalized == "credential_error" or (
+        normalized == "token_required"
+        and any(marker in message for marker in ("expired", "rejected", "invalid"))
+    )
 
 
 def find_linked_account_for_type(current_payload: dict, account_type: str):
@@ -1563,7 +1580,11 @@ def get_current_account(request: Request) -> dict | None:
         account_id = str(stored.get("account_id", "")).strip()
         if not account_id:
             return None
-        token_ready = has_personal_trading_api_token(stored)
+        requires_token = execution_requires_new_token(account.get("execution_status"))
+        token_invalid = execution_token_was_rejected(
+            account.get("execution_status"), account.get("execution_status_reason")
+        )
+        token_ready = has_personal_trading_api_token(stored) and not requires_token
         account_type = account_type_from_payload(stored)
         return {
             "id": account["id"],
@@ -1583,6 +1604,7 @@ def get_current_account(request: Request) -> dict | None:
             ),
             "has_trading_api_token": token_ready,
             "requires_api_token": not token_ready,
+            "trading_api_token_invalid": token_invalid,
             "created_at": account["created_at"],
         }
 
@@ -1601,7 +1623,11 @@ def get_current_account(request: Request) -> dict | None:
             except Exception:
                 continue
             if str(stored.get("account_id", "")).strip() == account_id:
-                token_ready = has_personal_trading_api_token(stored)
+                requires_token = execution_requires_new_token(row.execution_status)
+                token_invalid = execution_token_was_rejected(
+                    row.execution_status, row.execution_status_reason
+                )
+                token_ready = has_personal_trading_api_token(stored) and not requires_token
                 account_type = account_type_from_payload(stored)
                 return {
                     "id": row.id,
@@ -1619,6 +1645,7 @@ def get_current_account(request: Request) -> dict | None:
                     "execution_status_reason": str(row.execution_status_reason),
                     "has_trading_api_token": token_ready,
                     "requires_api_token": not token_ready,
+                    "trading_api_token_invalid": token_invalid,
                     "created_at": row.created_at,
                 }
     except Exception:
@@ -1649,6 +1676,9 @@ def get_me(request: Request) -> dict:
         "enabled": account["enabled"],
         "has_trading_api_token": account.get("has_trading_api_token", False),
         "requires_api_token": account.get("requires_api_token", True),
+        "trading_api_token_invalid": account.get(
+            "trading_api_token_invalid", False
+        ),
         "balance": personal["balance"],
         "currency": personal["currency"],
         "status": personal["status"],
@@ -1840,11 +1870,16 @@ def save_personal_api_token(request: Request, body: PersonalApiTokenRequest) -> 
             "auth_type": "oauth",
             "account_id": str(account["account_id"]).strip(),
         }
-    if has_trading_api_token(payload):
+    replacing_rejected_token = execution_requires_new_token(
+        row.get("execution_status")
+    )
+    if has_trading_api_token(payload) and not replacing_rejected_token:
         raise HTTPException(
             status_code=409,
             detail="A Deriv API token is already connected for this account.",
         )
+    if replacing_rejected_token:
+        payload = remove_trading_api_token(payload)
     try:
         accounts = load_options_accounts(api_token)
     except requests.HTTPError as exc:
@@ -2240,7 +2275,9 @@ def settings_accounts(_: str = Depends(require_control_auth)) -> dict:
         try:
             payload = decrypt_auth_payload(row.token_secret, CONFIG.deriv.token_encryption_key)
             auth_type = str(payload.get("auth_type", "pat")).strip() or "pat"
-            token_ready = has_trading_api_token(payload)
+            token_ready = has_trading_api_token(payload) and not execution_requires_new_token(
+                row.execution_status
+            )
             account_id = str(payload.get("account_id", "")).strip()
             account_type = account_type_from_payload(payload)
             if len(account_id) > 6:
@@ -2254,7 +2291,7 @@ def settings_accounts(_: str = Depends(require_control_auth)) -> dict:
                 "label": row.label or f"Account {row.id}",
                 "enabled": row.enabled,
                 "account_type": account_type,
-                "token_masked": "Stored securely",
+                "token_masked": "Stored securely" if token_ready else "Not connected",
                 "auth_type": auth_type,
                 "has_trading_api_token": token_ready,
                 "can_receive_trades": bool(row.enabled and token_ready),

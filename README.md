@@ -73,6 +73,13 @@ Each managed account has independent:
 
 A manual AutoTrade stop resets the account's active recovery state. Resuming starts from the configured base stake rather than an old recovery stake; historical trades, wins, losses, and P/L are retained. Page refreshes, WebSocket reconnects, API restarts, and worker restarts are not treated as manual stop actions.
 
+When Deriv rejects a stored personal API token as expired or invalid, the worker
+disables affected execution, removes that rejected PAT from encrypted storage
+(including Demo/Real siblings sharing it), and preserves the owner's OAuth
+identity. The dashboard displays the rejection reason and restores the API-token
+input so the owner can verify and save a new active token before rejoining
+AutoTrade. Transient timeouts and network errors do not erase credentials.
+
 ## Virtual-loss protection
 
 Virtual protection is per account and uses fixed safety invariants:

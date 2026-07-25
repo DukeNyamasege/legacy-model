@@ -42,6 +42,11 @@ from app.model.hmm_regime import HmmInference
 from app.strategy.decision_engine import ProposalEconomics, TradeDecision
 from app.strategy.signal_detector import CandidateSignal
 from app.strategy.rise_fall_strategy import shadow_outcome
+from app.token_store import (
+    decrypt_auth_payload,
+    encrypt_auth_payload,
+    remove_trading_api_token,
+)
 
 
 def mask_account_id(account_id: str) -> str:
@@ -390,6 +395,66 @@ class Test2Repository:
             row.execution_status_reason = str(reason or "Account excluded")[:160]
             row.execution_status_updated_at = utc_now()
             row.updated_at = utc_now()
+
+    def discard_rejected_trading_token(
+        self,
+        account_id: int,
+        *,
+        reason: str,
+    ) -> list[int]:
+        """Forget a rejected PAT everywhere it is shared and request replacement."""
+        encryption_key = self.config.deriv.token_encryption_key
+        if not encryption_key:
+            return []
+        with self.database.session() as session:
+            target = session.get(ManagedAccount, int(account_id), with_for_update=True)
+            if target is None:
+                return []
+            try:
+                target_payload = decrypt_auth_payload(target.token_secret, encryption_key)
+            except Exception:
+                return []
+            rejected_token = str(
+                target_payload.get("pat_token")
+                or (
+                    target_payload.get("access_token")
+                    if str(target_payload.get("auth_type", "")).lower() != "oauth"
+                    else ""
+                )
+                or ""
+            ).strip()
+            if not rejected_token:
+                return []
+
+            affected: list[int] = []
+            rows = session.scalars(select(ManagedAccount).with_for_update()).all()
+            for row in rows:
+                try:
+                    payload = decrypt_auth_payload(row.token_secret, encryption_key)
+                except Exception:
+                    continue
+                stored_token = str(
+                    payload.get("pat_token")
+                    or (
+                        payload.get("access_token")
+                        if str(payload.get("auth_type", "")).lower() != "oauth"
+                        else ""
+                    )
+                    or ""
+                ).strip()
+                if stored_token != rejected_token:
+                    continue
+                row.token_secret = encrypt_auth_payload(
+                    remove_trading_api_token(payload),
+                    encryption_key,
+                )
+                row.enabled = False
+                row.execution_status = "token_required"
+                row.execution_status_reason = str(reason or "Deriv API token expired")[:160]
+                row.execution_status_updated_at = utc_now()
+                row.updated_at = utc_now()
+                affected.append(int(row.id))
+            return affected
 
     def touch_managed_account_execution(self, account_ids: list[int]) -> None:
         normalized = sorted({int(account_id) for account_id in account_ids if account_id})

@@ -529,6 +529,22 @@ class DashboardMetricsTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             api.PersonalApiTokenRequest(api_token="x" * 4097)
 
+    def test_expired_token_status_requires_replacement_and_notification(self) -> None:
+        from app import api
+
+        self.assertTrue(api.execution_requires_new_token("credential_error"))
+        self.assertTrue(api.execution_requires_new_token("token_required"))
+        self.assertTrue(
+            api.execution_token_was_rejected(
+                "token_required", "Deriv API token expired or was rejected"
+            )
+        )
+        self.assertFalse(
+            api.execution_token_was_rejected(
+                "token_required", "A verified Deriv API token is required"
+            )
+        )
+
 
 class CopyTradeAuditTests(unittest.TestCase):
     @staticmethod
@@ -1353,6 +1369,25 @@ class TimingAndModelTests(unittest.TestCase):
 
 
 class AccountIsolationTests(unittest.IsolatedAsyncioTestCase):
+    def test_permanent_token_rejection_discards_credential_and_requests_new_one(self) -> None:
+        bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
+        bot.repository = MagicMock()
+        bot.repository.discard_rejected_trading_token.return_value = [7, 8]
+        bot.logger = MagicMock()
+
+        bot._set_account_execution_status(
+            7, "credential_error", "Invalid or expired token"
+        )
+
+        bot.repository.discard_rejected_trading_token.assert_called_once_with(
+            7,
+            reason=(
+                "Deriv API token expired or was rejected. Enter a new active "
+                "API token to resume AutoTrade."
+            ),
+        )
+        bot.repository.quarantine_managed_account.assert_not_called()
+
     def test_quarantined_account_status_survives_runtime_reload(self) -> None:
         bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
         bot.repository = MagicMock()

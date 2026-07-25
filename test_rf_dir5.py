@@ -11,6 +11,7 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from cryptography.fernet import Fernet
 from sqlalchemy import func, select
 
 from app.config import TelegramSettings, load_test2_config
@@ -39,6 +40,7 @@ from app.strategy.rise_fall_strategy import (
     make_signal_event,
     shadow_outcome,
 )
+from app.token_store import decrypt_auth_payload, encrypt_auth_payload
 from enhanced_bot import TradingBot, sanitize_log_value
 
 
@@ -1394,6 +1396,48 @@ class RFRepositoryTests(unittest.TestCase):
             self.assertEqual(target.execution_status, "credential_error")
             self.assertEqual(target.token_secret, "encrypted")
             self.assertTrue(healthy.enabled)
+
+    def test_rejected_shared_pat_is_removed_and_oauth_identity_is_retained(self) -> None:
+        key = Fernet.generate_key().decode("utf-8")
+        self.base.config.deriv.token_encryption_key = key
+        first_id = self.create_managed_account("Expired Demo")
+        second_id = self.create_managed_account("Expired Real")
+        for account_id, account_type in ((first_id, "demo"), (second_id, "real")):
+            payload = {
+                "auth_type": "pat",
+                "access_token": "expired-shared-pat",
+                "account_id": f"VRTC{account_id}",
+                "account_type": account_type,
+                "auth_source": "deriv_oauth_with_pat",
+                "oauth_access_token": "oauth-access",
+                "oauth_refresh_token": "oauth-refresh",
+                "oauth_expires_at": "2099-01-01T00:00:00+00:00",
+                "oauth_scope": "trade",
+                "pat_token_set": True,
+            }
+            with self.database.session() as session:
+                session.get(ManagedAccount, account_id).token_secret = (
+                    encrypt_auth_payload(payload, key)
+                )
+
+        affected = self.base.discard_rejected_trading_token(
+            first_id,
+            reason="Deriv API token expired or was rejected. Enter a new active token.",
+        )
+
+        self.assertEqual(affected, [first_id, second_id])
+        with self.database.session() as session:
+            for account_id in affected:
+                row = session.get(ManagedAccount, account_id)
+                payload = decrypt_auth_payload(row.token_secret, key)
+                self.assertEqual(payload["auth_type"], "oauth")
+                self.assertEqual(payload["access_token"], "oauth-access")
+                self.assertEqual(payload["refresh_token"], "oauth-refresh")
+                self.assertFalse(payload["pat_token_set"])
+                self.assertNotIn("expired-shared-pat", row.token_secret)
+                self.assertFalse(row.enabled)
+                self.assertEqual(row.execution_status, "token_required")
+                self.assertIn("new active token", row.execution_status_reason)
 
     def test_two_losses_arm_exactly_one_recovery_attempt(self) -> None:
         account_id = self.create_managed_account("Recovery")
