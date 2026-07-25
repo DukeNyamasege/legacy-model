@@ -267,8 +267,11 @@ class RiskSettings(StrictModel):
 
 class VirtualProtectionSettings(StrictModel):
     enabled: bool = True
-    trigger_actual_losses: int = Field(default=2, ge=1, le=20)
-    exit_after_wins: int = Field(default=2, ge=1, le=10)
+    # These are safety invariants, not tuning parameters.  Allowing a stale VPS
+    # environment variable to change either value can purchase a recovery after
+    # only one (or after non-consecutive) virtual win.
+    trigger_actual_losses: Literal[2] = 2
+    exit_after_wins: Literal[2] = 2
     max_observations: int = Field(default=0, ge=0)
     scope: Literal["PER_ACCOUNT", "EXECUTION_GROUP"] = "PER_ACCOUNT"
 

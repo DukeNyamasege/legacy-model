@@ -810,7 +810,10 @@ class RFDir5Repository:
     ) -> list[dict[str, Any]]:
         settled: list[dict[str, Any]] = []
         now = utc_now()
-        required_virtual_wins = max(1, int(exit_after_wins or 1))
+        # Recovery is deliberately armed by exactly two consecutive virtual
+        # wins.  Keep this invariant here as well as in configuration so direct
+        # callers cannot weaken the financial safety rule.
+        required_virtual_wins = 2
         with self.database.session() as session:
             rows = session.scalars(
                 select(VirtualTrade)
