@@ -804,14 +804,18 @@ class RFDir5TradingBot(TradingBot):
         self.rf_repository.record_signal(signal)
         self.rf_candidate_queue.append(signal)
         self.logger.info(
-            "RF_SIGNAL_QUALIFIED signal_id=%s symbol=%s direction=%s score=%s "
-            "efficiency=%.3f impulse=%.3f",
+            "RF_SIGNAL_QUALIFIED signal_id=%s symbol=%s direction=%s score=%.3f "
+            "efficiency=%.3f impulse=%.3f duration_ticks=%s "
+            "tick_seq=%d epoch=%d",
             signal.signal_id,
             signal.symbol,
             signal.direction,
             signal.quality_score,
             signal.features.efficiency,
             signal.features.impulse,
+            signal.duration_ticks,
+            signal.tick_sequence,
+            signal.signal_tick_epoch,
         )
         self._schedule_candidate_arbitration()
 
@@ -1032,7 +1036,8 @@ class RFDir5TradingBot(TradingBot):
             logger.info(
                 "RF_AI_DECISION signal_id=%s symbol=%s action=%s posterior_mean=%s "
                 "lower_bound=%s edge_confidence=%s break_even=%.5f expected_value=%.5f "
-                "hmm_state=%s hmm_fall_probability=%s gate_mode=%s idle_seconds=%.1f",
+                "hmm_state=%s hmm_fall_probability=%s gate_mode=%s idle_seconds=%.1f "
+                "reasons=%s",
                 selected.signal_id,
                 selected.symbol,
                 decision.action,
@@ -1061,6 +1066,7 @@ class RFDir5TradingBot(TradingBot):
                 ),
                 "cadence_relaxed" if cadence_relaxed else "strict",
                 idle_seconds,
+                ";".join(decision.reasons),
             )
         execution_available = bool(
             self.test2_config.execution.demo_enabled
@@ -1439,6 +1445,20 @@ class RFDir5TradingBot(TradingBot):
                 registered_account_masks=[
                     mask_account_id(account_id) for account_id in registered
                 ],
+            )
+            self.logger.info(
+                "PURCHASE_CONFIRMED signal_id=%s symbol=%s direction=%s "
+                "registered=%s expected=%s contracts=%s stake_sum=%.2f "
+                "profit_ratio=%.5f missing=%s",
+                signal.signal_id,
+                signal.symbol,
+                signal.direction,
+                len(registered),
+                len(expected_account_ids),
+                len(contracts),
+                sum(stake_by_token[token] for token in stake_by_token if token in {t for t, _ in filtered}),
+                proposal_profit_ratio,
+                [mask_account_id(a) for a in missing_accounts] if missing_accounts else [],
             )
             if missing_accounts:
                 self.logger.warning(

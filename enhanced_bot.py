@@ -2477,6 +2477,11 @@ class TradingBot:
     def _on_public_connection_established(self) -> None:
         previous = self.connection_session_id
         self.connection_session_id = str(uuid.uuid4())
+        self.logger.info(
+            "PUBLIC_CONNECTION_ESTABLISHED session=%s previous_session=%s",
+            self.connection_session_id[:8] + "...",
+            previous[:8] + "..." if previous else "none",
+        )
         if previous and self.pending_signal and not self.pending_signal.consumed:
             self.repository.mark_signal(
                 self.pending_signal.signal_id,
@@ -2509,11 +2514,19 @@ class TradingBot:
 
     def _on_public_connection_lost(self, error: Exception) -> None:
         """Hook for strategy-specific work that must stop with a public session."""
+        self.logger.error(
+            "PUBLIC_CONNECTION_LOST error=%s",
+            error,
+        )
         return
 
     def _on_private_session_ready(self, session: ClientSession) -> None:
-        """Hook for account-scoped contract capability validation."""
-        return
+        self.logger.info(
+            "ACCOUNT_CONNECTED token=%s account=%s managed_id=%s",
+            session.token[:8] + "...",
+            mask_account_id(session.account_id),
+            session.managed_account_id,
+        )
 
     def _on_account_contract_registered(
         self,
@@ -2522,8 +2535,12 @@ class TradingBot:
         contract_id: int,
         stake_amount: float,
     ) -> None:
-        """Hook after durable purchase registration and before settlement subscription."""
-        return
+        self.logger.info(
+            "CONTRACT_REGISTERED account=%s contract_id=%s stake=%.2f",
+            mask_account_id(account_id),
+            contract_id,
+            stake_amount,
+        )
 
     def _reset_session_runtime_state(self) -> None:
         self.is_trading_locked = False
@@ -3136,6 +3153,15 @@ class TradingBot:
             final_digit=int(last_digit),
             connection_session_id=self.connection_session_id,
         )
+        if self.tick_sequence % 10 == 0 or len(market.live_ticks_history) <= 1:
+            self.logger.info(
+                "LIVE_TICK symbol=%s seq=%d quote=%s digit=%s epoch=%d",
+                symbol,
+                self.tick_sequence,
+                display_value,
+                last_digit,
+                epoch,
+            )
         self._evaluate_pending_shadow_signals(int(last_digit), market)
         self._render_live_ticks()
 
@@ -3408,13 +3434,16 @@ class TradingBot:
             )
             self.logger.info(
                 "MODEL_DECISION signal_id=%s symbol=%s action=%s expected_value=%.5f "
-                "posterior_mean=%.5f hmm_state=%s",
+                "posterior_mean=%.5f hmm_state=%s hmm_probabilities=%s "
+                "rejection_reasons=%s",
                 signal.signal_id,
                 signal.symbol,
                 decision.final_action,
                 decision.expected_value,
                 decision.posterior_mean,
                 decision.hmm_state,
+                decision.hmm_state_probabilities,
+                decision.rejection_reasons,
             )
             if decision.final_action != "PURCHASE":
                 self.repository.mark_signal(
@@ -4682,12 +4711,13 @@ class TradingBot:
                 self._register_master_market_outcome(signal_symbol, master_outcome)
                 self.logger.info(
                     "CONTRACT_SETTLED signal_id=%s symbol=%s master_account=%s "
-                    "result=%s exit_digit=%s",
+                    "result=%s exit_digit=%s outcomes=%s",
                     signal_id,
                     signal_symbol,
                     mask_account_id(master_account_id),
                     master_outcome.upper(),
                     exit_digit,
+                    {mask_account_id(k): v for k, v in outcomes.items()},
                 )
             else:
                 self.logger.warning(

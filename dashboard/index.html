@@ -2027,8 +2027,8 @@
   }
   function formatContractStatus(outcome) {
     const normalized = String(outcome || "OPEN").toUpperCase();
-    if (normalized === "VIRTUAL_WIN") return { label: "Virtual Win", className: "virtual" };
-    if (normalized === "VIRTUAL_LOSS") return { label: "Virtual Loss", className: "virtual" };
+    if (normalized === "VIRTUAL_WIN") return { label: "Win", className: "virtual" };
+    if (normalized === "VIRTUAL_LOSS") return { label: "Loss", className: "virtual" };
     if (normalized === "WIN") return { label: "Win", className: "win" };
     if (normalized === "LOSS") return { label: "Loss", className: "loss" };
     return { label: "Open", className: "open" };

@@ -1005,6 +1005,21 @@ class Test2Repository:
             trade.commission = commission
             trade.cumulative_profit = state.total_profit
             trade.drawdown = state.current_drawdown
+            if trade.signal_id:
+                system_trade = session.scalar(
+                    select(SystemModelTrade)
+                    .where(
+                        SystemModelTrade.signal_id == trade.signal_id,
+                        SystemModelTrade.run_id == self.run_id,
+                    )
+                    .with_for_update()
+                )
+                if system_trade is not None and system_trade.settlement_timestamp is None:
+                    system_trade.outcome = outcome.upper()
+                    system_trade.settlement_timestamp = utc_now()
+                    ref_stake = max(0.35, float(system_trade.reference_base_stake or 0.0))
+                    actual_stake = max(1e-9, float(buy_price or ref_stake))
+                    system_trade.fixed_stake_profit = round(profit * ref_stake / actual_stake, 2)
             return True
 
     def completed_outcomes(self) -> tuple[int, int]:
