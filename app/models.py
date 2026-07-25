@@ -472,7 +472,7 @@ class SystemModelTrade(Base):
     signal_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     entry_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     settlement_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    outcome: Mapped[str] = mapped_column(String(10))
+    outcome: Mapped[str | None] = mapped_column(String(10), nullable=True)
     is_virtual: Mapped[bool] = mapped_column(Boolean, default=False)
     reference_base_stake: Mapped[float] = mapped_column(Float, default=0.50)
     fixed_stake_profit: Mapped[float] = mapped_column(Float, default=0.0)
