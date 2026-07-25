@@ -6,6 +6,7 @@ import math
 import os
 import socket
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -28,6 +29,7 @@ from app.models import (
     ProposalRecord,
     RuntimePreference,
     SystemModelTrade,
+    SystemModelState,
     TestRun,
     Tick,
     Trade,
@@ -39,6 +41,7 @@ from app.model.bayesian_probability import BayesianSnapshot
 from app.model.hmm_regime import HmmInference
 from app.strategy.decision_engine import ProposalEconomics, TradeDecision
 from app.strategy.signal_detector import CandidateSignal
+from app.strategy.rise_fall_strategy import shadow_outcome
 
 
 def mask_account_id(account_id: str) -> str:
@@ -2032,11 +2035,20 @@ class Test2Repository:
         direction: str,
         contract_type: str,
         duration_ticks: int,
+        entry_tick_sequence: int,
+        entry_spot: float,
+        expected_profit_ratio: float,
         reference_base_stake: float = 0.50,
-        is_virtual: bool = False,
-    ) -> None:
+        is_virtual: bool | None = None,
+    ) -> bool:
         now = utc_now()
         with self.database.session() as session:
+            state = session.get(SystemModelState, self.run_id, with_for_update=True)
+            if state is None:
+                state = SystemModelState(run_id=self.run_id)
+                session.add(state)
+                session.flush()
+            virtual = state.mode == "VIRTUAL" if is_virtual is None else bool(is_virtual)
             trade = SystemModelTrade(
                 run_id=self.run_id,
                 signal_id=str(signal_id),
@@ -2044,44 +2056,78 @@ class Test2Repository:
                 direction=str(direction),
                 contract_type=str(contract_type),
                 duration_ticks=int(duration_ticks),
+                entry_tick_sequence=int(entry_tick_sequence),
+                expiry_tick_sequence=int(entry_tick_sequence) + int(duration_ticks),
+                entry_spot=float(entry_spot),
                 signal_timestamp=now,
                 entry_timestamp=now,
                 reference_base_stake=float(reference_base_stake),
-                is_virtual=bool(is_virtual),
+                expected_profit_ratio=max(0.0, float(expected_profit_ratio)),
+                is_virtual=virtual,
             )
             session.merge(trade)
+            return virtual
 
-    def settle_system_model_trade(
+    def settle_due_system_model_trades(
         self,
         *,
-        signal_id: str,
-        outcome: str,
-        fixed_stake_profit: float,
-        martingale_stake: float,
-        martingale_profit: float,
-        martingale_level: int,
-        recovery_debt_before: float,
-        recovery_debt_after: float,
-        settlement_timestamp: datetime | None = None,
-    ) -> None:
-        now = settlement_timestamp or utc_now()
+        symbol: str,
+        tick_sequence: int,
+        exit_spot: float,
+    ) -> list[dict[str, Any]]:
+        """Settle canonical model events once, independently of user contracts."""
+        now = utc_now()
+        settled: list[dict[str, Any]] = []
         with self.database.session() as session:
-            trade = session.scalar(
+            rows = session.scalars(
                 select(SystemModelTrade).where(
-                    SystemModelTrade.signal_id == str(signal_id),
                     SystemModelTrade.run_id == self.run_id,
+                    SystemModelTrade.symbol == str(symbol),
+                    SystemModelTrade.outcome.is_(None),
+                    SystemModelTrade.expiry_tick_sequence <= int(tick_sequence),
+                ).with_for_update()
+            ).all()
+            if not rows:
+                return settled
+            state = session.get(SystemModelState, self.run_id, with_for_update=True)
+            if state is None:
+                state = SystemModelState(run_id=self.run_id)
+                session.add(state)
+                session.flush()
+            for trade in rows:
+                outcome = shadow_outcome(
+                    trade.direction,
+                    Decimal(str(trade.entry_spot)),
+                    Decimal(str(exit_spot)),
                 )
-            )
-            if trade is None:
-                return
-            trade.outcome = str(outcome or "").upper()
-            trade.settlement_timestamp = now
-            trade.fixed_stake_profit = float(fixed_stake_profit)
-            trade.martingale_stake = float(martingale_stake)
-            trade.martingale_profit = float(martingale_profit)
-            trade.martingale_level = int(martingale_level)
-            trade.recovery_debt_before = float(recovery_debt_before)
-            trade.recovery_debt_after = float(recovery_debt_after)
+                trade.outcome = outcome
+                trade.exit_spot = float(exit_spot)
+                trade.settlement_timestamp = now
+                ratio = max(0.0, float(trade.expected_profit_ratio or 0.0))
+                trade.fixed_stake_profit = ratio * 0.50 if outcome == "WIN" else -0.50
+                if trade.is_virtual:
+                    state.consecutive_virtual_wins = (
+                        state.consecutive_virtual_wins + 1 if outcome == "WIN" else 0
+                    )
+                    if state.consecutive_virtual_wins >= 2:
+                        state.mode = "REAL"
+                        state.consecutive_virtual_wins = 0
+                else:
+                    state.consecutive_real_losses = (
+                        state.consecutive_real_losses + 1 if outcome == "LOSS" else 0
+                    )
+                    if state.consecutive_real_losses >= 2:
+                        state.mode = "VIRTUAL"
+                        state.consecutive_virtual_wins = 0
+                state.updated_at = now
+                settled.append(
+                    {
+                        "signal_id": trade.signal_id,
+                        "outcome": outcome,
+                        "is_virtual": bool(trade.is_virtual),
+                    }
+                )
+        return settled
 
     def system_model_trades(
         self,
@@ -2118,6 +2164,7 @@ class Test2Repository:
                     "is_virtual": bool(row.is_virtual),
                     "reference_base_stake": float(row.reference_base_stake or 0.0),
                     "fixed_stake_profit": float(row.fixed_stake_profit or 0.0),
+                    "expected_profit_ratio": float(row.expected_profit_ratio or 0.90),
                     "martingale_stake": float(row.martingale_stake or 0.0),
                     "martingale_profit": float(row.martingale_profit or 0.0),
                     "martingale_level": int(row.martingale_level or 0),
@@ -2151,17 +2198,38 @@ class Test2Repository:
         max_martingale_drawdown = 0.0
         real_wins = 0
         real_losses = 0
+        current_real_win_streak = 0
+        longest_real_win_streak = 0
         current_real_loss_streak = 0
         longest_real_loss_streak = 0
         fixed_stake = max(0.35, float(simulated_base_stake))
         recovery_debt = 0.0
         recovery_wins_remaining = 2
         martingale_level = 0
-        profit_ratio = 0.9
+        total_fixed_staked = 0.0
+        total_martingale_staked = 0.0
         for trade in real_trades:
             outcome = str(trade["outcome"]).upper()
             ref_stake = max(0.35, float(trade.get("reference_base_stake") or 0.0))
+            profit_ratio = max(0.01, float(trade.get("expected_profit_ratio") or 0.90))
             fixed_pnl = fixed_stake * (float(trade.get("fixed_stake_profit") or 0.0) / ref_stake) if ref_stake > 1e-9 else 0.0
+            # Select the stake from debt carried into this trade.  The previous
+            # implementation increased the stake after observing this trade's
+            # result, retroactively multiplying the loss that triggered it.
+            if recovery_debt > 0.01:
+                required_recovery_stake = (
+                    math.ceil((recovery_debt / profit_ratio) * 100.0 - 1e-9) / 100.0
+                )
+                martingale_stake = max(fixed_stake, required_recovery_stake)
+            else:
+                martingale_stake = fixed_stake
+            martingale_pnl = (
+                fixed_pnl * (martingale_stake / fixed_stake)
+                if fixed_stake > 1e-9
+                else 0.0
+            )
+            total_fixed_staked += fixed_stake
+            total_martingale_staked += martingale_stake
             fixed_profit += fixed_pnl
             fixed_peak = max(fixed_peak, fixed_profit)
             current_fixed_drawdown = fixed_peak - fixed_profit
@@ -2169,8 +2237,12 @@ class Test2Repository:
             if outcome == "WIN":
                 real_wins += 1
                 current_real_loss_streak = 0
+                current_real_win_streak += 1
+                longest_real_win_streak = max(
+                    longest_real_win_streak, current_real_win_streak
+                )
                 if recovery_debt > 0.01:
-                    recovered = max(0.0, fixed_pnl)
+                    recovered = max(0.0, martingale_pnl)
                     recovery_debt = max(0.0, round(recovery_debt - recovered, 2))
                     recovery_wins_remaining = max(0, recovery_wins_remaining - 1)
                     if recovery_debt <= 0.01:
@@ -2183,19 +2255,12 @@ class Test2Repository:
                     martingale_level = 0
             else:
                 real_losses += 1
+                current_real_win_streak = 0
                 current_real_loss_streak += 1
                 longest_real_loss_streak = max(longest_real_loss_streak, current_real_loss_streak)
-                recovery_debt = round(recovery_debt + fixed_stake, 2)
+                recovery_debt = round(recovery_debt + martingale_stake, 2)
                 recovery_wins_remaining = 2
                 martingale_level = min(martingale_level + 1, 10)
-            if recovery_debt > 0.01 and martingale_level > 0:
-                required_recovery_stake = (
-                    math.ceil((recovery_debt / profit_ratio) * 100.0 - 1e-9) / 100.0
-                )
-                martingale_stake = max(fixed_stake, required_recovery_stake)
-            else:
-                martingale_stake = fixed_stake
-            martingale_pnl = fixed_pnl * (martingale_stake / fixed_stake) if fixed_stake > 1e-9 else 0.0
             martingale_profit += martingale_pnl
             martingale_peak = max(martingale_peak, martingale_profit)
             current_martingale_drawdown = martingale_peak - martingale_profit
@@ -2215,7 +2280,29 @@ class Test2Repository:
             "max_drawdown_martingale": round(max_martingale_drawdown, 2),
             "current_drawdown_fixed": round(current_fixed_drawdown, 2),
             "current_drawdown_martingale": round(current_martingale_drawdown, 2),
-            "longest_win_streak": 0,
+            "longest_win_streak": longest_real_win_streak,
             "longest_loss_streak": longest_real_loss_streak,
             "current_loss_streak": current_real_loss_streak,
+            "current_drawdown_fixed_pct": round(
+                current_fixed_drawdown / total_fixed_staked * 100.0, 2
+            ) if total_fixed_staked else 0.0,
+            "current_drawdown_martingale_pct": round(
+                current_martingale_drawdown / total_martingale_staked * 100.0, 2
+            ) if total_martingale_staked else 0.0,
+            "max_drawdown_fixed_pct": round(
+                max_fixed_drawdown / total_fixed_staked * 100.0, 2
+            ) if total_fixed_staked else 0.0,
+            "max_drawdown_martingale_pct": round(
+                max_martingale_drawdown / total_martingale_staked * 100.0, 2
+            ) if total_martingale_staked else 0.0,
         }
+
+    def open_system_model_trade_count(self) -> int:
+        with self.database.session() as session:
+            return int(session.scalar(
+                select(func.count()).select_from(SystemModelTrade).where(
+                    SystemModelTrade.run_id == self.run_id,
+                    SystemModelTrade.is_virtual.is_(False),
+                    SystemModelTrade.outcome.is_(None),
+                )
+            ) or 0)

@@ -937,17 +937,18 @@ def dashboard_summary(
         except ZoneInfoNotFoundError:
             tz = ZoneInfo("UTC")
         utc_now_value = datetime.now(timezone.utc)
+        local_now = utc_now_value.astimezone(tz)
         today_start = datetime(
-            utc_now_value.year,
-            utc_now_value.month,
-            utc_now_value.day,
+            local_now.year,
+            local_now.month,
+            local_now.day,
             tzinfo=tz,
         ).astimezone(timezone.utc)
         yesterday_start = today_start - timedelta(days=1)
         week_start = today_start - timedelta(days=today_start.weekday())
         month_start = datetime(
-            utc_now_value.year,
-            utc_now_value.month,
+            local_now.year,
+            local_now.month,
             1,
             tzinfo=tz,
         ).astimezone(timezone.utc)
@@ -975,13 +976,27 @@ def dashboard_summary(
             simulated_base_stake=0.50,
             include_virtual=False,
         )
+        system_all_time = REPOSITORY.system_performance_summary(
+            start=datetime(1970, 1, 1, tzinfo=timezone.utc),
+            end=utc_now_value,
+            simulated_base_stake=0.50,
+            include_virtual=False,
+        )
+        # Both overview cards and detailed statistics use this same canonical
+        # model ledger. Personal/user contracts never contribute here.
+        result["purchased_trades"] = system_today["total_trades"]
+        result["wins"] = system_today["wins"]
+        result["losses"] = system_today["losses"]
+        result["open_trades"] = REPOSITORY.open_system_model_trade_count()
         result["system_performance"] = {
             "today": system_today,
             "yesterday": system_yesterday,
             "week": system_week,
             "month": system_month,
+            "all_time": system_all_time,
             "timezone": str(tz),
             "daily_reset_hour": today_start.astimezone(tz).hour,
+            "next_session_close_at": (today_start + timedelta(days=1)).isoformat(),
         }
         mode_cache["last"] = now
         mode_cache["data"] = result
@@ -2322,8 +2337,19 @@ def import_accounts(
     }
 
 
+def _system_reporting_timezone() -> ZoneInfo:
+    try:
+        return ZoneInfo(
+            os.getenv("TRADING_REPORT_TIMEZONE")
+            or os.getenv("DASHBOARD_TIMEZONE")
+            or "Africa/Nairobi"
+        )
+    except ZoneInfoNotFoundError:
+        return ZoneInfo("UTC")
+
+
 def _system_period_bounds(period: str, tz: ZoneInfo | None = None) -> tuple[datetime, datetime]:
-    tz = tz or ZoneInfo("Africa/Nairobi")
+    tz = tz or _system_reporting_timezone()
     now = datetime.now(timezone.utc).astimezone(tz)
     today_start = datetime(now.year, now.month, now.day, tzinfo=tz)
     normalized = str(period or "today").strip().lower()
@@ -2376,7 +2402,7 @@ def system_performance(
     summary.update(
         {
             "period": period,
-            "timezone": "Africa/Nairobi",
+            "timezone": str(_system_reporting_timezone()),
             "minimum_stake": 0.35,
         }
     )
