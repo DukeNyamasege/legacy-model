@@ -78,6 +78,8 @@ class Test2Repository:
                 )
                 session.add(run)
                 session.flush()
+            state = session.get(BotState, run.id)
+            if state is None:
                 session.add(BotState(run_id=run.id))
             return int(run.id)
 
@@ -972,7 +974,9 @@ class Test2Repository:
                 return False
             state = session.get(BotState, self.run_id)
             if state is None:
-                raise RuntimeError("Missing Test 2 bot state")
+                state = BotState(run_id=self.run_id)
+                session.add(state)
+                session.flush()
             state.total_profit += profit
             state.session_profit += profit
             state.high_water_mark = max(state.high_water_mark, state.total_profit)
