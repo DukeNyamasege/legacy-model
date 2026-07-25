@@ -971,6 +971,587 @@
       .metrics { grid-template-columns: 1fr; }
       main { width: calc(100% - 10px); }
     }
+
+
+    /* ==========================================================
+       GLOBAL BOT STATISTICS — screenshot-matched redesign
+       Keeps existing backend IDs/API wiring, changes presentation only.
+       ========================================================== */
+    body {
+      background: #020912;
+    }
+    main {
+      width: min(1484px, calc(100% - 48px));
+    }
+    .global-dashboard-snapshot {
+      --gbs-bg: #030b14;
+      --gbs-card: #07121f;
+      --gbs-card-2: #091624;
+      --gbs-line: #1a2b3c;
+      --gbs-line-soft: rgba(74, 99, 124, .34);
+      --gbs-green: #20e27a;
+      --gbs-green-soft: rgba(32, 226, 122, .12);
+      --gbs-blue: #3398ff;
+      --gbs-red: #ff4d57;
+      --gbs-text: #f5f8fc;
+      --gbs-muted: #9badc1;
+      margin-top: 18px;
+      color: var(--gbs-text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: transparent;
+    }
+    .global-dashboard-snapshot *,
+    .global-dashboard-snapshot *::before,
+    .global-dashboard-snapshot *::after { box-sizing: border-box; }
+    .gbs-topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      margin: 0 2px 14px;
+    }
+    .gbs-title-wrap,
+    .gbs-updated,
+    .gbs-card-title,
+    .gbs-section-title,
+    .gbs-status-label,
+    .gbs-reset-title {
+      display: flex;
+      align-items: center;
+    }
+    .gbs-title-wrap { gap: 12px; }
+    .gbs-title {
+      margin: 0;
+      color: var(--gbs-text);
+      font-size: clamp(1.65rem, 2.2vw, 2rem);
+      font-weight: 760;
+      letter-spacing: -.035em;
+      line-height: 1;
+    }
+    .gbs-live-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 32px;
+      padding: 0 13px;
+      border: 1px solid rgba(32, 226, 122, .8);
+      border-radius: 999px;
+      color: var(--gbs-green);
+      background: rgba(4, 30, 24, .72);
+      font-size: .72rem;
+      font-weight: 750;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+    .gbs-live-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--gbs-green);
+      box-shadow: 0 0 12px rgba(32, 226, 122, .8);
+    }
+    .gbs-top-actions { display: flex; align-items: center; gap: 14px; }
+    .gbs-updated {
+      gap: 7px;
+      color: #bdc9d8;
+      font-size: .82rem;
+      white-space: nowrap;
+    }
+    .gbs-icon-button {
+      display: grid;
+      width: 42px;
+      min-width: 42px;
+      height: 42px;
+      min-height: 42px;
+      padding: 0;
+      place-items: center;
+      border: 1px solid var(--gbs-line);
+      border-radius: 10px;
+      color: #b8c8d9;
+      background: #08131f;
+      box-shadow: none;
+    }
+    .gbs-icon-button:hover { border-color: #35516a; background: #0a1826; }
+    .gbs-icon { width: 18px; height: 18px; flex: 0 0 auto; }
+
+    .global-dashboard-snapshot .ai-mode-card {
+      position: relative;
+      overflow: hidden;
+      display: block;
+      min-height: 104px;
+      margin: 0 0 18px;
+      padding: 21px 28px;
+      border: 1px solid rgba(32, 226, 122, .66);
+      border-radius: 15px;
+      background:
+        radial-gradient(circle at 83% 42%, rgba(0, 199, 105, .17), transparent 22rem),
+        linear-gradient(105deg, #071821 0%, #06151d 56%, #06201c 100%);
+      box-shadow: none;
+      backdrop-filter: none;
+    }
+    .global-dashboard-snapshot .ai-mode-card::before {
+      content: "";
+      position: absolute;
+      inset: auto -26px -116px auto;
+      width: 420px;
+      height: 420px;
+      border-radius: 50%;
+      background:
+        repeating-radial-gradient(circle, rgba(32, 226, 122, .24) 0 1px, transparent 1px 28px),
+        repeating-conic-gradient(from 0deg, rgba(32, 226, 122, .14) 0 1deg, transparent 1deg 15deg);
+      opacity: .43;
+      mask-image: radial-gradient(circle, #000 0 54%, transparent 72%);
+      pointer-events: none;
+    }
+    .global-dashboard-snapshot .ai-mode-card::after {
+      content: "";
+      position: absolute;
+      right: 165px;
+      bottom: -86px;
+      width: 260px;
+      height: 260px;
+      border: 2px solid rgba(32, 226, 122, .18);
+      border-radius: 50%;
+      box-shadow: 0 0 0 24px rgba(32, 226, 122, .025), 0 0 0 48px rgba(32, 226, 122, .02);
+      pointer-events: none;
+    }
+    .global-dashboard-snapshot .ai-mode-card > div { position: relative; z-index: 2; }
+    .global-dashboard-snapshot .ai-mode-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--gbs-green);
+      font-size: .78rem;
+      font-weight: 760;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+    .global-dashboard-snapshot .ai-mode-label::before {
+      width: 9px;
+      height: 9px;
+      background: #6af5ad;
+      box-shadow: 0 0 0 5px rgba(32, 226, 122, .12), 0 0 14px rgba(32, 226, 122, .65);
+      animation: pulse 1.4s ease-in-out infinite;
+    }
+    .global-dashboard-snapshot .ai-mode-message {
+      margin-top: 12px;
+      color: var(--gbs-text);
+      font-size: clamp(1.25rem, 1.8vw, 1.62rem);
+      font-weight: 760;
+      line-height: 1.1;
+      letter-spacing: -.02em;
+    }
+    .global-dashboard-snapshot .ai-mode-detail {
+      margin-top: 8px;
+      color: #b6c5d5;
+      font-size: .86rem;
+    }
+
+    .gbs-section { margin-top: 16px; }
+    .gbs-section-title {
+      gap: 9px;
+      margin: 0 0 10px 3px;
+      color: #f2f5f9;
+      font-size: .9rem;
+      font-weight: 760;
+      letter-spacing: .025em;
+      text-transform: uppercase;
+    }
+    .gbs-section-title .gbs-icon { color: #d9e4ef; }
+    .gbs-section-subtle {
+      margin-left: 4px;
+      color: #90a2b6;
+      font-weight: 500;
+      text-transform: none;
+      letter-spacing: 0;
+    }
+    .gbs-platform-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr)) 1.02fr;
+      gap: 12px;
+    }
+    .gbs-platform-card,
+    .gbs-panel,
+    .gbs-period-card,
+    .gbs-risk-card,
+    .gbs-footer {
+      border: 1px solid var(--gbs-line);
+      background: linear-gradient(145deg, #07111d 0%, #091522 100%);
+      box-shadow: none;
+    }
+    .gbs-platform-card {
+      display: grid;
+      min-height: 120px;
+      grid-template-columns: 54px 1fr;
+      gap: 14px;
+      align-items: center;
+      padding: 19px 18px;
+      border-radius: 13px;
+    }
+    .gbs-platform-icon {
+      display: grid;
+      width: 52px;
+      height: 52px;
+      place-items: center;
+      border: 1px solid rgba(85, 111, 136, .24);
+      border-radius: 50%;
+      color: var(--gbs-green);
+      background: rgba(3, 12, 20, .38);
+    }
+    .gbs-card-label {
+      display: block;
+      color: #e9eef5;
+      font-size: .9rem;
+      font-weight: 520;
+      line-height: 1.2;
+    }
+    .gbs-platform-card strong {
+      display: block;
+      margin-top: 9px;
+      color: #f8fbff;
+      font-size: clamp(1.7rem, 2vw, 2.1rem);
+      line-height: 1;
+      letter-spacing: -.035em;
+    }
+    .gbs-card-note {
+      display: block;
+      margin-top: 10px;
+      color: var(--gbs-muted);
+      font-size: .8rem;
+      line-height: 1.3;
+    }
+    .gbs-reset-card {
+      display: block;
+      min-height: 120px;
+      padding: 17px 18px;
+      border-color: rgba(32, 226, 122, .55);
+      background: linear-gradient(145deg, rgba(4, 31, 24, .65), rgba(7, 22, 28, .96));
+    }
+    .gbs-reset-title {
+      gap: 8px;
+      color: var(--gbs-green);
+      font-size: .85rem;
+      font-weight: 760;
+    }
+    .gbs-reset-row {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 21px;
+      padding-top: 12px;
+      border-top: 1px solid rgba(32, 226, 122, .12);
+    }
+    .gbs-reset-row span { color: var(--gbs-muted); font-size: .74rem; }
+    .gbs-reset-row strong {
+      margin: 0;
+      color: #c3d9f5;
+      font: 700 1.2rem ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: .04em;
+    }
+
+    .gbs-main-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.62fr) minmax(420px, 1fr);
+      gap: 12px;
+      margin-top: 14px;
+    }
+    .gbs-panel { border-radius: 13px; }
+    .gbs-pnl-panel { overflow: hidden; border-color: rgba(32, 226, 122, .52); }
+    .gbs-panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 17px 10px;
+    }
+    .gbs-panel-head h3,
+    .gbs-trades-panel h3 {
+      margin: 0;
+      color: var(--gbs-green);
+      font-size: .98rem;
+      font-weight: 780;
+      letter-spacing: .02em;
+      text-transform: uppercase;
+    }
+    .gbs-panel-head h3 span,
+    .gbs-trades-panel h3 span {
+      color: #9ab0c8;
+      font-weight: 500;
+      text-transform: none;
+    }
+    .gbs-pnl-content {
+      display: grid;
+      grid-template-columns: minmax(0, 1.7fr) minmax(280px, 1fr);
+      gap: 0;
+      min-height: 173px;
+      padding: 0 12px 12px;
+    }
+    .gbs-pnl-pair {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      overflow: hidden;
+      border: 1px solid rgba(65, 88, 110, .3);
+      border-radius: 10px;
+      background: rgba(3, 10, 17, .24);
+    }
+    .gbs-pnl-block {
+      position: relative;
+      min-width: 0;
+      padding: 15px 13px 10px;
+    }
+    .gbs-pnl-block + .gbs-pnl-block { border-left: 1px solid rgba(32, 226, 122, .52); }
+    .gbs-pnl-block .gbs-card-label { color: #dbe5ef; font-size: .84rem; }
+    .gbs-money {
+      display: block;
+      margin-top: 9px;
+      font-size: clamp(2rem, 2.75vw, 2.85rem);
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: -.05em;
+      font-variant-numeric: tabular-nums;
+    }
+    .gbs-money.martingale { color: var(--gbs-green); }
+    .gbs-money.fixed { color: var(--gbs-blue); }
+    .gbs-money.negative { color: var(--gbs-red) !important; }
+    .gbs-money-label { margin-top: 8px; color: #9fb1c5; font-size: .75rem; }
+    .gbs-sparkline { display: block; width: 100%; height: 40px; margin-top: 7px; overflow: visible; }
+    .gbs-sparkline path { fill: none; stroke-width: 1.8; vector-effect: non-scaling-stroke; }
+    .gbs-sparkline .green { stroke: var(--gbs-green); }
+    .gbs-sparkline .blue { stroke: var(--gbs-blue); }
+    .gbs-sparkline .red { stroke: var(--gbs-red); }
+    .gbs-simulator {
+      display: grid;
+      align-content: start;
+      padding: 3px 0 0 14px;
+    }
+    .gbs-sim-title {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      color: #e2eaf4;
+      font-size: .82rem;
+      font-weight: 560;
+    }
+    .gbs-sim-copy { margin-top: 7px; color: #99abc0; font-size: .72rem; }
+    .gbs-slider-row {
+      display: grid;
+      grid-template-columns: minmax(120px, 1fr) 88px;
+      gap: 11px;
+      align-items: center;
+      margin-top: 13px;
+    }
+    .global-dashboard-snapshot input[type="range"] {
+      width: 100%;
+      min-height: 5px;
+      height: 5px;
+      padding: 0;
+      appearance: none;
+      border: 0;
+      border-radius: 99px;
+      outline: 0;
+      background: linear-gradient(90deg, var(--gbs-green), #263a4b 52%);
+      box-shadow: none;
+    }
+    .global-dashboard-snapshot input[type="range"]::-webkit-slider-thumb {
+      width: 17px; height: 17px; appearance: none; border: 2px solid #9bd0ff; border-radius: 50%; background: #68aef2; cursor: pointer;
+    }
+    .global-dashboard-snapshot input[type="range"]::-moz-range-thumb {
+      width: 15px; height: 15px; border: 2px solid #9bd0ff; border-radius: 50%; background: #68aef2; cursor: pointer;
+    }
+    .gbs-stake-input {
+      width: 88px;
+      min-height: 36px;
+      height: 36px;
+      padding: 0 9px;
+      border: 1px solid #23384a;
+      border-radius: 8px;
+      color: #eef5fc;
+      background: #0a1724;
+      font: 650 .78rem Inter, ui-sans-serif, system-ui, sans-serif;
+      text-align: right;
+      box-shadow: none;
+    }
+    .gbs-slider-labels {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 7px;
+      padding-right: 99px;
+      color: #8ea1b8;
+      font-size: .67rem;
+    }
+    .gbs-sim-result {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 11px;
+    }
+    .gbs-sim-box {
+      min-width: 0;
+      padding: 9px 10px;
+      border: 1px solid rgba(32, 226, 122, .25);
+      border-radius: 8px;
+      background: rgba(4, 26, 22, .36);
+    }
+    .gbs-sim-box.fixed-box { border-color: rgba(51, 152, 255, .25); background: rgba(8, 25, 42, .42); }
+    .gbs-sim-box span { display: block; color: #9eafc0; font-size: .63rem; line-height: 1.25; }
+    .gbs-sim-box strong { display: block; margin-top: 4px; font-size: 1.05rem; line-height: 1; }
+
+    .gbs-trades-panel { padding: 15px 16px 13px; }
+    .gbs-trades-top {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0;
+      margin-top: 18px;
+      padding-bottom: 14px;
+      border-bottom: 1px dashed rgba(109, 132, 154, .25);
+    }
+    .gbs-trade-stat { padding: 0 14px; border-right: 1px solid rgba(87, 108, 128, .22); }
+    .gbs-trade-stat:first-child { padding-left: 0; }
+    .gbs-trade-stat:last-child { border-right: 0; }
+    .gbs-trade-stat span { display: block; color: #c0ccda; font-size: .75rem; }
+    .gbs-trade-stat strong { display: block; margin-top: 8px; color: #f3f7fb; font-size: 1.28rem; }
+    .gbs-trade-stat strong.win { color: var(--gbs-green); }
+    .gbs-trade-stat strong.loss { color: var(--gbs-red); }
+    .gbs-streak-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 13px; }
+    .gbs-streak { color: #aab8c8; font-size: .75rem; }
+    .gbs-streak strong { display: block; margin-top: 5px; color: #f5f7fa; font-size: 1.2rem; }
+    .gbs-streak small { display: block; margin-top: 2px; color: #8295aa; font-size: .64rem; }
+
+    .gbs-period-wrap,
+    .gbs-risk-wrap {
+      margin-top: 14px;
+      padding: 0;
+      border: 1px solid var(--gbs-line);
+      border-radius: 12px;
+      background: linear-gradient(145deg, #06111c, #081522);
+      overflow: hidden;
+    }
+    .gbs-strip-title { padding: 9px 13px 7px; }
+    .gbs-period-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      padding: 0 10px 10px;
+    }
+    .gbs-period-card { overflow: hidden; border-radius: 10px; }
+    .gbs-period-head {
+      padding: 8px 10px;
+      border-bottom: 1px solid rgba(77, 101, 124, .24);
+      color: #eef3f8;
+      background: rgba(9, 22, 35, .76);
+      font-size: .75rem;
+      font-weight: 760;
+      text-transform: uppercase;
+    }
+    .gbs-period-body { display: grid; grid-template-columns: 1fr 1fr; }
+    .gbs-period-side { min-width: 0; padding: 10px 10px 7px; }
+    .gbs-period-side + .gbs-period-side { border-left: 1px dashed rgba(112, 135, 157, .25); }
+    .gbs-period-mode { color: var(--gbs-green); font-size: .67rem; font-weight: 700; }
+    .gbs-period-side.fixed-side .gbs-period-mode { color: var(--gbs-blue); }
+    .gbs-period-money { display: block; margin-top: 8px; font-size: 1.25rem; font-weight: 780; letter-spacing: -.03em; }
+    .gbs-period-side:first-child .gbs-period-money { color: var(--gbs-green); }
+    .gbs-period-side.fixed-side .gbs-period-money { color: var(--gbs-blue); }
+    .gbs-period-money.negative { color: var(--gbs-red) !important; }
+    .gbs-period-caption { display: block; margin-top: 6px; color: #9cafc2; font-size: .64rem; }
+    .gbs-period-pct { display: block; margin-top: 5px; font-size: .72rem; font-weight: 650; color: var(--gbs-green); }
+    .fixed-side .gbs-period-pct { color: var(--gbs-blue); }
+    .gbs-period-pct.negative { color: var(--gbs-red) !important; }
+    .gbs-period-card .gbs-sparkline { height: 30px; margin-top: 4px; }
+
+    .gbs-risk-grid {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 12px;
+      padding: 0 10px 10px;
+    }
+    .gbs-risk-card { min-height: 112px; padding: 11px 12px; border-radius: 10px; }
+    .gbs-risk-card span { display: block; color: #d1dae5; font-size: .72rem; }
+    .gbs-risk-card strong { display: block; margin-top: 10px; font-size: 1.55rem; letter-spacing: -.04em; line-height: 1; }
+    .gbs-risk-card small { display: block; margin-top: 10px; color: #8fa1b5; font-size: .66rem; line-height: 1.25; }
+    .gbs-risk-card .good { color: var(--gbs-green); }
+    .gbs-risk-card .bad { color: var(--gbs-red); }
+    .gbs-risk-card .status-value { text-transform: uppercase; }
+
+    .gbs-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      margin-top: 14px;
+      padding: 13px 16px;
+      border-radius: 10px;
+    }
+    .gbs-footer-copy { display: grid; grid-template-columns: 28px 1fr; gap: 10px; align-items: center; }
+    .gbs-info-icon {
+      display: grid;
+      width: 27px;
+      height: 27px;
+      place-items: center;
+      border: 2px solid #3a9bff;
+      border-radius: 50%;
+      color: #3a9bff;
+      font-size: .78rem;
+      font-weight: 800;
+    }
+    .gbs-footer p { margin: 0; color: #9eb0c5; font-size: .72rem; line-height: 1.55; }
+    .gbs-details-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 38px;
+      padding: 0 16px;
+      border: 1px solid rgba(51, 152, 255, .72);
+      border-radius: 8px;
+      color: #46a2ff;
+      background: rgba(5, 22, 38, .34);
+      font-size: .75rem;
+      font-weight: 650;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .gbs-details-link:hover { background: rgba(51, 152, 255, .08); }
+
+    /* Keep the activity table visually consistent with the redesigned global board. */
+    .contract-history {
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      border-color: #1a2b3c;
+      background: linear-gradient(145deg, #07111d, #091522);
+      box-shadow: none;
+    }
+
+    @media (max-width: 1180px) {
+      .gbs-platform-grid { grid-template-columns: repeat(3, 1fr); }
+      .gbs-main-grid { grid-template-columns: 1fr; }
+      .gbs-period-grid { grid-template-columns: repeat(2, 1fr); }
+      .gbs-risk-grid { grid-template-columns: repeat(3, 1fr); }
+    }
+    @media (max-width: 760px) {
+      main { width: calc(100% - 20px); }
+      .gbs-topbar { align-items: flex-start; flex-direction: column; }
+      .gbs-top-actions { width: 100%; justify-content: space-between; }
+      .gbs-updated { white-space: normal; }
+      .global-dashboard-snapshot .ai-mode-card { padding: 18px; }
+      .gbs-platform-grid { grid-template-columns: repeat(2, 1fr); }
+      .gbs-reset-card { grid-column: 1 / -1; }
+      .gbs-pnl-content { grid-template-columns: 1fr; }
+      .gbs-simulator { padding: 14px 0 0; }
+      .gbs-period-grid { grid-template-columns: 1fr; }
+      .gbs-risk-grid { grid-template-columns: repeat(2, 1fr); }
+      .gbs-footer { align-items: stretch; flex-direction: column; }
+      .gbs-details-link { justify-content: center; }
+    }
+    @media (max-width: 480px) {
+      .gbs-platform-grid { grid-template-columns: 1fr; }
+      .gbs-platform-card { min-height: 100px; }
+      .gbs-pnl-pair { grid-template-columns: 1fr; }
+      .gbs-pnl-block + .gbs-pnl-block { border-left: 0; border-top: 1px solid rgba(32, 226, 122, .36); }
+      .gbs-trades-top { grid-template-columns: repeat(2, 1fr); row-gap: 16px; }
+      .gbs-trade-stat:nth-child(2) { border-right: 0; }
+      .gbs-risk-grid { grid-template-columns: 1fr; }
+      .gbs-sim-result { grid-template-columns: 1fr; }
+    }
+
   </style>
 </head>
 <body>
@@ -1055,15 +1636,11 @@
             Join Auto Trading
           </button>
           <div id="resume-panel" style="display: none; flex-direction: column; gap: 10px; min-width: 220px;">
-            <button id="btn-continue-trading" type="button" style="min-height: 48px; font-size: 1rem; border-radius: 14px; background: linear-gradient(135deg, #0b4fb4, #1d7dff); color: #fff; border: none; cursor: pointer;">
-              Continue Trading
+            <button id="btn-start-again" type="button" style="min-height: 48px; font-size: 1rem; border-radius: 14px; background: linear-gradient(135deg, #0b4fb4, #1d7dff); color: #fff; border: none; cursor: pointer;">
+              Resume From Base Stake
             </button>
-            <button id="btn-start-again" type="button" style="min-height: 48px; font-size: 1rem; border-radius: 14px; background: rgba(255,255,255,.1); color: var(--ink); border: 1px solid var(--line); cursor: pointer;">
-              Start Again
-            </button>
-            <div style="font-size: 0.72rem; opacity: 0.65; text-align: center; line-height: 1.4;">
-              <strong>Continue</strong> keeps your current recovery stake.<br>
-              <strong>Start Again</strong> resets to your saved stake.
+            <div style="font-size: 0.72rem; opacity: 0.72; text-align: center; line-height: 1.4;">
+              Resuming always starts a fresh staking cycle from your saved base stake. Previous recovery/Martingale stake is not resumed.
             </div>
           </div>
           <div style="margin-top: 8px; font-size: 0.75rem; opacity: 0.7; max-width: 220px; text-align: center;">
@@ -1140,123 +1717,163 @@
     data-snapshot-ready="false"
     aria-label="Global Bot Statistics"
   >
-  <h2 style="margin: 30px 0 10px; opacity: 0.72;">
-    Global Bot Statistics
-    <span id="global-account-mode" class="global-mode-chip">Demo</span>
-  </h2>
-
-  <section id="ai-mode-card" class="panel ai-mode-card idle" aria-live="polite">
-    <div>
-      <span id="ai-mode-label" class="ai-mode-label">Checking bot status</span>
-      <h2 id="ai-mode-message" class="ai-mode-message">Connecting to worker</h2>
-      <p id="ai-mode-detail" class="ai-mode-detail">Waiting for the first status update.</p>
+    <div class="gbs-topbar">
+      <div class="gbs-title-wrap">
+        <h2 class="gbs-title">Global Bot Statistics</h2>
+        <span id="global-status-pill" class="gbs-live-pill"><span class="gbs-live-dot"></span><span id="global-status-pill-text">BOT ONLINE</span></span>
+        <span id="global-account-mode" hidden>Demo</span>
+      </div>
+      <div class="gbs-top-actions">
+        <div class="gbs-updated" aria-live="polite">
+          <svg class="gbs-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+          <span>Updated: <time id="global-updated-at">—</time></span>
+        </div>
+        <button id="global-refresh" class="gbs-icon-button" type="button" aria-label="Refresh dashboard" title="Refresh dashboard">
+          <svg class="gbs-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66"/><path d="M20 4v7h-7"/></svg>
+        </button>
+      </div>
     </div>
-  </section>
 
-  <section class="metrics">
-    <article class="panel metric"><span>Registered Traders</span><strong id="registered-traders">0</strong></article>
-    <article class="panel metric"><span>Trading Now</span><strong id="active-traders">0</strong><small>Executing accounts</small></article>
-    <article class="panel metric"><span>Model Trades Today</span><strong id="model-trades-today">0</strong></article>
-    <article class="panel metric"><span>Open Model Trades</span><strong id="open-model-trades">0</strong></article>
-    <article class="panel metric"><span>Daily System Reset</span><strong id="daily-reset">00:00</strong></article>
-  </section>
-
-  <section class="metrics">
-    <article class="panel metric"><span>Today's Model P/L (With Martingale)</span><strong id="model-pl-martingale">0.00</strong></article>
-    <article class="panel metric"><span>Today's Model P/L (Without Martingale)</span><strong id="model-pl-fixed">0.00</strong></article>
-  </section>
-
-  <section class="panel section">
-    <div class="section-head">
+    <section id="ai-mode-card" class="panel ai-mode-card idle" aria-live="polite">
       <div>
-        <h2>Stake Simulator</h2>
+        <span id="ai-mode-label" class="ai-mode-label">Checking bot status</span>
+        <h2 id="ai-mode-message" class="ai-mode-message">Connecting to worker</h2>
+        <p id="ai-mode-detail" class="ai-mode-detail">Waiting for the first status update.</p>
       </div>
+    </section>
+
+    <section class="gbs-section" aria-labelledby="platform-overview-title">
+      <h3 id="platform-overview-title" class="gbs-section-title">
+        <svg class="gbs-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="8" cy="7" r="3"/><circle cx="17" cy="9" r="2.4"/><path d="M3 20v-2a5 5 0 0 1 10 0v2M14 20v-1a4 4 0 0 1 7 0v1"/></svg>
+        Platform Overview
+      </h3>
+      <div class="gbs-platform-grid">
+        <article class="gbs-platform-card">
+          <div class="gbs-platform-icon"><svg class="gbs-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="8" cy="8" r="3"/><circle cx="16.5" cy="9" r="2.5"/><path d="M2.5 20a5.5 5.5 0 0 1 11 0M13 20a4.5 4.5 0 0 1 9 0"/></svg></div>
+          <div><span class="gbs-card-label">Registered Traders</span><strong id="registered-traders">0</strong><small class="gbs-card-note">All time</small></div>
+        </article>
+        <article class="gbs-platform-card">
+          <div class="gbs-platform-icon"><svg class="gbs-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 13h4l2-7 4 13 2-7h6"/></svg></div>
+          <div><span class="gbs-card-label">Trading Now</span><strong id="active-traders">0</strong><small class="gbs-card-note">Active traders</small></div>
+        </article>
+        <article class="gbs-platform-card">
+          <div class="gbs-platform-icon"><svg class="gbs-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 20V10M10 20V5M16 20v-8M22 20V3"/><path d="M3 20h19"/></svg></div>
+          <div><span class="gbs-card-label">Total Trades Today</span><strong id="model-trades-today">0</strong><small class="gbs-card-note">Executed by the system</small></div>
+        </article>
+        <article class="gbs-platform-card">
+          <div class="gbs-platform-icon"><svg class="gbs-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="6"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg></div>
+          <div><span class="gbs-card-label">Open Trades</span><strong id="open-model-trades">0</strong><small class="gbs-card-note">Positions currently open</small></div>
+        </article>
+        <article class="gbs-platform-card gbs-reset-card">
+          <div class="gbs-reset-title"><svg class="gbs-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18M8 14h2M14 14h2M8 18h2"/></svg>System Reset (Daily)</div>
+          <small class="gbs-card-note">Resets daily at <strong id="daily-reset" style="display:inline;margin:0;font-size:inherit;color:inherit;">00:00</strong></small>
+          <div class="gbs-reset-row"><span>Current session</span><strong id="session-clock">00:00:00</strong></div>
+        </article>
+      </div>
+    </section>
+
+    <div class="gbs-main-grid">
+      <section class="gbs-panel gbs-pnl-panel" aria-labelledby="today-model-pl-title">
+        <div class="gbs-panel-head"><h3 id="today-model-pl-title">Today's Model P/L <span>(From 00:00)</span></h3></div>
+        <div class="gbs-pnl-content">
+          <div class="gbs-pnl-pair">
+            <div class="gbs-pnl-block">
+              <span class="gbs-card-label">With Martingale</span>
+              <strong id="model-pl-martingale" class="gbs-money martingale">+$0.00</strong>
+              <div class="gbs-money-label">Profit / Loss (USD)</div>
+              <svg class="gbs-sparkline" viewBox="0 0 200 45" preserveAspectRatio="none" aria-hidden="true"><path class="green" d="M2 33 L12 24 L21 31 L34 29 L45 31 L57 29 L68 25 L78 26 L88 20 L101 24 L113 19 L125 27 L136 29 L149 24 L160 22 L172 14 L184 18 L198 9"/></svg>
+            </div>
+            <div class="gbs-pnl-block">
+              <span class="gbs-card-label">Without Martingale</span>
+              <strong id="model-pl-fixed" class="gbs-money fixed">+$0.00</strong>
+              <div class="gbs-money-label">Profit / Loss (USD)</div>
+              <svg class="gbs-sparkline" viewBox="0 0 200 45" preserveAspectRatio="none" aria-hidden="true"><path class="blue" d="M2 34 L12 25 L23 29 L35 31 L48 32 L58 34 L69 30 L80 32 L92 35 L104 33 L116 22 L127 20 L139 26 L151 25 L162 30 L174 20 L186 22 L198 12"/></svg>
+            </div>
+          </div>
+          <div class="gbs-simulator">
+            <div class="gbs-sim-title">Simulate Your Stake <span title="Simulation only; it does not change live trading settings" style="color:#318fff;">ⓘ</span></div>
+            <div class="gbs-sim-copy">Adjust stake to see simulated P/L from recorded model trades.</div>
+            <div class="gbs-slider-row">
+              <input type="range" id="stake-simulator-slider" min="0.50" max="100" step="0.01" value="0.50" aria-label="Simulated base stake">
+              <input class="gbs-stake-input" type="number" id="stake-simulator-input" value="0.50" min="0.50" max="100" step="0.01" inputmode="decimal" aria-label="Simulated base stake amount">
+            </div>
+            <div class="gbs-slider-labels"><span>$0.50</span><span>$100.00</span></div>
+            <div class="gbs-sim-result">
+              <div class="gbs-sim-box"><span>Simulated Today P/L<br>With Martingale</span><strong id="sim-pl-martingale" class="positive">+$0.00</strong></div>
+              <div class="gbs-sim-box fixed-box"><span>Simulated Today P/L<br>Without Martingale</span><strong id="sim-pl-fixed" style="color:var(--gbs-blue);">+$0.00</strong></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="gbs-panel gbs-trades-panel" aria-labelledby="today-trades-title">
+        <h3 id="today-trades-title">Today's Trades <span>(From 00:00)</span></h3>
+        <div class="gbs-trades-top">
+          <div class="gbs-trade-stat"><span>Total Trades</span><strong id="total-trades">0</strong></div>
+          <div class="gbs-trade-stat"><span>Wins</span><strong id="total-wins" class="win">0</strong></div>
+          <div class="gbs-trade-stat"><span>Losses</span><strong id="total-losses" class="loss">0</strong></div>
+          <div class="gbs-trade-stat"><span>Win Rate</span><strong id="win-rate">0.00%</strong></div>
+        </div>
+        <div class="gbs-streak-row">
+          <div class="gbs-streak">Longest Win Streak<strong id="longest-win-streak">0</strong></div>
+          <div class="gbs-streak">Longest Loss Streak*<strong id="today-longest-loss-streak">0</strong><small>*Excludes virtual losses</small></div>
+        </div>
+      </section>
     </div>
-    <div style="display: grid; gap: 12px;">
-      <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-        <label style="display: flex; align-items: center; gap: 8px; font-weight: 700;">
-          Base Stake:
-          <input type="number" id="stake-simulator-input" value="0.50" min="0.35" step="0.01" style="width: 90px; padding: 6px 10px;">
-        </label>
-        <input type="range" id="stake-simulator-slider" min="0.35" max="100" step="0.01" value="0.50" style="flex: 1; min-width: 160px;">
+
+    <section class="gbs-period-wrap" aria-labelledby="performance-period-title">
+      <div class="gbs-strip-title"><h3 id="performance-period-title" class="gbs-section-title" style="margin:0;"><svg class="gbs-icon" style="color:#3398ff" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>Performance by Period <span class="gbs-section-subtle">(System Model)</span></h3></div>
+      <div class="gbs-period-grid">
+        <article class="gbs-period-card">
+          <div class="gbs-period-head">▣ &nbsp; Today <span style="color:#93a7bc;font-weight:500;text-transform:none;">(From 00:00)</span></div>
+          <div class="gbs-period-body">
+            <div class="gbs-period-side"><span class="gbs-period-mode">With Martingale</span><strong id="today-martingale" class="gbs-period-money">+$0.00</strong><span class="gbs-period-caption">Profit / Loss</span><span id="today-martingale-pct" class="gbs-period-pct">—</span><svg class="gbs-sparkline" viewBox="0 0 150 30" preserveAspectRatio="none" aria-hidden="true"><path class="green" d="M1 24 L15 21 L28 22 L40 18 L52 20 L65 15 L77 17 L90 12 L104 14 L116 9 L130 11 L149 5"/></svg></div>
+            <div class="gbs-period-side fixed-side"><span class="gbs-period-mode">Without Martingale</span><strong id="today-fixed" class="gbs-period-money">+$0.00</strong><span class="gbs-period-caption">Profit / Loss</span><span id="today-fixed-pct" class="gbs-period-pct">—</span><svg class="gbs-sparkline" viewBox="0 0 150 30" preserveAspectRatio="none" aria-hidden="true"><path class="blue" d="M1 24 L15 23 L28 20 L40 22 L52 18 L65 19 L77 17 L90 18 L104 14 L116 15 L130 11 L149 10"/></svg></div>
+          </div>
+        </article>
+        <article class="gbs-period-card">
+          <div class="gbs-period-head">▣ &nbsp; Yesterday</div>
+          <div class="gbs-period-body">
+            <div class="gbs-period-side"><span class="gbs-period-mode">With Martingale</span><strong id="yesterday-martingale" class="gbs-period-money">+$0.00</strong><span class="gbs-period-caption">Profit / Loss</span><span id="yesterday-martingale-pct" class="gbs-period-pct">—</span><svg class="gbs-sparkline" viewBox="0 0 150 30" preserveAspectRatio="none" aria-hidden="true"><path class="green" d="M1 23 L13 18 L25 22 L38 16 L50 17 L63 10 L76 14 L88 8 L102 12 L116 7 L130 8 L149 5"/></svg></div>
+            <div class="gbs-period-side fixed-side"><span class="gbs-period-mode">Without Martingale</span><strong id="yesterday-fixed" class="gbs-period-money">+$0.00</strong><span class="gbs-period-caption">Profit / Loss</span><span id="yesterday-fixed-pct" class="gbs-period-pct">—</span><svg class="gbs-sparkline" viewBox="0 0 150 30" preserveAspectRatio="none" aria-hidden="true"><path class="blue" d="M1 22 L14 21 L28 18 L42 20 L55 15 L67 16 L81 12 L94 11 L108 15 L121 10 L135 12 L149 7"/></svg></div>
+          </div>
+        </article>
+        <article class="gbs-period-card">
+          <div class="gbs-period-head">▣ &nbsp; This Week</div>
+          <div class="gbs-period-body">
+            <div class="gbs-period-side"><span class="gbs-period-mode">With Martingale</span><strong id="week-martingale" class="gbs-period-money">+$0.00</strong><span class="gbs-period-caption">Profit / Loss</span><span id="week-martingale-pct" class="gbs-period-pct">—</span><svg class="gbs-sparkline" viewBox="0 0 150 30" preserveAspectRatio="none" aria-hidden="true"><path class="red" d="M1 7 L13 10 L25 13 L38 12 L50 17 L63 15 L76 20 L88 18 L102 22 L116 21 L130 25 L149 27"/></svg></div>
+            <div class="gbs-period-side fixed-side"><span class="gbs-period-mode">Without Martingale</span><strong id="week-fixed" class="gbs-period-money">+$0.00</strong><span class="gbs-period-caption">Profit / Loss</span><span id="week-fixed-pct" class="gbs-period-pct">—</span><svg class="gbs-sparkline" viewBox="0 0 150 30" preserveAspectRatio="none" aria-hidden="true"><path class="blue" d="M1 15 L15 18 L28 13 L40 16 L53 11 L66 14 L79 10 L92 12 L105 8 L119 10 L133 7 L149 11"/></svg></div>
+          </div>
+        </article>
+        <article class="gbs-period-card">
+          <div class="gbs-period-head">▣ &nbsp; This Month</div>
+          <div class="gbs-period-body">
+            <div class="gbs-period-side"><span class="gbs-period-mode">With Martingale</span><strong id="month-martingale" class="gbs-period-money">+$0.00</strong><span class="gbs-period-caption">Profit / Loss</span><span id="month-martingale-pct" class="gbs-period-pct">—</span><svg class="gbs-sparkline" viewBox="0 0 150 30" preserveAspectRatio="none" aria-hidden="true"><path class="red" d="M1 8 L14 11 L27 12 L40 16 L53 14 L66 18 L79 20 L92 19 L105 23 L118 22 L132 26 L149 28"/></svg></div>
+            <div class="gbs-period-side fixed-side"><span class="gbs-period-mode">Without Martingale</span><strong id="month-fixed" class="gbs-period-money">+$0.00</strong><span class="gbs-period-caption">Profit / Loss</span><span id="month-fixed-pct" class="gbs-period-pct">—</span><svg class="gbs-sparkline" viewBox="0 0 150 30" preserveAspectRatio="none" aria-hidden="true"><path class="blue" d="M1 15 L14 17 L28 14 L42 16 L55 12 L68 14 L81 11 L94 13 L108 9 L121 11 L135 8 L149 12"/></svg></div>
+          </div>
+        </article>
       </div>
-      <div class="metrics">
-        <article class="panel metric"><span>Simulated P/L with Martingale</span><strong id="sim-pl-martingale">0.00</strong></article>
-        <article class="panel metric"><span>Simulated P/L without Martingale</span><strong id="sim-pl-fixed">0.00</strong></article>
+    </section>
+
+    <section class="gbs-risk-wrap" aria-labelledby="risk-stability-title">
+      <div class="gbs-strip-title"><h3 id="risk-stability-title" class="gbs-section-title" style="margin:0;"><svg class="gbs-icon" style="color:#6f5cff" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3l8 4v5c0 5-3.3 8-8 9-4.7-1-8-4-8-9V7l8-4z"/><path d="M9 12l2 2 4-4"/></svg>Risk &amp; Stability <span class="gbs-section-subtle">(Calculated from system trades)</span></h3></div>
+      <div class="gbs-risk-grid">
+        <article class="gbs-risk-card"><span>Current Drawdown</span><strong id="current-drawdown" class="good">0.00%</strong><small>From session peak</small></article>
+        <article class="gbs-risk-card"><span>Maximum Drawdown</span><strong id="max-drawdown" class="bad">0.00%</strong><small>System history</small></article>
+        <article class="gbs-risk-card"><span>Current Losing Streak*</span><strong id="current-loss-streak" class="bad">0</strong><small>Consecutive actual losses<br>*Excludes virtual losses</small></article>
+        <article class="gbs-risk-card"><span>Longest Losing Streak*</span><strong id="longest-loss-streak" class="bad">0</strong><small>Consecutive actual losses<br>*Excludes virtual losses</small></article>
+        <article class="gbs-risk-card"><span>Status</span><strong id="model-status" class="good status-value">ACTIVE</strong><small id="model-status-copy">System operational</small></article>
+        <article class="gbs-risk-card"><span>Uptime</span><strong id="uptime" class="good">—</strong><small id="uptime-caption">Live service metric</small></article>
       </div>
-      <p style="font-size: 0.78rem; color: var(--muted); margin: 0;">Replays recorded model trades using the selected base stake.</p>
-    </div>
+    </section>
+
+    <footer class="gbs-footer">
+      <div class="gbs-footer-copy"><span class="gbs-info-icon">i</span><p>These statistics are calculated from trades generated by the system from 00:00 using a reference base stake of <strong style="color:#dce7f2;">$0.50</strong>.<br>Individual trader results may vary based on stake size, account settings, execution, and market conditions.</p></div>
+      <a class="gbs-details-link" href="#recent-contracts">View More Details <span aria-hidden="true">›</span></a>
+    </footer>
   </section>
 
-  <section class="panel section">
-    <div class="section-head">
-      <div>
-        <h2>Today's Trades</h2>
-      </div>
-    </div>
-    <div class="metrics">
-      <article class="panel metric"><span>Total Trades</span><strong id="total-trades">0</strong></article>
-      <article class="panel metric"><span>Wins</span><strong id="total-wins">0</strong></article>
-      <article class="panel metric"><span>Losses</span><strong id="total-losses">0</strong></article>
-      <article class="panel metric"><span>Win Rate</span><strong id="win-rate">0%</strong></article>
-      <article class="panel metric"><span>Longest Win Streak</span><strong id="longest-win-streak">0</strong></article>
-      <article class="panel metric"><span>Longest Loss Streak</span><strong id="longest-loss-streak">0</strong></article>
-    </div>
-    <p style="font-size: 0.78rem; color: var(--muted); margin-top: 10px;">Virtual trades excluded from real losing streak statistics.</p>
-  </section>
-
-  <section class="panel section">
-    <div class="section-head">
-      <div>
-        <h2>Performance by Period</h2>
-      </div>
-    </div>
-    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px;">
-      <div style="padding: 14px; border: 1px solid var(--row-line); border-radius: 14px; background: var(--row-bg);">
-        <h3 style="margin: 0 0 10px; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);">Today</h3>
-        <div style="display: flex; justify-content: space-between; font-size: 0.88rem;"><span>With Martingale</span><strong id="today-martingale">0.00</strong></div>
-        <div style="display: flex; justify-content: space-between; font-size: 0.88rem; margin-top: 6px;"><span>Without Martingale</span><strong id="today-fixed">0.00</strong></div>
-      </div>
-      <div style="padding: 14px; border: 1px solid var(--row-line); border-radius: 14px; background: var(--row-bg);">
-        <h3 style="margin: 0 0 10px; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);">Yesterday</h3>
-        <div style="display: flex; justify-content: space-between; font-size: 0.88rem;"><span>With Martingale</span><strong id="yesterday-martingale">0.00</strong></div>
-        <div style="display: flex; justify-content: space-between; font-size: 0.88rem; margin-top: 6px;"><span>Without Martingale</span><strong id="yesterday-fixed">0.00</strong></div>
-      </div>
-      <div style="padding: 14px; border: 1px solid var(--row-line); border-radius: 14px; background: var(--row-bg);">
-        <h3 style="margin: 0 0 10px; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);">This Week</h3>
-        <div style="display: flex; justify-content: space-between; font-size: 0.88rem;"><span>With Martingale</span><strong id="week-martingale">0.00</strong></div>
-        <div style="display: flex; justify-content: space-between; font-size: 0.88rem; margin-top: 6px;"><span>Without Martingale</span><strong id="week-fixed">0.00</strong></div>
-      </div>
-      <div style="padding: 14px; border: 1px solid var(--row-line); border-radius: 14px; background: var(--row-bg);">
-        <h3 style="margin: 0 0 10px; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);">This Month</h3>
-        <div style="display: flex; justify-content: space-between; font-size: 0.88rem;"><span>With Martingale</span><strong id="month-martingale">0.00</strong></div>
-        <div style="display: flex; justify-content: space-between; font-size: 0.88rem; margin-top: 6px;"><span>Without Martingale</span><strong id="month-fixed">0.00</strong></div>
-      </div>
-    </div>
-  </section>
-
-  <section class="panel section">
-    <div class="section-head">
-      <div>
-        <h2>Risk & Stability</h2>
-      </div>
-    </div>
-    <div class="metrics">
-      <article class="panel metric"><span>Current Drawdown</span><strong id="current-drawdown">0.00</strong></article>
-      <article class="panel metric"><span>Maximum Drawdown</span><strong id="max-drawdown">0.00</strong></article>
-      <article class="panel metric"><span>Current Losing Streak</span><strong id="current-loss-streak">0</strong></article>
-      <article class="panel metric"><span>Longest Losing Streak</span><strong id="longest-loss-streak">0</strong></article>
-      <article class="panel metric"><span>Status</span><strong id="model-status">Running</strong></article>
-      <article class="panel metric"><span>Uptime</span><strong id="uptime">99.87%</strong></article>
-    </div>
-  </section>
-
-  <footer class="panel section" style="margin-top: 18px;">
-    <p style="font-size: 0.78rem; color: var(--muted); margin: 0; text-align: center;">Global model statistics are calculated from trades generated by the system using a reference base stake of $0.50. Individual trader results may vary depending on stake size, account settings, execution, and market conditions.</p>
-  </footer>
-  </section>
-
-  <section class="panel section contract-history">
+  <section id="recent-contracts" class="panel section contract-history">
     <div class="section-head">
       <div>
         <h2>Recent Contracts</h2>
@@ -1484,7 +2101,11 @@
         ? "trading"
         : "idle";
 
-    $("ai-mode-card").className = `panel ai-mode-card ${visualMode}`;
+    const aiModeCard = $("ai-mode-card");
+    if (aiModeCard) {
+      aiModeCard.classList.remove("learning", "trading", "idle");
+      aiModeCard.classList.add(visualMode);
+    }
     $("ai-mode-label").textContent = label;
     $("ai-mode-message").textContent = message;
     $("ai-mode-detail").textContent = detail;
@@ -1528,23 +2149,110 @@
     if (document.hidden) return;
     wsReconnectTimer = window.setTimeout(connectWebSocket, 5000);
   }
+  let latestSummary = null;
+  let baseSystemPerformance = null;
+  let stakeSimulationTimer = 0;
+
+  function signedMoney(value) {
+    const amount = Number(value || 0);
+    return `${amount >= 0 ? '+' : '-'}$${number(Math.abs(amount), 2)}`;
+  }
+
+  function setMoneyElement(id, value, mode = "martingale") {
+    const element = $(id);
+    if (!element) return;
+    const amount = Number(value || 0);
+    element.textContent = signedMoney(amount);
+    const baseClasses = element.classList.contains("gbs-money")
+      ? ["gbs-money", mode === "fixed" ? "fixed" : "martingale"]
+      : element.classList.contains("gbs-period-money")
+        ? ["gbs-period-money"]
+        : [];
+    element.className = baseClasses.join(" ");
+    if (mode === "fixed") {
+      element.style.color = "var(--gbs-blue)";
+    } else {
+      element.style.color = amount < 0 ? "var(--gbs-red)" : "var(--gbs-green)";
+    }
+    if (amount < 0 && mode !== "fixed") element.classList.add("negative");
+  }
+
+  function normalizePercentValue(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function readReturnPct(stats, mode) {
+    const candidates = mode === "martingale"
+      ? [stats.martingale_return_pct, stats.martingale_roi_pct, stats.martingale_return, stats.martingale_roi]
+      : [stats.fixed_return_pct, stats.fixed_roi_pct, stats.fixed_return, stats.fixed_roi];
+    for (const value of candidates) {
+      const normalized = normalizePercentValue(value);
+      if (normalized !== null) return normalized;
+    }
+    return null;
+  }
+
+  function setReturnPct(id, value, mode = "martingale") {
+    const element = $(id);
+    if (!element) return;
+    if (value === null) {
+      element.textContent = "—";
+      element.classList.remove("negative");
+      return;
+    }
+    element.textContent = `${value >= 0 ? '+' : ''}${number(value, 2)}%`;
+    element.classList.toggle("negative", value < 0 && mode !== "fixed");
+    if (mode === "fixed") element.style.color = "var(--gbs-blue)";
+    else element.style.color = value < 0 ? "var(--gbs-red)" : "var(--gbs-green)";
+  }
+
+  function asPercentDisplay(value) {
+    const n = Number(value || 0);
+    return `${n > 0 ? '+' : ''}${number(n, 2)}%`;
+  }
+
   function renderStatus(data) {
+    latestSummary = data || {};
     currentStatus = data.status || "UNKNOWN";
     $("registered-traders").textContent = number(data.total_traders);
     $("active-traders").textContent = number(data.active_traders);
+    $("open-model-trades").textContent = number(data.open_trades);
+
     const system = data.system_performance || {};
     const today = system.today || {};
     $("model-trades-today").textContent = number(today.total_trades);
-    $("open-model-trades").textContent = number(data.open_trades);
     const resetHour = String(system.daily_reset_hour ?? 0).padStart(2, "0");
     $("daily-reset").textContent = `${resetHour}:00`;
-    const martingalePl = Number(today.martingale_pnl || 0);
-    const fixedPl = Number(today.fixed_pnl || 0);
-    $("model-pl-martingale").textContent = `${martingalePl >= 0 ? '+' : ''}${number(martingalePl, 2)}`;
-    $("model-pl-martingale").className = martingalePl < 0 ? "negative" : martingalePl > 0 ? "positive" : "";
-    $("model-pl-fixed").textContent = `${fixedPl >= 0 ? '+' : ''}${number(fixedPl, 2)}`;
-    $("model-pl-fixed").className = fixedPl < 0 ? "negative" : fixedPl > 0 ? "positive" : "";
-    renderSystemPerformance(system);
+
+    if (Object.keys(system).length) {
+      baseSystemPerformance = system;
+      renderSystemPerformance(system);
+    }
+
+    const uptimeValue = data.uptime_pct ?? data.uptime_percent ?? data.uptime_percentage;
+    const uptimeEl = $("uptime");
+    if (uptimeEl) {
+      if (uptimeValue == null || uptimeValue === "") uptimeEl.textContent = "—";
+      else uptimeEl.textContent = `${number(Number(uptimeValue), 2)}%`;
+    }
+    if ($("uptime-caption")) {
+      $("uptime-caption").textContent = data.uptime_window || "Live service metric";
+    }
+
+    const active = currentStatus === "RUNNING" || currentStatus === "ACTIVE";
+    if ($("global-status-pill-text")) $("global-status-pill-text").textContent = active ? "BOT ONLINE" : String(currentStatus || "BOT STATUS").replaceAll("_", " ");
+    if ($("global-status-pill")) {
+      $("global-status-pill").style.borderColor = active ? "rgba(32,226,122,.8)" : "rgba(255,77,87,.65)";
+      $("global-status-pill").style.color = active ? "var(--gbs-green)" : "var(--gbs-red)";
+    }
+
+    if ($("global-updated-at")) {
+      $("global-updated-at").textContent = new Date().toLocaleString(undefined, {
+        year: "numeric", month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit"
+      });
+    }
+
     renderAiActivity(data);
     $("global-dashboard-snapshot").dataset.snapshotReady = "true";
   }
@@ -1556,55 +2264,106 @@
       week: system.week || {},
       month: system.month || {},
     };
+
+    const baseToday = periods.today;
+    setMoneyElement("model-pl-martingale", baseToday.martingale_pnl, "martingale");
+    setMoneyElement("model-pl-fixed", baseToday.fixed_pnl, "fixed");
+
     for (const [key, stats] of Object.entries(periods)) {
-      const martingale = Number(stats.martingale_pnl || 0);
-      const fixed = Number(stats.fixed_pnl || 0);
-      const martingaleEl = $(`${key}-martingale`);
-      const fixedEl = $(`${key}-fixed`);
-      if (martingaleEl) {
-        martingaleEl.textContent = `${martingale >= 0 ? '+' : ''}${number(martingale, 2)}`;
-        martingaleEl.className = martingale < 0 ? "negative" : martingale > 0 ? "positive" : "";
-      }
-      if (fixedEl) {
-        fixedEl.textContent = `${fixed >= 0 ? '+' : ''}${number(fixed, 2)}`;
-        fixedEl.className = fixed < 0 ? "negative" : fixed > 0 ? "positive" : "";
-      }
+      setMoneyElement(`${key}-martingale`, stats.martingale_pnl, "martingale");
+      setMoneyElement(`${key}-fixed`, stats.fixed_pnl, "fixed");
+      setReturnPct(`${key}-martingale-pct`, readReturnPct(stats, "martingale"), "martingale");
+      setReturnPct(`${key}-fixed-pct`, readReturnPct(stats, "fixed"), "fixed");
     }
-    const today = periods.today || {};
-    $("total-trades").textContent = number(today.total_trades);
-    $("total-wins").textContent = number(today.wins);
-    $("total-losses").textContent = number(today.losses);
-    const winRate = today.win_rate || 0;
-    $("win-rate").textContent = `${number(Number(winRate) * 100, 2)}%`;
-    $("longest-win-streak").textContent = number(today.longest_win_streak || 0);
-    $("longest-loss-streak").textContent = number(today.longest_loss_streak || 0);
-    $("current-drawdown").textContent = number(today.current_drawdown_fixed || 0, 2);
-    $("max-drawdown").textContent = number(today.max_drawdown_fixed || 0, 2);
-    $("current-loss-streak").textContent = number(today.current_loss_streak || 0);
-    $("model-status").textContent = currentStatus === "RUNNING" ? "Running" : currentStatus;
+
+    $("total-trades").textContent = number(baseToday.total_trades);
+    $("total-wins").textContent = number(baseToday.wins);
+    $("total-losses").textContent = number(baseToday.losses);
+    const winRate = Number(baseToday.win_rate || 0);
+    $("win-rate").textContent = `${number(winRate <= 1 ? winRate * 100 : winRate, 2)}%`;
+    $("longest-win-streak").textContent = number(baseToday.longest_win_streak || 0);
+    $("today-longest-loss-streak").textContent = number(baseToday.longest_loss_streak || 0);
+    $("longest-loss-streak").textContent = number(baseToday.longest_loss_streak || 0);
+    $("current-loss-streak").textContent = number(baseToday.current_loss_streak || 0);
+
+    // Prefer percentage drawdown fields when the backend exposes them.
+    const currentDd = baseToday.current_drawdown_martingale_pct
+      ?? baseToday.current_drawdown_fixed_pct
+      ?? baseToday.current_drawdown_pct
+      ?? baseToday.current_drawdown_fixed
+      ?? 0;
+    const maxDd = baseToday.max_drawdown_martingale_pct
+      ?? baseToday.max_drawdown_fixed_pct
+      ?? baseToday.max_drawdown_pct
+      ?? baseToday.max_drawdown_fixed
+      ?? 0;
+    $("current-drawdown").textContent = asPercentDisplay(currentDd);
+    $("max-drawdown").textContent = asPercentDisplay(maxDd);
+    $("current-drawdown").className = Number(currentDd) < 0 ? "bad" : "good";
+    $("max-drawdown").className = Number(maxDd) < 0 ? "bad" : "good";
+
+    const statusText = currentStatus === "RUNNING" ? "ACTIVE" : String(currentStatus || "UNKNOWN").replaceAll("_", " ");
+    $("model-status").textContent = statusText;
+    $("model-status").className = `status-value ${statusText === "ACTIVE" ? "good" : "bad"}`;
+    if ($("model-status-copy")) $("model-status-copy").textContent = statusText === "ACTIVE" ? "All systems operational" : "Check worker status";
   }
 
-  async function loadSystemPerformance(stake) {
+  function renderStakeSimulation(today, selectedStake) {
+    const martingale = Number(today?.martingale_pnl || 0);
+    const fixed = Number(today?.fixed_pnl || 0);
+    const martingaleEl = $("sim-pl-martingale");
+    const fixedEl = $("sim-pl-fixed");
+    if (martingaleEl) {
+      martingaleEl.textContent = signedMoney(martingale);
+      martingaleEl.style.color = martingale < 0 ? "var(--gbs-red)" : "var(--gbs-green)";
+    }
+    if (fixedEl) {
+      fixedEl.textContent = signedMoney(fixed);
+      fixedEl.style.color = "var(--gbs-blue)";
+    }
+    const input = $("stake-simulator-input");
+    if (input && document.activeElement !== input) input.value = Number(selectedStake).toFixed(2);
+  }
+
+  async function loadBaseSystemPerformance() {
     const periods = ["today", "yesterday", "week", "month"];
-    const base = stake || 0.50;
     try {
       const [today, yesterday, week, month] = await Promise.all(
-        periods.map(period =>
-          api(`/metrics/system-performance?period=${encodeURIComponent(period)}&simulated_base_stake=${base}`).catch(() => ({}))
-        )
+        periods.map(period => api(`/metrics/system-performance?period=${encodeURIComponent(period)}&simulated_base_stake=0.50`).catch(() => ({})))
       );
-      const system = { today, yesterday, week, month };
+      const system = { today, yesterday, week, month, daily_reset_hour: baseSystemPerformance?.daily_reset_hour ?? 0 };
+      baseSystemPerformance = system;
       renderSystemPerformance(system);
     } catch (_) {}
   }
 
+  async function loadStakeSimulation(stake) {
+    const base = Math.max(0.50, Math.min(100, Number(stake || 0.50)));
+    try {
+      const today = await api(`/metrics/system-performance?period=today&simulated_base_stake=${encodeURIComponent(base)}`).catch(() => ({}));
+      renderStakeSimulation(today, base);
+    } catch (_) {}
+  }
+
   function updateStakeSimulator(value) {
+    const base = Math.max(0.50, Math.min(100, Number(value || 0.50)));
     const input = $("stake-simulator-input");
     const slider = $("stake-simulator-slider");
-    if (input) input.value = Number(value || 0.35).toFixed(2);
-    if (slider) slider.value = Number(value || 0.35);
-    loadSystemPerformance(Number(value || 0.35));
+    if (input && document.activeElement !== input) input.value = base.toFixed(2);
+    if (slider) slider.value = String(base);
+    window.clearTimeout(stakeSimulationTimer);
+    stakeSimulationTimer = window.setTimeout(() => loadStakeSimulation(base), 180);
   }
+
+  function updateSessionClock() {
+    const node = $("session-clock");
+    if (!node) return;
+    const now = new Date();
+    node.textContent = now.toLocaleTimeString(undefined, { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  }
+  updateSessionClock();
+  window.setInterval(updateSessionClock, 1000);
+
   function applyReadOnlyMode() {
     const controls = ["toggle", "save-mode", "import-tokens", "emergency"];
     for (const id of controls) {
@@ -1847,8 +2606,7 @@
   }
 
   $("btn-toggle-auto")?.addEventListener("click", toggleAutoTrade);
-  $("btn-continue-trading")?.addEventListener("click", () => resumeTrading("continue"));
-  $("btn-start-again")?.addEventListener("click", () => resumeTrading("start_again"));
+  $("btn-start-again")?.addEventListener("click", resumeTrading);
   $("btn-save-api-token")?.addEventListener("click", saveApiToken);
   $("btn-save-trading-settings")?.addEventListener("click", saveTradingSettings);
   $("account-mode-demo")?.addEventListener("click", () => switchAccountMode("demo"));
@@ -1873,9 +2631,18 @@
     updateStakeSimulator(e.target.value);
   });
   $("stake-simulator-input")?.addEventListener("change", (e) => {
-    let value = Number(e.target.value || 0.35);
-    value = Math.max(0.35, Math.min(100, value));
+    let value = Number(e.target.value || 0.50);
+    value = Math.max(0.50, Math.min(100, value));
     updateStakeSimulator(value);
+  });
+  $("global-refresh")?.addEventListener("click", async () => {
+    const button = $("global-refresh");
+    if (button) button.disabled = true;
+    try {
+      await refresh({ showLoader: false, blocking: false });
+    } finally {
+      if (button) button.disabled = false;
+    }
   });
   $("btn-logout")?.addEventListener("click", async () => {
     try {
@@ -1889,28 +2656,31 @@
     const resumePanel = $("resume-panel");
     if (!btn) return;
     if (isAutoTrading) {
+      btn.style.display = "inline-flex";
       btn.textContent = "Stop Auto Trading";
       btn.className = "stop";
       if (resumePanel) resumePanel.style.display = "none";
+      return;
+    }
+
+    const wasStopped = lastExecutionStatus === "stopped" || lastExecutionStatus === "disabled";
+    if (wasStopped && hasTradingApiToken) {
+      // Manual resume is intentionally routed through /me/resume-trading with start_again,
+      // so an old Martingale/recovery stake can never be continued.
+      btn.style.display = "none";
+      if (resumePanel) resumePanel.style.display = "flex";
     } else {
-      const wasStopped = lastExecutionStatus === "stopped" || lastExecutionStatus === "disabled";
-      const hasRecovery = hasRecoveryState;
-      if (wasStopped && hasTradingApiToken && hasRecovery) {
-        btn.textContent = "Join Auto Trading";
-        btn.className = "";
-        if (resumePanel) resumePanel.style.display = "flex";
-      } else {
-        btn.textContent = "Join Auto Trading";
-        btn.className = "";
-        if (resumePanel) resumePanel.style.display = "none";
-      }
+      btn.style.display = "inline-flex";
+      btn.textContent = "Join Auto Trading";
+      btn.className = "";
+      if (resumePanel) resumePanel.style.display = "none";
     }
   }
 
   let lastExecutionStatus = "inactive";
   let hasRecoveryState = false;
 
-  async function resumeTrading(mode) {
+  async function resumeTrading() {
     if (!hasTradingApiToken) {
       const message = $("api-token-message");
       if (message) {
@@ -1919,13 +2689,14 @@
       }
       return;
     }
-    setSmartLoader(true, mode === "continue" ? "Continuing with recovery stake" : "Resetting to base stake", false);
+    setSmartLoader(true, "Resuming from your base stake", false);
     try {
       await api("/me/resume-trading", {
         method: "POST",
-        body: JSON.stringify({ mode }),
+        body: JSON.stringify({ mode: "start_again" }),
         headers: { "Content-Type": "application/json" },
       });
+      hasRecoveryState = false;
       await refresh({ showLoader: false, blocking: false });
     } catch (error) {
       if ($("error")) $("error").textContent = error.message || "Unable to resume trading.";
@@ -1969,7 +2740,8 @@
       renderStatus(summary);
       applyReadOnlyMode();
       await loadRecentContracts();
-      loadSystemPerformance(Number($("stake-simulator-input")?.value || 0.50));
+      await loadBaseSystemPerformance();
+      loadStakeSimulation(Number($("stake-simulator-input")?.value || 0.50));
 
       if (me.authenticated) {
         $("personal-section").style.display = "block";
