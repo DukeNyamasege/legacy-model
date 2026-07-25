@@ -777,7 +777,6 @@ class RFRepositoryTests(unittest.TestCase):
                 trades=canonical,
             )
         self.assertEqual(replay["total_trades"], summary["total_trades"])
-
     def test_model_stake_simulation_is_read_only_and_replays_requested_stake(self) -> None:
         account_id = self.create_managed_account("Independent user")
         with self.database.session() as session:

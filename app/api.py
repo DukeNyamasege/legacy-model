@@ -1016,13 +1016,13 @@ def dashboard_summary(
             include_virtual=False,
             trades=canonical_trades,
         )
-        system_all_time = REPOSITORY.system_performance_summary(
-            start=all_time_start,
-            end=utc_now_value,
-            simulated_base_stake=0.50,
-            include_virtual=False,
-            trades=canonical_trades,
-        )
+          system_all_time = REPOSITORY.system_performance_summary(
+              start=all_time_start,
+              end=utc_now_value,
+              simulated_base_stake=0.50,
+              include_virtual=False,
+              trades=canonical_trades,
+          )
         # Both overview cards and detailed statistics use this same canonical
         # model ledger. Personal/user contracts never contribute here.
         result["purchased_trades"] = system_today["total_trades"]
