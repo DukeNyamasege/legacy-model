@@ -2246,13 +2246,28 @@ class Test2Repository:
         end: datetime,
         simulated_base_stake: float = 0.50,
         include_virtual: bool = False,
+        trades: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        trades = self.system_model_trades(
-            start=start,
-            end=end,
-            include_virtual=include_virtual,
-        )
-        real_trades = [trade for trade in trades if not trade["is_virtual"]]
+        if trades is None:
+            period_trades = self.system_model_trades(
+                start=start,
+                end=end,
+                include_virtual=include_virtual,
+            )
+        else:
+            period_trades = []
+            for trade in trades:
+                timestamp_value = trade.get("signal_timestamp")
+                if not timestamp_value:
+                    continue
+                timestamp = datetime.fromisoformat(str(timestamp_value))
+                if timestamp.tzinfo is None:
+                    timestamp = timestamp.replace(tzinfo=timezone.utc)
+                if start <= timestamp < end and (
+                    include_virtual or not trade.get("is_virtual")
+                ):
+                    period_trades.append(trade)
+        real_trades = [trade for trade in period_trades if not trade["is_virtual"]]
         fixed_profit = 0.0
         martingale_profit = 0.0
         current_fixed_drawdown = 0.0

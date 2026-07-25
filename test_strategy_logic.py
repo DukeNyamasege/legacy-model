@@ -71,6 +71,18 @@ def live_tick_payload(
 
 
 class DashboardMetricsTests(unittest.TestCase):
+    def test_personal_deriv_refresh_is_scheduled_off_request(self) -> None:
+        import app.api as api
+
+        account = {"account_id": "VRTC123", "id": 123}
+        with api.PERSONAL_ACCOUNT_REFRESH_LOCK:
+            api.PERSONAL_ACCOUNT_REFRESH.clear()
+            api.PERSONAL_ACCOUNT_REFRESH_INFLIGHT.clear()
+        with patch.object(api.PERSONAL_ACCOUNT_REFRESH_EXECUTOR, "submit") as submit:
+            self.assertTrue(api.schedule_personal_account_refresh(account))
+            self.assertFalse(api.schedule_personal_account_refresh(account))
+        submit.assert_called_once_with(api._refresh_personal_account_snapshot, account)
+
     def test_dashboard_contract_table_is_compact_and_has_no_repeated_copy(self) -> None:
         html = Path("dashboard/index.html").read_text(encoding="utf-8")
         for heading in ("Market", "Contract type", "Stake", "Payout", "Outcome"):
@@ -468,8 +480,15 @@ class DashboardMetricsTests(unittest.TestCase):
                 "sec-fetch-site": "cross-site",
             }
         )
+        configured_cross_site = SimpleNamespace(
+            headers={
+                "origin": "https://legacymodel.netlify.app",
+                "sec-fetch-site": "cross-site",
+            }
+        )
 
         api.enforce_mutation_origin(allowed)
+        api.enforce_mutation_origin(configured_cross_site)
         with self.assertRaises(api.HTTPException) as context:
             api.enforce_mutation_origin(blocked)
 

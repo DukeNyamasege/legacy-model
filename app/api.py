@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import hashlib
 import hmac
 import math
@@ -28,6 +29,7 @@ from fastapi.responses import FileResponse, RedirectResponse, JSONResponse
 from pydantic import BaseModel, Field
 import requests
 import json
+import logging
 
 from app.config import load_test2_config
 from app.dashboard_metrics import build_execution_summary
@@ -68,6 +70,10 @@ GLOBAL_ACCOUNT_REFRESH_LOCK = threading.Lock()
 PERSONAL_ACCOUNT_REFRESH: dict[str, float] = {}
 PERSONAL_ACCOUNT_REFRESH_INFLIGHT: set[str] = set()
 PERSONAL_ACCOUNT_REFRESH_LOCK = threading.Lock()
+PERSONAL_ACCOUNT_REFRESH_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=max(1, int(os.getenv("PERSONAL_ACCOUNT_REFRESH_WORKERS", "4"))),
+    thread_name_prefix="personal-account-refresh",
+)
 DASHBOARD_SUMMARY_CACHE: dict[str, dict[str, object]] = {
     "demo": {"last": 0.0, "data": None},
     "real": {"last": 0.0, "data": None},
@@ -78,6 +84,7 @@ OAUTH_VERIFIER_COOKIE = "deriv_oauth_code_verifier"
 CLIENT_SESSION_COOKIE = "client_session"
 CLIENT_SESSION_DAYS = int(os.getenv("CLIENT_SESSION_DAYS", "30"))
 FIXED_STAKE_AMOUNT = 0.50
+LOGGER = logging.getLogger("legacy_model.api")
 
 
 class DashboardBroadcaster:
@@ -100,11 +107,15 @@ class DashboardBroadcaster:
     async def broadcast(self, payload: dict) -> None:
         async with self._lock:
             clients = list(self._clients)
-        for ws in clients:
+
+        async def send(ws: WebSocket) -> None:
             try:
-                await ws.send_json(payload)
+                await asyncio.wait_for(ws.send_json(payload), timeout=2.0)
             except Exception:
                 await self.disconnect(ws)
+
+        if clients:
+            await asyncio.gather(*(send(ws) for ws in clients))
 
 
 BROADCASTER = DashboardBroadcaster()
@@ -183,7 +194,9 @@ def redirect_to_dashboard(request: Request) -> RedirectResponse:
 
 
 def session_cookie_samesite() -> str:
-    value = os.getenv("CLIENT_SESSION_SAMESITE", "lax").strip().lower()
+    # `None` is required when the optional Netlify dashboard calls the VPS API.
+    # Mutation origin checks and the Secure cookie flag still protect writes.
+    value = os.getenv("CLIENT_SESSION_SAMESITE", "none").strip().lower()
     return value if value in {"lax", "strict", "none"} else "lax"
 
 
@@ -969,35 +982,46 @@ def dashboard_summary(
             1,
             tzinfo=tz,
         ).astimezone(timezone.utc)
+        all_time_start = datetime(1970, 1, 1, tzinfo=timezone.utc)
+        canonical_trades = REPOSITORY.system_model_trades(
+            start=all_time_start,
+            end=utc_now_value,
+            include_virtual=False,
+        )
         system_today = REPOSITORY.system_performance_summary(
             start=today_start,
             end=utc_now_value,
             simulated_base_stake=0.50,
             include_virtual=False,
+            trades=canonical_trades,
         )
         system_yesterday = REPOSITORY.system_performance_summary(
             start=yesterday_start,
             end=today_start,
             simulated_base_stake=0.50,
             include_virtual=False,
+            trades=canonical_trades,
         )
         system_week = REPOSITORY.system_performance_summary(
             start=week_start,
             end=utc_now_value,
             simulated_base_stake=0.50,
             include_virtual=False,
+            trades=canonical_trades,
         )
         system_month = REPOSITORY.system_performance_summary(
             start=month_start,
             end=utc_now_value,
             simulated_base_stake=0.50,
             include_virtual=False,
+            trades=canonical_trades,
         )
         system_all_time = REPOSITORY.system_performance_summary(
-            start=datetime(1970, 1, 1, tzinfo=timezone.utc),
+            start=all_time_start,
             end=utc_now_value,
             simulated_base_stake=0.50,
             include_virtual=False,
+            trades=canonical_trades,
         )
         # Both overview cards and detailed statistics use this same canonical
         # model ledger. Personal/user contracts never contribute here.
@@ -1064,16 +1088,8 @@ def refresh_account_snapshot(
     return REPOSITORY.account_summary(account_id)
 
 
-def refresh_personal_account_snapshot(account: dict) -> dict | None:
+def _refresh_personal_account_snapshot(account: dict) -> dict | None:
     account_id = str(account.get("account_id", "")).strip()
-    ttl_seconds = max(5, int(os.getenv("PERSONAL_ACCOUNT_REFRESH_SECONDS", "30")))
-    now = time.monotonic()
-    with PERSONAL_ACCOUNT_REFRESH_LOCK:
-        if now - PERSONAL_ACCOUNT_REFRESH.get(account_id, 0.0) < ttl_seconds:
-            return None
-        if account_id in PERSONAL_ACCOUNT_REFRESH_INFLIGHT:
-            return None
-        PERSONAL_ACCOUNT_REFRESH_INFLIGHT.add(account_id)
     try:
         try:
             row = REPOSITORY.managed_account(int(account["id"]))
@@ -1103,6 +1119,23 @@ def refresh_personal_account_snapshot(account: dict) -> dict | None:
             PERSONAL_ACCOUNT_REFRESH[account_id] = time.monotonic()
             PERSONAL_ACCOUNT_REFRESH_INFLIGHT.discard(account_id)
 
+
+def schedule_personal_account_refresh(account: dict) -> bool:
+    """Refresh Deriv balance off-request so `/me` never waits on provider latency."""
+    account_id = str(account.get("account_id", "")).strip()
+    if not account_id:
+        return False
+    ttl_seconds = max(5, int(os.getenv("PERSONAL_ACCOUNT_REFRESH_SECONDS", "30")))
+    now = time.monotonic()
+    with PERSONAL_ACCOUNT_REFRESH_LOCK:
+        if now - PERSONAL_ACCOUNT_REFRESH.get(account_id, 0.0) < ttl_seconds:
+            return False
+        if account_id in PERSONAL_ACCOUNT_REFRESH_INFLIGHT:
+            return False
+        PERSONAL_ACCOUNT_REFRESH_INFLIGHT.add(account_id)
+    PERSONAL_ACCOUNT_REFRESH_EXECUTOR.submit(_refresh_personal_account_snapshot, account)
+    return True
+
 app = FastAPI(
     title="RF-DIR5 Guarded",
     version=CONFIG.model.version,
@@ -1113,7 +1146,10 @@ frontend_origins = [
     origin.strip().rstrip("/")
     for origin in os.getenv(
         "FRONTEND_ORIGINS",
-        "http://127.0.0.1:8080,http://localhost:8080,https://derivadmin.site",
+        (
+            "http://127.0.0.1:8080,http://localhost:8080,"
+            "https://derivadmin.site,https://legacymodel.netlify.app"
+        ),
     ).split(",")
     if origin.strip()
 ]
@@ -1139,13 +1175,21 @@ app.add_middleware(
 
 def enforce_mutation_origin(request: Request) -> None:
     fetch_site = request.headers.get("sec-fetch-site", "").strip().lower()
-    if fetch_site == "cross-site":
+    origin = request.headers.get("origin", "").strip().rstrip("/")
+    regex_allowed = bool(
+        origin
+        and frontend_origin_regex
+        and re.fullmatch(frontend_origin_regex, origin)
+    )
+    origin_allowed = bool(
+        origin and (origin in set(frontend_origins) or regex_allowed)
+    )
+    if fetch_site == "cross-site" and not origin_allowed:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cross-site account changes are not allowed",
         )
-    origin = request.headers.get("origin", "").strip().rstrip("/")
-    if origin and origin not in set(frontend_origins):
+    if origin and not origin_allowed:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Request origin is not allowed",
@@ -1186,6 +1230,7 @@ def enforce_personal_mutation_rate_limit(request: Request) -> None:
 @app.middleware("http")
 async def enforce_request_security(request: Request, call_next):
     path = request.url.path
+    request_started = time.perf_counter()
     try:
         if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
             enforce_mutation_origin(request)
@@ -1197,6 +1242,17 @@ async def enforce_request_security(request: Request, call_next):
             content={"detail": exc.detail},
         )
     response = await call_next(request)
+    elapsed_ms = (time.perf_counter() - request_started) * 1000.0
+    response.headers["Server-Timing"] = f"app;dur={elapsed_ms:.1f}"
+    slow_threshold_ms = max(100.0, float(os.getenv("SLOW_REQUEST_MS", "1000")))
+    if elapsed_ms >= slow_threshold_ms:
+        LOGGER.warning(
+            "SLOW_REQUEST method=%s path=%s status=%s duration_ms=%.1f",
+            request.method,
+            path,
+            response.status_code,
+            elapsed_ms,
+        )
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
@@ -1664,7 +1720,7 @@ def get_me(request: Request) -> dict:
     account = get_current_account(request)
     if not account:
         return {"authenticated": False}
-    refresh_personal_account_snapshot(account)
+    schedule_personal_account_refresh(account)
     personal = REPOSITORY.account_summary(account["account_id"])
             
     return {

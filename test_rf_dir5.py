@@ -762,6 +762,21 @@ class RFRepositoryTests(unittest.TestCase):
         self.assertEqual(summary["losses"], 2)
         self.assertEqual(self.base.open_system_model_trade_count(), 0)
 
+        canonical = self.base.system_model_trades(
+            start=start, end=end, include_virtual=False
+        )
+        with patch.object(
+            self.base,
+            "system_model_trades",
+            side_effect=AssertionError("preloaded replay must not query again"),
+        ):
+            replay = self.base.system_performance_summary(
+                start=start,
+                end=end,
+                trades=canonical,
+            )
+        self.assertEqual(replay["total_trades"], summary["total_trades"])
+
     def test_model_stake_simulation_is_read_only_and_replays_requested_stake(self) -> None:
         account_id = self.create_managed_account("Independent user")
         with self.database.session() as session:

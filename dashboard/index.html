@@ -2048,20 +2048,33 @@
   }
   async function api(path, options = {}) {
     const method = String(options.method || "GET").toUpperCase();
+    const controller = new AbortController();
+    const timeoutMs = Math.max(1000, Number(options.timeoutMs || 20000));
+    const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
     const headers = {
       ...(method === "GET" ? { "Cache-Control": "no-cache" } : {}),
       ...(options.headers || {})
     };
-    const response = await fetch(method === "GET" ? noCacheUrl(apiUrl(path)) : apiUrl(path), {
-      ...options,
-      method,
-      headers,
-      cache: method === "GET" ? "no-store" : "default",
-      credentials: options.credentials || "include"
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.detail || `Request failed (${response.status})`);
-    return data;
+    try {
+      const response = await fetch(method === "GET" ? noCacheUrl(apiUrl(path)) : apiUrl(path), {
+        ...options,
+        method,
+        headers,
+        signal: options.signal || controller.signal,
+        cache: method === "GET" ? "no-store" : "default",
+        credentials: options.credentials || "include"
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || `Request failed (${response.status})`);
+      return data;
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        throw new Error("The service took too long to respond. Please try again.");
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timeout);
+    }
   }
   function escapeHtml(value) {
     return String(value ?? "").replace(/[&<>"']/g, character => ({
@@ -2783,12 +2796,18 @@
     if ($("error")) $("error").textContent = "";
     try {
       const meRequest = api("/me").catch(() => ({ authenticated: false }));
-      const summaryRequest = api("/metrics/summary?mode=demo");
-      const summary = await summaryRequest;
-      renderStatus(summary);
-      applyReadOnlyMode();
+      const liveSnapshotIsFresh = (
+        latestSummary && Date.now() - lastWebSocketRefresh < 15000
+      );
+      if (!liveSnapshotIsFresh) {
+        const summary = await api("/metrics/summary?mode=demo");
+        renderStatus(summary);
+        applyReadOnlyMode();
+      }
       loadRecentContracts();
-      loadStakeSimulation(Number($("stake-simulator-input")?.value || 0.50));
+      if (!baseSystemPerformance) {
+        loadStakeSimulation(Number($("stake-simulator-input")?.value || 0.50));
+      }
 
       const me = await meRequest;
       if (me.authenticated) {

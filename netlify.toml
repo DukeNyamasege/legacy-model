@@ -4,6 +4,7 @@
 
 [build.environment]
   NODE_VERSION = "22"
+  DASHBOARD_API_BASE_URL = "https://derivadmin.site"
 
 # The production application is hosted on the VPS. Netlify only builds the
 # dashboard preview, with its API origin injected at build time when configured.

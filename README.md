@@ -58,6 +58,13 @@ Without that exact acknowledgement, configuration validation rejects real-money 
 
 Users authenticate through Deriv OAuth 2.0 with PKCE and server-side state verification. OAuth/account tokens and optional personal trading API tokens are stored encrypted; the browser session receives an HTTP-only session cookie rather than the stored trading credential. Demo and Real sibling accounts retain separate balances, execution state, settings, and contract history.
 
+Deriv PATs are shared credentials for the linked Options identity: one verified
+PAT may authorize both the Demo and Real Options accounts returned by Deriv.
+The application verifies the PAT against the currently selected account, then
+attaches that same credential to every matching Demo/Real sibling. The accounts'
+balances, settings, histories, and risk state remain separate even though the PAT
+is shared.
+
 ## Personal AutoTrade behavior
 
 Each managed account has independent:
@@ -165,6 +172,13 @@ Public/application routes include:
 
 Control and account-administration routes require control authentication. The browser renders WebSocket snapshots directly, uses a watchdog plus bounded exponential reconnect backoff with jitter, and retains periodic REST refresh as reconciliation rather than refreshing the entire page for every snapshot.
 
+Dashboard REST calls have a 20-second browser timeout, so a stalled secondary
+request cannot leave the interface loading forever. `/me` returns persisted
+account data immediately and schedules the slower Deriv balance refresh on a
+bounded background executor. API responses expose `Server-Timing`, and requests
+slower than `SLOW_REQUEST_MS` (1,000 ms by default) are logged as
+`SLOW_REQUEST` without logging credentials.
+
 ## Persistence and migrations
 
 PostgreSQL is the production database. SQLAlchemy models and Alembic migrations cover, among other records:
@@ -202,6 +216,12 @@ The Netlify build is a dashboard preview only. `DASHBOARD_API_BASE_URL`, when se
 DASHBOARD_API_BASE_URL=https://your-api.example npm run build
 ```
 
+The checked-in Netlify default points at `https://derivadmin.site`. If a
+different frontend hostname is used, add its exact HTTPS origin to
+`FRONTEND_ORIGINS`. Cross-origin cookie access requires
+`CLIENT_SESSION_SAMESITE=none` (the current default); all public cookies remain
+`Secure`, and mutation requests are accepted only from configured origins.
+
 ## VPS deployment
 
 Use an Ubuntu host with Docker Engine, Docker Compose, Caddy, DNS, and the required secrets. See `README_VPS_DEPLOYMENT.md` for the operational procedure.
@@ -226,6 +246,30 @@ docker compose -f docker-compose.yml -f docker-compose.vps.yml ps
 docker compose -f docker-compose.yml -f docker-compose.vps.yml logs -f worker
 ./scripts/backup_database.sh
 ```
+
+### Slow or inaccessible dashboard checklist
+
+After every VPS update, check these in order:
+
+1. `docker compose ... ps` — database, API, and worker must be healthy.
+2. `docker compose ... logs api` — confirm every Alembic migration completed
+   before Uvicorn started; a failed migration leaves the whole site unavailable.
+3. `curl -i https://derivadmin.site/health/ready` — verify database and worker
+   readiness through Caddy, not only from inside Docker.
+4. Confirm both apex and `www` DNS records. Caddy redirects `www` to the apex so
+   users do not receive a different cookie origin or an unhandled host.
+5. For Netlify, confirm `DASHBOARD_API_BASE_URL`, `FRONTEND_ORIGINS`, and the
+   browser Network panel. A blank/wrong API origin makes the static shell call
+   nonexistent Netlify API routes.
+6. Search API logs for `SLOW_REQUEST`; the response's `Server-Timing` header
+   identifies server time separately from browser/network latency.
+7. Check PostgreSQL CPU, connections, disk space, and query plans. Migration
+   `0016` adds the canonical-ledger indexes used by period and open-trade cards.
+
+The Global summary now loads canonical trades once per cached snapshot and
+replays Today, Yesterday, Week, Month, and all-time views in memory instead of
+issuing five separate ledger queries. Fresh WebSocket snapshots also prevent the
+30-second reconciliation timer from requesting the same Global summary again.
 
 ## Important files
 
