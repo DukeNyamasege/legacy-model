@@ -8,7 +8,12 @@
 #
 # Caddy automatically provisions and renews Let's Encrypt certificates.
 
+www.derivadmin.site {
+    redir https://derivadmin.site{uri} permanent
+}
+
 derivadmin.site {
+    encode zstd gzip
     reverse_proxy 10.89.0.10:8080
 
     header {

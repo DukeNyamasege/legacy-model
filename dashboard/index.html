@@ -1776,6 +1776,7 @@
     id="global-dashboard-snapshot"
     class="global-dashboard-snapshot"
     data-snapshot-ready="false"
+    data-snapshot-state="loading"
     aria-label="Global Bot Statistics"
   >
     <div class="gbs-topbar">
@@ -2048,20 +2049,33 @@
   }
   async function api(path, options = {}) {
     const method = String(options.method || "GET").toUpperCase();
+    const controller = new AbortController();
+    const timeoutMs = Math.max(1000, Number(options.timeoutMs || 20000));
+    const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
     const headers = {
       ...(method === "GET" ? { "Cache-Control": "no-cache" } : {}),
       ...(options.headers || {})
     };
-    const response = await fetch(method === "GET" ? noCacheUrl(apiUrl(path)) : apiUrl(path), {
-      ...options,
-      method,
-      headers,
-      cache: method === "GET" ? "no-store" : "default",
-      credentials: options.credentials || "include"
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.detail || `Request failed (${response.status})`);
-    return data;
+    try {
+      const response = await fetch(method === "GET" ? noCacheUrl(apiUrl(path)) : apiUrl(path), {
+        ...options,
+        method,
+        headers,
+        signal: options.signal || controller.signal,
+        cache: method === "GET" ? "no-store" : "default",
+        credentials: options.credentials || "include"
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || `Request failed (${response.status})`);
+      return data;
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        throw new Error("The service took too long to respond. Please try again.");
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timeout);
+    }
   }
   function escapeHtml(value) {
     return String(value ?? "").replace(/[&<>"']/g, character => ({
@@ -2319,7 +2333,9 @@
     }
 
     renderAiActivity(data);
-    $("global-dashboard-snapshot").dataset.snapshotReady = "true";
+    const snapshot = $("global-dashboard-snapshot");
+    snapshot.dataset.snapshotReady = "true";
+    snapshot.dataset.snapshotState = "ready";
   }
 
   function renderSystemPerformance(system) {
@@ -2429,6 +2445,7 @@
   }
   let isAutoTrading = false;
   let hasTradingApiToken = false;
+  let tradingApiTokenInvalid = false;
   let activeAccountType = "demo";
   let availableAccountTypes = ["demo"];
 
@@ -2556,14 +2573,22 @@
     const autoPanel = $("auto-trade-panel");
     const settingsPanel = $("personal-settings-panel");
     if (!panel || !state || !btn) return;
-    panel.style.display = hasTradingApiToken ? "none" : "grid";
-    state.textContent = "Required";
+    const needsToken = !hasTradingApiToken || tradingApiTokenInvalid;
+    panel.style.display = needsToken ? "grid" : "none";
+    state.textContent = tradingApiTokenInvalid ? "Expired or rejected" : "Required";
     state.className = "negative";
-    if (autoPanel) autoPanel.style.display = hasTradingApiToken ? "block" : "none";
-    if (settingsPanel) settingsPanel.style.display = hasTradingApiToken ? "block" : "none";
-    if (!hasTradingApiToken) setPersonalSettingsExpanded(false);
-    btn.disabled = !hasTradingApiToken;
-    btn.title = hasTradingApiToken ? "" : "Save API token first";
+    if (autoPanel) autoPanel.style.display = needsToken ? "none" : "block";
+    if (settingsPanel) settingsPanel.style.display = needsToken ? "none" : "block";
+    if (needsToken) setPersonalSettingsExpanded(false);
+    btn.disabled = needsToken;
+    btn.title = needsToken ? "Save a new active API token first" : "";
+    const message = $("api-token-message");
+    if (message && tradingApiTokenInvalid && !message.textContent.trim()) {
+      message.textContent = lastExecutionStatus === "credential_error"
+        ? "Your previous Deriv API token expired or was rejected. Enter a new active token."
+        : "A new active Deriv API token is required before AutoTrade can resume.";
+      message.className = "api-token-message negative";
+    }
   }
 
   async function saveApiToken() {
@@ -2591,6 +2616,8 @@
       });
       if (input) input.value = "";
       hasTradingApiToken = true;
+      tradingApiTokenInvalid = false;
+      lastExecutionStatus = "connecting";
       updateApiTokenPanel();
       if (message) {
         message.textContent = "";
@@ -2772,12 +2799,18 @@
     if ($("error")) $("error").textContent = "";
     try {
       const meRequest = api("/me").catch(() => ({ authenticated: false }));
-      const summaryRequest = api("/metrics/summary?mode=demo");
-      const summary = await summaryRequest;
-      renderStatus(summary);
-      applyReadOnlyMode();
+      const liveSnapshotIsFresh = (
+        latestSummary && Date.now() - lastWebSocketRefresh < 15000
+      );
+      if (!liveSnapshotIsFresh) {
+        const summary = await api("/metrics/summary?mode=demo");
+        renderStatus(summary);
+        applyReadOnlyMode();
+      }
       loadRecentContracts();
-      loadStakeSimulation(Number($("stake-simulator-input")?.value || 0.50));
+      if (!baseSystemPerformance) {
+        loadStakeSimulation(Number($("stake-simulator-input")?.value || 0.50));
+      }
 
       const me = await meRequest;
       if (me.authenticated) {
@@ -2806,6 +2839,7 @@
         
         isAutoTrading = Boolean(me.enabled);
         hasTradingApiToken = Boolean(me.has_trading_api_token);
+        tradingApiTokenInvalid = Boolean(me.trading_api_token_invalid);
         lastExecutionStatus = String(me.execution_status || "inactive");
         hasRecoveryState = Boolean(
           me.virtual_protection &&
@@ -2835,6 +2869,7 @@
         $("btn-login").style.display = "inline-flex";
         $("btn-logout").style.display = "none";
         hasTradingApiToken = false;
+        tradingApiTokenInvalid = false;
         activeAccountType = "demo";
         availableAccountTypes = ["demo"];
         updateAccountModeSwitch();
@@ -2861,7 +2896,9 @@
         pill.style.borderColor = "rgba(255,77,87,.65)";
         pill.style.color = "var(--gbs-red)";
       }
-      $("global-dashboard-snapshot").dataset.snapshotReady = "true";
+      const snapshot = $("global-dashboard-snapshot");
+      snapshot.dataset.snapshotReady = "true";
+      snapshot.dataset.snapshotState = "error";
     } finally {
       if (showLoader) setSmartLoader(false);
       refreshInFlight = false;

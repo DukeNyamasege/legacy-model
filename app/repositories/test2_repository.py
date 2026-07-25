@@ -42,6 +42,11 @@ from app.model.hmm_regime import HmmInference
 from app.strategy.decision_engine import ProposalEconomics, TradeDecision
 from app.strategy.signal_detector import CandidateSignal
 from app.strategy.rise_fall_strategy import shadow_outcome
+from app.token_store import (
+    decrypt_auth_payload,
+    encrypt_auth_payload,
+    remove_trading_api_token,
+)
 
 
 def mask_account_id(account_id: str) -> str:
@@ -390,6 +395,66 @@ class Test2Repository:
             row.execution_status_reason = str(reason or "Account excluded")[:160]
             row.execution_status_updated_at = utc_now()
             row.updated_at = utc_now()
+
+    def discard_rejected_trading_token(
+        self,
+        account_id: int,
+        *,
+        reason: str,
+    ) -> list[int]:
+        """Forget a rejected PAT everywhere it is shared and request replacement."""
+        encryption_key = self.config.deriv.token_encryption_key
+        if not encryption_key:
+            return []
+        with self.database.session() as session:
+            target = session.get(ManagedAccount, int(account_id), with_for_update=True)
+            if target is None:
+                return []
+            try:
+                target_payload = decrypt_auth_payload(target.token_secret, encryption_key)
+            except Exception:
+                return []
+            rejected_token = str(
+                target_payload.get("pat_token")
+                or (
+                    target_payload.get("access_token")
+                    if str(target_payload.get("auth_type", "")).lower() != "oauth"
+                    else ""
+                )
+                or ""
+            ).strip()
+            if not rejected_token:
+                return []
+
+            affected: list[int] = []
+            rows = session.scalars(select(ManagedAccount).with_for_update()).all()
+            for row in rows:
+                try:
+                    payload = decrypt_auth_payload(row.token_secret, encryption_key)
+                except Exception:
+                    continue
+                stored_token = str(
+                    payload.get("pat_token")
+                    or (
+                        payload.get("access_token")
+                        if str(payload.get("auth_type", "")).lower() != "oauth"
+                        else ""
+                    )
+                    or ""
+                ).strip()
+                if stored_token != rejected_token:
+                    continue
+                row.token_secret = encrypt_auth_payload(
+                    remove_trading_api_token(payload),
+                    encryption_key,
+                )
+                row.enabled = False
+                row.execution_status = "token_required"
+                row.execution_status_reason = str(reason or "Deriv API token expired")[:160]
+                row.execution_status_updated_at = utc_now()
+                row.updated_at = utc_now()
+                affected.append(int(row.id))
+            return affected
 
     def touch_managed_account_execution(self, account_ids: list[int]) -> None:
         normalized = sorted({int(account_id) for account_id in account_ids if account_id})
@@ -1542,84 +1607,55 @@ class Test2Repository:
     def hourly_execution_report(
         self,
         *,
-        master_account_id: str,
-        window_minutes: int = 60,
+        window_start: datetime,
+        window_end: datetime,
+        timezone_name: str = "Africa/Nairobi",
     ) -> dict[str, Any]:
-        minutes = max(1, int(window_minutes))
-        now = utc_now()
-        master_masked = mask_account_id(master_account_id) if master_account_id else ""
+        tz = ZoneInfo(timezone_name)
+        start = window_start.astimezone(timezone.utc)
+        end = window_end.astimezone(timezone.utc)
+        local_end = end.astimezone(tz)
+        today_start = datetime(
+            local_end.year,
+            local_end.month,
+            local_end.day,
+            tzinfo=tz,
+        ).astimezone(timezone.utc)
+        canonical_trades = self.system_model_trades(
+            start=min(today_start, start),
+            end=end,
+            include_virtual=False,
+        )
+        hourly = self.system_performance_summary(
+            start=start,
+            end=end,
+            simulated_base_stake=0.50,
+            include_virtual=False,
+            trades=canonical_trades,
+        )
+        today = self.system_performance_summary(
+            start=today_start,
+            end=end,
+            simulated_base_stake=0.50,
+            include_virtual=False,
+            trades=canonical_trades,
+        )
         with self.database.session() as session:
-            settled_filter = (
-                self._current_run_trade_filter(),
-                Trade.settlement_time.is_not(None),
-            )
-            master_row = session.execute(
-                select(
-                    func.count().label("trades"),
-                    func.sum(case((Trade.outcome == "WIN", 1), else_=0)).label("wins"),
-                    func.sum(case((Trade.outcome == "LOSS", 1), else_=0)).label("losses"),
-                    func.sum(Trade.profit).label("profit"),
-                ).where(*settled_filter, Trade.account_id_masked == master_masked)
-            ).one()
-            all_row = session.execute(
-                select(
-                    func.count().label("trades"),
-                    func.sum(Trade.profit).label("profit"),
-                ).where(*settled_filter)
-            ).one()
-            recent_master_outcomes = session.scalars(
-                select(Trade.outcome)
-                .where(*settled_filter, Trade.account_id_masked == master_masked)
-                .order_by(Trade.settlement_time.desc(), Trade.id.desc())
-            ).all()
-            consecutive_wins, consecutive_losses = self.current_consecutive_streaks(
-                recent_master_outcomes
-            )
-            open_contracts = session.scalar(
-                select(func.count()).select_from(Trade).where(
-                    self._current_run_trade_filter(),
-                    Trade.settlement_time.is_(None),
-                )
-            )
             active_accounts = session.scalar(
                 select(func.count()).select_from(ManagedAccount).where(
                     ManagedAccount.enabled.is_(True),
                     ManagedAccount.execution_status == "active",
                 )
             )
-            excluded_accounts = session.scalar(
-                select(func.count()).select_from(ManagedAccount).where(
-                    ManagedAccount.enabled.is_(False),
-                    ManagedAccount.execution_status.in_(
-                        (
-                            "credential_error",
-                            "duplicate",
-                            "insufficient_balance",
-                            "invalid_account",
-                            "risk_limit",
-                        )
-                    ),
-                )
-            )
         return {
-            "generated_at": now.isoformat(),
-            "window_minutes": minutes,
-            "mode": self.runtime_mode(),
-            "strategy": self.config.rf_strategy.name,
-            "direction": self.config.rf_strategy.allowed_direction,
-            "contract_type": "PUT",
-            "master_account": master_masked,
-            "master_trades": int(master_row.trades or 0),
-            "master_wins": int(master_row.wins or 0),
-            "master_losses": int(master_row.losses or 0),
-            "master_profit": float(master_row.profit or 0.0),
-            "consecutive_wins": consecutive_wins,
-            "consecutive_losses": consecutive_losses,
-            "all_account_runs": int(all_row.trades or 0),
-            "all_account_profit": float(all_row.profit or 0.0),
-            "open_contracts": int(open_contracts or 0),
+            "timezone": str(tz.key),
+            "window_start": start.astimezone(tz).isoformat(),
+            "window_end": end.astimezone(tz).isoformat(),
+            "hourly_trades": int(hourly["total_trades"]),
+            "hourly_martingale_pnl": float(hourly["martingale_pnl"]),
+            "hourly_flat_pnl": float(hourly["fixed_pnl"]),
             "active_accounts": int(active_accounts or 0),
-            "excluded_accounts": int(excluded_accounts or 0),
+            "today_martingale_pnl": float(today["martingale_pnl"]),
         }
 
     @staticmethod
@@ -2181,13 +2217,28 @@ class Test2Repository:
         end: datetime,
         simulated_base_stake: float = 0.50,
         include_virtual: bool = False,
+        trades: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        trades = self.system_model_trades(
-            start=start,
-            end=end,
-            include_virtual=include_virtual,
-        )
-        real_trades = [trade for trade in trades if not trade["is_virtual"]]
+        if trades is None:
+            period_trades = self.system_model_trades(
+                start=start,
+                end=end,
+                include_virtual=include_virtual,
+            )
+        else:
+            period_trades = []
+            for trade in trades:
+                timestamp_value = trade.get("signal_timestamp")
+                if not timestamp_value:
+                    continue
+                timestamp = datetime.fromisoformat(str(timestamp_value))
+                if timestamp.tzinfo is None:
+                    timestamp = timestamp.replace(tzinfo=timezone.utc)
+                if start <= timestamp < end and (
+                    include_virtual or not trade.get("is_virtual")
+                ):
+                    period_trades.append(trade)
+        real_trades = [trade for trade in period_trades if not trade["is_virtual"]]
         fixed_profit = 0.0
         martingale_profit = 0.0
         current_fixed_drawdown = 0.0
