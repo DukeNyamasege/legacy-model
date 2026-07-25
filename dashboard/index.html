@@ -2450,18 +2450,6 @@
     if (input && document.activeElement !== input) input.value = Number(selectedStake).toFixed(2);
   }
 
-  async function loadBaseSystemPerformance() {
-    const periods = ["today", "yesterday", "week", "month"];
-    try {
-      const [today, yesterday, week, month] = await Promise.all(
-        periods.map(period => api(`/metrics/system-performance?period=${encodeURIComponent(period)}&simulated_base_stake=0.50`).catch(() => ({})))
-      );
-      const system = { today, yesterday, week, month, daily_reset_hour: baseSystemPerformance?.daily_reset_hour ?? 0 };
-      baseSystemPerformance = system;
-      renderSystemPerformance(system);
-    } catch (_) {}
-  }
-
   async function loadStakeSimulation(stake) {
     const base = Math.max(0.50, Math.min(100, Number(stake || 0.50)));
     try {
@@ -2865,7 +2853,6 @@
       renderStatus(summary);
       applyReadOnlyMode();
       await loadRecentContracts();
-      await loadBaseSystemPerformance();
       loadStakeSimulation(Number($("stake-simulator-input")?.value || 0.50));
 
       if (me.authenticated) {
