@@ -2922,7 +2922,23 @@
         setPersonalSettingsExpanded(false);
       }
     } catch (error) {
-      if ($("error")) $("error").textContent = error.message || "Unable to reach the service.";
+      const message = error.message || "Unable to reach the service.";
+      if ($("error")) $("error").textContent = message;
+      // Surface the failure on the global board instead of leaving it stuck on
+      // the "Connecting to worker" placeholder, so the real cause is visible.
+      const card = $("ai-mode-card");
+      if (card) card.classList.remove("learning", "trading", "idle");
+      if ($("ai-mode-label")) $("ai-mode-label").textContent = "Dashboard data unavailable";
+      if ($("ai-mode-message")) $("ai-mode-message").textContent = "Could not load live statistics";
+      if ($("ai-mode-detail")) $("ai-mode-detail").textContent = message;
+      const pillText = $("global-status-pill-text");
+      const pill = $("global-status-pill");
+      if (pillText) pillText.textContent = "DATA ERROR";
+      if (pill) {
+        pill.style.borderColor = "rgba(255,77,87,.65)";
+        pill.style.color = "var(--gbs-red)";
+      }
+      $("global-dashboard-snapshot").dataset.snapshotReady = "true";
     } finally {
       if (showLoader) setSmartLoader(false);
       refreshInFlight = false;
