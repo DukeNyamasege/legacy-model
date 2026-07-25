@@ -48,8 +48,22 @@ class DashboardScreenshotCapture:
                     await locator.wait_for(state="visible", timeout=timeout_ms)
                     await page.wait_for_function(
                         """
-                        selector => document.querySelector(selector)?.dataset.snapshotReady
-                            === "true"
+                        selector => {
+                            const root = document.querySelector(selector);
+                            if (!root || root.dataset.snapshotReady !== "true"
+                                || root.dataset.snapshotState !== "ready") return false;
+                            const required = [
+                                "model-pl-martingale",
+                                "model-pl-fixed",
+                                "total-trades",
+                                "active-traders",
+                                "session-clock",
+                            ];
+                            return required.every(id => {
+                                const text = document.getElementById(id)?.textContent?.trim();
+                                return text && !/loading|connecting|unavailable|--:--/i.test(text);
+                            });
+                        }
                         """,
                         arg=self.settings.dashboard_selector,
                         timeout=timeout_ms,
@@ -57,6 +71,7 @@ class DashboardScreenshotCapture:
                     await page.evaluate(
                         "document.fonts?.ready ? document.fonts.ready : Promise.resolve()"
                     )
+                    await page.wait_for_timeout(500)
                     screenshot = await locator.screenshot(
                         type="png",
                         animations="disabled",

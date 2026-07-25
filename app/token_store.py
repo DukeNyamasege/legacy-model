@@ -54,6 +54,40 @@ def decrypt_auth_payload(token_secret: str, key: str) -> dict:
     return payload
 
 
+def remove_trading_api_token(payload: dict) -> dict:
+    """Remove a rejected PAT while retaining OAuth identity/account metadata."""
+    updated = dict(payload)
+    oauth_access_token = str(updated.pop("oauth_access_token", "") or "").strip()
+    oauth_refresh_token = str(updated.pop("oauth_refresh_token", "") or "").strip()
+    oauth_expires_at = str(updated.pop("oauth_expires_at", "") or "").strip()
+    oauth_scope = str(updated.pop("oauth_scope", "") or "").strip()
+    updated.pop("pat_token", None)
+    updated.pop("pat_verified_at", None)
+    updated["pat_token_set"] = False
+    if oauth_access_token or oauth_refresh_token:
+        updated.update(
+            {
+                "auth_type": "oauth",
+                "access_token": oauth_access_token,
+                "refresh_token": oauth_refresh_token,
+                "expires_at": oauth_expires_at,
+                "scope": oauth_scope,
+                "auth_source": "deriv_oauth",
+            }
+        )
+    else:
+        # Keep a valid encrypted payload and account identity, but no credential
+        # that can accidentally be reused for trading.
+        updated.update(
+            {
+                "auth_type": "pat",
+                "access_token": "",
+                "auth_source": "pat_required",
+            }
+        )
+    return updated
+
+
 def parse_token_lines(raw_text: str) -> list[str]:
     return [
         line.strip()

@@ -11,6 +11,7 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from cryptography.fernet import Fernet
 from sqlalchemy import func, select
 
 from app.config import TelegramSettings, load_test2_config
@@ -39,6 +40,7 @@ from app.strategy.rise_fall_strategy import (
     make_signal_event,
     shadow_outcome,
 )
+from app.token_store import decrypt_auth_payload, encrypt_auth_payload
 from enhanced_bot import TradingBot, sanitize_log_value
 
 
@@ -268,43 +270,40 @@ class RiseFallContractTests(unittest.TestCase):
         self.assertEqual(headers["Deriv-App-ID"], "33MmAtDICSKcC7LAZj7JO")
         self.assertEqual(headers["Authorization"], "Bearer oauth-token")
 
-    def test_telegram_hourly_report_contains_execution_totals(self) -> None:
+    def test_telegram_hourly_report_contains_only_model_summary(self) -> None:
         message = TelegramAlertClient.format_hourly_report(
             {
-                "window_minutes": 60,
-                "mode": "demo",
-                "strategy": "RF-PUT5-PREMIUM-V7",
-                "direction": "FALL",
-                "contract_type": "PUT",
+                "timezone": "Africa/Nairobi",
+                "window_start": "2026-07-21T10:00:00+03:00",
+                "window_end": "2026-07-21T11:00:00+03:00",
+                "hourly_trades": 10,
+                "hourly_martingale_pnl": 1.25,
+                "hourly_flat_pnl": -0.50,
                 "active_accounts": 3,
-                "excluded_accounts": 2,
-                "master_account": "DOT***422",
-                "master_trades": 10,
-                "master_wins": 7,
-                "master_losses": 3,
-                "master_profit": 1.25,
-                "consecutive_wins": 3,
-                "consecutive_losses": 0,
-                "all_account_runs": 30,
-                "all_account_profit": 3.75,
-                "open_contracts": 0,
-                "generated_at": "2026-07-21T10:00:00+00:00",
+                "today_martingale_pnl": 4.50,
             }
         )
         self.assertEqual(
             message,
             "\n".join(
                 (
-                    "Test our model: https://derivadmin.site/",
-                    "Total trades: 10",
-                    "Trade type: FALL (PUT)",
-                    "Per-account profit: 1.25 USD",
-                    "Total profit: 3.75 USD",
-                    "Consecutive wins/losses: 3/0",
-                    "Join other traders and let's train the future.",
+                    "Hourly Model Update — Nairobi (EAT)",
+                    "Period: 21 Jul 2026, 10:00 EAT → 11:00 EAT",
+                    "Trades this hour: 10",
+                    "$0.50 + Martingale P/L: +1.25 USD",
+                    "$0.50 without Martingale P/L: -0.50 USD",
+                    "Active traders (Demo + Real): 3",
+                    "Today's total P/L ($0.50 + Martingale): +4.50 USD",
                 )
             ),
         )
+
+    def test_telegram_hour_window_is_aligned_to_nairobi_clock(self) -> None:
+        start, end = RFDir5TradingBot.telegram_hour_window(
+            datetime(2026, 7, 21, 7, 35, tzinfo=timezone.utc)
+        )
+        self.assertEqual(start.isoformat(), "2026-07-21T10:00:00+03:00")
+        self.assertEqual(end.isoformat(), "2026-07-21T11:00:00+03:00")
 
     def test_current_consecutive_streaks_use_latest_master_results(self) -> None:
         self.assertEqual(
@@ -366,10 +365,13 @@ class RiseFallContractTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn('id="global-dashboard-snapshot"', dashboard)
+        self.assertIn('data-snapshot-state="loading"', dashboard)
         self.assertIn(
-            '$("global-dashboard-snapshot").dataset.snapshotReady = "true";',
+            'snapshot.dataset.snapshotReady = "true";',
             dashboard,
         )
+        self.assertIn('snapshot.dataset.snapshotState = "ready";', dashboard)
+        self.assertIn('snapshot.dataset.snapshotState = "error";', dashboard)
 
     def test_dashboard_has_accessible_official_risk_disclaimer(self) -> None:
         dashboard = (Path(__file__).parent / "dashboard" / "index.html").read_text(
@@ -388,13 +390,14 @@ class RiseFallContractTests(unittest.TestCase):
     @staticmethod
     def _telegram_report() -> dict[str, object]:
         return {
-            "direction": "FALL",
-            "contract_type": "PUT",
-            "master_trades": 10,
-            "master_profit": 1.25,
-            "consecutive_wins": 3,
-            "consecutive_losses": 0,
-            "all_account_profit": 3.75,
+            "timezone": "Africa/Nairobi",
+            "window_start": "2026-07-21T10:00:00+03:00",
+            "window_end": "2026-07-21T11:00:00+03:00",
+            "hourly_trades": 10,
+            "hourly_martingale_pnl": 1.25,
+            "hourly_flat_pnl": -0.50,
+            "active_accounts": 3,
+            "today_martingale_pnl": 4.50,
         }
 
     def test_telegram_channel_is_discovered_from_admin_or_post_update(self) -> None:
@@ -720,6 +723,80 @@ class RFRepositoryTests(unittest.TestCase):
             session.flush()
             return account.id
 
+    def settle_model_sequence(self, outcomes: str) -> list[bool]:
+        virtual_flags = []
+        for index, outcome in enumerate(outcomes):
+            item = signal("RISE", tick_sequence=2_000 + index * 10)
+            self.repository.record_signal(item)
+            virtual_flags.append(self.base.record_system_model_trade(
+                signal_id=item.signal_id,
+                symbol=item.symbol,
+                direction=item.direction,
+                contract_type=item.contract_type,
+                duration_ticks=item.duration_ticks,
+                entry_tick_sequence=item.tick_sequence,
+                entry_spot=100.0,
+                expected_profit_ratio=0.82,
+                reference_base_stake=0.50,
+            ))
+            self.base.settle_due_system_model_trades(
+                symbol=item.symbol,
+                tick_sequence=item.tick_sequence + item.duration_ticks,
+                exit_spot=101.0 if outcome == "W" else 99.0,
+            )
+        return virtual_flags
+
+    def test_canonical_model_ledger_enforces_exact_virtual_boundaries(self) -> None:
+        # L, W, L cannot enter; only the following second consecutive L does.
+        flags = self.settle_model_sequence("LWLLLWLWWW")
+        self.assertEqual(flags[:4], [False, False, False, False])
+        self.assertTrue(all(flags[4:9]))
+        self.assertFalse(flags[9])
+
+    def test_model_statistics_exclude_virtual_runs_and_are_idempotent(self) -> None:
+        self.settle_model_sequence("LLLWW")
+        start = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2100, 1, 1, tzinfo=timezone.utc)
+        summary = self.base.system_performance_summary(start=start, end=end)
+        self.assertEqual(summary["total_trades"], 2)
+        self.assertEqual(summary["total_trades"], summary["wins"] + summary["losses"])
+        self.assertEqual(summary["losses"], 2)
+        self.assertEqual(self.base.open_system_model_trade_count(), 0)
+
+        canonical = self.base.system_model_trades(
+            start=start, end=end, include_virtual=False
+        )
+        with patch.object(
+            self.base,
+            "system_model_trades",
+            side_effect=AssertionError("preloaded replay must not query again"),
+        ):
+            replay = self.base.system_performance_summary(
+                start=start,
+                end=end,
+                trades=canonical,
+            )
+        self.assertEqual(replay["total_trades"], summary["total_trades"])
+
+    def test_model_stake_simulation_is_read_only_and_replays_requested_stake(self) -> None:
+        account_id = self.create_managed_account("Independent user")
+        with self.database.session() as session:
+            session.get(ManagedAccount, account_id).stake_amount = 300.0
+        self.settle_model_sequence("WL")
+        start = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2100, 1, 1, tzinfo=timezone.utc)
+        reference = self.base.system_performance_summary(
+            start=start, end=end, simulated_base_stake=0.50
+        )
+        simulated = self.base.system_performance_summary(
+            start=start, end=end, simulated_base_stake=300.0
+        )
+        self.assertEqual(reference["simulated_base_stake"], 0.50)
+        self.assertEqual(simulated["simulated_base_stake"], 300.0)
+        self.assertNotEqual(reference["fixed_pnl"], simulated["fixed_pnl"])
+        account = self.base.managed_account(account_id)
+        self.assertEqual(account["stake_amount"], 300.0)
+
     def test_five_and_ten_tick_shadows_expire_on_exact_market_ticks(self) -> None:
         item = self.create_signal_and_shadows()
         self.assertEqual(
@@ -830,6 +907,20 @@ class RFRepositoryTests(unittest.TestCase):
         )
         self.assertEqual(protection["mode"], "VIRTUAL_MODE")
         self.assertEqual(protection["consecutive_actual_losses"], 2)
+
+    def test_real_win_resets_virtual_entry_loss_sequence(self) -> None:
+        account_id = self.create_managed_account("Loss win loss")
+        for profit, balance in ((-1.0, 99.0), (1.0, 100.0), (-1.0, 99.0)):
+            result = self.repository.record_account_outcome(
+                managed_account_id=account_id,
+                profit=profit,
+                current_balance=balance,
+                recovery_enabled=True,
+                virtual_protection_enabled=True,
+                virtual_trigger_actual_losses=2,
+            )
+        self.assertEqual(result["protection_mode"], "NORMAL_MODE")
+        self.assertEqual(result["consecutive_losses"], 1)
 
     def test_virtual_losses_do_not_change_actual_recovery_debt(self) -> None:
         account_id = self.create_managed_account("Virtual Losses")
@@ -988,7 +1079,8 @@ class RFRepositoryTests(unittest.TestCase):
             symbol=first.symbol,
             tick_sequence=first.tick_sequence + first.duration_ticks,
             exit_quote=Decimal("101.00"),
-            exit_after_wins=2,
+            # Even a stale/unsafe caller setting cannot weaken the exact rule.
+            exit_after_wins=1,
         )
         self.assertEqual(first_settled[0]["result"], "VIRTUAL_WIN")
         self.assertEqual(
@@ -1320,6 +1412,48 @@ class RFRepositoryTests(unittest.TestCase):
             self.assertEqual(target.execution_status, "credential_error")
             self.assertEqual(target.token_secret, "encrypted")
             self.assertTrue(healthy.enabled)
+
+    def test_rejected_shared_pat_is_removed_and_oauth_identity_is_retained(self) -> None:
+        key = Fernet.generate_key().decode("utf-8")
+        self.base.config.deriv.token_encryption_key = key
+        first_id = self.create_managed_account("Expired Demo")
+        second_id = self.create_managed_account("Expired Real")
+        for account_id, account_type in ((first_id, "demo"), (second_id, "real")):
+            payload = {
+                "auth_type": "pat",
+                "access_token": "expired-shared-pat",
+                "account_id": f"VRTC{account_id}",
+                "account_type": account_type,
+                "auth_source": "deriv_oauth_with_pat",
+                "oauth_access_token": "oauth-access",
+                "oauth_refresh_token": "oauth-refresh",
+                "oauth_expires_at": "2099-01-01T00:00:00+00:00",
+                "oauth_scope": "trade",
+                "pat_token_set": True,
+            }
+            with self.database.session() as session:
+                session.get(ManagedAccount, account_id).token_secret = (
+                    encrypt_auth_payload(payload, key)
+                )
+
+        affected = self.base.discard_rejected_trading_token(
+            first_id,
+            reason="Deriv API token expired or was rejected. Enter a new active token.",
+        )
+
+        self.assertEqual(affected, [first_id, second_id])
+        with self.database.session() as session:
+            for account_id in affected:
+                row = session.get(ManagedAccount, account_id)
+                payload = decrypt_auth_payload(row.token_secret, key)
+                self.assertEqual(payload["auth_type"], "oauth")
+                self.assertEqual(payload["access_token"], "oauth-access")
+                self.assertEqual(payload["refresh_token"], "oauth-refresh")
+                self.assertFalse(payload["pat_token_set"])
+                self.assertNotIn("expired-shared-pat", row.token_secret)
+                self.assertFalse(row.enabled)
+                self.assertEqual(row.execution_status, "token_required")
+                self.assertIn("new active token", row.execution_status_reason)
 
     def test_two_losses_arm_exactly_one_recovery_attempt(self) -> None:
         account_id = self.create_managed_account("Recovery")
