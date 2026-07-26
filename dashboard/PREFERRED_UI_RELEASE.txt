@@ -1,0 +1,6 @@
+Preferred production dashboard release
+
+This marker identifies the approved responsive cyber/AI dashboard currently in dashboard/index.html as the production UI for main.
+
+Release date: 2026-07-27
+Includes: desktop/mobile responsive layout, AI Stake Advisor, floating AI Advisor, AI Daily Review, cached snapshot/WebSocket data flow, and preserved WebSocket-only execution path.
