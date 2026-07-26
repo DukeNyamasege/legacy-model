@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 
 from app.account_lifecycle import (
     PAUSED_STATUSES,
@@ -55,10 +55,9 @@ def lifecycle_dashboard(
 
 
 @app.get("/ui/account-lifecycle.js", include_in_schema=False)
-def lifecycle_script():
-    path = ROOT / "dashboard" / "account-lifecycle.js"
-    return HTMLResponse(
-        path.read_text(encoding="utf-8"),
+def lifecycle_script() -> FileResponse:
+    return FileResponse(
+        ROOT / "dashboard" / "account-lifecycle.js",
         media_type="application/javascript",
         headers={"Cache-Control": "no-store"},
     )
