@@ -17,8 +17,8 @@ docker compose logs -f worker
 
 Set every placeholder in `.env`. Keep `TRADING_MODE=demo`,
 `DERIV_ENVIRONMENT=demo`, and `ALLOW_REAL_TRADING=false`. The stack keeps the
-API on the internal Docker bridge with a fixed address, and Caddy on the host
-reverse proxies traffic to it so the public site is served at
+API published only on the host loopback interface, and Caddy on the host reverse
+proxies traffic to it so the public site is served at
 `https://derivadmin.site`.
 
 Required variables are `DERIV_APP_ID`, `DERIV_TOKEN`, `DERIV_ENVIRONMENT`,
@@ -32,7 +32,7 @@ Point `derivadmin.site` at your VPS IP, then use a Caddyfile like this:
 
 ```caddy
 derivadmin.site {
-    reverse_proxy 10.89.0.10:8080
+    reverse_proxy 127.0.0.1:8080
 
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains"
@@ -68,6 +68,28 @@ docker compose restart api
 ./scripts/backup_database.sh
 ./scripts/restore_database.sh backups/test2_TIMESTAMP.dump
 ```
+
+### Reset trade history without deleting traders
+
+Stop the worker before resetting so no purchase or settlement can race the
+database transaction. Always create a backup first. The reset command clears
+all historical personal trades, canonical model trades, virtual/shadow runs,
+signals, ticks, streaks, and active recovery state while preserving managed
+trader accounts, encrypted credentials, browser sessions, balances, controls,
+OAuth state, and model artifacts.
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.vps.yml stop worker
+./scripts/backup_database.sh
+docker compose -f docker-compose.yml -f docker-compose.vps.yml run --rm worker \
+  python scripts/reset_test_data.py --target test2 --confirm RESET_TEST2 --all-runs
+docker compose -f docker-compose.yml -f docker-compose.vps.yml up -d worker
+```
+
+The reset refuses to proceed while a potentially active purchased contract is
+recorded. Do not use `--allow-expired-one-tick` unless Deriv has independently
+confirmed that every listed contract has expired and the worker cannot
+reconcile it.
 
 Pause or resume through the authenticated API before maintenance. During an
 upgrade, leave the old worker running until the new image is built, pause it,

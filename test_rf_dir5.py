@@ -11,6 +11,7 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from cryptography.fernet import Fernet
 from sqlalchemy import func, select
 
 from app.config import TelegramSettings, load_test2_config
@@ -26,6 +27,7 @@ from app.repositories.rf_dir5_repository import RFDir5Repository, VIRTUAL_MODE
 from app.repositories.test2_repository import Test2Repository
 from app.rf_dir5_bot import RFDir5TradingBot
 from app.services.telegram_alerts import TelegramAlertClient
+from app.token_store import decrypt_auth_payload, encrypt_auth_payload
 from app.strategy.decision_engine import (
     ProposalEconomics,
     RiseFallDecisionEngine,
@@ -40,6 +42,7 @@ from app.strategy.rise_fall_strategy import (
     shadow_outcome,
 )
 from enhanced_bot import TradingBot, sanitize_log_value
+from scripts.reset_test_data import reset_database
 
 
 def features(prices: list[str]):
@@ -268,43 +271,40 @@ class RiseFallContractTests(unittest.TestCase):
         self.assertEqual(headers["Deriv-App-ID"], "33MmAtDICSKcC7LAZj7JO")
         self.assertEqual(headers["Authorization"], "Bearer oauth-token")
 
-    def test_telegram_hourly_report_contains_execution_totals(self) -> None:
+    def test_telegram_hourly_report_contains_only_model_summary(self) -> None:
         message = TelegramAlertClient.format_hourly_report(
             {
-                "window_minutes": 60,
-                "mode": "demo",
-                "strategy": "RF-PUT5-PREMIUM-V7",
-                "direction": "FALL",
-                "contract_type": "PUT",
+                "timezone": "Africa/Nairobi",
+                "window_start": "2026-07-21T10:00:00+03:00",
+                "window_end": "2026-07-21T11:00:00+03:00",
+                "hourly_trades": 10,
+                "hourly_martingale_pnl": 1.25,
+                "hourly_flat_pnl": -0.50,
                 "active_accounts": 3,
-                "excluded_accounts": 2,
-                "master_account": "DOT***422",
-                "master_trades": 10,
-                "master_wins": 7,
-                "master_losses": 3,
-                "master_profit": 1.25,
-                "consecutive_wins": 3,
-                "consecutive_losses": 0,
-                "all_account_runs": 30,
-                "all_account_profit": 3.75,
-                "open_contracts": 0,
-                "generated_at": "2026-07-21T10:00:00+00:00",
+                "today_martingale_pnl": 4.50,
             }
         )
         self.assertEqual(
             message,
             "\n".join(
                 (
-                    "Test our model: https://derivadmin.site/",
-                    "Total trades: 10",
-                    "Trade type: FALL (PUT)",
-                    "Per-account profit: 1.25 USD",
-                    "Total profit: 3.75 USD",
-                    "Consecutive wins/losses: 3/0",
-                    "Join other traders and let's train the future.",
+                    "Hourly Model Update — Nairobi (EAT)",
+                    "Period: 21 Jul 2026, 10:00 EAT → 11:00 EAT",
+                    "Trades this hour: 10",
+                    "$0.50 + Martingale P/L: +1.25 USD",
+                    "$0.50 without Martingale P/L: -0.50 USD",
+                    "Active traders (Demo + Real): 3",
+                    "Today's total P/L ($0.50 + Martingale): +4.50 USD",
                 )
             ),
         )
+
+    def test_telegram_hour_window_is_aligned_to_nairobi_clock(self) -> None:
+        start, end = RFDir5TradingBot.telegram_hour_window(
+            datetime(2026, 7, 21, 7, 35, tzinfo=timezone.utc)
+        )
+        self.assertEqual(start.isoformat(), "2026-07-21T10:00:00+03:00")
+        self.assertEqual(end.isoformat(), "2026-07-21T11:00:00+03:00")
 
     def test_current_consecutive_streaks_use_latest_master_results(self) -> None:
         self.assertEqual(
@@ -366,10 +366,52 @@ class RiseFallContractTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn('id="global-dashboard-snapshot"', dashboard)
+        self.assertIn('data-snapshot-state="loading"', dashboard)
         self.assertIn(
-            '$("global-dashboard-snapshot").dataset.snapshotReady = "true";',
+            'snapshot.dataset.snapshotReady = "true";',
             dashboard,
         )
+        self.assertIn('snapshot.dataset.snapshotState = "ready";', dashboard)
+        self.assertIn('snapshot.dataset.snapshotState = "error";', dashboard)
+
+    def test_public_simulator_and_viewer_reset_are_wired_safely(self) -> None:
+        api_source = (Path(__file__).parent / "app" / "api.py").read_text(
+            encoding="utf-8"
+        )
+        endpoint = api_source.split(
+            '@app.get("/metrics/system-performance")', 1
+        )[1].split('@app.websocket("/ws/dashboard")', 1)[0]
+        self.assertNotIn("require_control_auth", endpoint)
+        self.assertIn('min(1000.0, max(0.50', endpoint)
+
+        dashboard = (Path(__file__).parent / "dashboard" / "index.html").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('id="model-maximum-stake"', dashboard)
+        self.assertIn('id="model-flat-stake"', dashboard)
+        self.assertIn("model_data_version", dashboard)
+        self.assertIn("resetSimulationToViewerDefault();", dashboard)
+        self.assertIn("me.settings?.stake_amount ?? 0.50", dashboard)
+        self.assertIn("Math.min(1000, value)", dashboard)
+        self.assertIn(
+            '$("risk-longest-win-streak").textContent = number(baseToday.longest_win_streak || 0);',
+            dashboard,
+        )
+        self.assertNotIn("allTime.longest_loss_streak", dashboard)
+
+    def test_canonical_write_occurs_only_after_registered_contracts(self) -> None:
+        source = (Path(__file__).parent / "app" / "rf_dir5_bot.py").read_text(
+            encoding="utf-8"
+        )
+        purchase_flow = source.split(
+            "async def _buy_selected_accounts", 1
+        )[1].split("async def _purchase_accounts_by_stake", 1)[0]
+        no_contract_guard = purchase_flow.index("if not contracts:")
+        canonical_write = purchase_flow.index(
+            "self.repository.record_system_model_trade("
+        )
+        self.assertGreater(canonical_write, no_contract_guard)
+        self.assertIn("is_virtual=False", purchase_flow[canonical_write:])
 
     def test_dashboard_has_accessible_official_risk_disclaimer(self) -> None:
         dashboard = (Path(__file__).parent / "dashboard" / "index.html").read_text(
@@ -388,13 +430,14 @@ class RiseFallContractTests(unittest.TestCase):
     @staticmethod
     def _telegram_report() -> dict[str, object]:
         return {
-            "direction": "FALL",
-            "contract_type": "PUT",
-            "master_trades": 10,
-            "master_profit": 1.25,
-            "consecutive_wins": 3,
-            "consecutive_losses": 0,
-            "all_account_profit": 3.75,
+            "timezone": "Africa/Nairobi",
+            "window_start": "2026-07-21T10:00:00+03:00",
+            "window_end": "2026-07-21T11:00:00+03:00",
+            "hourly_trades": 10,
+            "hourly_martingale_pnl": 1.25,
+            "hourly_flat_pnl": -0.50,
+            "active_accounts": 3,
+            "today_martingale_pnl": 4.50,
         }
 
     def test_telegram_channel_is_discovered_from_admin_or_post_update(self) -> None:
@@ -720,6 +763,355 @@ class RFRepositoryTests(unittest.TestCase):
             session.flush()
             return account.id
 
+    def settle_model_sequence(self, outcomes: str) -> list[bool]:
+        virtual_flags = []
+        for index, outcome in enumerate(outcomes):
+            item = signal("RISE", tick_sequence=2_000 + index * 10)
+            self.repository.record_signal(item)
+            contract_id = f"canonical-contract-{item.signal_id}"
+            self.base.register_purchase(
+                signal_id=item.signal_id,
+                contract_id=contract_id,
+                transaction_id=f"canonical-transaction-{item.signal_id}",
+                account_id=f"DOT{index:08d}",
+                purchase_time=datetime.now(timezone.utc),
+                aligned_with_signal=True,
+                buy_price=0.50,
+                payout=0.91,
+            )
+            virtual_flags.append(self.base.record_system_model_trade(
+                signal_id=item.signal_id,
+                symbol=item.symbol,
+                direction=item.direction,
+                contract_type=item.contract_type,
+                duration_ticks=item.duration_ticks,
+                entry_tick_sequence=item.tick_sequence,
+                entry_spot=100.0,
+                expected_profit_ratio=0.82,
+                reference_base_stake=0.50,
+            ))
+            self.base.settle_due_system_model_trades(
+                symbol=item.symbol,
+                tick_sequence=item.tick_sequence + item.duration_ticks,
+                exit_spot=101.0 if outcome == "W" else 99.0,
+            )
+            self.base.settle_trade(
+                contract_id=contract_id,
+                profit=0.41 if outcome == "W" else -0.50,
+                outcome="win" if outcome == "W" else "loss",
+                entry_tick=100.0,
+                exit_tick=101.0 if outcome == "W" else 99.0,
+                exit_digit=1 if outcome == "W" else 9,
+                buy_price=0.50,
+                payout=0.91 if outcome == "W" else 0.0,
+            )
+        return virtual_flags
+
+    def test_canonical_model_ledger_never_infers_account_virtual_mode(self) -> None:
+        flags = self.settle_model_sequence("LWLLLWLWWW")
+        self.assertEqual(flags, [False] * 10)
+        canonical = self.base.system_model_trades(
+            start=datetime(2000, 1, 1, tzinfo=timezone.utc),
+            end=datetime(2100, 1, 1, tzinfo=timezone.utc),
+            include_virtual=False,
+        )
+        self.assertEqual(len(canonical), 10)
+        self.assertTrue(all(not trade["is_virtual"] for trade in canonical))
+
+    def test_canonical_statistics_require_at_least_one_actual_purchase(self) -> None:
+        virtual_only = signal("RISE", tick_sequence=3_000)
+        self.repository.record_signal(virtual_only)
+        self.base.record_system_model_trade(
+            signal_id=virtual_only.signal_id,
+            symbol=virtual_only.symbol,
+            direction=virtual_only.direction,
+            contract_type=virtual_only.contract_type,
+            duration_ticks=virtual_only.duration_ticks,
+            entry_tick_sequence=virtual_only.tick_sequence,
+            entry_spot=100.0,
+            expected_profit_ratio=0.82,
+            is_virtual=False,
+        )
+        self.base.settle_due_system_model_trades(
+            symbol=virtual_only.symbol,
+            tick_sequence=virtual_only.tick_sequence + virtual_only.duration_ticks,
+            exit_spot=101.0,
+        )
+
+        mixed = signal("RISE", tick_sequence=3_100)
+        self.repository.record_signal(mixed)
+        self.base.register_purchase(
+            signal_id=mixed.signal_id,
+            contract_id="mixed-real-contract",
+            transaction_id="mixed-real-transaction",
+            account_id="DOTREAL001",
+            purchase_time=datetime.now(timezone.utc),
+            aligned_with_signal=True,
+            buy_price=0.50,
+            payout=0.91,
+        )
+        self.base.record_system_model_trade(
+            signal_id=mixed.signal_id,
+            symbol=mixed.symbol,
+            direction=mixed.direction,
+            contract_type=mixed.contract_type,
+            duration_ticks=mixed.duration_ticks,
+            entry_tick_sequence=mixed.tick_sequence,
+            entry_spot=100.0,
+            expected_profit_ratio=0.82,
+            # A stale caller value cannot reclassify a financially executed
+            # canonical row. Account virtual observations remain separate.
+            is_virtual=True,
+        )
+        self.base.settle_due_system_model_trades(
+            symbol=mixed.symbol,
+            tick_sequence=mixed.tick_sequence + mixed.duration_ticks,
+            exit_spot=101.0,
+        )
+
+        canonical = self.base.system_model_trades(
+            start=datetime(2000, 1, 1, tzinfo=timezone.utc),
+            end=datetime(2100, 1, 1, tzinfo=timezone.utc),
+            include_virtual=False,
+        )
+        self.assertEqual([trade["signal_id"] for trade in canonical], [mixed.signal_id])
+        self.assertFalse(canonical[0]["is_virtual"])
+
+    def test_model_statistics_exclude_virtual_runs_and_are_idempotent(self) -> None:
+        self.settle_model_sequence("LLLWW")
+        start = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2100, 1, 1, tzinfo=timezone.utc)
+        summary = self.base.system_performance_summary(start=start, end=end)
+        self.assertEqual(summary["total_trades"], 5)
+        self.assertEqual(summary["total_trades"], summary["wins"] + summary["losses"])
+        self.assertEqual(summary["wins"], 2)
+        self.assertEqual(summary["losses"], 3)
+        self.assertEqual(self.base.open_system_model_trade_count(), 0)
+
+        canonical = self.base.system_model_trades(
+            start=start, end=end, include_virtual=False
+        )
+        with patch.object(
+            self.base,
+            "system_model_trades",
+            side_effect=AssertionError("preloaded replay must not query again"),
+        ):
+            replay = self.base.system_performance_summary(
+                start=start,
+                end=end,
+                trades=canonical,
+            )
+        self.assertEqual(replay["total_trades"], summary["total_trades"])
+
+    def test_safe_reset_clears_canonical_ledger_and_preserves_traders(self) -> None:
+        account_id = self.create_managed_account("Preserved trader")
+        self.settle_model_sequence("WL")
+
+        removed = reset_database(self.database, self.base.config.model.run_id)
+
+        self.assertEqual(removed["system_model_trades"], 2)
+        self.assertEqual(
+            self.base.system_performance_summary(
+                start=datetime(2000, 1, 1, tzinfo=timezone.utc),
+                end=datetime(2100, 1, 1, tzinfo=timezone.utc),
+            )["total_trades"],
+            0,
+        )
+        self.assertIsNotNone(self.base.managed_account(account_id))
+
+    def test_account_risk_state_uses_managed_identity_not_display_mask(self) -> None:
+        first_id = self.create_managed_account("First masked account")
+        second_id = self.create_managed_account("Second masked account")
+        with self.database.session() as session:
+            session.add_all(
+                [
+                    AccountRiskState(
+                        managed_account_id=first_id,
+                        account_id_masked="DOT***271",
+                        consecutive_losses=1,
+                    ),
+                    AccountRiskState(
+                        managed_account_id=second_id,
+                        account_id_masked="DOT***271",
+                        consecutive_losses=5,
+                    ),
+                ]
+            )
+
+        first = self.base.account_summary(
+            "DOT00000271",
+            managed_account_id=first_id,
+        )
+        second = self.base.account_summary(
+            "DOT99999271",
+            managed_account_id=second_id,
+        )
+        self.assertEqual(
+            first["virtual_protection"]["consecutive_actual_losses"],
+            1,
+        )
+        self.assertEqual(
+            second["virtual_protection"]["consecutive_actual_losses"],
+            5,
+        )
+
+    def test_model_stake_simulation_is_read_only_and_replays_requested_stake(self) -> None:
+        account_id = self.create_managed_account("Independent user")
+        with self.database.session() as session:
+            session.get(ManagedAccount, account_id).stake_amount = 300.0
+        self.settle_model_sequence("WL")
+        start = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2100, 1, 1, tzinfo=timezone.utc)
+        reference = self.base.system_performance_summary(
+            start=start, end=end, simulated_base_stake=0.50
+        )
+        simulated = self.base.system_performance_summary(
+            start=start, end=end, simulated_base_stake=300.0
+        )
+        self.assertEqual(reference["simulated_base_stake"], 0.50)
+        self.assertEqual(simulated["simulated_base_stake"], 300.0)
+        self.assertNotEqual(reference["fixed_pnl"], simulated["fixed_pnl"])
+        account = self.base.managed_account(account_id)
+        self.assertEqual(account["stake_amount"], 300.0)
+
+    def test_realized_settlement_calibrates_one_canonical_signal_once(self) -> None:
+        item = signal("RISE", tick_sequence=4_000)
+        self.repository.record_signal(item)
+        self.base.record_system_model_trade(
+            signal_id=item.signal_id,
+            symbol=item.symbol,
+            direction=item.direction,
+            contract_type=item.contract_type,
+            duration_ticks=item.duration_ticks,
+            entry_tick_sequence=item.tick_sequence,
+            entry_spot=100.0,
+            expected_profit_ratio=0.92,
+            reference_base_stake=30.0,
+        )
+        self.base.settle_due_system_model_trades(
+            symbol=item.symbol,
+            tick_sequence=item.tick_sequence + item.duration_ticks,
+            exit_spot=101.0,
+        )
+        purchased_at = datetime.now(timezone.utc)
+        copied_contracts = (
+            ("first", 0.50, 0.41, purchased_at),
+            ("copy", 30.0, 24.90, purchased_at + timedelta(seconds=1)),
+        )
+        for suffix, actual_stake, _profit, provider_purchase_time in copied_contracts:
+            self.base.register_purchase(
+                signal_id=item.signal_id,
+                contract_id=f"realized-{suffix}",
+                transaction_id=f"transaction-{suffix}",
+                account_id=f"DOT{suffix}",
+                purchase_time=provider_purchase_time,
+                aligned_with_signal=True,
+                buy_price=actual_stake,
+                payout=0.91,
+                provider_purchase_time=provider_purchase_time,
+            )
+        # The later-purchased copy settles first. Once the earliest purchase
+        # settles, it deterministically becomes the one canonical reference.
+        for suffix, actual_stake, actual_profit, provider_purchase_time in reversed(
+            copied_contracts
+        ):
+            self.assertTrue(
+                self.base.settle_trade(
+                    contract_id=f"realized-{suffix}",
+                    profit=actual_profit,
+                    outcome="win",
+                    entry_tick=100.0,
+                    exit_tick=101.0,
+                    exit_digit=1,
+                    buy_price=actual_stake,
+                    payout=0.91,
+                    app_markup_amount=0.015,
+                    provider_purchase_time=provider_purchase_time,
+                )
+            )
+
+        start = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2100, 1, 1, tzinfo=timezone.utc)
+        canonical = self.base.system_model_trades(
+            start=start,
+            end=end,
+            include_virtual=False,
+        )
+        self.assertEqual(len(canonical), 1)
+        self.assertEqual(canonical[0]["reference_base_stake"], 0.50)
+        self.assertAlmostEqual(canonical[0]["fixed_stake_profit"], 0.41)
+
+        default = self.base.system_performance_summary(start=start, end=end)
+        self.assertEqual(default["fixed_pnl"], 0.41)
+        self.assertEqual(default["martingale_pnl"], 0.41)
+        self.assertEqual(default["flat_stake"], 0.50)
+        self.assertEqual(default["maximum_martingale_stake"], 0.50)
+
+        viewer = self.base.system_performance_summary(
+            start=start,
+            end=end,
+            simulated_base_stake=30.0,
+        )
+        self.assertAlmostEqual(viewer["fixed_pnl"], 24.60)
+        self.assertAlmostEqual(viewer["martingale_pnl"], 24.60)
+        self.assertEqual(viewer["flat_stake"], 30.0)
+        self.assertEqual(viewer["maximum_martingale_stake"], 30.0)
+
+        large_simulation = self.base.system_performance_summary(
+            start=start,
+            end=end,
+            simulated_base_stake=757.0,
+        )
+        self.assertAlmostEqual(large_simulation["fixed_pnl"], 620.74)
+        self.assertEqual(large_simulation["flat_stake"], 757.0)
+
+    def test_thirty_dollar_actual_contract_normalizes_to_fifty_cents(self) -> None:
+        item = signal("RISE", tick_sequence=4_100)
+        self.repository.record_signal(item)
+        self.base.register_purchase(
+            signal_id=item.signal_id,
+            contract_id="thirty-dollar-contract",
+            transaction_id="thirty-dollar-transaction",
+            account_id="DOT30000000",
+            purchase_time=datetime.now(timezone.utc),
+            aligned_with_signal=True,
+            buy_price=30.0,
+            payout=54.60,
+        )
+        self.base.record_system_model_trade(
+            signal_id=item.signal_id,
+            symbol=item.symbol,
+            direction=item.direction,
+            contract_type=item.contract_type,
+            duration_ticks=item.duration_ticks,
+            entry_tick_sequence=item.tick_sequence,
+            entry_spot=100.0,
+            expected_profit_ratio=0.82,
+            is_virtual=False,
+        )
+        self.base.settle_due_system_model_trades(
+            symbol=item.symbol,
+            tick_sequence=item.tick_sequence + item.duration_ticks,
+            exit_spot=101.0,
+        )
+        self.base.settle_trade(
+            contract_id="thirty-dollar-contract",
+            profit=24.60,
+            outcome="win",
+            entry_tick=100.0,
+            exit_tick=101.0,
+            exit_digit=1,
+            buy_price=30.0,
+            payout=54.60,
+        )
+        canonical = self.base.system_model_trades(
+            start=datetime(2000, 1, 1, tzinfo=timezone.utc),
+            end=datetime(2100, 1, 1, tzinfo=timezone.utc),
+            include_virtual=False,
+        )
+        self.assertEqual(len(canonical), 1)
+        self.assertAlmostEqual(canonical[0]["fixed_stake_profit"], 0.41)
+
     def test_five_and_ten_tick_shadows_expire_on_exact_market_ticks(self) -> None:
         item = self.create_signal_and_shadows()
         self.assertEqual(
@@ -830,6 +1222,20 @@ class RFRepositoryTests(unittest.TestCase):
         )
         self.assertEqual(protection["mode"], "VIRTUAL_MODE")
         self.assertEqual(protection["consecutive_actual_losses"], 2)
+
+    def test_real_win_resets_virtual_entry_loss_sequence(self) -> None:
+        account_id = self.create_managed_account("Loss win loss")
+        for profit, balance in ((-1.0, 99.0), (1.0, 100.0), (-1.0, 99.0)):
+            result = self.repository.record_account_outcome(
+                managed_account_id=account_id,
+                profit=profit,
+                current_balance=balance,
+                recovery_enabled=True,
+                virtual_protection_enabled=True,
+                virtual_trigger_actual_losses=2,
+            )
+        self.assertEqual(result["protection_mode"], "NORMAL_MODE")
+        self.assertEqual(result["consecutive_losses"], 1)
 
     def test_virtual_losses_do_not_change_actual_recovery_debt(self) -> None:
         account_id = self.create_managed_account("Virtual Losses")
@@ -988,7 +1394,8 @@ class RFRepositoryTests(unittest.TestCase):
             symbol=first.symbol,
             tick_sequence=first.tick_sequence + first.duration_ticks,
             exit_quote=Decimal("101.00"),
-            exit_after_wins=2,
+            # Even a stale/unsafe caller setting cannot weaken the exact rule.
+            exit_after_wins=1,
         )
         self.assertEqual(first_settled[0]["result"], "VIRTUAL_WIN")
         self.assertEqual(
@@ -1321,6 +1728,48 @@ class RFRepositoryTests(unittest.TestCase):
             self.assertEqual(target.token_secret, "encrypted")
             self.assertTrue(healthy.enabled)
 
+    def test_rejected_shared_pat_is_removed_and_oauth_identity_is_retained(self) -> None:
+        key = Fernet.generate_key().decode("utf-8")
+        self.base.config.deriv.token_encryption_key = key
+        first_id = self.create_managed_account("Expired Demo")
+        second_id = self.create_managed_account("Expired Real")
+        for account_id, account_type in ((first_id, "demo"), (second_id, "real")):
+            payload = {
+                "auth_type": "pat",
+                "access_token": "expired-shared-pat",
+                "account_id": f"VRTC{account_id}",
+                "account_type": account_type,
+                "auth_source": "deriv_oauth_with_pat",
+                "oauth_access_token": "oauth-access",
+                "oauth_refresh_token": "oauth-refresh",
+                "oauth_expires_at": "2099-01-01T00:00:00+00:00",
+                "oauth_scope": "trade",
+                "pat_token_set": True,
+            }
+            with self.database.session() as session:
+                session.get(ManagedAccount, account_id).token_secret = (
+                    encrypt_auth_payload(payload, key)
+                )
+
+        affected = self.base.discard_rejected_trading_token(
+            first_id,
+            reason="Deriv API token expired or was rejected. Enter a new active token.",
+        )
+
+        self.assertEqual(affected, [first_id, second_id])
+        with self.database.session() as session:
+            for account_id in affected:
+                row = session.get(ManagedAccount, account_id)
+                payload = decrypt_auth_payload(row.token_secret, key)
+                self.assertEqual(payload["auth_type"], "oauth")
+                self.assertEqual(payload["access_token"], "oauth-access")
+                self.assertEqual(payload["refresh_token"], "oauth-refresh")
+                self.assertFalse(payload["pat_token_set"])
+                self.assertNotIn("expired-shared-pat", row.token_secret)
+                self.assertFalse(row.enabled)
+                self.assertEqual(row.execution_status, "token_required")
+                self.assertIn("new active token", row.execution_status_reason)
+
     def test_two_losses_arm_exactly_one_recovery_attempt(self) -> None:
         account_id = self.create_managed_account("Recovery")
         first = self.repository.record_account_outcome(
@@ -1607,6 +2056,17 @@ class RFVirtualHookTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertFalse(
             bot.repository.mark_signal.call_args.kwargs["purchase_requested"]
+        )
+        bot.repository.record_system_model_trade.assert_not_called()
+
+        bot.repository.reset_mock()
+        bot.rf_repository.start_virtual_trade.return_value = None
+        waiting = signal("RISE", tick_sequence=1410)
+        await bot._buy_selected_accounts(waiting, economics)
+        bot.repository.record_system_model_trade.assert_not_called()
+        self.assertEqual(
+            bot.repository.mark_signal.call_args.kwargs["status"],
+            "VIRTUAL_WAITING_SETTLEMENT",
         )
 
 

@@ -71,6 +71,18 @@ def live_tick_payload(
 
 
 class DashboardMetricsTests(unittest.TestCase):
+    def test_personal_deriv_refresh_is_scheduled_off_request(self) -> None:
+        import app.api as api
+
+        account = {"account_id": "VRTC123", "id": 123}
+        with api.PERSONAL_ACCOUNT_REFRESH_LOCK:
+            api.PERSONAL_ACCOUNT_REFRESH.clear()
+            api.PERSONAL_ACCOUNT_REFRESH_INFLIGHT.clear()
+        with patch.object(api.PERSONAL_ACCOUNT_REFRESH_EXECUTOR, "submit") as submit:
+            self.assertTrue(api.schedule_personal_account_refresh(account))
+            self.assertFalse(api.schedule_personal_account_refresh(account))
+        submit.assert_called_once_with(api._refresh_personal_account_snapshot, account)
+
     def test_dashboard_contract_table_is_compact_and_has_no_repeated_copy(self) -> None:
         html = Path("dashboard/index.html").read_text(encoding="utf-8")
         for heading in ("Market", "Contract type", "Stake", "Payout", "Outcome"):
@@ -468,8 +480,15 @@ class DashboardMetricsTests(unittest.TestCase):
                 "sec-fetch-site": "cross-site",
             }
         )
+        configured_cross_site = SimpleNamespace(
+            headers={
+                "origin": "https://legacymodel.netlify.app",
+                "sec-fetch-site": "cross-site",
+            }
+        )
 
         api.enforce_mutation_origin(allowed)
+        api.enforce_mutation_origin(configured_cross_site)
         with self.assertRaises(api.HTTPException) as context:
             api.enforce_mutation_origin(blocked)
 
@@ -522,12 +541,65 @@ class DashboardMetricsTests(unittest.TestCase):
                 path,
             )
 
+    def test_aggregate_simulator_is_public_but_raw_model_trades_stay_private(self) -> None:
+        import app.api as api
+
+        routes = {
+            route.path: route
+            for route in api.app.routes
+            if hasattr(route, "dependant")
+        }
+        self.assertEqual(
+            len(routes["/metrics/system-performance"].dependant.dependencies),
+            0,
+        )
+        self.assertGreater(
+            len(routes["/metrics/system-trades"].dependant.dependencies),
+            0,
+        )
+        with patch.object(
+            api.REPOSITORY,
+            "system_performance_summary",
+            return_value={
+                "simulated_base_stake": 0.50,
+                "flat_stake": 0.50,
+                "maximum_martingale_stake": 0.50,
+                "fixed_pnl": 0.0,
+                "martingale_pnl": 0.0,
+                "total_trades": 0,
+                "wins": 0,
+                "losses": 0,
+            },
+        ):
+            result = api.system_performance(
+                period="today",
+                simulated_base_stake=0.50,
+            )
+        self.assertEqual(result["fixed_pnl"], 0.0)
+        self.assertEqual(result["martingale_pnl"], 0.0)
+
     def test_personal_api_tokens_have_a_strict_input_size_limit(self) -> None:
         import app.api as api
         from pydantic import ValidationError
 
         with self.assertRaises(ValidationError):
             api.PersonalApiTokenRequest(api_token="x" * 4097)
+
+    def test_expired_token_status_requires_replacement_and_notification(self) -> None:
+        from app import api
+
+        self.assertTrue(api.execution_requires_new_token("credential_error"))
+        self.assertTrue(api.execution_requires_new_token("token_required"))
+        self.assertTrue(
+            api.execution_token_was_rejected(
+                "token_required", "Deriv API token expired or was rejected"
+            )
+        )
+        self.assertFalse(
+            api.execution_token_was_rejected(
+                "token_required", "A verified Deriv API token is required"
+            )
+        )
 
 
 class CopyTradeAuditTests(unittest.TestCase):
@@ -1353,6 +1425,25 @@ class TimingAndModelTests(unittest.TestCase):
 
 
 class AccountIsolationTests(unittest.IsolatedAsyncioTestCase):
+    def test_permanent_token_rejection_discards_credential_and_requests_new_one(self) -> None:
+        bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
+        bot.repository = MagicMock()
+        bot.repository.discard_rejected_trading_token.return_value = [7, 8]
+        bot.logger = MagicMock()
+
+        bot._set_account_execution_status(
+            7, "credential_error", "Invalid or expired token"
+        )
+
+        bot.repository.discard_rejected_trading_token.assert_called_once_with(
+            7,
+            reason=(
+                "Deriv API token expired or was rejected. Enter a new active "
+                "API token to resume AutoTrade."
+            ),
+        )
+        bot.repository.quarantine_managed_account.assert_not_called()
+
     def test_quarantined_account_status_survives_runtime_reload(self) -> None:
         bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
         bot.repository = MagicMock()

@@ -1476,6 +1476,20 @@ class TradingBot:
             return
         try:
             normalized = str(status or "inactive").strip().lower()
+            if normalized == "credential_error":
+                discarded = self.repository.discard_rejected_trading_token(
+                    int(managed_account_id),
+                    reason=(
+                        "Deriv API token expired or was rejected. Enter a new active "
+                        "API token to resume AutoTrade."
+                    ),
+                )
+                if discarded:
+                    self.logger.warning(
+                        "REJECTED_TRADING_TOKEN_REMOVED affected_accounts=%s",
+                        len(discarded),
+                    )
+                    return
             if normalized in {
                 "credential_error",
                 "duplicate",

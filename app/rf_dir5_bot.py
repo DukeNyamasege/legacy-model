@@ -5,9 +5,10 @@ import json
 import time
 from collections import Counter, deque
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.model.bayesian_probability import BayesianGroupKey, KeyedBayesianProbability
 from app.model.directional_regime_hmm import DirectionalRegimeHmm
@@ -158,15 +159,45 @@ class RFDir5TradingBot(TradingBot):
             self.virtual_config.trigger_actual_losses,
         )
 
+    @staticmethod
+    def telegram_hour_window(
+        now: datetime,
+        timezone_name: str = "Africa/Nairobi",
+    ) -> tuple[datetime, datetime]:
+        try:
+            report_tz = ZoneInfo(timezone_name)
+        except ZoneInfoNotFoundError:
+            report_tz = ZoneInfo("Africa/Nairobi")
+        local_now = now.astimezone(report_tz)
+        window_end = local_now.replace(
+            minute=0,
+            second=0,
+            microsecond=0,
+        ) + timedelta(hours=1)
+        return window_end - timedelta(hours=1), window_end
+
     async def _telegram_hourly_loop(self) -> None:
         await asyncio.sleep(self.test2_config.telegram.initial_delay_seconds)
         await self._send_virtual_protection_announcement_once()
         while self.is_running:
+            window_start, window_end = self.telegram_hour_window(
+                datetime.now(timezone.utc),
+                self.test2_config.telegram.timezone,
+            )
+            report_tz = window_end.tzinfo
+            await asyncio.sleep(
+                max(
+                    0.0,
+                    (window_end - datetime.now(timezone.utc).astimezone(report_tz))
+                    .total_seconds(),
+                )
+            )
             sent = False
             try:
                 report = self.repository.hourly_execution_report(
-                    master_account_id=self._copytrading_master_account_id(),
-                    window_minutes=60,
+                    window_start=window_start,
+                    window_end=window_end,
+                    timezone_name=str(report_tz.key),
                 )
                 sent = await self.telegram_alerts.send_hourly_report(report)
             except Exception as exc:
@@ -174,12 +205,8 @@ class RFDir5TradingBot(TradingBot):
                     "TELEGRAM_ALERT_FAILED error=%s",
                     type(exc).__name__,
                 )
-            retry_seconds = min(60, self.test2_config.telegram.interval_seconds)
-            await asyncio.sleep(
-                self.test2_config.telegram.interval_seconds
-                if sent
-                else retry_seconds
-            )
+            if not sent:
+                await asyncio.sleep(60)
 
     async def _send_virtual_protection_announcement_once(self) -> None:
         key = "telegram_announcement_virtual_loss_protection_v1"
@@ -690,6 +717,17 @@ class RFDir5TradingBot(TradingBot):
             connection_session_id=self.connection_session_id,
         )
         self._render_live_ticks()
+        for model_trade in self.repository.settle_due_system_model_trades(
+            symbol=symbol,
+            tick_sequence=market.tick_sequence,
+            exit_spot=float(quote),
+        ):
+            self.logger.info(
+                "SYSTEM_MODEL_SETTLED signal_id=%s outcome=%s virtual=%s",
+                model_trade["signal_id"],
+                model_trade["outcome"],
+                model_trade["is_virtual"],
+            )
         virtual_config = getattr(self, "virtual_config", None)
         for settled in self.rf_repository.settle_due_virtual_trades(
             symbol=symbol,
@@ -1114,15 +1152,6 @@ class RFDir5TradingBot(TradingBot):
         signal: SignalEvent,
         economics: ProposalEconomics,
     ) -> None:
-        self.repository.record_system_model_trade(
-            signal_id=signal.signal_id,
-            symbol=signal.symbol,
-            direction=signal.direction,
-            contract_type=signal.contract_type,
-            duration_ticks=int(signal.duration_ticks),
-            reference_base_stake=self.base_stake,
-            is_virtual=False,
-        )
         eligible = self._eligible_purchase_accounts()
         skip_reasons: Counter[str] = Counter()
         stake_by_token: dict[str, float] = {}
@@ -1198,7 +1227,10 @@ class RFDir5TradingBot(TradingBot):
                         signal.signal_id,
                     )
                 continue
-            summary = self.repository.account_summary(account_id)
+            summary = self.repository.account_summary(
+                account_id,
+                managed_account_id=managed_id,
+            )
             if not summary.get("updated_at"):
                 self._set_account_execution_status(
                     managed_id,
@@ -1433,6 +1465,24 @@ class RFDir5TradingBot(TradingBot):
                     registered_account_masks=[],
                 )
                 return
+            # The Global model ledger represents real execution signals, not
+            # qualifying decisions or account-level virtual observations. One
+            # canonical row is created only after at least one monetary Deriv
+            # contract has been registered successfully.
+            self.repository.record_system_model_trade(
+                signal_id=signal.signal_id,
+                symbol=signal.symbol,
+                direction=signal.direction,
+                contract_type=signal.contract_type,
+                duration_ticks=int(signal.duration_ticks),
+                entry_tick_sequence=int(signal.tick_sequence),
+                entry_spot=float(signal.reference_entry_quote),
+                expected_profit_ratio=float(
+                    economics.potential_profit / economics.stake
+                ),
+                reference_base_stake=0.50,
+                is_virtual=False,
+            )
             self._complete_market_rotation_after_purchase(signal.symbol)
             self._save_state()
             self.rf_last_purchase_monotonic = time.monotonic()
@@ -1658,7 +1708,10 @@ class RFDir5TradingBot(TradingBot):
         account_id = str(state.get("account_id") or "")
         if managed_id in {None, ""} or not account_id:
             return
-        summary = self.repository.account_summary(account_id)
+        summary = self.repository.account_summary(
+            account_id,
+            managed_account_id=int(managed_id),
+        )
         current_balance = float(summary.get("balance") or 0.0) + float(profit)
         virtual_config = getattr(self, "virtual_config", None)
         account_martingale = bool(
