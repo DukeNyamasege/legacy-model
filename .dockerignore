@@ -16,3 +16,13 @@ analysis
 model_artifacts
 trading_bot.log
 bot_state.json
+
+# VPS runtime backups and forensic artifacts must never enter API/worker images.
+deploy-backups/
+reset-backups/
+backups/
+*.sql
+*.sql.gz
+*.backup
+*.patch
+*.before-*
