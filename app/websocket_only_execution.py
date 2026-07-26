@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from enhanced_bot import TradingBot, sanitize_account_ids
+from enhanced_bot import TradingBot, mask_account_id, sanitize_account_ids
 
 
 def _masked_app_id(value: Any) -> str:
@@ -154,7 +154,7 @@ async def _websocket_only_purchase_accounts_by_stake(
                 self.logger.warning(
                     "ACCOUNT_PAUSED_INSUFFICIENT_FUNDS account=%s stake=%.2f "
                     "recovery_state_preserved=true",
-                    account_id,
+                    mask_account_id(account_id),
                     stake,
                 )
 
