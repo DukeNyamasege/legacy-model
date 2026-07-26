@@ -147,6 +147,12 @@ class Trade(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    managed_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("managed_accounts.id"), index=True
+    )
+    bulk_batch_id: Mapped[str | None] = mapped_column(
+        ForeignKey("bulk_execution_batches.id"), index=True
+    )
     trade_id: Mapped[str] = mapped_column(String(100), unique=True, index=True)
     signal_id: Mapped[str] = mapped_column(
         ForeignKey("candidate_signals.signal_id"), index=True
@@ -469,12 +475,17 @@ class SystemModelTrade(Base):
     direction: Mapped[str] = mapped_column(String(10), index=True)
     contract_type: Mapped[str] = mapped_column(String(30))
     duration_ticks: Mapped[int] = mapped_column(Integer)
+    entry_tick_sequence: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    expiry_tick_sequence: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    entry_spot: Mapped[float] = mapped_column(Float, default=0.0)
+    exit_spot: Mapped[float | None] = mapped_column(Float)
     signal_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     entry_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     settlement_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     outcome: Mapped[str | None] = mapped_column(String(10), nullable=True)
     is_virtual: Mapped[bool] = mapped_column(Boolean, default=False)
     reference_base_stake: Mapped[float] = mapped_column(Float, default=0.50)
+    expected_profit_ratio: Mapped[float] = mapped_column(Float, default=0.90)
     fixed_stake_profit: Mapped[float] = mapped_column(Float, default=0.0)
     martingale_stake: Mapped[float] = mapped_column(Float, default=0.0)
     martingale_profit: Mapped[float] = mapped_column(Float, default=0.0)
@@ -482,3 +493,76 @@ class SystemModelTrade(Base):
     recovery_debt_before: Mapped[float] = mapped_column(Float, default=0.0)
     recovery_debt_after: Mapped[float] = mapped_column(Float, default=0.0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class SystemModelState(Base):
+    """Account-independent execution state for the canonical model ledger."""
+
+    __tablename__ = "system_model_states"
+
+    run_id: Mapped[int] = mapped_column(ForeignKey("test_runs.id"), primary_key=True)
+    mode: Mapped[str] = mapped_column(String(30), default="REAL")
+    consecutive_real_losses: Mapped[int] = mapped_column(Integer, default=0)
+    consecutive_virtual_wins: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class BulkExecutionBatch(Base):
+    __tablename__ = "bulk_execution_batches"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    signal_id: Mapped[str] = mapped_column(String(36), index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("test_runs.id"), index=True)
+    account_type: Mapped[str] = mapped_column(String(10), index=True)
+    martingale_enabled: Mapped[bool] = mapped_column(Boolean, index=True)
+    stake: Mapped[float] = mapped_column(Float)
+    shard_index: Mapped[int] = mapped_column(Integer)
+    account_count: Mapped[int] = mapped_column(Integer)
+    leader_managed_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("managed_accounts.id")
+    )
+    pre_trade_profit_ratio: Mapped[float] = mapped_column(Float)
+    request_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    request_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    response_received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    latency_ms: Mapped[float | None] = mapped_column(Float)
+    status: Mapped[str] = mapped_column(String(30), default="PREPARED", index=True)
+    successful_count: Mapped[int] = mapped_column(Integer, default=0)
+    failed_count: Mapped[int] = mapped_column(Integer, default=0)
+    unique_start_time_count: Mapped[int | None] = mapped_column(Integer)
+    unique_entry_spot_count: Mapped[int | None] = mapped_column(Integer)
+    unique_expiry_time_count: Mapped[int | None] = mapped_column(Integer)
+    unique_outcome_count: Mapped[int | None] = mapped_column(Integer)
+    first_purchase_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_purchase_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    execution_spread_ms: Mapped[float | None] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class BulkExecutionMember(Base):
+    __tablename__ = "bulk_execution_members"
+    __table_args__ = (
+        UniqueConstraint("batch_id", "managed_account_id", name="uq_bulk_member_batch_account"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    batch_id: Mapped[str] = mapped_column(
+        ForeignKey("bulk_execution_batches.id"), index=True
+    )
+    managed_account_id: Mapped[int] = mapped_column(
+        ForeignKey("managed_accounts.id"), index=True
+    )
+    account_id_masked: Mapped[str] = mapped_column(String(50), index=True)
+    status: Mapped[str] = mapped_column(String(30), default="PENDING", index=True)
+    contract_id: Mapped[str | None] = mapped_column(String(100), index=True)
+    trade_id: Mapped[str | None] = mapped_column(String(100))
+    buy_price: Mapped[float | None] = mapped_column(Float)
+    payout: Mapped[float | None] = mapped_column(Float)
+    profit: Mapped[float | None] = mapped_column(Float)
+    outcome: Mapped[str | None] = mapped_column(String(20))
+    provider_start_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    provider_expiry_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    entry_spot: Mapped[float | None] = mapped_column(Float)
+    error_code: Mapped[str | None] = mapped_column(String(80))
+    error_message: Mapped[str | None] = mapped_column(String(240))
+    purchase_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import hashlib
 import hmac
 import math
@@ -28,6 +29,7 @@ from fastapi.responses import FileResponse, RedirectResponse, JSONResponse
 from pydantic import BaseModel, Field
 import requests
 import json
+import logging
 
 from app.config import load_test2_config
 from app.dashboard_metrics import build_execution_summary
@@ -49,6 +51,7 @@ from app.token_store import (
     encrypt_token,
     has_encryption_key,
     parse_token_lines,
+    remove_trading_api_token,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -67,6 +70,10 @@ GLOBAL_ACCOUNT_REFRESH_LOCK = threading.Lock()
 PERSONAL_ACCOUNT_REFRESH: dict[str, float] = {}
 PERSONAL_ACCOUNT_REFRESH_INFLIGHT: set[str] = set()
 PERSONAL_ACCOUNT_REFRESH_LOCK = threading.Lock()
+PERSONAL_ACCOUNT_REFRESH_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=max(1, int(os.getenv("PERSONAL_ACCOUNT_REFRESH_WORKERS", "4"))),
+    thread_name_prefix="personal-account-refresh",
+)
 DASHBOARD_SUMMARY_CACHE: dict[str, dict[str, object]] = {
     "demo": {"last": 0.0, "data": None},
     "real": {"last": 0.0, "data": None},
@@ -77,6 +84,7 @@ OAUTH_VERIFIER_COOKIE = "deriv_oauth_code_verifier"
 CLIENT_SESSION_COOKIE = "client_session"
 CLIENT_SESSION_DAYS = int(os.getenv("CLIENT_SESSION_DAYS", "30"))
 FIXED_STAKE_AMOUNT = 0.50
+LOGGER = logging.getLogger("legacy_model.api")
 
 
 class DashboardBroadcaster:
@@ -99,11 +107,15 @@ class DashboardBroadcaster:
     async def broadcast(self, payload: dict) -> None:
         async with self._lock:
             clients = list(self._clients)
-        for ws in clients:
+
+        async def send(ws: WebSocket) -> None:
             try:
-                await ws.send_json(payload)
+                await asyncio.wait_for(ws.send_json(payload), timeout=2.0)
             except Exception:
                 await self.disconnect(ws)
+
+        if clients:
+            await asyncio.gather(*(send(ws) for ws in clients))
 
 
 BROADCASTER = DashboardBroadcaster()
@@ -182,7 +194,9 @@ def redirect_to_dashboard(request: Request) -> RedirectResponse:
 
 
 def session_cookie_samesite() -> str:
-    value = os.getenv("CLIENT_SESSION_SAMESITE", "lax").strip().lower()
+    # `None` is required when the optional Netlify dashboard calls the VPS API.
+    # Mutation origin checks and the Secure cookie flag still protect writes.
+    value = os.getenv("CLIENT_SESSION_SAMESITE", "none").strip().lower()
     return value if value in {"lax", "strict", "none"} else "lax"
 
 
@@ -369,6 +383,23 @@ def has_personal_trading_api_token(payload: dict) -> bool:
     return has_trading_api_token(payload) or bool(shared_trading_api_token(payload))
 
 
+def execution_requires_new_token(status: object) -> bool:
+    return str(status or "").strip().lower() in {
+        "credential_error",
+        "token_required",
+        "bulk_execution_pat_required",
+    }
+
+
+def execution_token_was_rejected(status: object, reason: object = "") -> bool:
+    normalized = str(status or "").strip().lower()
+    message = str(reason or "").strip().lower()
+    return normalized == "credential_error" or (
+        normalized in {"token_required", "bulk_execution_pat_required"}
+        and any(marker in message for marker in ("expired", "rejected", "invalid"))
+    )
+
+
 def find_linked_account_for_type(current_payload: dict, account_type: str):
     target_type = normalize_account_type(account_type)
     identity = login_identity_from_payload(current_payload)
@@ -429,6 +460,7 @@ def actively_executing_account_ids() -> set[str]:
         "stop_loss",
         "take_profit",
         "token_required",
+        "bulk_execution_pat_required",
     }
     account_ids: set[str] = set()
     for row in REPOSITORY.list_managed_accounts():
@@ -583,6 +615,7 @@ def filter_summary_to_trading_ready_accounts(
             "stop_loss",
             "take_profit",
             "token_required",
+            "bulk_execution_pat_required",
         }
         linked_contexts = [
             context
@@ -937,51 +970,77 @@ def dashboard_summary(
         except ZoneInfoNotFoundError:
             tz = ZoneInfo("UTC")
         utc_now_value = datetime.now(timezone.utc)
+        local_now = utc_now_value.astimezone(tz)
         today_start = datetime(
-            utc_now_value.year,
-            utc_now_value.month,
-            utc_now_value.day,
+            local_now.year,
+            local_now.month,
+            local_now.day,
             tzinfo=tz,
         ).astimezone(timezone.utc)
         yesterday_start = today_start - timedelta(days=1)
         week_start = today_start - timedelta(days=today_start.weekday())
         month_start = datetime(
-            utc_now_value.year,
-            utc_now_value.month,
+            local_now.year,
+            local_now.month,
             1,
             tzinfo=tz,
         ).astimezone(timezone.utc)
+        all_time_start = datetime(1970, 1, 1, tzinfo=timezone.utc)
+        canonical_trades = REPOSITORY.system_model_trades(
+            start=all_time_start,
+            end=utc_now_value,
+            include_virtual=False,
+        )
         system_today = REPOSITORY.system_performance_summary(
             start=today_start,
             end=utc_now_value,
             simulated_base_stake=0.50,
             include_virtual=False,
+            trades=canonical_trades,
         )
         system_yesterday = REPOSITORY.system_performance_summary(
             start=yesterday_start,
             end=today_start,
             simulated_base_stake=0.50,
             include_virtual=False,
+            trades=canonical_trades,
         )
         system_week = REPOSITORY.system_performance_summary(
             start=week_start,
             end=utc_now_value,
             simulated_base_stake=0.50,
             include_virtual=False,
+            trades=canonical_trades,
         )
         system_month = REPOSITORY.system_performance_summary(
             start=month_start,
             end=utc_now_value,
             simulated_base_stake=0.50,
             include_virtual=False,
+            trades=canonical_trades,
         )
+        system_all_time = REPOSITORY.system_performance_summary(
+            start=all_time_start,
+            end=utc_now_value,
+            simulated_base_stake=0.50,
+            include_virtual=False,
+            trades=canonical_trades,
+        )
+        # Both overview cards and detailed statistics use this same canonical
+        # model ledger. Personal/user contracts never contribute here.
+        result["purchased_trades"] = system_today["total_trades"]
+        result["wins"] = system_today["wins"]
+        result["losses"] = system_today["losses"]
+        result["open_trades"] = REPOSITORY.open_system_model_trade_count()
         result["system_performance"] = {
             "today": system_today,
             "yesterday": system_yesterday,
             "week": system_week,
             "month": system_month,
+            "all_time": system_all_time,
             "timezone": str(tz),
             "daily_reset_hour": today_start.astimezone(tz).hour,
+            "next_session_close_at": (today_start + timedelta(days=1)).isoformat(),
         }
         mode_cache["last"] = now
         mode_cache["data"] = result
@@ -1032,16 +1091,8 @@ def refresh_account_snapshot(
     return REPOSITORY.account_summary(account_id)
 
 
-def refresh_personal_account_snapshot(account: dict) -> dict | None:
+def _refresh_personal_account_snapshot(account: dict) -> dict | None:
     account_id = str(account.get("account_id", "")).strip()
-    ttl_seconds = max(5, int(os.getenv("PERSONAL_ACCOUNT_REFRESH_SECONDS", "30")))
-    now = time.monotonic()
-    with PERSONAL_ACCOUNT_REFRESH_LOCK:
-        if now - PERSONAL_ACCOUNT_REFRESH.get(account_id, 0.0) < ttl_seconds:
-            return None
-        if account_id in PERSONAL_ACCOUNT_REFRESH_INFLIGHT:
-            return None
-        PERSONAL_ACCOUNT_REFRESH_INFLIGHT.add(account_id)
     try:
         try:
             row = REPOSITORY.managed_account(int(account["id"]))
@@ -1071,6 +1122,23 @@ def refresh_personal_account_snapshot(account: dict) -> dict | None:
             PERSONAL_ACCOUNT_REFRESH[account_id] = time.monotonic()
             PERSONAL_ACCOUNT_REFRESH_INFLIGHT.discard(account_id)
 
+
+def schedule_personal_account_refresh(account: dict) -> bool:
+    """Refresh Deriv balance off-request so `/me` never waits on provider latency."""
+    account_id = str(account.get("account_id", "")).strip()
+    if not account_id:
+        return False
+    ttl_seconds = max(5, int(os.getenv("PERSONAL_ACCOUNT_REFRESH_SECONDS", "30")))
+    now = time.monotonic()
+    with PERSONAL_ACCOUNT_REFRESH_LOCK:
+        if now - PERSONAL_ACCOUNT_REFRESH.get(account_id, 0.0) < ttl_seconds:
+            return False
+        if account_id in PERSONAL_ACCOUNT_REFRESH_INFLIGHT:
+            return False
+        PERSONAL_ACCOUNT_REFRESH_INFLIGHT.add(account_id)
+    PERSONAL_ACCOUNT_REFRESH_EXECUTOR.submit(_refresh_personal_account_snapshot, account)
+    return True
+
 app = FastAPI(
     title="RF-DIR5 Guarded",
     version=CONFIG.model.version,
@@ -1081,7 +1149,10 @@ frontend_origins = [
     origin.strip().rstrip("/")
     for origin in os.getenv(
         "FRONTEND_ORIGINS",
-        "http://127.0.0.1:8080,http://localhost:8080,https://derivadmin.site",
+        (
+            "http://127.0.0.1:8080,http://localhost:8080,"
+            "https://derivadmin.site,https://legacymodel.netlify.app"
+        ),
     ).split(",")
     if origin.strip()
 ]
@@ -1107,13 +1178,21 @@ app.add_middleware(
 
 def enforce_mutation_origin(request: Request) -> None:
     fetch_site = request.headers.get("sec-fetch-site", "").strip().lower()
-    if fetch_site == "cross-site":
+    origin = request.headers.get("origin", "").strip().rstrip("/")
+    regex_allowed = bool(
+        origin
+        and frontend_origin_regex
+        and re.fullmatch(frontend_origin_regex, origin)
+    )
+    origin_allowed = bool(
+        origin and (origin in set(frontend_origins) or regex_allowed)
+    )
+    if fetch_site == "cross-site" and not origin_allowed:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cross-site account changes are not allowed",
         )
-    origin = request.headers.get("origin", "").strip().rstrip("/")
-    if origin and origin not in set(frontend_origins):
+    if origin and not origin_allowed:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Request origin is not allowed",
@@ -1154,6 +1233,7 @@ def enforce_personal_mutation_rate_limit(request: Request) -> None:
 @app.middleware("http")
 async def enforce_request_security(request: Request, call_next):
     path = request.url.path
+    request_started = time.perf_counter()
     try:
         if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
             enforce_mutation_origin(request)
@@ -1165,6 +1245,17 @@ async def enforce_request_security(request: Request, call_next):
             content={"detail": exc.detail},
         )
     response = await call_next(request)
+    elapsed_ms = (time.perf_counter() - request_started) * 1000.0
+    response.headers["Server-Timing"] = f"app;dur={elapsed_ms:.1f}"
+    slow_threshold_ms = max(100.0, float(os.getenv("SLOW_REQUEST_MS", "1000")))
+    if elapsed_ms >= slow_threshold_ms:
+        LOGGER.warning(
+            "SLOW_REQUEST method=%s path=%s status=%s duration_ms=%.1f",
+            request.method,
+            path,
+            response.status_code,
+            elapsed_ms,
+        )
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
@@ -1548,7 +1639,11 @@ def get_current_account(request: Request) -> dict | None:
         account_id = str(stored.get("account_id", "")).strip()
         if not account_id:
             return None
-        token_ready = has_personal_trading_api_token(stored)
+        requires_token = execution_requires_new_token(account.get("execution_status"))
+        token_invalid = execution_token_was_rejected(
+            account.get("execution_status"), account.get("execution_status_reason")
+        )
+        token_ready = has_personal_trading_api_token(stored) and not requires_token
         account_type = account_type_from_payload(stored)
         return {
             "id": account["id"],
@@ -1568,6 +1663,7 @@ def get_current_account(request: Request) -> dict | None:
             ),
             "has_trading_api_token": token_ready,
             "requires_api_token": not token_ready,
+            "trading_api_token_invalid": token_invalid,
             "created_at": account["created_at"],
         }
 
@@ -1586,7 +1682,11 @@ def get_current_account(request: Request) -> dict | None:
             except Exception:
                 continue
             if str(stored.get("account_id", "")).strip() == account_id:
-                token_ready = has_personal_trading_api_token(stored)
+                requires_token = execution_requires_new_token(row.execution_status)
+                token_invalid = execution_token_was_rejected(
+                    row.execution_status, row.execution_status_reason
+                )
+                token_ready = has_personal_trading_api_token(stored) and not requires_token
                 account_type = account_type_from_payload(stored)
                 return {
                     "id": row.id,
@@ -1604,6 +1704,7 @@ def get_current_account(request: Request) -> dict | None:
                     "execution_status_reason": str(row.execution_status_reason),
                     "has_trading_api_token": token_ready,
                     "requires_api_token": not token_ready,
+                    "trading_api_token_invalid": token_invalid,
                     "created_at": row.created_at,
                 }
     except Exception:
@@ -1622,8 +1723,11 @@ def get_me(request: Request) -> dict:
     account = get_current_account(request)
     if not account:
         return {"authenticated": False}
-    refresh_personal_account_snapshot(account)
-    personal = REPOSITORY.account_summary(account["account_id"])
+    schedule_personal_account_refresh(account)
+    personal = REPOSITORY.account_summary(
+        account["account_id"],
+        managed_account_id=int(account["id"]),
+    )
             
     return {
         "authenticated": True,
@@ -1634,6 +1738,9 @@ def get_me(request: Request) -> dict:
         "enabled": account["enabled"],
         "has_trading_api_token": account.get("has_trading_api_token", False),
         "requires_api_token": account.get("requires_api_token", True),
+        "trading_api_token_invalid": account.get(
+            "trading_api_token_invalid", False
+        ),
         "balance": personal["balance"],
         "currency": personal["currency"],
         "status": personal["status"],
@@ -1825,11 +1932,16 @@ def save_personal_api_token(request: Request, body: PersonalApiTokenRequest) -> 
             "auth_type": "oauth",
             "account_id": str(account["account_id"]).strip(),
         }
-    if has_trading_api_token(payload):
+    replacing_rejected_token = execution_requires_new_token(
+        row.get("execution_status")
+    )
+    if has_trading_api_token(payload) and not replacing_rejected_token:
         raise HTTPException(
             status_code=409,
             detail="A Deriv API token is already connected for this account.",
         )
+    if replacing_rejected_token:
+        payload = remove_trading_api_token(payload)
     try:
         accounts = load_options_accounts(api_token)
     except requests.HTTPError as exc:
@@ -2225,7 +2337,9 @@ def settings_accounts(_: str = Depends(require_control_auth)) -> dict:
         try:
             payload = decrypt_auth_payload(row.token_secret, CONFIG.deriv.token_encryption_key)
             auth_type = str(payload.get("auth_type", "pat")).strip() or "pat"
-            token_ready = has_trading_api_token(payload)
+            token_ready = has_trading_api_token(payload) and not execution_requires_new_token(
+                row.execution_status
+            )
             account_id = str(payload.get("account_id", "")).strip()
             account_type = account_type_from_payload(payload)
             if len(account_id) > 6:
@@ -2239,7 +2353,7 @@ def settings_accounts(_: str = Depends(require_control_auth)) -> dict:
                 "label": row.label or f"Account {row.id}",
                 "enabled": row.enabled,
                 "account_type": account_type,
-                "token_masked": "Stored securely",
+                "token_masked": "Stored securely" if token_ready else "Not connected",
                 "auth_type": auth_type,
                 "has_trading_api_token": token_ready,
                 "can_receive_trades": bool(row.enabled and token_ready),
@@ -2322,8 +2436,19 @@ def import_accounts(
     }
 
 
+def _system_reporting_timezone() -> ZoneInfo:
+    try:
+        return ZoneInfo(
+            os.getenv("TRADING_REPORT_TIMEZONE")
+            or os.getenv("DASHBOARD_TIMEZONE")
+            or "Africa/Nairobi"
+        )
+    except ZoneInfoNotFoundError:
+        return ZoneInfo("UTC")
+
+
 def _system_period_bounds(period: str, tz: ZoneInfo | None = None) -> tuple[datetime, datetime]:
-    tz = tz or ZoneInfo("Africa/Nairobi")
+    tz = tz or _system_reporting_timezone()
     now = datetime.now(timezone.utc).astimezone(tz)
     today_start = datetime(now.year, now.month, now.day, tzinfo=tz)
     normalized = str(period or "today").strip().lower()
@@ -2358,26 +2483,56 @@ def system_model_trades(
     }
 
 
-@app.get("/metrics/system-performance")
-def system_performance(
+@app.get("/control/martingale-cohort")
+def martingale_cohort_diagnostics(
     period: str = "today",
-    simulated_base_stake: float = 0.50,
-    include_virtual: bool = False,
     _: str = Depends(require_control_auth),
 ) -> dict:
-    start, end = _system_period_bounds(period)
-    stake = max(0.35, float(simulated_base_stake))
+    """Token-free observed execution-cohort audit for administrators."""
+    normalized_period = str(period or "today").strip().lower()
+    if normalized_period not in {"today", "yesterday", "week", "month"}:
+        raise HTTPException(status_code=400, detail="Unsupported performance period")
+    start, end = _system_period_bounds(normalized_period)
+    return {
+        "period": normalized_period,
+        "timezone": str(_system_reporting_timezone()),
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        **REPOSITORY.observed_martingale_performance(
+            start=start,
+            end=end,
+            include_signal_diagnostics=True,
+        ),
+    }
+
+
+@app.get("/metrics/system-performance")
+def system_performance(
+    request: Request,
+    period: str = "today",
+    simulated_base_stake: float = 0.50,
+) -> dict:
+    normalized_period = str(period or "today").strip().lower()
+    if normalized_period not in {"today", "yesterday", "week", "month"}:
+        raise HTTPException(status_code=400, detail="Unsupported performance period")
+    if not math.isfinite(simulated_base_stake):
+        raise HTTPException(status_code=400, detail="Simulation stake must be finite")
+    start, end = _system_period_bounds(normalized_period)
+    stake = min(1000.0, max(0.50, float(simulated_base_stake)))
+    viewer = get_current_account(request)
     summary = REPOSITORY.system_performance_summary(
         start=start,
         end=end,
         simulated_base_stake=stake,
-        include_virtual=include_virtual,
+        include_virtual=False,
+        viewer_managed_account_id=int(viewer["id"]) if viewer else None,
     )
     summary.update(
         {
-            "period": period,
-            "timezone": "Africa/Nairobi",
-            "minimum_stake": 0.35,
+            "period": normalized_period,
+            "timezone": str(_system_reporting_timezone()),
+            "minimum_stake": 0.50,
+            "maximum_stake": 1000.0,
         }
     )
     return summary
@@ -2397,6 +2552,19 @@ async def ws_dashboard(ws: WebSocket) -> None:
         pass
     finally:
         await BROADCASTER.disconnect(ws)
+
+
+@app.post("/control/internal/dashboard-settlement-refresh")
+async def dashboard_settlement_refresh(
+    _administrator: str = Depends(require_control_auth),
+) -> dict[str, bool]:
+    """Worker-only settlement hook: invalidate cache and push immediately."""
+    for cached in DASHBOARD_SUMMARY_CACHE.values():
+        cached["data"] = None
+        cached["last"] = 0.0
+    summary = await asyncio.to_thread(dashboard_summary, force=True)
+    await BROADCASTER.broadcast({"type": "snapshot", "data": summary})
+    return {"broadcast": True}
 
 
 @app.on_event("startup")

@@ -25,6 +25,7 @@ import re
 import socket
 import subprocess
 import math
+import secrets
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -1476,6 +1477,20 @@ class TradingBot:
             return
         try:
             normalized = str(status or "inactive").strip().lower()
+            if normalized == "credential_error":
+                discarded = self.repository.discard_rejected_trading_token(
+                    int(managed_account_id),
+                    reason=(
+                        "Deriv API token expired or was rejected. Enter a new active "
+                        "API token to resume AutoTrade."
+                    ),
+                )
+                if discarded:
+                    self.logger.warning(
+                        "REJECTED_TRADING_TOKEN_REMOVED affected_accounts=%s",
+                        len(discarded),
+                    )
+                    return
             if normalized in {
                 "credential_error",
                 "duplicate",
@@ -1501,14 +1516,14 @@ class TradingBot:
             )
 
     def _managed_account_id_for_token(self, token: str) -> int | None:
-        value = self.user_profiles.get(token, {}).get("managed_account_id")
+        value = getattr(self, "user_profiles", {}).get(token, {}).get("managed_account_id")
         try:
             return int(value) if value not in {None, ""} else None
         except (TypeError, ValueError):
             return None
 
     def _credential_for_token(self, token: str) -> str:
-        return str(self.user_profiles.get(token, {}).get("api_token") or token)
+        return str(getattr(self, "user_profiles", {}).get(token, {}).get("api_token") or token)
 
     def _load_runtime_accounts(self) -> Tuple[List[str], Dict[str, Dict[str, Any]]]:
         managed_accounts = self.repository.list_managed_accounts()
@@ -1643,8 +1658,8 @@ class TradingBot:
                 if not token:
                     self._set_account_execution_status(
                         int(row.id),
-                        "token_required",
-                        "A verified Deriv API token is required",
+                        "bulk_execution_pat_required",
+                        "A verified Deriv Personal Access Token with trade scope is required",
                     )
                     self.logger.error(
                         "Managed account %s is missing a Deriv API token/PAT required "
@@ -3527,6 +3542,7 @@ class TradingBot:
                 signal=signal,
                 eligible_accounts=eligible_accounts,
                 stake_by_token=stake_by_token,
+                pre_trade_profit_ratio=profit_ratio,
             )
             signal_contracts: Set[int] = set()
             registered_account_ids: Set[str] = set()
@@ -3691,6 +3707,8 @@ class TradingBot:
                 provider_start_time=optional_epoch_datetime(transaction.get("start_time")),
                 contract_duration=self.duration,
                 contract_duration_unit=self.duration_unit,
+                managed_account_id=self._managed_account_id_for_token(token),
+                bulk_batch_id=transaction.get("bulk_batch_id"),
             )
         except Exception:
             # The provider already opened this contract. Isolate it to this account
@@ -3771,40 +3789,60 @@ class TradingBot:
         signal: CandidateSignal,
         eligible_accounts: List[Tuple[str, str]],
         stake_by_token: Dict[str, float],
+        pre_trade_profit_ratio: float = 0.0,
     ) -> List[Dict[str, Any]]:
-        groups: Dict[float, List[Tuple[str, str]]] = {}
+        groups: Dict[Tuple[str, bool, float], List[Tuple[str, str]]] = {}
+        rejected: List[Dict[str, Any]] = []
         for token, account_id in eligible_accounts:
-            stake = round(float(stake_by_token[token]), 2)
-            groups.setdefault(stake, []).append((token, account_id))
-
-        tasks = [
-            self._purchase_stake_group(
-                signal=signal,
-                eligible_accounts=accounts,
-                stake_amount=stake,
-            )
-            for stake, accounts in groups.items()
-        ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        transactions: List[Dict[str, Any]] = []
-        for (stake, accounts), result in zip(groups.items(), results):
-            if isinstance(result, Exception):
-                message = sanitize_account_ids(str(result))
-                self.logger.warning(
-                    "Purchase group failed signal_id=%s stake=%.2f account_count=%s: %s; "
-                    "retrying accounts independently",
-                    signal.signal_id,
-                    stake,
-                    len(accounts),
+            if not self._bulk_purchase_token_capable(token):
+                message = "A Personal Access Token with trade scope is required for bulk execution"
+                self._set_account_execution_status(
+                    self._managed_account_id_for_token(token),
+                    "bulk_execution_pat_required",
                     message,
                 )
-                result = await self._purchase_via_private_sessions(
-                    signal=signal,
-                    eligible_accounts=accounts,
-                    stake_amount=stake,
-                )
+                rejected.append({"account_id": account_id, "error": {"code": "PAT_REQUIRED", "message": message}})
+                continue
+            stake = round(float(stake_by_token[token]), 2)
+            environment = self._account_environment_for_token(token)
+            martingale = bool(self.user_profiles.get(token, {}).get("martingale_enabled", True))
+            groups.setdefault((environment, martingale, stake), []).append((token, account_id))
+
+        shards: List[Tuple[Tuple[str, bool, float], int, List[Tuple[str, str]]]] = []
+        for key, accounts in sorted(groups.items(), key=lambda item: item[0]):
+            accounts.sort(key=lambda item: (self._managed_account_id_for_token(item[0]) or 2**63, item[1]))
+            for offset in range(0, len(accounts), 100):
+                shards.append((key, offset // 100 + 1, accounts[offset : offset + 100]))
+            self.logger.info(
+                "BULK_EXECUTION_PREPARED signal_id=%s team=%s stake=%.2f shards=%s accounts=%s",
+                signal.signal_id,
+                "TEAM_MARTINGALE" if key[1] else "TEAM_FLAT",
+                key[2],
+                (len(accounts) + 99) // 100,
+                len(accounts),
+            )
+
+        tasks = [
+            self._purchase_stake_group_for_environment(
+                signal=signal,
+                eligible_accounts=accounts,
+                stake_amount=key[2],
+                environment=key[0],
+                martingale_enabled=key[1],
+                shard_index=shard_index,
+                pre_trade_profit_ratio=pre_trade_profit_ratio,
+            )
+            for key, shard_index, accounts in shards
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        transactions: List[Dict[str, Any]] = list(rejected)
+        for (key, _shard_index, accounts), result in zip(shards, results):
+            if isinstance(result, Exception):
+                message = sanitize_account_ids(str(result))
+                self.logger.error("Bulk shard failed signal_id=%s stake=%.2f accounts=%s: %s; no retry", signal.signal_id, key[2], len(accounts), message)
+                result = [{"account_id": account_id, "error": {"code": "BULK_SHARD_FAILED", "message": message}} for _token, account_id in accounts]
             for transaction in result:
-                transaction["stake_amount"] = stake
+                transaction["stake_amount"] = key[2]
                 transactions.append(transaction)
         return transactions
 
@@ -3873,7 +3911,12 @@ class TradingBot:
         eligible_accounts: List[Tuple[str, str]],
         stake_amount: float,
         environment: str,
+        martingale_enabled: bool = True,
+        shard_index: int = 1,
+        pre_trade_profit_ratio: float = 0.0,
     ) -> List[Dict[str, Any]]:
+        if len(eligible_accounts) > 100:
+            raise ValueError("Deriv bulk purchase shards cannot exceed 100 accounts")
         environment = normalize_account_type(environment, self.environment)
         if environment == "real" and not self._real_trading_allowed():
             message = "Real trading is disabled on this VPS"
@@ -3893,26 +3936,29 @@ class TradingBot:
                 {"account_id": account_id, "error": {"message": message}}
                 for _token, account_id in eligible_accounts
             ]
-        incompatible = self._bulk_purchase_incompatible_accounts(eligible_accounts)
-        if self._requires_private_purchase_transport(
-            account_count=len(eligible_accounts),
-            bulk_incompatible_accounts=incompatible,
-        ):
-            self.logger.info(
-                "APP_MARKUP_DIRECT_TRANSPORT percentage=%.2f app_id=%s "
-                "account_count=%s environment=%s",
-                self.app_markup_percentage,
-                mask_app_id(self.app_id),
-                len(eligible_accounts),
-                environment,
-            )
-            return await self._purchase_via_private_sessions(
-                signal=signal,
-                eligible_accounts=eligible_accounts,
-                stake_amount=stake_amount,
-            )
-
         bulk_path = f"/trading/v1/options/contracts/bulk-purchase/{environment}"
+        request_started_at = datetime.now(timezone.utc)
+        leader_token, leader_account = secrets.choice(eligible_accounts)
+        leader_id = self._managed_account_id_for_token(leader_token)
+        members = [
+            {"managed_account_id": self._managed_account_id_for_token(token), "account_id_masked": mask_account_id(account_id)}
+            for token, account_id in eligible_accounts
+        ]
+        if any(member["managed_account_id"] is None for member in members):
+            raise ValueError("Every bulk member must have a managed account identity")
+        batch_id = self.repository.create_bulk_execution_batch(
+            signal_id=signal.signal_id,
+            account_type=environment,
+            martingale_enabled=martingale_enabled,
+            stake=stake_amount,
+            shard_index=shard_index,
+            leader_managed_account_id=leader_id,
+            pre_trade_profit_ratio=pre_trade_profit_ratio,
+            members=members,
+            request_metadata={"endpoint": bulk_path, "symbol": signal.symbol, "contract_type": signal.contract_type, "duration": self.duration, "duration_unit": self.duration_unit},
+            request_started_at=request_started_at,
+        )
+        self.logger.info("BULK_EXECUTION_DISPATCH batch_id=%s stake=%.2f accounts=%s shard=%s leader=%s", batch_id, stake_amount, len(eligible_accounts), shard_index, mask_account_id(leader_account))
         self.logger.info(
             "BULK_PURCHASE_REQUEST endpoint=%s app_id=%s account_count=%s "
             "accounts=%s pat_fingerprints=%s symbol=%s contract_type=%s stake=%.2f",
@@ -3925,6 +3971,7 @@ class TradingBot:
             signal.contract_type,
             stake_amount,
         )
+        sent_monotonic = time.monotonic()
         response = await _rest_request(
             "POST",
             bulk_path,
@@ -3946,20 +3993,23 @@ class TradingBot:
                 ],
             },
         )
+        received_at = datetime.now(timezone.utc)
+        latency_ms = (time.monotonic() - sent_monotonic) * 1000.0
         if "error" in response:
             message = sanitize_account_ids(
                 response["error"].get("message", "Bulk purchase request failed")
             )
-            self.logger.warning(
-                "REST Bulk Purchase request failed: %s; retrying each account "
-                "through its private connection",
-                message,
-            )
-            return await self._purchase_via_private_sessions(
-                signal=signal,
-                eligible_accounts=eligible_accounts,
-                stake_amount=stake_amount,
-            )
+            permanent = is_permanent_credential_error(response["error"])
+            for token, _account_id in eligible_accounts:
+                self._set_account_execution_status(
+                    self._managed_account_id_for_token(token),
+                    "credential_error" if permanent else "error",
+                    message,
+                )
+            results = [{"account_id": account_id, "managed_account_id": self._managed_account_id_for_token(token), "bulk_batch_id": batch_id, "error": {"code": response["error"].get("code", "BULK_REQUEST_FAILED"), "message": message}} for token, account_id in eligible_accounts]
+            self.repository.complete_bulk_execution_batch(batch_id, response_received_at=received_at, latency_ms=latency_ms, results=results)
+            self.logger.error("BULK_EXECUTION_RESULT batch_id=%s success=0 failed=%s latency_ms=%.2f", batch_id, len(results), latency_ms)
+            return results
 
         transactions = list(response.get("data", {}).get("transactions", []))
         errors = list(response.get("errors") or [])
@@ -3974,11 +4024,31 @@ class TradingBot:
                 "REST Bulk Purchase validation failed for one or more accounts: %s",
                 messages,
             )
-        successful_transactions = [
-            transaction
-            for transaction in transactions
-            if transaction.get("contract_id") and not transaction.get("error")
-        ]
+        transaction_by_account = {str(item.get("account_id") or ""): item for item in transactions}
+        error_by_account = {str(item.get("account_id") or ""): item for item in errors}
+        results: List[Dict[str, Any]] = []
+        for token, account_id in eligible_accounts:
+            item = dict(transaction_by_account.get(account_id) or {})
+            error = item.get("error") or error_by_account.get(account_id)
+            item.update({"account_id": account_id, "managed_account_id": self._managed_account_id_for_token(token), "bulk_batch_id": batch_id})
+            item["purchase_timestamp"] = optional_epoch_datetime(item.get("purchase_time"))
+            if not item.get("contract_id"):
+                item["error"] = error or {"code": "BULK_MEMBER_MISSING", "message": "Deriv returned no transaction for this account"}
+                permanent = is_permanent_credential_error(item["error"])
+                self._set_account_execution_status(
+                    self._managed_account_id_for_token(token),
+                    "credential_error" if permanent else "error",
+                    sanitize_account_ids(str(item["error"].get("message", "Bulk purchase failed"))),
+                )
+                self.logger.error("BULK_MEMBER_FAILED account=%s code=%s reason=%s", mask_account_id(account_id), item["error"].get("code", "unknown"), sanitize_account_ids(str(item["error"].get("message", "Bulk purchase failed"))))
+            else:
+                self._set_account_execution_status(
+                    self._managed_account_id_for_token(token),
+                    "active",
+                    "Bulk contract purchased successfully",
+                )
+            results.append(item)
+        successful_transactions = [item for item in results if item.get("contract_id") and not item.get("error")]
         self.logger.info(
             "BULK_PURCHASE_RESPONSE endpoint=%s app_id=%s purchased=%s errors=%s "
             "accounts=%s contracts=%s",
@@ -3995,30 +4065,9 @@ class TradingBot:
                 for transaction in successful_transactions
             ],
         )
-        completed_account_ids = {
-            str(transaction.get("account_id") or "")
-            for transaction in successful_transactions
-        }
-        missing_accounts = [
-            (token, account_id)
-            for token, account_id in eligible_accounts
-            if account_id not in completed_account_ids
-        ]
-        if not missing_accounts:
-            return successful_transactions
-
-        self.logger.warning(
-            "BULK_ACCOUNT_FALLBACK signal_id=%s missing_accounts=%s; "
-            "retrying only missing accounts privately",
-            signal.signal_id,
-            [mask_account_id(account_id) for _token, account_id in missing_accounts],
-        )
-        fallback_transactions = await self._purchase_via_private_sessions(
-            signal=signal,
-            eligible_accounts=missing_accounts,
-            stake_amount=stake_amount,
-        )
-        return successful_transactions + fallback_transactions
+        self.repository.complete_bulk_execution_batch(batch_id, response_received_at=received_at, latency_ms=latency_ms, results=results)
+        self.logger.info("BULK_EXECUTION_RESULT batch_id=%s success=%s failed=%s latency_ms=%.2f", batch_id, len(successful_transactions), len(results) - len(successful_transactions), latency_ms)
+        return results
 
     async def _purchase_via_private_sessions(
         self,
@@ -4230,7 +4279,7 @@ class TradingBot:
         return ""
 
     def _auth_type_for_token(self, token: str) -> str:
-        profile = self.user_profiles.get(token, {})
+        profile = getattr(self, "user_profiles", {}).get(token, {})
         return str(profile.get("auth_type", "pat")).strip().lower() or "pat"
 
     def _account_environment_for_token(self, token: str) -> str:
@@ -4259,7 +4308,7 @@ class TradingBot:
         )
 
     def _bulk_purchase_token_capable(self, token: str) -> bool:
-        return self._auth_type_for_token(token) != "oauth"
+        return self._auth_type_for_token(token) == "pat" and bool(self._credential_for_token(token))
 
     def _bulk_purchase_incompatible_accounts(
         self, accounts: List[Tuple[str, str]]
@@ -4276,11 +4325,11 @@ class TradingBot:
         account_count: int,
         bulk_incompatible_accounts: List[str],
     ) -> bool:
-        del account_count
-        return bool(
-            bulk_incompatible_accounts
-            or float(getattr(self, "app_markup_percentage", 0.0) or 0.0) > 0
-        )
+        # Compatibility hook retained for callers outside RF-PUT5. The RF
+        # engine never selects private purchase transport: invalid PAT members
+        # are excluded and markup is controlled by the registered Deriv App ID.
+        del account_count, bulk_incompatible_accounts
+        return False
 
     def _eligible_purchase_accounts(self) -> List[Tuple[str, str]]:
         accounts = list(self.valid_clients)
@@ -4607,6 +4656,27 @@ class TradingBot:
             f"{commission:.4f}" if commission is not None else "unavailable",
             extra=extra,
         )
+        consistency = self.repository.bulk_execution_consistency(str(contract_id))
+        if isinstance(consistency, dict) and consistency:
+            self.logger.info(
+                "BULK_SETTLEMENT batch_id=%s account=%s contract_id=%s outcome=%s buy_price=%s payout=%s profit=%.2f",
+                consistency.get("batch_id"),
+                mask_account_id(account_id),
+                contract_id,
+                outcome.upper(),
+                buy_price,
+                payout,
+                profit,
+            )
+            self.logger.info(
+                "BULK_CONSISTENCY signal_id=%s accounts=%s matching=%s different=%s consistency_pct=%s dispatch_spread_ms=%.2f",
+                consistency.get("signal_id"),
+                consistency.get("successful_contracts"),
+                consistency.get("matching"),
+                consistency.get("different"),
+                consistency.get("execution_consistency_pct"),
+                float(consistency.get("dispatch_spread_ms") or 0.0),
+            )
         lifecycle_seconds = self._contract_age_seconds(contract_id)
         provider_lifecycle_seconds = None
         if provider_purchase_time and provider_settlement_time:
@@ -4729,7 +4799,23 @@ class TradingBot:
                 )
 
         self._save_state()
+        await self._notify_dashboard_settlement()
         await self._finish_contract_transport_cleanup(token, contract_id)
+
+    async def _notify_dashboard_settlement(self) -> None:
+        """Ask the API process to invalidate its cache and push the committed settlement."""
+        url = os.getenv("INTERNAL_DASHBOARD_REFRESH_URL", "").strip()
+        api_key = os.getenv("CONTROL_API_KEY", "").strip()
+        if not url or not api_key:
+            return
+        try:
+            timeout = aiohttp.ClientTimeout(total=2.0)
+            async with aiohttp.ClientSession(timeout=timeout) as client:
+                async with client.post(url, headers={"X-API-Key": api_key}) as response:
+                    if response.status >= 400:
+                        self.logger.warning("DASHBOARD_SETTLEMENT_PUSH_FAILED status=%s", response.status)
+        except Exception as exc:
+            self.logger.warning("DASHBOARD_SETTLEMENT_PUSH_FAILED error=%s", sanitize_account_ids(str(exc)))
 
     async def _watchdog_loop(self) -> None:
         await asyncio.sleep(min(self.max_tick_silence_seconds, self.watchdog_poll_interval_seconds))

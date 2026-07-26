@@ -1173,8 +1173,7 @@
     .gbs-platform-card,
     .gbs-panel,
     .gbs-period-card,
-    .gbs-risk-card,
-    .gbs-footer {
+    .gbs-risk-card {
       border: 1px solid var(--gbs-line);
       background: linear-gradient(145deg, #07111d 0%, #091522 100%);
       box-shadow: none;
@@ -1315,11 +1314,7 @@
     .gbs-money.fixed { color: var(--gbs-blue); }
     .gbs-money.negative { color: var(--gbs-red) !important; }
     .gbs-money-label { margin-top: 8px; color: #9fb1c5; font-size: .75rem; }
-    .gbs-sparkline { display: block; width: 100%; height: 40px; margin-top: 7px; overflow: visible; }
-    .gbs-sparkline path { fill: none; stroke-width: 1.8; vector-effect: non-scaling-stroke; }
-    .gbs-sparkline .green { stroke: var(--gbs-green); }
-    .gbs-sparkline .blue { stroke: var(--gbs-blue); }
-    .gbs-sparkline .red { stroke: var(--gbs-red); }
+    .gbs-stake-detail { margin-top: 4px; color: #fff; font-size: .9rem; }
     .gbs-simulator {
       display: grid;
       align-content: start;
@@ -1457,7 +1452,6 @@
     .gbs-period-pct { display: block; margin-top: 5px; font-size: .72rem; font-weight: 650; color: var(--gbs-green); }
     .fixed-side .gbs-period-pct { color: var(--gbs-blue); }
     .gbs-period-pct.negative { color: var(--gbs-red) !important; }
-    .gbs-period-card .gbs-sparkline { height: 30px; margin-top: 4px; }
 
     .gbs-risk-grid {
       display: grid;
@@ -1472,45 +1466,6 @@
     .gbs-risk-card .good { color: var(--gbs-green); }
     .gbs-risk-card .bad { color: var(--gbs-red); }
     .gbs-risk-card .status-value { text-transform: uppercase; }
-
-    .gbs-footer {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 18px;
-      margin-top: 14px;
-      padding: 13px 16px;
-      border-radius: 10px;
-    }
-    .gbs-footer-copy { display: grid; grid-template-columns: 28px 1fr; gap: 10px; align-items: center; }
-    .gbs-info-icon {
-      display: grid;
-      width: 27px;
-      height: 27px;
-      place-items: center;
-      border: 2px solid #3a9bff;
-      border-radius: 50%;
-      color: #3a9bff;
-      font-size: .78rem;
-      font-weight: 800;
-    }
-    .gbs-footer p { margin: 0; color: #9eb0c5; font-size: .72rem; line-height: 1.55; }
-    .gbs-details-link {
-      display: inline-flex;
-      align-items: center;
-      gap: 10px;
-      min-height: 38px;
-      padding: 0 16px;
-      border: 1px solid rgba(51, 152, 255, .72);
-      border-radius: 8px;
-      color: #46a2ff;
-      background: rgba(5, 22, 38, .34);
-      font-size: .75rem;
-      font-weight: 650;
-      text-decoration: none;
-      white-space: nowrap;
-    }
-    .gbs-details-link:hover { background: rgba(51, 152, 255, .08); }
 
     /* Keep the activity table visually consistent with the redesigned global board. */
     .contract-history {
@@ -1549,7 +1504,6 @@
       .gbs-pnl-block { padding: 12px 10px 8px; }
       .gbs-money { font-size: 1.6rem; margin-top: 6px; }
       .gbs-money-label { font-size: .68rem; margin-top: 5px; }
-      .gbs-sparkline { height: 28px; margin-top: 4px; }
       .gbs-simulator { padding: 12px 0 0; }
       .gbs-sim-title { font-size: .72rem; }
       .gbs-sim-copy { font-size: .65rem; margin-top: 5px; }
@@ -1578,7 +1532,6 @@
       .gbs-period-money { font-size: 1.05rem; margin-top: 5px; }
       .gbs-period-caption { font-size: .58rem; margin-top: 4px; }
       .gbs-period-pct { font-size: .64rem; margin-top: 4px; }
-      .gbs-period-card .gbs-sparkline { height: 22px; margin-top: 3px; }
       .gbs-risk-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; padding: 0 8px 8px; }
       .gbs-risk-card { min-height: auto; padding: 9px 10px; border-radius: 8px; }
       .gbs-risk-card span { font-size: .65rem; }
@@ -1590,11 +1543,6 @@
       .gbs-panel-head { padding: 10px 12px 6px; }
       .gbs-panel-head h3 { font-size: .85rem; }
       .gbs-trades-panel { padding: 12px; }
-      .gbs-footer { padding: 10px 12px; gap: 10px; margin-top: 10px; }
-      .gbs-footer p { font-size: .65rem; }
-      .gbs-details-link { min-height: 32px; padding: 0 12px; font-size: .68rem; }
-      .gbs-info-icon { width: 22px; height: 22px; font-size: .68rem; }
-    }
     @media (max-width: 480px) {
       main { width: calc(100% - 14px); padding-top: 12px; }
       .gbs-topbar { flex-direction: column; gap: 8px; }
@@ -1628,7 +1576,6 @@
       .gbs-pnl-pair { border-radius: 8px; }
       .gbs-money { font-size: 1.4rem; margin-top: 5px; }
       .gbs-money-label { font-size: .62rem; margin-top: 4px; }
-      .gbs-sparkline { height: 22px; }
       .gbs-simulator { padding: 10px 0 0; }
       .gbs-sim-title { font-size: .68rem; gap: 5px; }
       .gbs-sim-copy { font-size: .6rem; margin-top: 4px; }
@@ -1660,22 +1607,12 @@
       .gbs-period-money { font-size: .95rem; margin-top: 4px; }
       .gbs-period-caption { font-size: .55rem; margin-top: 3px; }
       .gbs-period-pct { font-size: .6rem; margin-top: 3px; }
-      .gbs-period-card .gbs-sparkline { height: 18px; margin-top: 2px; }
       .gbs-risk-wrap { margin-top: 10px; border-radius: 10px; }
       .gbs-risk-grid { grid-template-columns: repeat(2, 1fr); gap: 6px; padding: 0 6px 6px; }
       .gbs-risk-card { min-height: auto; padding: 7px 8px; border-radius: 8px; }
       .gbs-risk-card span { font-size: .6rem; }
       .gbs-risk-card strong { font-size: 1rem; margin-top: 5px; }
       .gbs-risk-card small { font-size: .55rem; margin-top: 5px; }
-      .gbs-footer { padding: 8px 10px; gap: 8px; margin-top: 8px; border-radius: 8px; }
-      .gbs-footer p { font-size: .6rem; }
-      .gbs-details-link { min-height: 28px; padding: 0 10px; font-size: .64rem; }
-      .gbs-info-icon { width: 20px; height: 20px; font-size: .64rem; border-width: 1px; }
-      .contract-table { min-width: 320px; font-size: .72rem; }
-      .contract-table th, .contract-table td { padding: 6px 7px; }
-      .contract-status { min-width: 50px; padding: 3px 7px; font-size: .64rem; }
-      .mode-badge { min-height: 18px; padding: 0 6px; font-size: .6rem; }
-    }
 
   </style>
 </head>
@@ -1840,6 +1777,7 @@
     id="global-dashboard-snapshot"
     class="global-dashboard-snapshot"
     data-snapshot-ready="false"
+    data-snapshot-state="loading"
     aria-label="Global Bot Statistics"
   >
     <div class="gbs-topbar">
@@ -1883,16 +1821,16 @@
         </article>
         <article class="gbs-platform-card">
           <div class="gbs-platform-icon"><svg class="gbs-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 20V10M10 20V5M16 20v-8M22 20V3"/><path d="M3 20h19"/></svg></div>
-          <div><span class="gbs-card-label">Total Trades Today</span><strong id="model-trades-today">0</strong><small class="gbs-card-note">Executed by the system</small></div>
+          <div><span class="gbs-card-label">Total Trades Today</span><strong id="model-trades-today">0</strong><small class="gbs-card-note" title="Counts real execution signals. Individual accounts may differ while virtual protection is active.">Executed by the system</small></div>
         </article>
         <article class="gbs-platform-card">
           <div class="gbs-platform-icon"><svg class="gbs-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="6"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg></div>
           <div><span class="gbs-card-label">Open Trades</span><strong id="open-model-trades">0</strong><small class="gbs-card-note">Positions currently open</small></div>
         </article>
         <article class="gbs-platform-card gbs-reset-card">
-          <div class="gbs-reset-title"><svg class="gbs-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18M8 14h2M14 14h2M8 18h2"/></svg>System Reset (Daily)</div>
-          <small class="gbs-card-note">Resets daily at <strong id="daily-reset" style="display:inline;margin:0;font-size:inherit;color:inherit;">00:00</strong></small>
-          <div class="gbs-reset-row"><span>Current session</span><strong id="session-clock">00:00:00</strong></div>
+          <div class="gbs-reset-title"><svg class="gbs-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>Day Close Countdown</div>
+          <small class="gbs-card-note">Configured session timezone: <strong id="session-timezone" style="display:inline;margin:0;font-size:inherit;color:inherit;">—</strong></small>
+          <div class="gbs-reset-row"><span>Time remaining</span><strong id="session-clock">--:--:--</strong></div>
         </article>
       </div>
     </section>
@@ -1906,23 +1844,25 @@
               <span class="gbs-card-label">With Martingale</span>
               <strong id="model-pl-martingale" class="gbs-money martingale">+$0.00</strong>
               <div class="gbs-money-label">Profit / Loss (USD)</div>
-              <svg class="gbs-sparkline" viewBox="0 0 200 45" preserveAspectRatio="none" aria-hidden="true"><path class="green" d="M2 33 L12 24 L21 31 L34 29 L45 31 L57 29 L68 25 L78 26 L88 20 L101 24 L113 19 L125 27 L136 29 L149 24 L160 22 L172 14 L184 18 L198 9"/></svg>
+              <div class="gbs-money-label">Maximum Stake</div>
+              <strong id="model-maximum-stake" class="gbs-stake-detail">$0.50</strong>
             </div>
             <div class="gbs-pnl-block">
               <span class="gbs-card-label">Without Martingale</span>
               <strong id="model-pl-fixed" class="gbs-money fixed">+$0.00</strong>
               <div class="gbs-money-label">Profit / Loss (USD)</div>
-              <svg class="gbs-sparkline" viewBox="0 0 200 45" preserveAspectRatio="none" aria-hidden="true"><path class="blue" d="M2 34 L12 25 L23 29 L35 31 L48 32 L58 34 L69 30 L80 32 L92 35 L104 33 L116 22 L127 20 L139 26 L151 25 L162 30 L174 20 L186 22 L198 12"/></svg>
+              <div class="gbs-money-label">Flat Stake</div>
+              <strong id="model-flat-stake" class="gbs-stake-detail">$0.50</strong>
             </div>
           </div>
           <div class="gbs-simulator">
             <div class="gbs-sim-title">Simulate Your Stake <span title="Simulation only; it does not change live trading settings" style="color:#318fff;">ⓘ</span></div>
             <div class="gbs-sim-copy">Adjust stake to see simulated P/L from recorded model trades.</div>
             <div class="gbs-slider-row">
-              <input type="range" id="stake-simulator-slider" min="0.50" max="100" step="0.01" value="0.50" aria-label="Simulated base stake">
-              <input class="gbs-stake-input" type="number" id="stake-simulator-input" value="0.50" min="0.50" max="100" step="0.01" inputmode="decimal" aria-label="Simulated base stake amount">
+              <input type="range" id="stake-simulator-slider" min="0.50" max="1000" step="0.50" value="0.50" aria-label="Simulated base stake">
+              <input class="gbs-stake-input" type="number" id="stake-simulator-input" value="0.50" min="0.50" max="1000" step="0.01" inputmode="decimal" aria-label="Simulated base stake amount">
             </div>
-            <div class="gbs-slider-labels"><span>$0.50</span><span>$100.00</span></div>
+            <div class="gbs-slider-labels"><span>$0.50</span><span>$1,000.00</span></div>
             <div class="gbs-sim-result">
               <div class="gbs-sim-box"><span>Simulated Today P/L<br>With Martingale</span><strong id="sim-pl-martingale" class="positive">+$0.00</strong></div>
               <div class="gbs-sim-box fixed-box"><span>Simulated Today P/L<br>Without Martingale</span><strong id="sim-pl-fixed" style="color:var(--gbs-blue);">+$0.00</strong></div>
@@ -1950,31 +1890,24 @@
       <div class="gbs-strip-title"><h3 id="performance-period-title" class="gbs-section-title" style="margin:0;"><svg class="gbs-icon" style="color:#3398ff" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>Performance by Period <span class="gbs-section-subtle">(System Model)</span></h3></div>
       <div class="gbs-period-grid">
         <article class="gbs-period-card">
-          <div class="gbs-period-head">▣ &nbsp; Today <span style="color:#93a7bc;font-weight:500;text-transform:none;">(From 00:00)</span></div>
-          <div class="gbs-period-body">
-            <div class="gbs-period-side"><span class="gbs-period-mode">With Martingale</span><strong id="today-martingale" class="gbs-period-money">+$0.00</strong><span class="gbs-period-caption">Profit / Loss</span><span id="today-martingale-pct" class="gbs-period-pct">—</span><svg class="gbs-sparkline" viewBox="0 0 150 30" preserveAspectRatio="none" aria-hidden="true"><path class="green" d="M1 24 L15 21 L28 22 L40 18 L52 20 L65 15 L77 17 L90 12 L104 14 L116 9 L130 11 L149 5"/></svg></div>
-            <div class="gbs-period-side fixed-side"><span class="gbs-period-mode">Without Martingale</span><strong id="today-fixed" class="gbs-period-money">+$0.00</strong><span class="gbs-period-caption">Profit / Loss</span><span id="today-fixed-pct" class="gbs-period-pct">—</span><svg class="gbs-sparkline" viewBox="0 0 150 30" preserveAspectRatio="none" aria-hidden="true"><path class="blue" d="M1 24 L15 23 L28 20 L40 22 L52 18 L65 19 L77 17 L90 18 L104 14 L116 15 L130 11 L149 10"/></svg></div>
-          </div>
-        </article>
-        <article class="gbs-period-card">
           <div class="gbs-period-head">▣ &nbsp; Yesterday</div>
           <div class="gbs-period-body">
-            <div class="gbs-period-side"><span class="gbs-period-mode">With Martingale</span><strong id="yesterday-martingale" class="gbs-period-money">+$0.00</strong><span class="gbs-period-caption">Profit / Loss</span><span id="yesterday-martingale-pct" class="gbs-period-pct">—</span><svg class="gbs-sparkline" viewBox="0 0 150 30" preserveAspectRatio="none" aria-hidden="true"><path class="green" d="M1 23 L13 18 L25 22 L38 16 L50 17 L63 10 L76 14 L88 8 L102 12 L116 7 L130 8 L149 5"/></svg></div>
-            <div class="gbs-period-side fixed-side"><span class="gbs-period-mode">Without Martingale</span><strong id="yesterday-fixed" class="gbs-period-money">+$0.00</strong><span class="gbs-period-caption">Profit / Loss</span><span id="yesterday-fixed-pct" class="gbs-period-pct">—</span><svg class="gbs-sparkline" viewBox="0 0 150 30" preserveAspectRatio="none" aria-hidden="true"><path class="blue" d="M1 22 L14 21 L28 18 L42 20 L55 15 L67 16 L81 12 L94 11 L108 15 L121 10 L135 12 L149 7"/></svg></div>
+            <div class="gbs-period-side"><span class="gbs-period-mode">With Martingale</span><strong id="yesterday-martingale" class="gbs-period-money">+$0.00</strong><span class="gbs-period-caption">Profit / Loss</span><span id="yesterday-martingale-pct" class="gbs-period-pct">—</span></div>
+            <div class="gbs-period-side fixed-side"><span class="gbs-period-mode">Without Martingale</span><strong id="yesterday-fixed" class="gbs-period-money">+$0.00</strong><span class="gbs-period-caption">Profit / Loss</span><span id="yesterday-fixed-pct" class="gbs-period-pct">—</span></div>
           </div>
         </article>
         <article class="gbs-period-card">
           <div class="gbs-period-head">▣ &nbsp; This Week</div>
           <div class="gbs-period-body">
-            <div class="gbs-period-side"><span class="gbs-period-mode">With Martingale</span><strong id="week-martingale" class="gbs-period-money">+$0.00</strong><span class="gbs-period-caption">Profit / Loss</span><span id="week-martingale-pct" class="gbs-period-pct">—</span><svg class="gbs-sparkline" viewBox="0 0 150 30" preserveAspectRatio="none" aria-hidden="true"><path class="red" d="M1 7 L13 10 L25 13 L38 12 L50 17 L63 15 L76 20 L88 18 L102 22 L116 21 L130 25 L149 27"/></svg></div>
-            <div class="gbs-period-side fixed-side"><span class="gbs-period-mode">Without Martingale</span><strong id="week-fixed" class="gbs-period-money">+$0.00</strong><span class="gbs-period-caption">Profit / Loss</span><span id="week-fixed-pct" class="gbs-period-pct">—</span><svg class="gbs-sparkline" viewBox="0 0 150 30" preserveAspectRatio="none" aria-hidden="true"><path class="blue" d="M1 15 L15 18 L28 13 L40 16 L53 11 L66 14 L79 10 L92 12 L105 8 L119 10 L133 7 L149 11"/></svg></div>
+            <div class="gbs-period-side"><span class="gbs-period-mode">With Martingale</span><strong id="week-martingale" class="gbs-period-money">+$0.00</strong><span class="gbs-period-caption">Profit / Loss</span><span id="week-martingale-pct" class="gbs-period-pct">—</span></div>
+            <div class="gbs-period-side fixed-side"><span class="gbs-period-mode">Without Martingale</span><strong id="week-fixed" class="gbs-period-money">+$0.00</strong><span class="gbs-period-caption">Profit / Loss</span><span id="week-fixed-pct" class="gbs-period-pct">—</span></div>
           </div>
         </article>
         <article class="gbs-period-card">
           <div class="gbs-period-head">▣ &nbsp; This Month</div>
           <div class="gbs-period-body">
-            <div class="gbs-period-side"><span class="gbs-period-mode">With Martingale</span><strong id="month-martingale" class="gbs-period-money">+$0.00</strong><span class="gbs-period-caption">Profit / Loss</span><span id="month-martingale-pct" class="gbs-period-pct">—</span><svg class="gbs-sparkline" viewBox="0 0 150 30" preserveAspectRatio="none" aria-hidden="true"><path class="red" d="M1 8 L14 11 L27 12 L40 16 L53 14 L66 18 L79 20 L92 19 L105 23 L118 22 L132 26 L149 28"/></svg></div>
-            <div class="gbs-period-side fixed-side"><span class="gbs-period-mode">Without Martingale</span><strong id="month-fixed" class="gbs-period-money">+$0.00</strong><span class="gbs-period-caption">Profit / Loss</span><span id="month-fixed-pct" class="gbs-period-pct">—</span><svg class="gbs-sparkline" viewBox="0 0 150 30" preserveAspectRatio="none" aria-hidden="true"><path class="blue" d="M1 15 L14 17 L28 14 L42 16 L55 12 L68 14 L81 11 L94 13 L108 9 L121 11 L135 8 L149 12"/></svg></div>
+            <div class="gbs-period-side"><span class="gbs-period-mode">With Martingale</span><strong id="month-martingale" class="gbs-period-money">+$0.00</strong><span class="gbs-period-caption">Profit / Loss</span><span id="month-martingale-pct" class="gbs-period-pct">—</span></div>
+            <div class="gbs-period-side fixed-side"><span class="gbs-period-mode">Without Martingale</span><strong id="month-fixed" class="gbs-period-money">+$0.00</strong><span class="gbs-period-caption">Profit / Loss</span><span id="month-fixed-pct" class="gbs-period-pct">—</span></div>
           </div>
         </article>
       </div>
@@ -1983,19 +1916,12 @@
     <section class="gbs-risk-wrap" aria-labelledby="risk-stability-title">
       <div class="gbs-strip-title"><h3 id="risk-stability-title" class="gbs-section-title" style="margin:0;"><svg class="gbs-icon" style="color:#6f5cff" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3l8 4v5c0 5-3.3 8-8 9-4.7-1-8-4-8-9V7l8-4z"/><path d="M9 12l2 2 4-4"/></svg>Risk &amp; Stability <span class="gbs-section-subtle">(Calculated from system trades)</span></h3></div>
       <div class="gbs-risk-grid">
-        <article class="gbs-risk-card"><span>Current Drawdown</span><strong id="current-drawdown" class="good">0.00%</strong><small>From session peak</small></article>
-        <article class="gbs-risk-card"><span>Maximum Drawdown</span><strong id="max-drawdown" class="bad">0.00%</strong><small>System history</small></article>
-        <article class="gbs-risk-card"><span>Current Losing Streak*</span><strong id="current-loss-streak" class="bad">0</strong><small>Consecutive actual losses<br>*Excludes virtual losses</small></article>
         <article class="gbs-risk-card"><span>Longest Losing Streak*</span><strong id="longest-loss-streak" class="bad">0</strong><small>Consecutive actual losses<br>*Excludes virtual losses</small></article>
+        <article class="gbs-risk-card"><span>Longest Winning Streak*</span><strong id="risk-longest-win-streak" class="good">0</strong><small>Consecutive actual wins<br>*Excludes virtual runs</small></article>
         <article class="gbs-risk-card"><span>Status</span><strong id="model-status" class="good status-value">ACTIVE</strong><small id="model-status-copy">System operational</small></article>
         <article class="gbs-risk-card"><span>Uptime</span><strong id="uptime" class="good">—</strong><small id="uptime-caption">Live service metric</small></article>
       </div>
     </section>
-
-    <footer class="gbs-footer">
-      <div class="gbs-footer-copy"><span class="gbs-info-icon">i</span><p>These statistics are calculated from trades generated by the system from 00:00 using a reference base stake of <strong style="color:#dce7f2;">$0.50</strong>.<br>Individual trader results may vary based on stake size, account settings, execution, and market conditions.</p></div>
-      <a class="gbs-details-link" href="#recent-contracts">View More Details <span aria-hidden="true">›</span></a>
-    </footer>
   </section>
 
   <section id="recent-contracts" class="panel section contract-history">
@@ -2047,6 +1973,8 @@
   let currentAiActivityMode = "";
   let wsConnection = null;
   let wsReconnectTimer = 0;
+  let wsWatchdogTimer = 0;
+  let wsReconnectAttempts = 0;
   let refreshTimer = 0;
   let refreshInFlight = false;
   let lastWebSocketRefresh = 0;
@@ -2126,20 +2054,33 @@
   }
   async function api(path, options = {}) {
     const method = String(options.method || "GET").toUpperCase();
+    const controller = new AbortController();
+    const timeoutMs = Math.max(1000, Number(options.timeoutMs || 20000));
+    const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
     const headers = {
       ...(method === "GET" ? { "Cache-Control": "no-cache" } : {}),
       ...(options.headers || {})
     };
-    const response = await fetch(method === "GET" ? noCacheUrl(apiUrl(path)) : apiUrl(path), {
-      ...options,
-      method,
-      headers,
-      cache: method === "GET" ? "no-store" : "default",
-      credentials: options.credentials || "include"
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.detail || `Request failed (${response.status})`);
-    return data;
+    try {
+      const response = await fetch(method === "GET" ? noCacheUrl(apiUrl(path)) : apiUrl(path), {
+        ...options,
+        method,
+        headers,
+        signal: options.signal || controller.signal,
+        cache: method === "GET" ? "no-store" : "default",
+        credentials: options.credentials || "include"
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || `Request failed (${response.status})`);
+      return data;
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        throw new Error("The service took too long to respond. Please try again.");
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timeout);
+    }
   }
   function escapeHtml(value) {
     return String(value ?? "").replace(/[&<>"']/g, character => ({
@@ -2249,19 +2190,23 @@
       scheduleWsReconnect();
       return;
     }
+    wsConnection.onopen = () => {
+      wsReconnectAttempts = 0;
+      lastWebSocketRefresh = Date.now();
+      armWsWatchdog();
+    };
     wsConnection.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
         if (msg.type === "snapshot" && msg.data) {
-          const now = Date.now();
-          if (now - lastWebSocketRefresh >= 5000) {
-            lastWebSocketRefresh = now;
-            refresh({ showLoader: false });
-          }
+          lastWebSocketRefresh = Date.now();
+          armWsWatchdog();
+          renderStatus(msg.data);
         }
       } catch (_) {}
     };
     wsConnection.onclose = () => {
+      window.clearTimeout(wsWatchdogTimer);
       wsConnection = null;
       scheduleWsReconnect();
     };
@@ -2269,13 +2214,30 @@
       try { wsConnection.close(); } catch (_) {}
     };
   }
+  function armWsWatchdog() {
+    window.clearTimeout(wsWatchdogTimer);
+    wsWatchdogTimer = window.setTimeout(() => {
+      if (wsConnection && Date.now() - lastWebSocketRefresh > 15000) {
+        try { wsConnection.close(); } catch (_) {}
+      }
+    }, 16000);
+  }
   function scheduleWsReconnect() {
     window.clearTimeout(wsReconnectTimer);
     if (document.hidden) return;
-    wsReconnectTimer = window.setTimeout(connectWebSocket, 5000);
+    const backoff = Math.min(30000, 1000 * (2 ** Math.min(wsReconnectAttempts, 5)));
+    const jitter = Math.floor(Math.random() * 500);
+    wsReconnectAttempts += 1;
+    wsReconnectTimer = window.setTimeout(connectWebSocket, backoff + jitter);
   }
   let latestSummary = null;
   let baseSystemPerformance = null;
+  let viewerSystemPerformance = null;
+  let viewerDefaultStake = 0.50;
+  let currentSimulationStake = 0.50;
+  let lastModelDataVersion = null;
+  let viewerPerformanceRequest = 0;
+  let nextSessionCloseAt = null;
   let stakeSimulationTimer = 0;
 
   function signedMoney(value) {
@@ -2346,13 +2308,26 @@
 
     const system = data.system_performance || {};
     const today = system.today || {};
+    const nextModelDataVersion = String(
+      today.model_data_version || `trades:${Number(today.total_trades || 0)}`
+    );
+    const modelDataChanged = (
+      lastModelDataVersion !== null
+      && nextModelDataVersion !== lastModelDataVersion
+    );
+    lastModelDataVersion = nextModelDataVersion;
     $("model-trades-today").textContent = number(today.total_trades);
-    const resetHour = String(system.daily_reset_hour ?? 0).padStart(2, "0");
-    $("daily-reset").textContent = `${resetHour}:00`;
+    nextSessionCloseAt = system.next_session_close_at
+      ? new Date(system.next_session_close_at).getTime()
+      : nextSessionCloseAt;
+    if ($("session-timezone")) $("session-timezone").textContent = system.timezone || "—";
 
     if (Object.keys(system).length) {
       baseSystemPerformance = system;
-      renderSystemPerformance(system);
+      renderSystemPerformance(system, !viewerSystemPerformance);
+      if (modelDataChanged) {
+        resetSimulationToViewerDefault();
+      }
     }
 
     const uptimeValue = data.uptime_pct ?? data.uptime_percent ?? data.uptime_percentage;
@@ -2379,10 +2354,12 @@
     }
 
     renderAiActivity(data);
-    $("global-dashboard-snapshot").dataset.snapshotReady = "true";
+    const snapshot = $("global-dashboard-snapshot");
+    snapshot.dataset.snapshotReady = "true";
+    snapshot.dataset.snapshotState = "ready";
   }
 
-  function renderSystemPerformance(system) {
+  function renderSystemPerformance(system, renderMonetaryValues = true) {
     const periods = {
       today: system.today || {},
       yesterday: system.yesterday || {},
@@ -2391,14 +2368,24 @@
     };
 
     const baseToday = periods.today;
-    setMoneyElement("model-pl-martingale", baseToday.martingale_pnl, "martingale");
-    setMoneyElement("model-pl-fixed", baseToday.fixed_pnl, "fixed");
+    if (renderMonetaryValues) {
+      setMoneyElement("model-pl-martingale", baseToday.observed_martingale_pnl ?? baseToday.martingale_pnl, "martingale");
+      setMoneyElement("model-pl-fixed", baseToday.fixed_pnl, "fixed");
+      if ($("model-maximum-stake")) {
+        $("model-maximum-stake").textContent = `$${number(baseToday.observed_maximum_stake ?? baseToday.maximum_martingale_stake ?? 0, 2)}`;
+      }
+      if ($("model-flat-stake")) {
+        $("model-flat-stake").textContent = `$${number(baseToday.flat_stake ?? baseToday.simulated_base_stake ?? 0.50, 2)}`;
+      }
+    }
 
     for (const [key, stats] of Object.entries(periods)) {
-      setMoneyElement(`${key}-martingale`, stats.martingale_pnl, "martingale");
-      setMoneyElement(`${key}-fixed`, stats.fixed_pnl, "fixed");
-      setReturnPct(`${key}-martingale-pct`, readReturnPct(stats, "martingale"), "martingale");
-      setReturnPct(`${key}-fixed-pct`, readReturnPct(stats, "fixed"), "fixed");
+      if (renderMonetaryValues) {
+        setMoneyElement(`${key}-martingale`, stats.observed_martingale_pnl ?? stats.martingale_pnl, "martingale");
+        setMoneyElement(`${key}-fixed`, stats.fixed_pnl, "fixed");
+        setReturnPct(`${key}-martingale-pct`, readReturnPct(stats, "martingale"), "martingale");
+        setReturnPct(`${key}-fixed-pct`, readReturnPct(stats, "fixed"), "fixed");
+      }
     }
 
     $("total-trades").textContent = number(baseToday.total_trades);
@@ -2409,23 +2396,7 @@
     $("longest-win-streak").textContent = number(baseToday.longest_win_streak || 0);
     $("today-longest-loss-streak").textContent = number(baseToday.longest_loss_streak || 0);
     $("longest-loss-streak").textContent = number(baseToday.longest_loss_streak || 0);
-    $("current-loss-streak").textContent = number(baseToday.current_loss_streak || 0);
-
-    // Prefer percentage drawdown fields when the backend exposes them.
-    const currentDd = baseToday.current_drawdown_martingale_pct
-      ?? baseToday.current_drawdown_fixed_pct
-      ?? baseToday.current_drawdown_pct
-      ?? baseToday.current_drawdown_fixed
-      ?? 0;
-    const maxDd = baseToday.max_drawdown_martingale_pct
-      ?? baseToday.max_drawdown_fixed_pct
-      ?? baseToday.max_drawdown_pct
-      ?? baseToday.max_drawdown_fixed
-      ?? 0;
-    $("current-drawdown").textContent = asPercentDisplay(currentDd);
-    $("max-drawdown").textContent = asPercentDisplay(maxDd);
-    $("current-drawdown").className = Number(currentDd) < 0 ? "bad" : "good";
-    $("max-drawdown").className = Number(maxDd) < 0 ? "bad" : "good";
+    $("risk-longest-win-streak").textContent = number(baseToday.longest_win_streak || 0);
 
     const statusText = currentStatus === "RUNNING" ? "ACTIVE" : String(currentStatus || "UNKNOWN").replaceAll("_", " ");
     $("model-status").textContent = statusText;
@@ -2434,7 +2405,9 @@
   }
 
   function renderStakeSimulation(today, selectedStake) {
-    const martingale = Number(today?.martingale_pnl || 0);
+    // The stake simulator is hypothetical. It must never reuse the observed
+    // dominant-cohort fields displayed by the main Martingale card.
+    const martingale = Number(today?.simulated_martingale_pnl || 0);
     const fixed = Number(today?.fixed_pnl || 0);
     const martingaleEl = $("sim-pl-martingale");
     const fixedEl = $("sim-pl-fixed");
@@ -2451,15 +2424,20 @@
   }
 
   async function loadStakeSimulation(stake) {
-    const base = Math.max(0.50, Math.min(100, Number(stake || 0.50)));
+    const base = Math.max(0.50, Math.min(1000, Number(stake || 0.50)));
+    currentSimulationStake = base;
     try {
-      const today = await api(`/metrics/system-performance?period=today&simulated_base_stake=${encodeURIComponent(base)}`).catch(() => ({}));
+      const today = await api(`/metrics/system-performance?period=today&simulated_base_stake=${encodeURIComponent(base)}`);
       renderStakeSimulation(today, base);
-    } catch (_) {}
+    } catch (_) {
+      if ($("sim-pl-martingale")) $("sim-pl-martingale").textContent = "Unavailable";
+      if ($("sim-pl-fixed")) $("sim-pl-fixed").textContent = "Unavailable";
+    }
   }
 
   function updateStakeSimulator(value) {
-    const base = Math.max(0.50, Math.min(100, Number(value || 0.50)));
+    const base = Math.max(0.50, Math.min(1000, Number(value || 0.50)));
+    currentSimulationStake = base;
     const input = $("stake-simulator-input");
     const slider = $("stake-simulator-slider");
     if (input && document.activeElement !== input) input.value = base.toFixed(2);
@@ -2468,11 +2446,51 @@
     stakeSimulationTimer = window.setTimeout(() => loadStakeSimulation(base), 180);
   }
 
+  async function loadViewerSystemPerformance() {
+    const requestId = ++viewerPerformanceRequest;
+    const base = viewerDefaultStake;
+    try {
+      const [today, yesterday, week, month] = await Promise.all(
+        ["today", "yesterday", "week", "month"].map(period => api(
+          `/metrics/system-performance?period=${period}&simulated_base_stake=${encodeURIComponent(base)}`
+        ))
+      );
+      if (requestId !== viewerPerformanceRequest) return;
+      viewerSystemPerformance = {
+        ...(baseSystemPerformance || {}),
+        today,
+        yesterday,
+        week,
+        month,
+      };
+      renderSystemPerformance(viewerSystemPerformance, true);
+    } catch (_) {
+      // Retain the last valid viewer-specific values. A simulator request has
+      // its own explicit Unavailable state and can be retried independently.
+    }
+  }
+
+  function setViewerDefaultStake(value) {
+    viewerDefaultStake = Math.max(0.50, Math.min(1000, Number(value || 0.50)));
+  }
+
+  function resetSimulationToViewerDefault() {
+    updateStakeSimulator(viewerDefaultStake);
+    loadViewerSystemPerformance();
+  }
+
   function updateSessionClock() {
     const node = $("session-clock");
     if (!node) return;
-    const now = new Date();
-    node.textContent = now.toLocaleTimeString(undefined, { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    if (!Number.isFinite(nextSessionCloseAt)) {
+      node.textContent = "--:--:--";
+      return;
+    }
+    const remaining = Math.max(0, Math.ceil((nextSessionCloseAt - Date.now()) / 1000));
+    const hours = String(Math.floor(remaining / 3600)).padStart(2, "0");
+    const minutes = String(Math.floor((remaining % 3600) / 60)).padStart(2, "0");
+    const seconds = String(remaining % 60).padStart(2, "0");
+    node.textContent = `${hours}:${minutes}:${seconds}`;
   }
   updateSessionClock();
   window.setInterval(updateSessionClock, 1000);
@@ -2493,6 +2511,7 @@
   }
   let isAutoTrading = false;
   let hasTradingApiToken = false;
+  let tradingApiTokenInvalid = false;
   let activeAccountType = "demo";
   let availableAccountTypes = ["demo"];
 
@@ -2620,14 +2639,22 @@
     const autoPanel = $("auto-trade-panel");
     const settingsPanel = $("personal-settings-panel");
     if (!panel || !state || !btn) return;
-    panel.style.display = hasTradingApiToken ? "none" : "grid";
-    state.textContent = "Required";
+    const needsToken = !hasTradingApiToken || tradingApiTokenInvalid;
+    panel.style.display = needsToken ? "grid" : "none";
+    state.textContent = tradingApiTokenInvalid ? "Expired or rejected" : "Required";
     state.className = "negative";
-    if (autoPanel) autoPanel.style.display = hasTradingApiToken ? "block" : "none";
-    if (settingsPanel) settingsPanel.style.display = hasTradingApiToken ? "block" : "none";
-    if (!hasTradingApiToken) setPersonalSettingsExpanded(false);
-    btn.disabled = !hasTradingApiToken;
-    btn.title = hasTradingApiToken ? "" : "Save API token first";
+    if (autoPanel) autoPanel.style.display = needsToken ? "none" : "block";
+    if (settingsPanel) settingsPanel.style.display = needsToken ? "none" : "block";
+    if (needsToken) setPersonalSettingsExpanded(false);
+    btn.disabled = needsToken;
+    btn.title = needsToken ? "Save a new active API token first" : "";
+    const message = $("api-token-message");
+    if (message && tradingApiTokenInvalid && !message.textContent.trim()) {
+      message.textContent = lastExecutionStatus === "credential_error"
+        ? "Your previous Deriv API token expired or was rejected. Enter a new active token."
+        : "A new active Deriv API token is required before AutoTrade can resume.";
+      message.className = "api-token-message negative";
+    }
   }
 
   async function saveApiToken() {
@@ -2655,6 +2682,8 @@
       });
       if (input) input.value = "";
       hasTradingApiToken = true;
+      tradingApiTokenInvalid = false;
+      lastExecutionStatus = "connecting";
       updateApiTokenPanel();
       if (message) {
         message.textContent = "";
@@ -2698,6 +2727,7 @@
         body: JSON.stringify(payload)
       });
       const settings = response.settings || payload;
+      const previousViewerStake = viewerDefaultStake;
       setPersonalSettingValue("personal-stake", settings.stake_amount);
       setPersonalSettingValue("personal-take-profit", settings.take_profit);
       setPersonalSettingValue("personal-stop-loss", settings.stop_loss);
@@ -2708,6 +2738,11 @@
       if (message) {
         message.textContent = "Controls saved. Changes apply from the next contract.";
         message.className = "settings-message positive";
+      }
+      setViewerDefaultStake(settings.stake_amount ?? 0.50);
+      if (Math.abs(previousViewerStake - viewerDefaultStake) > 0.0001) {
+        viewerSystemPerformance = null;
+        resetSimulationToViewerDefault();
       }
     } catch (error) {
       if (message) {
@@ -2745,7 +2780,7 @@
   });
   $("stake-simulator-input")?.addEventListener("change", (e) => {
     let value = Number(e.target.value || 0.50);
-    value = Math.max(0.50, Math.min(100, value));
+    value = Math.max(0.50, Math.min(1000, value));
     updateStakeSimulator(value);
   });
   $("global-refresh")?.addEventListener("click", async () => {
@@ -2835,7 +2870,21 @@
     if (showLoader) setSmartLoader(true, message, blocking);
     if ($("error")) $("error").textContent = "";
     try {
-      const me = await api("/me").catch(() => ({ authenticated: false }));
+      const meRequest = api("/me").catch(() => ({ authenticated: false }));
+      const liveSnapshotIsFresh = (
+        latestSummary && Date.now() - lastWebSocketRefresh < 15000
+      );
+      if (!liveSnapshotIsFresh) {
+        const summary = await api("/metrics/summary?mode=demo");
+        renderStatus(summary);
+        applyReadOnlyMode();
+      }
+      loadRecentContracts();
+      if (!baseSystemPerformance) {
+        loadStakeSimulation(Number($("stake-simulator-input")?.value || 0.50));
+      }
+
+      const me = await meRequest;
       if (me.authenticated) {
         activeAccountType = me.account_type || "demo";
         availableAccountTypes = Array.isArray(me.available_account_types)
@@ -2846,14 +2895,17 @@
         availableAccountTypes = ["demo"];
       }
       updateAccountModeSwitch();
-
-      const summary = await api(
-        `/metrics/summary?mode=${encodeURIComponent(activeAccountType)}`
-      );
-      renderStatus(summary);
-      applyReadOnlyMode();
-      await loadRecentContracts();
-      loadStakeSimulation(Number($("stake-simulator-input")?.value || 0.50));
+      const nextViewerStake = me.authenticated
+        ? Number(me.settings?.stake_amount ?? 0.50)
+        : 0.50;
+      const viewerStakeChanged = Math.abs(
+        nextViewerStake - viewerDefaultStake
+      ) > 0.0001;
+      if (viewerStakeChanged || !viewerSystemPerformance) {
+        setViewerDefaultStake(nextViewerStake);
+        viewerSystemPerformance = null;
+        resetSimulationToViewerDefault();
+      }
 
       if (me.authenticated) {
         $("personal-section").style.display = "block";
@@ -2870,6 +2922,7 @@
         
         isAutoTrading = Boolean(me.enabled);
         hasTradingApiToken = Boolean(me.has_trading_api_token);
+        tradingApiTokenInvalid = Boolean(me.trading_api_token_invalid);
         lastExecutionStatus = String(me.execution_status || "inactive");
         hasRecoveryState = Boolean(
           me.virtual_protection &&
@@ -2899,6 +2952,7 @@
         $("btn-login").style.display = "inline-flex";
         $("btn-logout").style.display = "none";
         hasTradingApiToken = false;
+        tradingApiTokenInvalid = false;
         activeAccountType = "demo";
         availableAccountTypes = ["demo"];
         updateAccountModeSwitch();
@@ -2925,7 +2979,9 @@
         pill.style.borderColor = "rgba(255,77,87,.65)";
         pill.style.color = "var(--gbs-red)";
       }
-      $("global-dashboard-snapshot").dataset.snapshotReady = "true";
+      const snapshot = $("global-dashboard-snapshot");
+      snapshot.dataset.snapshotReady = "true";
+      snapshot.dataset.snapshotState = "error";
     } finally {
       if (showLoader) setSmartLoader(false);
       refreshInFlight = false;
@@ -2965,6 +3021,7 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
     window.clearTimeout(refreshTimer);
     window.clearTimeout(wsReconnectTimer);
+    window.clearTimeout(wsWatchdogTimer);
     if (wsConnection) {
       try { wsConnection.close(); } catch (_) {}
     }

@@ -154,7 +154,8 @@ telegram:
   dashboard_screenshot_enabled: true
   dashboard_url: http://api:8080/
   dashboard_selector: "#global-dashboard-snapshot"
-  dashboard_screenshot_timeout_seconds: 20.0
+  dashboard_screenshot_timeout_seconds: 30.0
+  timezone: Africa/Nairobi
 storage:
   database_url_env: DATABASE_URL
   local_database_url: sqlite:///data/rfdir5.db

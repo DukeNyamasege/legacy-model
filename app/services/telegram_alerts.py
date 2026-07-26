@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -132,18 +133,36 @@ class TelegramAlertClient:
 
     @staticmethod
     def format_hourly_report(report: dict[str, Any]) -> str:
+        start = datetime.fromisoformat(str(report["window_start"]))
+        end = datetime.fromisoformat(str(report["window_end"]))
+
+        def money(value: object) -> str:
+            amount = float(value or 0.0)
+            return f"{amount:+.2f} USD"
+
+        start_label = start.strftime("%d %b %Y, %H:%M EAT")
+        end_label = end.strftime("%H:%M EAT")
         return "\n".join(
             (
-                "Test our model: https://derivadmin.site/",
-                f"Total trades: {report['master_trades']}",
-                f"Trade type: {report['direction']} ({report['contract_type']})",
-                f"Per-account profit: {report['master_profit']:.2f} USD",
-                f"Total profit: {report['all_account_profit']:.2f} USD",
+                "Hourly Model Update — Nairobi (EAT)",
+                f"Period: {start_label} → {end_label}",
+                f"Trades this hour: {int(report['hourly_trades'])}",
                 (
-                    f"Consecutive wins/losses: {report['consecutive_wins']}"
-                    f"/{report['consecutive_losses']}"
+                    "$0.50 + Martingale P/L: "
+                    f"{money(report['hourly_martingale_pnl'])}"
                 ),
-                "Join other traders and let's train the future.",
+                (
+                    "$0.50 without Martingale P/L: "
+                    f"{money(report['hourly_flat_pnl'])}"
+                ),
+                (
+                    "Active traders (Demo + Real): "
+                    f"{int(report['active_accounts'])}"
+                ),
+                (
+                    "Today's total P/L ($0.50 + Martingale): "
+                    f"{money(report['today_martingale_pnl'])}"
+                ),
             )
         )
 

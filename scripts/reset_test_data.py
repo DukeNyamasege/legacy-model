@@ -18,6 +18,8 @@ from app.models import (
     ProposalRecord,
     ShadowContract,
     Streak,
+    SystemModelState,
+    SystemModelTrade,
     TestRun,
     Tick,
     Trade,
@@ -67,6 +69,7 @@ def reset_database(
             return {
                 "runs": 0,
                 "trades": 0,
+                "system_model_trades": 0,
                 "signals": 0,
                 "ticks": 0,
                 "expired_unresolved": 0,
@@ -111,6 +114,14 @@ def reset_database(
                 )
                 or 0
             ),
+            "system_model_trades": int(
+                session.scalar(
+                    select(func.count()).select_from(SystemModelTrade).where(
+                        SystemModelTrade.run_id.in_(run_ids)
+                    )
+                )
+                or 0
+            ),
             "signals": int(
                 session.scalar(
                     select(func.count()).select_from(CandidateSignalRecord).where(
@@ -138,6 +149,15 @@ def reset_database(
         )
         session.execute(
             delete(VirtualTrade).where(VirtualTrade.run_id.in_(run_ids))
+        )
+        # Canonical model trades reference directional signals, so they must be
+        # removed before their source signals. Deleting the run-scoped state
+        # makes the next model entry start in REAL mode with zero streaks.
+        session.execute(
+            delete(SystemModelTrade).where(SystemModelTrade.run_id.in_(run_ids))
+        )
+        session.execute(
+            delete(SystemModelState).where(SystemModelState.run_id.in_(run_ids))
         )
         session.execute(
             delete(DirectionalSignal).where(DirectionalSignal.run_id.in_(run_ids))
@@ -229,6 +249,7 @@ def main() -> None:
     print(
         "RESET_COMPLETED "
         f"runs={counts['runs']} removed_trades={counts['trades']} "
+        f"removed_system_model_trades={counts['system_model_trades']} "
         f"removed_signals={counts['signals']} removed_ticks={counts['ticks']} "
         f"expired_unresolved={counts['expired_unresolved']} "
         "preserved=accounts,sessions,controls,balances,models"
