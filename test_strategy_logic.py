@@ -111,6 +111,21 @@ class DashboardMetricsTests(unittest.TestCase):
         self.assertNotIn('api("/settings/accounts").catch', html)
         self.assertIn("refresh({ showLoader: false, blocking: false })", html)
 
+    def test_mobile_dashboard_keeps_key_stake_metrics_visible_and_css_balanced(self) -> None:
+        html = Path("dashboard/index.html").read_text(encoding="utf-8")
+        stylesheet = html.split("<style>", 1)[1].split("</style>", 1)[0]
+        self.assertEqual(stylesheet.count("{"), stylesheet.count("}"))
+        self.assertIn('class="gbs-metric-foot martingale-foot"', html)
+        self.assertIn('id="model-maximum-stake"', html)
+        self.assertIn('class="gbs-metric-foot fixed-foot"', html)
+        mobile = stylesheet.split("@media (max-width: 760px)", 1)[1]
+        self.assertIn(
+            ".gbs-pnl-pair {\n        grid-template-columns: repeat(2, minmax(0, 1fr));",
+            mobile,
+        )
+        self.assertIn(".gbs-metric-foot .gbs-stake-detail { font-size: .88rem; }", mobile)
+        self.assertNotIn(".gbs-stake-detail { display: none", mobile)
+
     def test_real_execution_requires_explicit_server_acknowledgement(self) -> None:
         bot = object.__new__(enhanced_bot.TradingBot)
         bot.environment = "demo"

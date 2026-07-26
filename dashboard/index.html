@@ -968,7 +968,7 @@
       .martingale-toggle { justify-content: space-between; }
     }
     @media (max-width: 380px) {
-      .metrics { grid-template-columns: 1fr; }
+      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       main { width: calc(100% - 10px); }
     }
 
@@ -1315,6 +1315,36 @@
     .gbs-money.negative { color: var(--gbs-red) !important; }
     .gbs-money-label { margin-top: 8px; color: #9fb1c5; font-size: .75rem; }
     .gbs-stake-detail { margin-top: 4px; color: #fff; font-size: .9rem; }
+    .gbs-metric-foot {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-top: 12px;
+      padding: 8px 10px;
+      border: 1px solid rgba(32, 226, 122, .2);
+      border-radius: 8px;
+      background: rgba(32, 226, 122, .065);
+    }
+    .gbs-metric-foot span {
+      color: #aebed0;
+      font-size: .69rem;
+      font-weight: 620;
+      letter-spacing: .01em;
+    }
+    .gbs-metric-foot .gbs-stake-detail {
+      margin: 0;
+      color: #79f2af;
+      font-size: .94rem;
+      font-weight: 790;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .gbs-metric-foot.fixed-foot {
+      border-color: rgba(51, 152, 255, .23);
+      background: rgba(51, 152, 255, .07);
+    }
+    .gbs-metric-foot.fixed-foot .gbs-stake-detail { color: #7cbcff; }
     .gbs-simulator {
       display: grid;
       align-content: start;
@@ -1481,138 +1511,189 @@
       .gbs-period-grid { grid-template-columns: repeat(2, 1fr); }
       .gbs-risk-grid { grid-template-columns: repeat(3, 1fr); }
     }
+
     @media (max-width: 760px) {
-      main { width: calc(100% - 20px); }
-      .gbs-topbar { align-items: flex-start; flex-direction: column; gap: 10px; }
-      .gbs-top-actions { width: 100%; justify-content: space-between; }
-      .gbs-updated { white-space: normal; font-size: .72rem; }
-      .global-dashboard-snapshot .ai-mode-card { padding: 14px; min-height: 80px; }
-      .gbs-platform-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
-      .gbs-platform-card { min-height: 90px; padding: 12px; grid-template-columns: 40px 1fr; gap: 10px; }
-      .gbs-platform-icon { width: 38px; height: 38px; }
-      .gbs-platform-icon svg { width: 16px; height: 16px; }
-      .gbs-card-label { font-size: .72rem; margin-bottom: 4px; }
-      .gbs-platform-card strong { font-size: 1.25rem; margin-top: 5px; }
-      .gbs-card-note { font-size: .68rem; margin-top: 5px; }
-      .gbs-reset-card { grid-column: 1 / -1; min-height: auto; padding: 12px; }
-      .gbs-reset-title { font-size: .78rem; gap: 6px; }
-      .gbs-reset-row { margin-top: 10px; padding-top: 8px; }
-      .gbs-reset-row strong { font-size: 1rem; }
-      .gbs-pnl-content { grid-template-columns: 1fr; min-height: auto; padding: 0 8px 8px; }
-      .gbs-pnl-pair { grid-template-columns: 1fr; }
-      .gbs-pnl-block + .gbs-pnl-block { border-left: 0; border-top: 1px solid rgba(32, 226, 122, .28); }
-      .gbs-pnl-block { padding: 12px 10px 8px; }
-      .gbs-money { font-size: 1.6rem; margin-top: 6px; }
-      .gbs-money-label { font-size: .68rem; margin-top: 5px; }
-      .gbs-simulator { padding: 12px 0 0; }
-      .gbs-sim-title { font-size: .72rem; }
-      .gbs-sim-copy { font-size: .65rem; margin-top: 5px; }
-      .gbs-slider-row { gap: 8px; margin-top: 10px; }
-      .gbs-stake-input { min-height: 30px; height: 30px; font-size: .72rem; width: 70px; }
-      .gbs-slider-labels { font-size: .6rem; padding-right: 78px; }
-      .gbs-sim-result { gap: 6px; margin-top: 8px; }
-      .gbs-sim-box { padding: 7px 8px; }
-      .gbs-sim-box span { font-size: .58rem; }
-      .gbs-sim-box strong { font-size: .92rem; margin-top: 3px; }
-      .gbs-trades-top { grid-template-columns: repeat(2, 1fr); gap: 8px; padding-bottom: 10px; margin-top: 12px; }
-      .gbs-trade-stat { padding: 0 8px; }
-      .gbs-trade-stat span { font-size: .68rem; }
-      .gbs-trade-stat strong { font-size: 1.1rem; margin-top: 5px; }
-      .gbs-streak-row { grid-template-columns: 1fr; gap: 8px; margin-top: 10px; }
-      .gbs-streak { font-size: .68rem; }
-      .gbs-streak strong { font-size: 1.05rem; margin-top: 4px; }
-      .gbs-streak small { font-size: .6rem; margin-top: 2px; }
-      .gbs-period-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; padding: 0 8px 8px; }
-      .gbs-period-card { border-radius: 8px; }
-      .gbs-period-head { padding: 6px 8px; font-size: .68rem; }
-      .gbs-period-body { grid-template-columns: 1fr; }
-      .gbs-period-side + .gbs-period-side { border-left: 0; border-top: 1px dashed rgba(112, 135, 157, .2); }
-      .gbs-period-side { padding: 8px; }
-      .gbs-period-mode { font-size: .6rem; }
-      .gbs-period-money { font-size: 1.05rem; margin-top: 5px; }
-      .gbs-period-caption { font-size: .58rem; margin-top: 4px; }
-      .gbs-period-pct { font-size: .64rem; margin-top: 4px; }
-      .gbs-risk-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; padding: 0 8px 8px; }
-      .gbs-risk-card { min-height: auto; padding: 9px 10px; border-radius: 8px; }
-      .gbs-risk-card span { font-size: .65rem; }
-      .gbs-risk-card strong { font-size: 1.15rem; margin-top: 6px; }
-      .gbs-risk-card small { font-size: .58rem; margin-top: 6px; }
-      .gbs-section-title { font-size: .78rem; margin-bottom: 8px; }
+      main { width: calc(100% - 16px); padding-top: 12px; }
+      header {
+        margin-bottom: 10px;
+        padding: 10px 4px 13px;
+        border-bottom: 1px solid rgba(74, 105, 133, .28);
+      }
+      .brand { font-size: .88rem; letter-spacing: .025em; }
+      .auth-controls { width: 100%; margin-top: 10px; gap: 7px; }
+      .risk-disclaimer-toggle,
+      .btn-login,
+      .btn-logout {
+        flex: 1 1 auto;
+        width: auto;
+        min-height: 38px;
+        border-radius: 9px;
+      }
+      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+      .metric { min-height: 84px; padding: 10px; border-radius: 10px; }
+      .personal-section .panel,
+      .contract-history { border-radius: 12px; }
+      .global-dashboard-snapshot {
+        --gbs-line: #20364a;
+        --gbs-muted: #a9b9ca;
+      }
+      .gbs-topbar {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 9px;
+        padding: 12px;
+        border: 1px solid rgba(64, 94, 121, .36);
+        border-radius: 13px;
+        background: linear-gradient(145deg, rgba(10, 27, 42, .96), rgba(5, 17, 29, .96));
+      }
+      .gbs-title-wrap { width: 100%; justify-content: space-between; gap: 8px; }
+      .gbs-title { font-size: 1.28rem; letter-spacing: -.035em; }
+      .gbs-live-pill { min-height: 27px; padding: 0 10px; font-size: .64rem; }
+      .gbs-top-actions { width: 100%; justify-content: space-between; gap: 8px; }
+      .gbs-updated { white-space: normal; font-size: .67rem; line-height: 1.35; }
+      .gbs-icon-button { width: 36px; height: 36px; min-width: 36px; min-height: 36px; }
+
+      .global-dashboard-snapshot .ai-mode-card {
+        min-height: 78px;
+        margin-bottom: 12px;
+        padding: 13px 14px;
+        border-radius: 13px;
+        background: linear-gradient(120deg, #071821, #07231d);
+      }
+      .global-dashboard-snapshot .ai-mode-card::before { width: 260px; height: 260px; opacity: .3; }
+      .global-dashboard-snapshot .ai-mode-card::after { display: none; }
+      .global-dashboard-snapshot .ai-mode-label { font-size: .68rem; }
+      .global-dashboard-snapshot .ai-mode-message { margin-top: 8px; font-size: 1.04rem; }
+      .global-dashboard-snapshot .ai-mode-detail { margin-top: 5px; font-size: .69rem; line-height: 1.35; }
+
       .gbs-section { margin-top: 12px; }
-      .gbs-strip-title { padding: 7px 10px 5px; }
-      .gbs-panel-head { padding: 10px 12px 6px; }
-      .gbs-panel-head h3 { font-size: .85rem; }
-      .gbs-trades-panel { padding: 12px; }
-    @media (max-width: 480px) {
-      main { width: calc(100% - 14px); padding-top: 12px; }
-      .gbs-topbar { flex-direction: column; gap: 8px; }
-      .gbs-title-wrap { gap: 8px; }
-      .gbs-title { font-size: 1.2rem; }
-      .gbs-live-pill { min-height: 26px; padding: 0 10px; font-size: .64rem; }
-      .gbs-live-dot { width: 6px; height: 6px; }
-      .gbs-updated { font-size: .68rem; }
-      .gbs-icon-button { width: 34px; height: 34px; min-width: 34px; min-height: 34px; }
-      .gbs-icon { width: 15px; height: 15px; }
-      .global-dashboard-snapshot .ai-mode-card { padding: 12px; min-height: 70px; }
-      .global-dashboard-snapshot .ai-mode-label { font-size: .68rem; gap: 5px; }
-      .global-dashboard-snapshot .ai-mode-label::before { width: 7px; height: 7px; box-shadow: 0 0 0 4px rgba(32, 226, 122, .1); }
-      .global-dashboard-snapshot .ai-mode-message { font-size: 1rem; margin-top: 8px; }
-      .global-dashboard-snapshot .ai-mode-detail { font-size: .72rem; margin-top: 6px; }
-      .gbs-platform-grid { grid-template-columns: repeat(2, 1fr); gap: 6px; }
-      .gbs-platform-card { min-height: 78px; padding: 10px; grid-template-columns: 34px 1fr; gap: 8px; border-radius: 10px; }
+      .gbs-section-title { margin: 0 0 8px 2px; font-size: .76rem; gap: 7px; }
+      .gbs-platform-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+      .gbs-platform-card {
+        min-height: 82px;
+        padding: 10px;
+        grid-template-columns: 34px minmax(0, 1fr);
+        gap: 8px;
+        border-radius: 11px;
+        background: linear-gradient(145deg, #091827, #07131f);
+      }
       .gbs-platform-icon { width: 32px; height: 32px; border-width: 1px; }
       .gbs-platform-icon svg { width: 14px; height: 14px; }
-      .gbs-card-label { font-size: .65rem; margin-bottom: 3px; }
-      .gbs-platform-card strong { font-size: 1.1rem; margin-top: 4px; }
-      .gbs-card-note { font-size: .6rem; margin-top: 4px; }
-      .gbs-reset-card { min-height: auto; padding: 10px; border-radius: 10px; }
-      .gbs-reset-title { font-size: .72rem; gap: 5px; }
-      .gbs-reset-title svg { width: 14px; height: 14px; }
-      .gbs-reset-row { margin-top: 8px; padding-top: 6px; }
-      .gbs-reset-row span { font-size: .65rem; }
-      .gbs-reset-row strong { font-size: .95rem; }
-      .gbs-pnl-content { padding: 0 6px 6px; }
-      .gbs-pnl-block { padding: 10px 8px 6px; }
-      .gbs-pnl-pair { border-radius: 8px; }
-      .gbs-money { font-size: 1.4rem; margin-top: 5px; }
-      .gbs-money-label { font-size: .62rem; margin-top: 4px; }
-      .gbs-simulator { padding: 10px 0 0; }
-      .gbs-sim-title { font-size: .68rem; gap: 5px; }
-      .gbs-sim-copy { font-size: .6rem; margin-top: 4px; }
-      .gbs-slider-row { grid-template-columns: 1fr 60px; gap: 6px; margin-top: 8px; }
-      .gbs-stake-input { min-height: 28px; height: 28px; font-size: .68rem; width: 60px; padding: 0 6px; }
-      .gbs-slider-labels { font-size: .58rem; padding-right: 68px; margin-top: 5px; }
-      .gbs-sim-result { grid-template-columns: 1fr; gap: 5px; margin-top: 6px; }
-      .gbs-sim-box { padding: 6px 7px; border-radius: 6px; }
+      .gbs-card-label { margin-bottom: 2px; font-size: .63rem; line-height: 1.15; }
+      .gbs-platform-card strong { margin-top: 4px; font-size: 1.08rem; }
+      .gbs-card-note { margin-top: 4px; font-size: .58rem; line-height: 1.25; }
+      .gbs-reset-card { grid-column: 1 / -1; min-height: auto; padding: 10px 12px; border-radius: 11px; }
+      .gbs-reset-title { font-size: .7rem; }
+      .gbs-reset-row { margin-top: 7px; padding-top: 7px; }
+      .gbs-reset-row span { font-size: .64rem; }
+      .gbs-reset-row strong { font-size: 1rem; }
+
+      .gbs-main-grid { gap: 9px; margin-top: 10px; }
+      .gbs-panel { border-radius: 12px; }
+      .gbs-panel-head { padding: 11px 12px 8px; }
+      .gbs-panel-head h3 { font-size: .79rem; }
+      .gbs-pnl-content { grid-template-columns: 1fr; min-height: auto; padding: 0 7px 8px; }
+      .gbs-pnl-pair {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        border-radius: 10px;
+        background: linear-gradient(145deg, rgba(5, 19, 28, .9), rgba(3, 12, 20, .88));
+      }
+      .gbs-pnl-block { padding: 11px 9px 9px; }
+      .gbs-pnl-block + .gbs-pnl-block {
+        border-top: 0;
+        border-left: 1px solid rgba(65, 102, 128, .38);
+      }
+      .gbs-pnl-block .gbs-card-label { font-size: .68rem; color: #e5edf6; }
+      .gbs-money { margin-top: 7px; font-size: clamp(1.35rem, 7vw, 1.75rem); }
+      .gbs-money-label { margin-top: 5px; font-size: .58rem; }
+      .gbs-metric-foot {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 3px;
+        margin-top: 9px;
+        padding: 7px 8px;
+        border-radius: 7px;
+      }
+      .gbs-metric-foot span { font-size: .57rem; }
+      .gbs-metric-foot .gbs-stake-detail { font-size: .88rem; }
+
+      .gbs-simulator {
+        margin-top: 8px;
+        padding: 10px;
+        border: 1px solid rgba(67, 91, 115, .27);
+        border-radius: 10px;
+        background: rgba(7, 20, 32, .72);
+      }
+      .gbs-sim-title { font-size: .69rem; font-weight: 700; }
+      .gbs-sim-copy { margin-top: 4px; font-size: .6rem; line-height: 1.35; }
+      .gbs-slider-row { grid-template-columns: minmax(0, 1fr) 68px; gap: 8px; margin-top: 10px; }
+      .global-dashboard-snapshot input[type="range"] { min-height: 20px; background-clip: content-box; }
+      .gbs-stake-input { width: 68px; min-height: 34px; height: 34px; padding: 0 7px; font-size: .7rem; }
+      .gbs-slider-labels { margin-top: 3px; padding-right: 76px; font-size: .56rem; }
+      .gbs-sim-result { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
+      .gbs-sim-box { padding: 7px 8px; border-radius: 7px; }
       .gbs-sim-box span { font-size: .55rem; }
-      .gbs-sim-box strong { font-size: .85rem; margin-top: 2px; }
-      .gbs-trades-top { grid-template-columns: repeat(2, 1fr); gap: 6px; padding-bottom: 8px; margin-top: 10px; }
-      .gbs-trade-stat { padding: 0 6px; }
-      .gbs-trade-stat span { font-size: .62rem; }
-      .gbs-trade-stat strong { font-size: 1rem; margin-top: 4px; }
-      .gbs-streak-row { grid-template-columns: 1fr; gap: 6px; margin-top: 8px; }
-      .gbs-streak { font-size: .62rem; }
-      .gbs-streak strong { font-size: .95rem; margin-top: 3px; }
-      .gbs-streak small { font-size: .55rem; }
-      .gbs-period-wrap { margin-top: 10px; border-radius: 10px; }
-      .gbs-strip-title { padding: 6px 8px 4px; }
-      .gbs-section-title { font-size: .72rem; gap: 6px; }
-      .gbs-period-grid { grid-template-columns: repeat(2, 1fr); gap: 6px; padding: 0 6px 6px; }
-      .gbs-period-card { border-radius: 8px; }
-      .gbs-period-head { padding: 5px 7px; font-size: .62rem; }
+      .gbs-sim-box strong { margin-top: 3px; font-size: .88rem; }
+
+      .gbs-trades-panel { padding: 11px; }
+      .gbs-trades-panel h3 { font-size: .78rem; }
+      .gbs-trades-top {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px;
+        margin-top: 10px;
+        padding-bottom: 8px;
+      }
+      .gbs-trade-stat {
+        padding: 8px 9px;
+        border: 1px solid rgba(65, 91, 116, .28);
+        border-radius: 8px;
+        background: rgba(8, 22, 35, .72);
+      }
+      .gbs-trade-stat:first-child { padding-left: 9px; }
+      .gbs-trade-stat:last-child { border-right: 1px solid rgba(65, 91, 116, .28); }
+      .gbs-trade-stat span { font-size: .61rem; }
+      .gbs-trade-stat strong { margin-top: 4px; font-size: 1.02rem; }
+      .gbs-streak-row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin-top: 8px; }
+      .gbs-streak { padding: 8px 9px; border-radius: 8px; background: rgba(7, 19, 31, .58); font-size: .61rem; }
+      .gbs-streak strong { margin-top: 3px; font-size: .95rem; }
+      .gbs-streak small { margin-top: 2px; font-size: .54rem; }
+
+      .gbs-period-wrap,
+      .gbs-risk-wrap { margin-top: 10px; border-radius: 11px; }
+      .gbs-strip-title { padding: 7px 8px 5px; }
+      .gbs-period-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; padding: 0 6px 7px; }
+      .gbs-period-card { border-radius: 8px; background: linear-gradient(145deg, #091725, #07121e); }
+      .gbs-period-head { padding: 6px 7px; font-size: .61rem; letter-spacing: .04em; }
       .gbs-period-body { grid-template-columns: 1fr; }
-      .gbs-period-side + .gbs-period-side { border-left: 0; border-top: 1px dashed rgba(112, 135, 157, .18); }
       .gbs-period-side { padding: 7px; }
-      .gbs-period-mode { font-size: .58rem; }
-      .gbs-period-money { font-size: .95rem; margin-top: 4px; }
-      .gbs-period-caption { font-size: .55rem; margin-top: 3px; }
-      .gbs-period-pct { font-size: .6rem; margin-top: 3px; }
-      .gbs-risk-wrap { margin-top: 10px; border-radius: 10px; }
-      .gbs-risk-grid { grid-template-columns: repeat(2, 1fr); gap: 6px; padding: 0 6px 6px; }
-      .gbs-risk-card { min-height: auto; padding: 7px 8px; border-radius: 8px; }
-      .gbs-risk-card span { font-size: .6rem; }
-      .gbs-risk-card strong { font-size: 1rem; margin-top: 5px; }
-      .gbs-risk-card small { font-size: .55rem; margin-top: 5px; }
+      .gbs-period-side + .gbs-period-side { border-top: 1px dashed rgba(112, 135, 157, .2); border-left: 0; }
+      .gbs-period-mode { font-size: .55rem; }
+      .gbs-period-money { margin-top: 4px; font-size: .94rem; }
+      .gbs-period-caption { margin-top: 3px; font-size: .52rem; }
+      .gbs-period-pct { margin-top: 3px; font-size: .58rem; }
+      .gbs-risk-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; padding: 0 6px 7px; }
+      .gbs-risk-card { min-height: 84px; padding: 8px 9px; border-radius: 8px; background: linear-gradient(145deg, #091725, #07121e); }
+      .gbs-risk-card span { font-size: .59rem; }
+      .gbs-risk-card strong { margin-top: 5px; font-size: 1rem; }
+      .gbs-risk-card small { margin-top: 5px; font-size: .53rem; }
+    }
+
+    @media (max-width: 380px) {
+      main { width: calc(100% - 10px); }
+      .gbs-topbar { padding: 10px; }
+      .gbs-title { font-size: 1.12rem; }
+      .gbs-live-pill { padding: 0 8px; }
+      .gbs-platform-grid,
+      .gbs-period-grid,
+      .gbs-risk-grid { gap: 5px; }
+      .gbs-platform-card { min-height: 78px; padding: 8px; grid-template-columns: 30px minmax(0, 1fr); gap: 6px; }
+      .gbs-platform-icon { width: 29px; height: 29px; }
+      .gbs-pnl-block { padding: 10px 7px 8px; }
+      .gbs-money { font-size: 1.28rem; }
+      .gbs-metric-foot { padding: 6px; }
+      .gbs-period-side { padding: 6px; }
+      .gbs-period-money { font-size: .88rem; }
+    }
 
   </style>
 </head>
@@ -1844,15 +1925,19 @@
               <span class="gbs-card-label">With Martingale</span>
               <strong id="model-pl-martingale" class="gbs-money martingale">+$0.00</strong>
               <div class="gbs-money-label">Profit / Loss (USD)</div>
-              <div class="gbs-money-label">Maximum Stake</div>
-              <strong id="model-maximum-stake" class="gbs-stake-detail">$0.50</strong>
+              <div class="gbs-metric-foot martingale-foot">
+                <span>Maximum Stake</span>
+                <strong id="model-maximum-stake" class="gbs-stake-detail">$0.50</strong>
+              </div>
             </div>
             <div class="gbs-pnl-block">
               <span class="gbs-card-label">Without Martingale</span>
               <strong id="model-pl-fixed" class="gbs-money fixed">+$0.00</strong>
               <div class="gbs-money-label">Profit / Loss (USD)</div>
-              <div class="gbs-money-label">Flat Stake</div>
-              <strong id="model-flat-stake" class="gbs-stake-detail">$0.50</strong>
+              <div class="gbs-metric-foot fixed-foot">
+                <span>Flat Stake</span>
+                <strong id="model-flat-stake" class="gbs-stake-detail">$0.50</strong>
+              </div>
             </div>
           </div>
           <div class="gbs-simulator">
