@@ -19,6 +19,7 @@ from app.models import (
     VirtualGuardState,
     utc_now,
 )
+from app.recovery import calculate_recovery_stake, ceil_cents
 from app.strategy.rise_fall_strategy import SignalEvent, shadow_outcome
 
 NORMAL_MODE = "NORMAL_MODE"
@@ -527,10 +528,7 @@ class RFDir5Repository:
                     ),
                     recovery_debt=state.recovery_loss_debt,
                 )
-            base_stake = (
-                math.ceil(max(float(minimum_stake), float(requested_stake)) * 100.0 - 1e-9)
-                / 100.0
-            )
+            base_stake = ceil_cents(max(float(minimum_stake), float(requested_stake)))
             spendable_balance = max(0.0, balance - float(minimum_balance_reserve))
             if base_stake > spendable_balance + 1e-9:
                 return StakePlan(
@@ -549,34 +547,25 @@ class RFDir5Repository:
             target_stake = base_stake
             reason = ""
             if is_recovery:
-                ratio = float(proposal_profit_ratio)
-                if ratio <= 0:
+                calculation = calculate_recovery_stake(
+                    base_stake=base_stake,
+                    recovery_debt=state.recovery_loss_debt,
+                    pre_trade_profit_ratio=proposal_profit_ratio,
+                    minimum_stake=minimum_stake,
+                    spendable_balance=spendable_balance,
+                    current_balance=balance,
+                    maximum_recovery_balance_fraction=maximum_recovery_balance_fraction,
+                )
+                required_recovery_stake = calculation.required_recovery_stake
+                target_stake = calculation.requested_stake
+                if not calculation.allowed:
                     return StakePlan(
                         None,
-                        "recovery economics unavailable; debt retained",
+                        calculation.reason,
+                        is_recovery=True,
                         recovery_debt=state.recovery_loss_debt,
+                        required_recovery_stake=required_recovery_stake,
                     )
-                else:
-                    required_recovery_stake = (
-                        math.ceil((state.recovery_loss_debt / ratio) * 100.0 - 1e-9)
-                        / 100.0
-                    )
-                    target_stake = max(base_stake, required_recovery_stake)
-                    recovery_safety_cap = min(
-                        spendable_balance,
-                        max(
-                            base_stake,
-                            balance * float(maximum_recovery_balance_fraction),
-                        ),
-                    )
-                    if target_stake > recovery_safety_cap + 1e-9:
-                        return StakePlan(
-                            None,
-                            "recovery stake exceeds account balance safety cap; debt retained",
-                            is_recovery=True,
-                            recovery_debt=state.recovery_loss_debt,
-                            required_recovery_stake=required_recovery_stake,
-                        )
 
             state.updated_at = utc_now()
             return StakePlan(
@@ -810,7 +799,10 @@ class RFDir5Repository:
     ) -> list[dict[str, Any]]:
         settled: list[dict[str, Any]] = []
         now = utc_now()
-        required_virtual_wins = max(1, int(exit_after_wins or 1))
+        # Recovery is deliberately armed by exactly two consecutive virtual
+        # wins.  Keep this invariant here as well as in configuration so direct
+        # callers cannot weaken the financial safety rule.
+        required_virtual_wins = 2
         with self.database.session() as session:
             rows = session.scalars(
                 select(VirtualTrade)

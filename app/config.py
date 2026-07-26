@@ -267,8 +267,11 @@ class RiskSettings(StrictModel):
 
 class VirtualProtectionSettings(StrictModel):
     enabled: bool = True
-    trigger_actual_losses: int = Field(default=2, ge=1, le=20)
-    exit_after_wins: int = Field(default=2, ge=1, le=10)
+    # These are safety invariants, not tuning parameters.  Allowing a stale VPS
+    # environment variable to change either value can purchase a recovery after
+    # only one (or after non-consecutive) virtual win.
+    trigger_actual_losses: Literal[2] = 2
+    exit_after_wins: Literal[2] = 2
     max_observations: int = Field(default=0, ge=0)
     scope: Literal["PER_ACCOUNT", "EXECUTION_GROUP"] = "PER_ACCOUNT"
 
@@ -283,8 +286,12 @@ class TelegramSettings(StrictModel):
     request_timeout_seconds: float = Field(default=15.0, gt=0, le=60)
     dashboard_screenshot_enabled: bool = True
     dashboard_url: str = "http://api:8080/"
-    dashboard_selector: str = "#global-dashboard-snapshot"
-    dashboard_screenshot_timeout_seconds: float = Field(default=20.0, gt=0, le=60)
+    dashboard_selector: str = "#telegram-dashboard-snapshot"
+    # The dashboard is fed by live worker/database state.  Production captures
+    # deliberately wait longer than ordinary HTTP requests rather than posting
+    # a half-rendered "Loading" card to Telegram.
+    dashboard_screenshot_timeout_seconds: float = Field(default=300.0, gt=0, le=300)
+    timezone: str = "Africa/Nairobi"
 
 
 class StorageSettings(StrictModel):
@@ -464,5 +471,13 @@ def load_test2_config(path: str | Path = "config.yaml") -> Test2Config:
     if os.getenv("TELEGRAM_DASHBOARD_URL"):
         raw.setdefault("telegram", {})["dashboard_url"] = os.environ[
             "TELEGRAM_DASHBOARD_URL"
+        ].strip()
+    if os.getenv("TELEGRAM_DASHBOARD_SCREENSHOT_TIMEOUT_SECONDS"):
+        raw.setdefault("telegram", {})["dashboard_screenshot_timeout_seconds"] = float(
+            os.environ["TELEGRAM_DASHBOARD_SCREENSHOT_TIMEOUT_SECONDS"]
+        )
+    if os.getenv("TELEGRAM_TIMEZONE"):
+        raw.setdefault("telegram", {})["timezone"] = os.environ[
+            "TELEGRAM_TIMEZONE"
         ].strip()
     return Test2Config.model_validate(raw)

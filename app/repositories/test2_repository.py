@@ -6,11 +6,13 @@ import math
 import os
 import socket
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import case, func, select, update
+from sqlalchemy import and_, case, exists, func, select, update
 
 from app.config import Test2Config
 from app.database import Database
@@ -19,8 +21,11 @@ from app.models import (
     AccountRiskState,
     AuditEvent,
     BotState,
+    BulkExecutionBatch,
+    BulkExecutionMember,
     CandidateSignalRecord,
     ClientSession,
+    DashboardSnapshot,
     ManagedAccount,
     ModelArtifact,
     ModelDecisionRecord,
@@ -35,10 +40,18 @@ from app.models import (
     VirtualTrade,
     utc_now,
 )
+from app.recovery import calculate_recovery_stake
+from app.observed_performance import ObservedExecution, observed_martingale_cohort
 from app.model.bayesian_probability import BayesianSnapshot
 from app.model.hmm_regime import HmmInference
 from app.strategy.decision_engine import ProposalEconomics, TradeDecision
 from app.strategy.signal_detector import CandidateSignal
+from app.strategy.rise_fall_strategy import shadow_outcome
+from app.token_store import (
+    decrypt_auth_payload,
+    encrypt_auth_payload,
+    remove_trading_api_token,
+)
 
 
 def mask_account_id(account_id: str) -> str:
@@ -388,6 +401,66 @@ class Test2Repository:
             row.execution_status_updated_at = utc_now()
             row.updated_at = utc_now()
 
+    def discard_rejected_trading_token(
+        self,
+        account_id: int,
+        *,
+        reason: str,
+    ) -> list[int]:
+        """Forget a rejected PAT everywhere it is shared and request replacement."""
+        encryption_key = self.config.deriv.token_encryption_key
+        if not encryption_key:
+            return []
+        with self.database.session() as session:
+            target = session.get(ManagedAccount, int(account_id), with_for_update=True)
+            if target is None:
+                return []
+            try:
+                target_payload = decrypt_auth_payload(target.token_secret, encryption_key)
+            except Exception:
+                return []
+            rejected_token = str(
+                target_payload.get("pat_token")
+                or (
+                    target_payload.get("access_token")
+                    if str(target_payload.get("auth_type", "")).lower() != "oauth"
+                    else ""
+                )
+                or ""
+            ).strip()
+            if not rejected_token:
+                return []
+
+            affected: list[int] = []
+            rows = session.scalars(select(ManagedAccount).with_for_update()).all()
+            for row in rows:
+                try:
+                    payload = decrypt_auth_payload(row.token_secret, encryption_key)
+                except Exception:
+                    continue
+                stored_token = str(
+                    payload.get("pat_token")
+                    or (
+                        payload.get("access_token")
+                        if str(payload.get("auth_type", "")).lower() != "oauth"
+                        else ""
+                    )
+                    or ""
+                ).strip()
+                if stored_token != rejected_token:
+                    continue
+                row.token_secret = encrypt_auth_payload(
+                    remove_trading_api_token(payload),
+                    encryption_key,
+                )
+                row.enabled = False
+                row.execution_status = "token_required"
+                row.execution_status_reason = str(reason or "Deriv API token expired")[:160]
+                row.execution_status_updated_at = utc_now()
+                row.updated_at = utc_now()
+                affected.append(int(row.id))
+            return affected
+
     def touch_managed_account_execution(self, account_ids: list[int]) -> None:
         normalized = sorted({int(account_id) for account_id in account_ids if account_id})
         if not normalized:
@@ -514,7 +587,12 @@ class Test2Repository:
             if row is not None:
                 session.delete(row)
 
-    def account_summary(self, account_id: str) -> dict[str, Any]:
+    def account_summary(
+        self,
+        account_id: str,
+        *,
+        managed_account_id: int | None = None,
+    ) -> dict[str, Any]:
         masked = mask_account_id(account_id)
         today_start, today_end = self._local_period_bounds("today")
         with self.database.session() as session:
@@ -575,10 +653,10 @@ class Test2Repository:
                 )
             wins = int(trade_stats["wins"])
             losses = int(trade_stats["losses"])
-            protection_state = session.scalar(
-                select(AccountRiskState).where(
-                    AccountRiskState.account_id_masked == masked
-                )
+            protection_state = (
+                session.get(AccountRiskState, int(managed_account_id))
+                if managed_account_id is not None
+                else None
             )
             virtual_protection = (
                 {
@@ -923,10 +1001,14 @@ class Test2Repository:
         provider_start_time: datetime | None = None,
         contract_duration: int = 1,
         contract_duration_unit: str = "t",
+        managed_account_id: int | None = None,
+        bulk_batch_id: str | None = None,
     ) -> None:
         with self.database.session() as session:
             session.add(
                 Trade(
+                    managed_account_id=managed_account_id,
+                    bulk_batch_id=bulk_batch_id,
                     trade_id=transaction_id or contract_id,
                     signal_id=signal_id,
                     contract_id=contract_id,
@@ -942,6 +1024,144 @@ class Test2Repository:
                     model_version=self.config.model.version,
                 )
             )
+
+    def create_bulk_execution_batch(
+        self,
+        *,
+        signal_id: str,
+        account_type: str,
+        martingale_enabled: bool,
+        stake: float,
+        shard_index: int,
+        leader_managed_account_id: int | None,
+        pre_trade_profit_ratio: float,
+        members: list[dict[str, Any]],
+        request_metadata: dict[str, Any],
+        request_started_at: datetime,
+    ) -> str:
+        batch_id = str(uuid4())
+        with self.database.session() as session:
+            session.add(
+                BulkExecutionBatch(
+                    id=batch_id,
+                    signal_id=str(signal_id),
+                    run_id=self.run_id,
+                    account_type=str(account_type),
+                    martingale_enabled=bool(martingale_enabled),
+                    stake=round(float(stake), 2),
+                    shard_index=int(shard_index),
+                    account_count=len(members),
+                    leader_managed_account_id=leader_managed_account_id,
+                    pre_trade_profit_ratio=float(pre_trade_profit_ratio),
+                    request_metadata=dict(request_metadata),
+                    request_started_at=request_started_at,
+                    status="DISPATCHING",
+                )
+            )
+            session.add_all(
+                BulkExecutionMember(
+                    batch_id=batch_id,
+                    managed_account_id=int(member["managed_account_id"]),
+                    account_id_masked=str(member["account_id_masked"]),
+                    status="PENDING",
+                )
+                for member in members
+            )
+        return batch_id
+
+    def complete_bulk_execution_batch(
+        self,
+        batch_id: str,
+        *,
+        response_received_at: datetime,
+        latency_ms: float,
+        results: list[dict[str, Any]],
+    ) -> None:
+        with self.database.session() as session:
+            batch = session.get(BulkExecutionBatch, str(batch_id), with_for_update=True)
+            if batch is None:
+                return
+            members = {
+                int(row.managed_account_id): row
+                for row in session.scalars(
+                    select(BulkExecutionMember).where(
+                        BulkExecutionMember.batch_id == str(batch_id)
+                    )
+                ).all()
+            }
+            successes = 0
+            for result in results:
+                member = members.get(int(result["managed_account_id"]))
+                if member is None:
+                    continue
+                error = result.get("error") or {}
+                if result.get("contract_id") and not error:
+                    member.status = "SUCCESS"
+                    member.contract_id = str(result["contract_id"])
+                    member.trade_id = str(result.get("transaction_id") or result["contract_id"])
+                    member.buy_price = result.get("buy_price")
+                    member.payout = result.get("payout")
+                    member.purchase_timestamp = result.get("purchase_timestamp")
+                    successes += 1
+                else:
+                    member.status = "FAILED"
+                    member.error_code = str(error.get("code") or "BULK_MEMBER_FAILED")[:80]
+                    member.error_message = str(error.get("message") or "Bulk purchase failed")[:240]
+            batch.response_received_at = response_received_at
+            batch.latency_ms = max(0.0, float(latency_ms))
+            batch.successful_count = successes
+            batch.failed_count = len(members) - successes
+            batch.status = "SUCCESS" if successes == len(members) else "PARTIAL" if successes else "FAILED"
+
+    def bulk_execution_consistency(self, contract_id: str) -> dict[str, Any]:
+        """Return token-free signal and shard execution diagnostics."""
+        with self.database.session() as session:
+            trade = session.scalar(select(Trade).where(Trade.contract_id == str(contract_id)))
+            if trade is None or not trade.signal_id:
+                return {}
+            trades = session.scalars(select(Trade).where(Trade.signal_id == trade.signal_id)).all()
+            batches = session.scalars(
+                select(BulkExecutionBatch).where(BulkExecutionBatch.signal_id == trade.signal_id)
+            ).all()
+            canonical = session.scalar(
+                select(SystemModelTrade).where(
+                    SystemModelTrade.signal_id == trade.signal_id,
+                    SystemModelTrade.run_id == self.run_id,
+                )
+            )
+            outcomes = [str(row.outcome).upper() for row in trades if row.outcome]
+            canonical_outcome = str(canonical.outcome or "").upper() if canonical else ""
+            matching = sum(value == canonical_outcome for value in outcomes) if canonical_outcome else 0
+            different = len(outcomes) - matching if canonical_outcome else 0
+            payout_ratios = [
+                float(row.payout) / float(row.buy_price)
+                for row in trades
+                if row.payout is not None and row.buy_price and row.buy_price > 0
+            ]
+            return_ratios = [
+                float(row.profit) / float(row.buy_price)
+                for row in trades
+                if row.profit is not None and row.buy_price and row.buy_price > 0
+            ]
+            dispatches = sorted(row.request_started_at for row in batches if row.request_started_at)
+            return {
+                "signal_id": trade.signal_id,
+                "batch_id": trade.bulk_batch_id,
+                "successful_contracts": sum(int(row.successful_count or 0) for row in batches),
+                "failed_accounts": sum(int(row.failed_count or 0) for row in batches),
+                "unique_entry_spots": len({row.entry_tick for row in trades if row.entry_tick is not None}),
+                "unique_provider_start_times": len({row.provider_start_time for row in trades if row.provider_start_time is not None}),
+                "unique_purchase_times": len({row.provider_purchase_time or row.purchase_time for row in trades}),
+                "unique_outcomes": len(set(outcomes)),
+                "matching": matching,
+                "different": different,
+                "execution_consistency_pct": round(matching / len(outcomes) * 100.0, 2) if outcomes and canonical_outcome else None,
+                "minimum_payout_ratio": min(payout_ratios) if payout_ratios else None,
+                "maximum_payout_ratio": max(payout_ratios) if payout_ratios else None,
+                "minimum_realized_return_ratio": min(return_ratios) if return_ratios else None,
+                "maximum_realized_return_ratio": max(return_ratios) if return_ratios else None,
+                "dispatch_spread_ms": max(0.0, (dispatches[-1] - dispatches[0]).total_seconds() * 1000.0) if dispatches else 0.0,
+            }
 
     def settle_trade(
         self,
@@ -1010,6 +1230,44 @@ class Test2Repository:
             trade.commission = commission
             trade.cumulative_profit = state.total_profit
             trade.drawdown = state.current_drawdown
+            session.flush()
+            if trade.bulk_batch_id and trade.managed_account_id is not None:
+                member = session.scalar(
+                    select(BulkExecutionMember).where(
+                        BulkExecutionMember.batch_id == trade.bulk_batch_id,
+                        BulkExecutionMember.managed_account_id == trade.managed_account_id,
+                    )
+                )
+                if member is not None:
+                    member.profit = float(profit)
+                    member.outcome = str(outcome).upper()
+                    member.buy_price = trade.buy_price
+                    member.payout = trade.payout
+                    member.provider_start_time = trade.provider_start_time
+                    member.provider_expiry_time = trade.provider_expiry_time
+                    member.entry_spot = entry_tick
+                batch = session.get(BulkExecutionBatch, trade.bulk_batch_id, with_for_update=True)
+                batch_trades = session.scalars(
+                    select(Trade).where(Trade.bulk_batch_id == trade.bulk_batch_id)
+                ).all()
+                if batch is not None:
+                    starts = {row.provider_start_time for row in batch_trades if row.provider_start_time is not None}
+                    entries = {row.entry_tick for row in batch_trades if row.entry_tick is not None}
+                    expiries = {row.provider_expiry_time for row in batch_trades if row.provider_expiry_time is not None}
+                    outcomes = {row.outcome for row in batch_trades if row.outcome}
+                    purchases = sorted(
+                        row.provider_purchase_time or row.purchase_time
+                        for row in batch_trades
+                        if row.provider_purchase_time or row.purchase_time
+                    )
+                    batch.unique_start_time_count = len(starts) if starts else None
+                    batch.unique_entry_spot_count = len(entries) if entries else None
+                    batch.unique_expiry_time_count = len(expiries) if expiries else None
+                    batch.unique_outcome_count = len(outcomes) if outcomes else None
+                    if purchases:
+                        batch.first_purchase_timestamp = purchases[0]
+                        batch.last_purchase_timestamp = purchases[-1]
+                        batch.execution_spread_ms = max(0.0, (purchases[-1] - purchases[0]).total_seconds() * 1000.0)
             if trade.signal_id:
                 system_trade = session.scalar(
                     select(SystemModelTrade)
@@ -1019,12 +1277,48 @@ class Test2Repository:
                     )
                     .with_for_update()
                 )
-                if system_trade is not None and system_trade.settlement_timestamp is None:
-                    system_trade.outcome = outcome.upper()
-                    system_trade.settlement_timestamp = utc_now()
-                    ref_stake = max(0.35, float(system_trade.reference_base_stake or 0.0))
-                    actual_stake = max(1e-9, float(buy_price or ref_stake))
-                    system_trade.fixed_stake_profit = round(profit * ref_stake / actual_stake, 2)
+                # One copied model signal may settle on many user accounts. Use
+                # only the earliest valid monetary settlement to calibrate the
+                # canonical $0.50 result, even when tick settlement happened
+                # first. Deriv's Trade.profit already includes quote/markup
+                # economics, so app_markup_amount must never be deducted again.
+                earliest_actual = session.scalar(
+                    select(Trade)
+                    .where(
+                        Trade.signal_id == trade.signal_id,
+                        Trade.settlement_time.is_not(None),
+                        Trade.profit.is_not(None),
+                        Trade.buy_price.is_not(None),
+                        Trade.buy_price > 0,
+                    )
+                    .order_by(
+                        func.coalesce(
+                            Trade.provider_purchase_time,
+                            Trade.purchase_time,
+                        ).asc(),
+                        Trade.id.asc(),
+                    )
+                    .limit(1)
+                )
+                if system_trade is not None and earliest_actual is not None:
+                    canonical_stake = 0.50
+                    actual_stake = float(earliest_actual.buy_price or 0.0)
+                    normalized_profit = (
+                        float(earliest_actual.profit or 0.0)
+                        * canonical_stake
+                        / actual_stake
+                    )
+                    system_trade.reference_base_stake = canonical_stake
+                    system_trade.is_virtual = False
+                    system_trade.fixed_stake_profit = round(normalized_profit, 8)
+                    # Canonical direction remains tick/model determined. Copied
+                    # account outcomes are retained for consistency diagnostics.
+                    if system_trade.settlement_timestamp is None:
+                        system_trade.settlement_timestamp = (
+                            earliest_actual.provider_settlement_time
+                            or earliest_actual.settlement_time
+                            or utc_now()
+                        )
             return True
 
     def completed_outcomes(self) -> tuple[int, int]:
@@ -1539,84 +1833,55 @@ class Test2Repository:
     def hourly_execution_report(
         self,
         *,
-        master_account_id: str,
-        window_minutes: int = 60,
+        window_start: datetime,
+        window_end: datetime,
+        timezone_name: str = "Africa/Nairobi",
     ) -> dict[str, Any]:
-        minutes = max(1, int(window_minutes))
-        now = utc_now()
-        master_masked = mask_account_id(master_account_id) if master_account_id else ""
+        tz = ZoneInfo(timezone_name)
+        start = window_start.astimezone(timezone.utc)
+        end = window_end.astimezone(timezone.utc)
+        local_end = end.astimezone(tz)
+        today_start = datetime(
+            local_end.year,
+            local_end.month,
+            local_end.day,
+            tzinfo=tz,
+        ).astimezone(timezone.utc)
+        canonical_trades = self.system_model_trades(
+            start=min(today_start, start),
+            end=end,
+            include_virtual=False,
+        )
+        hourly = self.system_performance_summary(
+            start=start,
+            end=end,
+            simulated_base_stake=0.50,
+            include_virtual=False,
+            trades=canonical_trades,
+        )
+        today = self.system_performance_summary(
+            start=today_start,
+            end=end,
+            simulated_base_stake=0.50,
+            include_virtual=False,
+            trades=canonical_trades,
+        )
         with self.database.session() as session:
-            settled_filter = (
-                self._current_run_trade_filter(),
-                Trade.settlement_time.is_not(None),
-            )
-            master_row = session.execute(
-                select(
-                    func.count().label("trades"),
-                    func.sum(case((Trade.outcome == "WIN", 1), else_=0)).label("wins"),
-                    func.sum(case((Trade.outcome == "LOSS", 1), else_=0)).label("losses"),
-                    func.sum(Trade.profit).label("profit"),
-                ).where(*settled_filter, Trade.account_id_masked == master_masked)
-            ).one()
-            all_row = session.execute(
-                select(
-                    func.count().label("trades"),
-                    func.sum(Trade.profit).label("profit"),
-                ).where(*settled_filter)
-            ).one()
-            recent_master_outcomes = session.scalars(
-                select(Trade.outcome)
-                .where(*settled_filter, Trade.account_id_masked == master_masked)
-                .order_by(Trade.settlement_time.desc(), Trade.id.desc())
-            ).all()
-            consecutive_wins, consecutive_losses = self.current_consecutive_streaks(
-                recent_master_outcomes
-            )
-            open_contracts = session.scalar(
-                select(func.count()).select_from(Trade).where(
-                    self._current_run_trade_filter(),
-                    Trade.settlement_time.is_(None),
-                )
-            )
             active_accounts = session.scalar(
                 select(func.count()).select_from(ManagedAccount).where(
                     ManagedAccount.enabled.is_(True),
                     ManagedAccount.execution_status == "active",
                 )
             )
-            excluded_accounts = session.scalar(
-                select(func.count()).select_from(ManagedAccount).where(
-                    ManagedAccount.enabled.is_(False),
-                    ManagedAccount.execution_status.in_(
-                        (
-                            "credential_error",
-                            "duplicate",
-                            "insufficient_balance",
-                            "invalid_account",
-                            "risk_limit",
-                        )
-                    ),
-                )
-            )
         return {
-            "generated_at": now.isoformat(),
-            "window_minutes": minutes,
-            "mode": self.runtime_mode(),
-            "strategy": self.config.rf_strategy.name,
-            "direction": self.config.rf_strategy.allowed_direction,
-            "contract_type": "PUT",
-            "master_account": master_masked,
-            "master_trades": int(master_row.trades or 0),
-            "master_wins": int(master_row.wins or 0),
-            "master_losses": int(master_row.losses or 0),
-            "master_profit": float(master_row.profit or 0.0),
-            "consecutive_wins": consecutive_wins,
-            "consecutive_losses": consecutive_losses,
-            "all_account_runs": int(all_row.trades or 0),
-            "all_account_profit": float(all_row.profit or 0.0),
-            "open_contracts": int(open_contracts or 0),
+            "timezone": str(tz.key),
+            "window_start": start.astimezone(tz).isoformat(),
+            "window_end": end.astimezone(tz).isoformat(),
+            "hourly_trades": int(hourly["total_trades"]),
+            "hourly_martingale_pnl": float(hourly["martingale_pnl"]),
+            "hourly_flat_pnl": float(hourly["fixed_pnl"]),
             "active_accounts": int(active_accounts or 0),
-            "excluded_accounts": int(excluded_accounts or 0),
+            "today_martingale_pnl": float(today["martingale_pnl"]),
         }
 
     @staticmethod
@@ -2032,9 +2297,12 @@ class Test2Repository:
         direction: str,
         contract_type: str,
         duration_ticks: int,
+        entry_tick_sequence: int,
+        entry_spot: float,
+        expected_profit_ratio: float,
         reference_base_stake: float = 0.50,
         is_virtual: bool = False,
-    ) -> None:
+    ) -> bool:
         now = utc_now()
         with self.database.session() as session:
             trade = SystemModelTrade(
@@ -2044,44 +2312,65 @@ class Test2Repository:
                 direction=str(direction),
                 contract_type=str(contract_type),
                 duration_ticks=int(duration_ticks),
+                entry_tick_sequence=int(entry_tick_sequence),
+                expiry_tick_sequence=int(entry_tick_sequence) + int(duration_ticks),
+                entry_spot=float(entry_spot),
                 signal_timestamp=now,
                 entry_timestamp=now,
-                reference_base_stake=float(reference_base_stake),
-                is_virtual=bool(is_virtual),
+                # The canonical ledger is account-independent and permanently
+                # denominated at $0.50. Viewer stakes are replay inputs only.
+                reference_base_stake=0.50,
+                expected_profit_ratio=max(0.0, float(expected_profit_ratio)),
+                # Canonical rows are created only after a real contract is
+                # registered. Account virtual protection lives exclusively in
+                # AccountRiskState/VirtualTrade and cannot classify this row.
+                is_virtual=False,
             )
             session.merge(trade)
+            return False
 
-    def settle_system_model_trade(
+    def settle_due_system_model_trades(
         self,
         *,
-        signal_id: str,
-        outcome: str,
-        fixed_stake_profit: float,
-        martingale_stake: float,
-        martingale_profit: float,
-        martingale_level: int,
-        recovery_debt_before: float,
-        recovery_debt_after: float,
-        settlement_timestamp: datetime | None = None,
-    ) -> None:
-        now = settlement_timestamp or utc_now()
+        symbol: str,
+        tick_sequence: int,
+        exit_spot: float,
+    ) -> list[dict[str, Any]]:
+        """Settle canonical model events once, independently of user contracts."""
+        now = utc_now()
+        settled: list[dict[str, Any]] = []
         with self.database.session() as session:
-            trade = session.scalar(
+            rows = session.scalars(
                 select(SystemModelTrade).where(
-                    SystemModelTrade.signal_id == str(signal_id),
                     SystemModelTrade.run_id == self.run_id,
+                    SystemModelTrade.symbol == str(symbol),
+                    SystemModelTrade.outcome.is_(None),
+                    SystemModelTrade.expiry_tick_sequence <= int(tick_sequence),
+                    exists().where(Trade.signal_id == SystemModelTrade.signal_id),
+                ).with_for_update()
+            ).all()
+            if not rows:
+                return settled
+            for trade in rows:
+                outcome = shadow_outcome(
+                    trade.direction,
+                    Decimal(str(trade.entry_spot)),
+                    Decimal(str(exit_spot)),
                 )
-            )
-            if trade is None:
-                return
-            trade.outcome = str(outcome or "").upper()
-            trade.settlement_timestamp = now
-            trade.fixed_stake_profit = float(fixed_stake_profit)
-            trade.martingale_stake = float(martingale_stake)
-            trade.martingale_profit = float(martingale_profit)
-            trade.martingale_level = int(martingale_level)
-            trade.recovery_debt_before = float(recovery_debt_before)
-            trade.recovery_debt_after = float(recovery_debt_after)
+                trade.outcome = outcome
+                trade.is_virtual = False
+                trade.exit_spot = float(exit_spot)
+                trade.settlement_timestamp = now
+                ratio = max(0.0, float(trade.expected_profit_ratio or 0.0))
+                trade.fixed_stake_profit = ratio * 0.50 if outcome == "WIN" else -0.50
+                settled.append(
+                    {
+                        "signal_id": trade.signal_id,
+                        "outcome": outcome,
+                        "is_virtual": False,
+                    }
+                )
+        return settled
 
     def system_model_trades(
         self,
@@ -2089,6 +2378,7 @@ class Test2Repository:
         start: datetime,
         end: datetime,
         include_virtual: bool = True,
+        viewer_managed_account_id: int | None = None,
     ) -> list[dict[str, Any]]:
         with self.database.session() as session:
             rows = session.scalars(
@@ -2098,13 +2388,59 @@ class Test2Repository:
                     SystemModelTrade.signal_timestamp >= start,
                     SystemModelTrade.signal_timestamp < end,
                     SystemModelTrade.outcome.in_(["WIN", "LOSS"]),
+                    exists().where(Trade.signal_id == SystemModelTrade.signal_id),
                 )
                 .order_by(SystemModelTrade.signal_timestamp.asc(), SystemModelTrade.id.asc())
             ).all()
+            signal_ids = [row.signal_id for row in rows]
+            earliest_actual_by_signal: dict[str, Trade] = {}
+            viewer_actual_by_signal: dict[str, Trade] = {}
+            if signal_ids:
+                actual_rows = session.scalars(
+                    select(Trade)
+                    .where(
+                        Trade.signal_id.in_(signal_ids),
+                        Trade.settlement_time.is_not(None),
+                        Trade.profit.is_not(None),
+                        Trade.buy_price.is_not(None),
+                        Trade.buy_price > 0,
+                    )
+                    .order_by(
+                        Trade.signal_id.asc(),
+                        func.coalesce(
+                            Trade.provider_purchase_time,
+                            Trade.purchase_time,
+                        ).asc(),
+                        Trade.id.asc(),
+                    )
+                ).all()
+                for actual in actual_rows:
+                    earliest_actual_by_signal.setdefault(actual.signal_id, actual)
+                    if (
+                        viewer_managed_account_id is not None
+                        and actual.managed_account_id == int(viewer_managed_account_id)
+                    ):
+                        viewer_actual_by_signal.setdefault(actual.signal_id, actual)
         results = []
         for row in rows:
-            if row.is_virtual and not include_virtual:
-                continue
+            canonical_actual = earliest_actual_by_signal.get(row.signal_id)
+            viewer_actual = viewer_actual_by_signal.get(row.signal_id)
+            actual = viewer_actual or canonical_actual
+            reference_base_stake = 0.50
+            if actual is not None:
+                fixed_stake_profit = (
+                    float(actual.profit or 0.0)
+                    * reference_base_stake
+                    / float(actual.buy_price or reference_base_stake)
+                )
+                outcome = (
+                    str(actual.outcome or row.outcome).upper()
+                    if viewer_actual is not None
+                    else str(row.outcome).upper()
+                )
+            else:
+                fixed_stake_profit = float(row.fixed_stake_profit or 0.0)
+                outcome = row.outcome
             results.append(
                 {
                     "signal_id": row.signal_id,
@@ -2114,10 +2450,12 @@ class Test2Repository:
                     "duration_ticks": row.duration_ticks,
                     "signal_timestamp": row.signal_timestamp.isoformat() if row.signal_timestamp else None,
                     "settlement_timestamp": row.settlement_timestamp.isoformat() if row.settlement_timestamp else None,
-                    "outcome": row.outcome,
-                    "is_virtual": bool(row.is_virtual),
-                    "reference_base_stake": float(row.reference_base_stake or 0.0),
-                    "fixed_stake_profit": float(row.fixed_stake_profit or 0.0),
+                    "outcome": outcome,
+                    "is_virtual": False,
+                    "reference_base_stake": reference_base_stake,
+                    "fixed_stake_profit": round(fixed_stake_profit, 8),
+                    "execution_source": "viewer_actual" if viewer_actual is not None else "canonical",
+                    "expected_profit_ratio": float(row.expected_profit_ratio or 0.90),
                     "martingale_stake": float(row.martingale_stake or 0.0),
                     "martingale_profit": float(row.martingale_profit or 0.0),
                     "martingale_level": int(row.martingale_level or 0),
@@ -2134,13 +2472,36 @@ class Test2Repository:
         end: datetime,
         simulated_base_stake: float = 0.50,
         include_virtual: bool = False,
+        trades: list[dict[str, Any]] | None = None,
+        viewer_managed_account_id: int | None = None,
+        observed_executions: list[ObservedExecution] | None = None,
     ) -> dict[str, Any]:
-        trades = self.system_model_trades(
+        if trades is None:
+            period_trades = self.system_model_trades(
+                start=start,
+                end=end,
+                include_virtual=include_virtual,
+                viewer_managed_account_id=viewer_managed_account_id,
+            )
+        else:
+            period_trades = []
+            for trade in trades:
+                timestamp_value = trade.get("signal_timestamp")
+                if not timestamp_value:
+                    continue
+                timestamp = datetime.fromisoformat(str(timestamp_value))
+                if timestamp.tzinfo is None:
+                    timestamp = timestamp.replace(tzinfo=timezone.utc)
+                if start <= timestamp < end and (
+                    include_virtual or not trade.get("is_virtual")
+                ):
+                    period_trades.append(trade)
+        real_trades = [trade for trade in period_trades if not trade["is_virtual"]]
+        observed = self.observed_martingale_performance(
             start=start,
             end=end,
-            include_virtual=include_virtual,
+            executions=observed_executions,
         )
-        real_trades = [trade for trade in trades if not trade["is_virtual"]]
         fixed_profit = 0.0
         martingale_profit = 0.0
         current_fixed_drawdown = 0.0
@@ -2151,17 +2512,50 @@ class Test2Repository:
         max_martingale_drawdown = 0.0
         real_wins = 0
         real_losses = 0
+        current_real_win_streak = 0
+        longest_real_win_streak = 0
         current_real_loss_streak = 0
         longest_real_loss_streak = 0
-        fixed_stake = max(0.35, float(simulated_base_stake))
+        fixed_stake = min(1000.0, max(0.50, float(simulated_base_stake)))
+        maximum_martingale_stake = fixed_stake
         recovery_debt = 0.0
         recovery_wins_remaining = 2
         martingale_level = 0
-        profit_ratio = 0.9
+        total_fixed_staked = 0.0
+        total_martingale_staked = 0.0
         for trade in real_trades:
             outcome = str(trade["outcome"]).upper()
-            ref_stake = max(0.35, float(trade.get("reference_base_stake") or 0.0))
-            fixed_pnl = fixed_stake * (float(trade.get("fixed_stake_profit") or 0.0) / ref_stake) if ref_stake > 1e-9 else 0.0
+            ref_stake = max(0.50, float(trade.get("reference_base_stake") or 0.0))
+            canonical_pnl = float(trade.get("fixed_stake_profit") or 0.0)
+            realized_return_ratio = canonical_pnl / ref_stake if ref_stake > 1e-9 else 0.0
+            # Recovery sizing must use proposal economics captured before this
+            # contract was bought; realized profit is settlement information.
+            profit_ratio = max(0.01, float(trade.get("expected_profit_ratio") or 0.90))
+            fixed_pnl = fixed_stake * realized_return_ratio
+            # Select the stake from debt carried into this trade.  The previous
+            # implementation increased the stake after observing this trade's
+            # result, retroactively multiplying the loss that triggered it.
+            if recovery_debt > 0.01:
+                calculation = calculate_recovery_stake(
+                    base_stake=fixed_stake,
+                    recovery_debt=recovery_debt,
+                    pre_trade_profit_ratio=profit_ratio,
+                    minimum_stake=0.50,
+                )
+                martingale_stake = calculation.requested_stake
+            else:
+                martingale_stake = fixed_stake
+            maximum_martingale_stake = max(
+                maximum_martingale_stake,
+                martingale_stake,
+            )
+            martingale_pnl = (
+                fixed_pnl * (martingale_stake / fixed_stake)
+                if fixed_stake > 1e-9
+                else 0.0
+            )
+            total_fixed_staked += fixed_stake
+            total_martingale_staked += martingale_stake
             fixed_profit += fixed_pnl
             fixed_peak = max(fixed_peak, fixed_profit)
             current_fixed_drawdown = fixed_peak - fixed_profit
@@ -2169,8 +2563,12 @@ class Test2Repository:
             if outcome == "WIN":
                 real_wins += 1
                 current_real_loss_streak = 0
+                current_real_win_streak += 1
+                longest_real_win_streak = max(
+                    longest_real_win_streak, current_real_win_streak
+                )
                 if recovery_debt > 0.01:
-                    recovered = max(0.0, fixed_pnl)
+                    recovered = max(0.0, martingale_pnl)
                     recovery_debt = max(0.0, round(recovery_debt - recovered, 2))
                     recovery_wins_remaining = max(0, recovery_wins_remaining - 1)
                     if recovery_debt <= 0.01:
@@ -2183,39 +2581,260 @@ class Test2Repository:
                     martingale_level = 0
             else:
                 real_losses += 1
+                current_real_win_streak = 0
                 current_real_loss_streak += 1
                 longest_real_loss_streak = max(longest_real_loss_streak, current_real_loss_streak)
-                recovery_debt = round(recovery_debt + fixed_stake, 2)
+                recovery_debt = round(recovery_debt + martingale_stake, 2)
                 recovery_wins_remaining = 2
                 martingale_level = min(martingale_level + 1, 10)
-            if recovery_debt > 0.01 and martingale_level > 0:
-                required_recovery_stake = (
-                    math.ceil((recovery_debt / profit_ratio) * 100.0 - 1e-9) / 100.0
-                )
-                martingale_stake = max(fixed_stake, required_recovery_stake)
-            else:
-                martingale_stake = fixed_stake
-            martingale_pnl = fixed_pnl * (martingale_stake / fixed_stake) if fixed_stake > 1e-9 else 0.0
             martingale_profit += martingale_pnl
             martingale_peak = max(martingale_peak, martingale_profit)
             current_martingale_drawdown = martingale_peak - martingale_profit
             max_martingale_drawdown = max(max_martingale_drawdown, current_martingale_drawdown)
         total = real_wins + real_losses
+        viewer_actual_trades = sum(
+            trade.get("execution_source") == "viewer_actual" for trade in real_trades
+        )
+        version_material = "|".join(
+            f"{trade.get('signal_id', '')}:{trade.get('outcome', '')}:"
+            f"{float(trade.get('fixed_stake_profit') or 0.0):.8f}"
+            for trade in real_trades
+        )
+        observed_stake_volume = float(observed["observed_martingale_stake_volume"])
+        observed_current_drawdown = float(observed["observed_current_drawdown"])
+        observed_max_drawdown = float(observed["observed_max_drawdown"])
         return {
             "start": start.isoformat(),
             "end": end.isoformat(),
             "simulated_base_stake": round(fixed_stake, 2),
+            "flat_stake": round(fixed_stake, 2),
+            # Main dashboard compatibility fields are OBSERVED actual Deriv
+            # economics. Synthetic recovery replay is explicitly separate.
+            "maximum_martingale_stake": observed["observed_maximum_stake"],
+            "observed_maximum_stake": observed["observed_maximum_stake"],
+            "simulated_maximum_martingale_stake": round(maximum_martingale_stake, 2),
+            "model_data_version": hashlib.sha256(
+                version_material.encode("utf-8")
+            ).hexdigest()[:16],
             "total_trades": total,
+            "viewer_actual_trades": viewer_actual_trades,
+            "simulated_trades": total - viewer_actual_trades,
             "wins": real_wins,
             "losses": real_losses,
             "win_rate": real_wins / total if total else 0.0,
             "fixed_pnl": round(fixed_profit, 2),
-            "martingale_pnl": round(martingale_profit, 2),
+            "martingale_pnl": observed["observed_martingale_pnl"],
+            "observed_martingale_pnl": observed["observed_martingale_pnl"],
+            "simulated_martingale_pnl": round(martingale_profit, 2),
+            "observed_martingale_stake_volume": observed_stake_volume,
+            "martingale_return_pct": round(
+                float(observed["observed_martingale_pnl"])
+                / observed_stake_volume
+                * 100.0,
+                2,
+            ) if observed_stake_volume else 0.0,
+            "martingale_cohort_size": observed["martingale_cohort_size"],
+            "martingale_population": observed["martingale_population"],
+            "martingale_cohort_confidence": observed["martingale_cohort_confidence"],
+            "martingale_cohort_trade_count": observed["martingale_cohort_trade_count"],
+            "martingale_cohort_status": observed["martingale_cohort_status"],
+            "martingale_cohort_sample_sufficient": observed["martingale_cohort_sample_sufficient"],
+            "martingale_dominant_signature": observed["martingale_dominant_signature"],
             "max_drawdown_fixed": round(max_fixed_drawdown, 2),
-            "max_drawdown_martingale": round(max_martingale_drawdown, 2),
+            "max_drawdown_martingale": round(observed_max_drawdown, 2),
+            "simulated_max_drawdown_martingale": round(max_martingale_drawdown, 2),
             "current_drawdown_fixed": round(current_fixed_drawdown, 2),
-            "current_drawdown_martingale": round(current_martingale_drawdown, 2),
-            "longest_win_streak": 0,
+            "current_drawdown_martingale": round(observed_current_drawdown, 2),
+            "simulated_current_drawdown_martingale": round(current_martingale_drawdown, 2),
+            "longest_win_streak": longest_real_win_streak,
             "longest_loss_streak": longest_real_loss_streak,
             "current_loss_streak": current_real_loss_streak,
+            "current_drawdown_fixed_pct": round(
+                current_fixed_drawdown / total_fixed_staked * 100.0, 2
+            ) if total_fixed_staked else 0.0,
+            "current_drawdown_martingale_pct": round(
+                observed_current_drawdown / observed_stake_volume * 100.0, 2
+            ) if observed_stake_volume else 0.0,
+            "simulated_current_drawdown_martingale_pct": round(
+                current_martingale_drawdown / total_martingale_staked * 100.0, 2
+            ) if total_martingale_staked else 0.0,
+            "max_drawdown_fixed_pct": round(
+                max_fixed_drawdown / total_fixed_staked * 100.0, 2
+            ) if total_fixed_staked else 0.0,
+            "max_drawdown_martingale_pct": round(
+                observed_max_drawdown / observed_stake_volume * 100.0, 2
+            ) if observed_stake_volume else 0.0,
+            "simulated_max_drawdown_martingale_pct": round(
+                max_martingale_drawdown / total_martingale_staked * 100.0, 2
+            ) if total_martingale_staked else 0.0,
         }
+
+    def observed_martingale_performance(
+        self,
+        *,
+        start: datetime,
+        end: datetime,
+        include_signal_diagnostics: bool = False,
+        executions: list[ObservedExecution] | None = None,
+    ) -> dict[str, Any]:
+        """Observed actual path from the largest identical Martingale cohort.
+
+        Future bulk trades use the immutable execution-time team stored on the
+        batch. Historical trades without a batch cautiously fall back to the
+        managed account's current Martingale setting. Rows without stable
+        managed-account identity are excluded rather than grouped by a possibly
+        colliding display mask.
+        """
+        if executions is None:
+            executions = self.observed_martingale_executions(start=start, end=end)
+        else:
+            executions = [row for row in executions if start <= row.purchased_at < end]
+        result = observed_martingale_cohort(executions)
+        # Account membership is used only to select a stable representative;
+        # neither public metrics nor protected aggregate diagnostics expose IDs.
+        result.pop("dominant_cohort_account_ids", None)
+        result.pop("representative_account_id", None)
+        if not include_signal_diagnostics:
+            result.pop("per_signal_consistency", None)
+        return result
+
+    def observed_martingale_executions(
+        self,
+        *,
+        start: datetime,
+        end: datetime,
+    ) -> list[ObservedExecution]:
+        """Load/decrypt observed executions once for an entire dashboard snapshot."""
+        legacy_candidates: dict[str, list[tuple[int, bool]]] = {}
+        for account in self.list_managed_accounts():
+            try:
+                payload = decrypt_auth_payload(
+                    account.token_secret,
+                    self.config.deriv.token_encryption_key,
+                )
+            except Exception:
+                continue
+            account_id = str(payload.get("account_id") or "").strip()
+            if not account_id:
+                continue
+            legacy_candidates.setdefault(mask_account_id(account_id), []).append(
+                (int(account.id), bool(account.martingale_enabled))
+            )
+        # A masked historical identity is usable only when it resolves to one
+        # managed account. Collisions are excluded rather than guessed.
+        legacy_accounts = {
+            masked: values[0]
+            for masked, values in legacy_candidates.items()
+            if len(values) == 1
+        }
+        purchased_at = func.coalesce(Trade.provider_purchase_time, Trade.purchase_time)
+        with self.database.session() as session:
+            rows = session.execute(
+                select(
+                    Trade,
+                    BulkExecutionBatch.martingale_enabled,
+                    ManagedAccount.martingale_enabled,
+                    SystemModelTrade.symbol,
+                )
+                .join(
+                    SystemModelTrade,
+                    and_(
+                        SystemModelTrade.signal_id == Trade.signal_id,
+                        SystemModelTrade.run_id == self.run_id,
+                    ),
+                )
+                .outerjoin(BulkExecutionBatch, BulkExecutionBatch.id == Trade.bulk_batch_id)
+                .outerjoin(ManagedAccount, ManagedAccount.id == Trade.managed_account_id)
+                .where(
+                    Trade.settlement_time.is_not(None),
+                    Trade.buy_price.is_not(None),
+                    Trade.buy_price > 0,
+                    Trade.payout.is_not(None),
+                    Trade.profit.is_not(None),
+                    Trade.outcome.in_(["WIN", "LOSS"]),
+                    purchased_at >= start,
+                    purchased_at < end,
+                )
+                .order_by(
+                    Trade.managed_account_id.asc(),
+                    purchased_at.asc(),
+                    Trade.id.asc(),
+                )
+            ).all()
+
+        executions: list[ObservedExecution] = []
+        for trade, batch_martingale, current_martingale, symbol in rows:
+            if trade.managed_account_id is not None:
+                stable_account_id = int(trade.managed_account_id)
+                inferred_martingale = bool(current_martingale)
+            else:
+                legacy = legacy_accounts.get(str(trade.account_id_masked or ""))
+                if legacy is None:
+                    continue
+                stable_account_id, inferred_martingale = legacy
+            martingale_at_purchase = (
+                bool(batch_martingale)
+                if batch_martingale is not None
+                else inferred_martingale
+            )
+            if not martingale_at_purchase:
+                continue
+            execution_time = trade.provider_purchase_time or trade.purchase_time
+            if execution_time.tzinfo is None:
+                execution_time = execution_time.replace(tzinfo=timezone.utc)
+            executions.append(
+                ObservedExecution(
+                    account_id=stable_account_id,
+                    trade_id=int(trade.id),
+                    signal_id=str(trade.signal_id),
+                    symbol=str(symbol),
+                    purchased_at=execution_time,
+                    buy_price=float(trade.buy_price),
+                    payout=float(trade.payout),
+                    profit=float(trade.profit),
+                    outcome=str(trade.outcome),
+                )
+            )
+        return executions
+
+    def load_dashboard_snapshots(self) -> dict[str, dict[str, Any]]:
+        with self.database.session() as session:
+            rows = session.scalars(select(DashboardSnapshot)).all()
+            return {
+                row.account_type: {
+                    "data": dict(row.payload or {}),
+                    "generated_at": row.generated_at,
+                    "snapshot_version": int(row.snapshot_version),
+                    "source_watermark": dict(row.source_watermark or {}),
+                }
+                for row in rows
+            }
+
+    def persist_dashboard_snapshot(
+        self,
+        *,
+        account_type: str,
+        payload: dict[str, Any],
+        generated_at: datetime,
+        snapshot_version: int,
+        source_watermark: dict[str, Any],
+    ) -> None:
+        with self.database.session() as session:
+            row = session.get(DashboardSnapshot, account_type)
+            if row is None:
+                row = DashboardSnapshot(account_type=account_type)
+                session.add(row)
+            row.payload = payload
+            row.generated_at = generated_at
+            row.snapshot_version = snapshot_version
+            row.source_watermark = source_watermark
+
+    def open_system_model_trade_count(self) -> int:
+        with self.database.session() as session:
+            return int(session.scalar(
+                select(func.count()).select_from(SystemModelTrade).where(
+                    SystemModelTrade.run_id == self.run_id,
+                    SystemModelTrade.outcome.is_(None),
+                    exists().where(Trade.signal_id == SystemModelTrade.signal_id),
+                )
+            ) or 0)

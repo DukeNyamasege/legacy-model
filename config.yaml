@@ -153,8 +153,11 @@ telegram:
   request_timeout_seconds: 15.0
   dashboard_screenshot_enabled: true
   dashboard_url: http://api:8080/
-  dashboard_selector: "#global-dashboard-snapshot"
-  dashboard_screenshot_timeout_seconds: 20.0
+  # This boundary intentionally excludes the interactive page header and AI
+  # banner, matching the desktop statistics image attached to hourly updates.
+  dashboard_selector: "#telegram-dashboard-snapshot"
+  dashboard_screenshot_timeout_seconds: 300.0
+  timezone: Africa/Nairobi
 storage:
   database_url_env: DATABASE_URL
   local_database_url: sqlite:///data/rfdir5.db

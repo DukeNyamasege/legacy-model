@@ -71,6 +71,18 @@ def live_tick_payload(
 
 
 class DashboardMetricsTests(unittest.TestCase):
+    def test_personal_deriv_refresh_is_scheduled_off_request(self) -> None:
+        import app.api as api
+
+        account = {"account_id": "VRTC123", "id": 123}
+        with api.PERSONAL_ACCOUNT_REFRESH_LOCK:
+            api.PERSONAL_ACCOUNT_REFRESH.clear()
+            api.PERSONAL_ACCOUNT_REFRESH_INFLIGHT.clear()
+        with patch.object(api.PERSONAL_ACCOUNT_REFRESH_EXECUTOR, "submit") as submit:
+            self.assertTrue(api.schedule_personal_account_refresh(account))
+            self.assertFalse(api.schedule_personal_account_refresh(account))
+        submit.assert_called_once_with(api._refresh_personal_account_snapshot, account)
+
     def test_dashboard_contract_table_is_compact_and_has_no_repeated_copy(self) -> None:
         html = Path("dashboard/index.html").read_text(encoding="utf-8")
         for heading in ("Market", "Contract type", "Stake", "Payout", "Outcome"):
@@ -98,6 +110,21 @@ class DashboardMetricsTests(unittest.TestCase):
         self.assertIn("<span>Trading Now</span>", html)
         self.assertNotIn('api("/settings/accounts").catch', html)
         self.assertIn("refresh({ showLoader: false, blocking: false })", html)
+
+    def test_mobile_dashboard_keeps_key_stake_metrics_visible_and_css_balanced(self) -> None:
+        html = Path("dashboard/index.html").read_text(encoding="utf-8")
+        stylesheet = html.split("<style>", 1)[1].split("</style>", 1)[0]
+        self.assertEqual(stylesheet.count("{"), stylesheet.count("}"))
+        self.assertIn('class="gbs-metric-foot martingale-foot"', html)
+        self.assertIn('id="model-maximum-stake"', html)
+        self.assertIn('class="gbs-metric-foot fixed-foot"', html)
+        mobile = stylesheet.split("@media (max-width: 760px)", 1)[1]
+        self.assertIn(
+            ".gbs-pnl-pair {\n        grid-template-columns: repeat(2, minmax(0, 1fr));",
+            mobile,
+        )
+        self.assertIn(".gbs-metric-foot .gbs-stake-detail { font-size: .88rem; }", mobile)
+        self.assertNotIn(".gbs-stake-detail { display: none", mobile)
 
     def test_real_execution_requires_explicit_server_acknowledgement(self) -> None:
         bot = object.__new__(enhanced_bot.TradingBot)
@@ -468,8 +495,15 @@ class DashboardMetricsTests(unittest.TestCase):
                 "sec-fetch-site": "cross-site",
             }
         )
+        configured_cross_site = SimpleNamespace(
+            headers={
+                "origin": "https://legacymodel.netlify.app",
+                "sec-fetch-site": "cross-site",
+            }
+        )
 
         api.enforce_mutation_origin(allowed)
+        api.enforce_mutation_origin(configured_cross_site)
         with self.assertRaises(api.HTTPException) as context:
             api.enforce_mutation_origin(blocked)
 
@@ -515,6 +549,7 @@ class DashboardMetricsTests(unittest.TestCase):
             "/metrics/recent-signals",
             "/metrics/model",
             "/metrics/rf-strategy",
+            "/control/martingale-cohort",
         ):
             self.assertGreater(
                 len(routes[path].dependant.dependencies),
@@ -522,12 +557,159 @@ class DashboardMetricsTests(unittest.TestCase):
                 path,
             )
 
+    def test_aggregate_simulator_is_public_but_raw_model_trades_stay_private(self) -> None:
+        import app.api as api
+
+        routes = {
+            route.path: route
+            for route in api.app.routes
+            if hasattr(route, "dependant")
+        }
+        self.assertEqual(
+            len(routes["/metrics/system-performance"].dependant.dependencies),
+            0,
+        )
+        self.assertGreater(
+            len(routes["/metrics/system-trades"].dependant.dependencies),
+            0,
+        )
+        with patch.object(
+            api.REPOSITORY,
+            "system_performance_summary",
+            return_value={
+                "simulated_base_stake": 0.50,
+                "flat_stake": 0.50,
+                "maximum_martingale_stake": 0.50,
+                "fixed_pnl": 0.0,
+                "martingale_pnl": 0.0,
+                "observed_martingale_pnl": 0.0,
+                "simulated_martingale_pnl": 0.0,
+                "total_trades": 0,
+                "wins": 0,
+                "losses": 0,
+            },
+        ):
+            result = api.system_performance(
+                request=MagicMock(cookies={}),
+                period="today",
+                simulated_base_stake=0.50,
+            )
+        self.assertEqual(result["fixed_pnl"], 0.0)
+        self.assertEqual(result["martingale_pnl"], 0.0)
+        self.assertEqual(result["simulated_martingale_pnl"], 0.0)
+
+    def test_settlement_refresh_marks_dirty_without_discarding_last_good(self) -> None:
+        import app.api as api
+
+        for cached in api.DASHBOARD_SUMMARY_CACHE.values():
+            cached["data"] = {"stale": True}
+            cached["dirty"] = False
+        with patch.object(api, "DASHBOARD_REFRESH_EVENT", None):
+            started = time.perf_counter()
+            result = asyncio.run(api.dashboard_settlement_refresh())
+            elapsed = time.perf_counter() - started
+        self.assertEqual(result, {"accepted": True, "broadcast": False})
+        self.assertLess(elapsed, 0.25)
+        self.assertTrue(all(cached["data"] == {"stale": True} for cached in api.DASHBOARD_SUMMARY_CACHE.values()))
+        self.assertTrue(all(cached["dirty"] for cached in api.DASHBOARD_SUMMARY_CACHE.values()))
+
+    def test_cached_summary_never_invokes_heavy_accounting(self) -> None:
+        import app.api as api
+
+        generated = datetime.now(timezone.utc)
+        with api.DASHBOARD_SUMMARY_LOCK:
+            api.DASHBOARD_SUMMARY_CACHE["demo"].update({
+                "data": {"system_performance": {"timezone": "Africa/Nairobi"}},
+                "generated_at": generated,
+                "snapshot_version": 7,
+                "refreshing": True,
+            })
+        with patch.object(api, "_build_dashboard_snapshot") as heavy:
+            responses = [api.dashboard_summary() for _ in range(20)]
+        heavy.assert_not_called()
+        self.assertTrue(all(row["snapshot_version"] == 7 for row in responses))
+        self.assertTrue(all(row["refreshing"] for row in responses))
+
+    def test_dashboard_build_reuses_one_observed_load_for_five_periods(self) -> None:
+        import app.api as api
+
+        canonical = [{"signal_id": "one"}]
+        observed = [object()]
+        period_result = {
+            "total_trades": 1,
+            "wins": 1,
+            "losses": 0,
+            "fixed_pnl": 0.41,
+            "observed_martingale_pnl": 0.41,
+            "simulated_martingale_pnl": 0.41,
+        }
+        with (
+            patch.object(api, "filter_summary_to_trading_ready_accounts", return_value={"status": "RUNNING"}),
+            patch.object(api.REPOSITORY, "summary", return_value={}),
+            patch.object(api.REPOSITORY, "managed_account_count", return_value=2),
+            patch.object(api.REPOSITORY, "open_system_model_trade_count", return_value=0),
+            patch.object(api.REPOSITORY, "system_model_trades", return_value=canonical) as canonical_load,
+            patch.object(api.REPOSITORY, "observed_martingale_executions", return_value=observed) as observed_load,
+            patch.object(api.REPOSITORY, "system_performance_summary", return_value=period_result) as performance,
+        ):
+            payload, _generated, _watermark = api._build_dashboard_snapshot("demo")
+        canonical_load.assert_called_once()
+        observed_load.assert_called_once()
+        self.assertEqual(performance.call_count, 5)
+        self.assertTrue(all(call.kwargs["trades"] is canonical for call in performance.call_args_list))
+        self.assertTrue(all(call.kwargs["observed_executions"] is observed for call in performance.call_args_list))
+        self.assertEqual(payload["system_performance"]["today"]["total_trades"], 1)
+
+    def test_api_restart_restores_persisted_last_good_snapshot(self) -> None:
+        import app.api as api
+
+        generated = datetime.now(timezone.utc)
+        saved = {
+            "demo": {
+                "data": {"system_performance": {"timezone": "Africa/Nairobi"}},
+                "generated_at": generated,
+                "snapshot_version": 12,
+                "source_watermark": {"canonical_trade_count": 70},
+            }
+        }
+        with api.DASHBOARD_SUMMARY_LOCK:
+            api.DASHBOARD_SUMMARY_CACHE["demo"]["data"] = None
+        with patch.object(api.REPOSITORY, "load_dashboard_snapshots", return_value=saved):
+            api._restore_dashboard_snapshots()
+        restored = api.dashboard_summary()
+        self.assertEqual(restored["snapshot_version"], 12)
+        self.assertEqual(restored["system_performance"]["timezone"], "Africa/Nairobi")
+        self.assertTrue(api.DASHBOARD_SUMMARY_CACHE["demo"]["dirty"])
+
+    def test_frontend_keeps_a_local_last_good_snapshot(self) -> None:
+        dashboard = (Path(__file__).parent / "dashboard" / "index.html").read_text()
+        self.assertIn("legacy-dashboard-last-good-snapshot-v1", dashboard)
+        self.assertIn("function showRefreshDelayed", dashboard)
+        self.assertIn("if (showRefreshDelayed(message)) return;", dashboard)
+        self.assertIn("LIVE REFRESH DELAYED", dashboard)
+
     def test_personal_api_tokens_have_a_strict_input_size_limit(self) -> None:
         import app.api as api
         from pydantic import ValidationError
 
         with self.assertRaises(ValidationError):
             api.PersonalApiTokenRequest(api_token="x" * 4097)
+
+    def test_expired_token_status_requires_replacement_and_notification(self) -> None:
+        from app import api
+
+        self.assertTrue(api.execution_requires_new_token("credential_error"))
+        self.assertTrue(api.execution_requires_new_token("token_required"))
+        self.assertTrue(
+            api.execution_token_was_rejected(
+                "token_required", "Deriv API token expired or was rejected"
+            )
+        )
+        self.assertFalse(
+            api.execution_token_was_rejected(
+                "token_required", "A verified Deriv API token is required"
+            )
+        )
 
 
 class CopyTradeAuditTests(unittest.TestCase):
@@ -1247,7 +1429,7 @@ class TimingAndModelTests(unittest.TestCase):
                 }
                 self.assertFalse(bot._bulk_purchase_token_capable("oauth-token"))
                 self.assertTrue(bot._bulk_purchase_token_capable("pat-token"))
-                self.assertTrue(bot._bulk_purchase_token_capable("global-token"))
+                self.assertFalse(bot._bulk_purchase_token_capable("global-token"))
                 self.assertEqual(
                     bot._bulk_purchase_incompatible_accounts(
                         [
@@ -1290,7 +1472,7 @@ class TimingAndModelTests(unittest.TestCase):
                 bulk_incompatible_accounts=[],
             )
         )
-        self.assertTrue(
+        self.assertFalse(
             bot._requires_private_purchase_transport(
                 account_count=2,
                 bulk_incompatible_accounts=["DOT90000001"],
@@ -1298,7 +1480,7 @@ class TimingAndModelTests(unittest.TestCase):
         )
 
         bot.app_markup_percentage = 3.0
-        self.assertTrue(
+        self.assertFalse(
             bot._requires_private_purchase_transport(
                 account_count=2,
                 bulk_incompatible_accounts=[],
@@ -1353,6 +1535,25 @@ class TimingAndModelTests(unittest.TestCase):
 
 
 class AccountIsolationTests(unittest.IsolatedAsyncioTestCase):
+    def test_permanent_token_rejection_discards_credential_and_requests_new_one(self) -> None:
+        bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
+        bot.repository = MagicMock()
+        bot.repository.discard_rejected_trading_token.return_value = [7, 8]
+        bot.logger = MagicMock()
+
+        bot._set_account_execution_status(
+            7, "credential_error", "Invalid or expired token"
+        )
+
+        bot.repository.discard_rejected_trading_token.assert_called_once_with(
+            7,
+            reason=(
+                "Deriv API token expired or was rejected. Enter a new active "
+                "API token to resume AutoTrade."
+            ),
+        )
+        bot.repository.quarantine_managed_account.assert_not_called()
+
     def test_quarantined_account_status_survives_runtime_reload(self) -> None:
         bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
         bot.repository = MagicMock()
@@ -1512,6 +1713,8 @@ class AccountIsolationTests(unittest.IsolatedAsyncioTestCase):
         bot.logger = MagicMock()
         bot.app_id = "app-id"
         bot.rest_base_url = "https://example.invalid"
+        bot.duration = 5
+        bot.duration_unit = "t"
         bot.valid_clients = []
 
         responses = [
@@ -1819,7 +2022,13 @@ class ContractRuntimeLockTests(unittest.IsolatedAsyncioTestCase):
         bot.logger = MagicMock()
         signal = MagicMock(signal_id="signal-1")
 
-        async def purchase_group(*, signal, eligible_accounts, stake_amount):
+        bot.user_profiles = {
+            "token-a": {"auth_type": "pat", "managed_account_id": 1, "account_type": "demo", "martingale_enabled": False},
+            "token-b": {"auth_type": "pat", "managed_account_id": 2, "account_type": "demo", "martingale_enabled": False},
+        }
+        bot.environment = "demo"
+
+        async def purchase_group(*, signal, eligible_accounts, stake_amount, **_kwargs):
             if stake_amount == 2.00:
                 raise RuntimeError("isolated account failure")
             return [
@@ -1829,7 +2038,7 @@ class ContractRuntimeLockTests(unittest.IsolatedAsyncioTestCase):
                 }
             ]
 
-        bot._purchase_stake_group = AsyncMock(side_effect=purchase_group)
+        bot._purchase_stake_group_for_environment = AsyncMock(side_effect=purchase_group)
         bot._purchase_via_private_sessions = AsyncMock(
             return_value=[
                 {
@@ -1851,22 +2060,22 @@ class ContractRuntimeLockTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(transactions[0]["stake_amount"], 0.50)
         self.assertIn("error", transactions[1])
         self.assertEqual(transactions[1]["account_id"], "DOT90000002")
-        bot._purchase_via_private_sessions.assert_awaited_once_with(
-            signal=signal,
-            eligible_accounts=[("token-b", "DOT90000002")],
-            stake_amount=2.00,
-        )
+        bot._purchase_via_private_sessions.assert_not_awaited()
 
-    async def test_bulk_partial_failure_retries_only_missing_account_privately(self) -> None:
+    async def test_bulk_partial_failure_never_retries_missing_account_privately(self) -> None:
         bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
         bot.environment = "demo"
         bot.app_id = "app-id"
         bot.rest_base_url = "https://example.invalid"
+        bot.duration = 5
+        bot.duration_unit = "t"
         bot.user_profiles = {
-            "token-a": {"auth_type": "pat"},
-            "token-b": {"auth_type": "pat"},
+            "token-a": {"auth_type": "pat", "managed_account_id": 1},
+            "token-b": {"auth_type": "pat", "managed_account_id": 2},
         }
         bot.logger = MagicMock()
+        bot.repository = MagicMock()
+        bot.repository.create_bulk_execution_batch.return_value = "batch-1"
         bot._contract_parameters = MagicMock(return_value={"contract_type": "CALL"})
         bot._purchase_via_private_sessions = AsyncMock(
             return_value=[
@@ -1899,15 +2108,76 @@ class ContractRuntimeLockTests(unittest.IsolatedAsyncioTestCase):
                 stake_amount=0.50,
             )
 
-        self.assertEqual(
-            {transaction["contract_id"] for transaction in transactions},
-            {"123", "456"},
+        self.assertEqual(transactions[0]["contract_id"], "123")
+        self.assertIn("error", transactions[1])
+        bot._purchase_via_private_sessions.assert_not_awaited()
+
+    async def test_rf_bulk_groups_are_sharded_at_one_hundred_without_sequential_buy(self) -> None:
+        bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
+        bot.logger = MagicMock()
+        bot.environment = "demo"
+        accounts = [(f"token-{index}", f"DOT9{index:07d}") for index in range(250)]
+        bot.user_profiles = {
+            token: {
+                "auth_type": "pat",
+                "managed_account_id": index + 1,
+                "account_type": "demo",
+                "martingale_enabled": False,
+            }
+            for index, (token, _account_id) in enumerate(accounts)
+        }
+
+        async def purchase_shard(*, eligible_accounts, **_kwargs):
+            await asyncio.sleep(0)
+            return [
+                {"account_id": account_id, "contract_id": str(index + 1)}
+                for index, (_token, account_id) in enumerate(eligible_accounts)
+            ]
+
+        bot._purchase_stake_group_for_environment = AsyncMock(side_effect=purchase_shard)
+        bot._purchase_via_private_sessions = AsyncMock()
+        for count, expected_shards in ((45, [45]), (145, [100, 45]), (250, [100, 100, 50])):
+            bot._purchase_stake_group_for_environment.reset_mock()
+            transactions = await bot._purchase_accounts_by_stake(
+                signal=MagicMock(signal_id=f"signal-{count}"),
+                eligible_accounts=accounts[:count],
+                stake_by_token={token: 0.50 for token, _account_id in accounts[:count]},
+                pre_trade_profit_ratio=0.82,
+            )
+            self.assertEqual(len(transactions), count)
+            self.assertEqual(
+                [len(call.kwargs["eligible_accounts"]) for call in bot._purchase_stake_group_for_environment.await_args_list],
+                expected_shards,
+            )
+        bot._purchase_via_private_sessions.assert_not_awaited()
+
+    async def test_bulk_groups_split_environment_team_and_exact_stake(self) -> None:
+        bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
+        bot.logger = MagicMock()
+        bot.environment = "demo"
+        accounts = [
+            ("demo-flat", "VRTC0001"),
+            ("demo-mart", "VRTC0002"),
+            ("real-flat", "CR000003"),
+            ("real-flat-high", "CR000004"),
+        ]
+        bot.user_profiles = {
+            "demo-flat": {"auth_type": "pat", "managed_account_id": 1, "account_type": "demo", "martingale_enabled": False},
+            "demo-mart": {"auth_type": "pat", "managed_account_id": 2, "account_type": "demo", "martingale_enabled": True},
+            "real-flat": {"auth_type": "pat", "managed_account_id": 3, "account_type": "real", "martingale_enabled": False},
+            "real-flat-high": {"auth_type": "pat", "managed_account_id": 4, "account_type": "real", "martingale_enabled": False},
+        }
+        bot._purchase_stake_group_for_environment = AsyncMock(return_value=[])
+        await bot._purchase_accounts_by_stake(
+            signal=MagicMock(signal_id="signal-groups"),
+            eligible_accounts=accounts,
+            stake_by_token={"demo-flat": 0.50, "demo-mart": 0.50, "real-flat": 0.50, "real-flat-high": 1.25},
         )
-        bot._purchase_via_private_sessions.assert_awaited_once_with(
-            signal=signal,
-            eligible_accounts=[("token-b", "DOT90000002")],
-            stake_amount=0.50,
-        )
+        keys = {
+            (call.kwargs["environment"], call.kwargs["martingale_enabled"], call.kwargs["stake_amount"])
+            for call in bot._purchase_stake_group_for_environment.await_args_list
+        }
+        self.assertEqual(keys, {("demo", False, 0.50), ("demo", True, 0.50), ("real", False, 0.50), ("real", False, 1.25)})
 
     async def test_settlement_sla_isolates_only_delayed_contract_from_global_cycle(self) -> None:
         bot = self.make_bot()
