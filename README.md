@@ -14,7 +14,10 @@ The Docker stack contains three services:
 | `api` | FastAPI dashboard/API service on container port `8080`; it applies Alembic migrations before startup. |
 | `worker` | A single `RFDir5TradingBot` process that consumes market ticks, evaluates signals, records the model ledger, and executes eligible account trades. |
 
-All services use `restart: unless-stopped`. The VPS override pins the API to `10.89.0.10` for Caddy and keeps one worker replica. Caddy serves the public HTTPS application at the configured domain (currently `derivadmin.site`).
+All services use `restart: unless-stopped`. Docker publishes the API only on
+`127.0.0.1:8080`, the VPS override keeps one worker replica, and Caddy serves
+the public HTTPS application at the configured domain (currently
+`derivadmin.site`).
 
 ## Current strategy
 
@@ -102,18 +105,29 @@ Virtual losses never add recovery debt. Only losses from purchased Demo/Real con
 
 ## Canonical system/model ledger
 
-Global statistics do not come from a user, master account, or sum of copied contracts. A qualifying model event creates one `SystemModelTrade`, regardless of how many users receive the signal. The worker records:
+Global statistics do not come from a user, master account, or sum of copied
+contracts. A qualifying signal creates one `SystemModelTrade` only after at
+least one real Deriv contract has been registered successfully, regardless of
+how many accounts purchase it. Virtual-only, waiting, skipped, and failed
+signals remain diagnostic/account events and do not enter the monetary ledger.
+The worker records:
 
 - unique signal ID and market;
 - direction and contract type;
 - entry/expiry tick sequence;
 - entry/exit spot;
-- real or virtual classification;
+- real execution classification;
 - signal, entry, and settlement timestamps;
 - outcome and reference economics;
 - fixed-stake and recovery simulation fields.
 
-`SystemModelState` persists the model's independent real/virtual state. Due model entries settle from market ticks even when no personal account is currently trading. Unresolved, non-virtual ledger entries are the source of the dashboard's **Open Trades** figure.
+`SystemModelState` remains only for schema compatibility and does not classify
+canonical executions. Account virtual protection is authoritative and remains
+in `AccountRiskState` and `VirtualTrade`, keyed by managed-account identity.
+Purchased canonical entries may settle provisionally from market ticks; the
+earliest purchased actual contract supplies final monetary economics when it
+settles. Unresolved canonical entries are the source of the dashboard's **Open
+Trades** figure.
 
 Global model statistics exclude virtual observations from trades, wins, losses, win rate, P/L, and winning/losing streaks. Therefore, for settled real model events:
 
@@ -129,9 +143,21 @@ The dashboard summary and `/metrics/system-performance` both read this canonical
 Permanent Global Model Statistics use a reference base stake of **USD 0.50** and replay the same real model outcomes in parallel:
 
 - **Without Martingale:** every real model trade uses the selected flat base stake.
-- **With Martingale:** the stake is selected before the result using carried recovery debt, the recorded proposal profit ratio, cent rounding, and the project's recovery rules.
+- **With Martingale:** the stake is selected before the result using carried recovery debt, realized return economics where available, the proposal ratio as fallback, cent rounding, and the project's recovery rules.
 
-The dashboard's simulator is read-only and supports base stakes from `$0.50` through `$1,000`. It replays ledger history for the selected stake; it does not update a user's live stake, account settings, or the permanent `$0.50` reference figures. Failed simulation requests display unavailable data rather than a false zero.
+When a purchased contract settles for a model signal, its `Trade.profit` and buy
+price calibrate that signal's canonical `$0.50` result. The earliest valid
+settlement is used once per signal, copied accounts are never summed, and the
+informational app-markup amount is not deducted again. Tick/proposal economics
+remain the fallback when no monetary settlement exists.
+
+The dashboard's simulator is read-only and supports base stakes from `$0.50`
+through `$1,000`. Anonymous viewers default to `$0.50`; authenticated viewers
+default to their configured personal base stake. It replays ledger history for
+the selected stake and never updates live execution settings or canonical
+trades. A new canonical result resets a manually selected simulation to that
+viewer default. Failed simulation requests display unavailable data rather than
+a false zero.
 
 ## Dashboard
 

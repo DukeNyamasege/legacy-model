@@ -35,8 +35,8 @@ services:
       timeout: 3s
       retries: 12
       start_period: 5s
-    expose:
-      - "8080"
+    ports:
+      - "127.0.0.1:8080:8080"
     networks:
       test2: {}
 

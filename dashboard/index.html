@@ -1314,6 +1314,7 @@
     .gbs-money.fixed { color: var(--gbs-blue); }
     .gbs-money.negative { color: var(--gbs-red) !important; }
     .gbs-money-label { margin-top: 8px; color: #9fb1c5; font-size: .75rem; }
+    .gbs-stake-detail { margin-top: 4px; color: #fff; font-size: .9rem; }
     .gbs-simulator {
       display: grid;
       align-content: start;
@@ -1820,7 +1821,7 @@
         </article>
         <article class="gbs-platform-card">
           <div class="gbs-platform-icon"><svg class="gbs-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 20V10M10 20V5M16 20v-8M22 20V3"/><path d="M3 20h19"/></svg></div>
-          <div><span class="gbs-card-label">Total Trades Today</span><strong id="model-trades-today">0</strong><small class="gbs-card-note">Executed by the system</small></div>
+          <div><span class="gbs-card-label">Total Trades Today</span><strong id="model-trades-today">0</strong><small class="gbs-card-note" title="Counts real execution signals. Individual accounts may differ while virtual protection is active.">Executed by the system</small></div>
         </article>
         <article class="gbs-platform-card">
           <div class="gbs-platform-icon"><svg class="gbs-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="6"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg></div>
@@ -1843,11 +1844,15 @@
               <span class="gbs-card-label">With Martingale</span>
               <strong id="model-pl-martingale" class="gbs-money martingale">+$0.00</strong>
               <div class="gbs-money-label">Profit / Loss (USD)</div>
+              <div class="gbs-money-label">Maximum Stake</div>
+              <strong id="model-maximum-stake" class="gbs-stake-detail">$0.50</strong>
             </div>
             <div class="gbs-pnl-block">
               <span class="gbs-card-label">Without Martingale</span>
               <strong id="model-pl-fixed" class="gbs-money fixed">+$0.00</strong>
               <div class="gbs-money-label">Profit / Loss (USD)</div>
+              <div class="gbs-money-label">Flat Stake</div>
+              <strong id="model-flat-stake" class="gbs-stake-detail">$0.50</strong>
             </div>
           </div>
           <div class="gbs-simulator">
@@ -1912,7 +1917,7 @@
       <div class="gbs-strip-title"><h3 id="risk-stability-title" class="gbs-section-title" style="margin:0;"><svg class="gbs-icon" style="color:#6f5cff" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3l8 4v5c0 5-3.3 8-8 9-4.7-1-8-4-8-9V7l8-4z"/><path d="M9 12l2 2 4-4"/></svg>Risk &amp; Stability <span class="gbs-section-subtle">(Calculated from system trades)</span></h3></div>
       <div class="gbs-risk-grid">
         <article class="gbs-risk-card"><span>Longest Losing Streak*</span><strong id="longest-loss-streak" class="bad">0</strong><small>Consecutive actual losses<br>*Excludes virtual losses</small></article>
-        <article class="gbs-risk-card"><span>Longest Winning Streak*</span><strong id="all-time-longest-win-streak" class="good">0</strong><small>Consecutive actual wins<br>*Excludes virtual runs</small></article>
+        <article class="gbs-risk-card"><span>Longest Winning Streak*</span><strong id="risk-longest-win-streak" class="good">0</strong><small>Consecutive actual wins<br>*Excludes virtual runs</small></article>
         <article class="gbs-risk-card"><span>Status</span><strong id="model-status" class="good status-value">ACTIVE</strong><small id="model-status-copy">System operational</small></article>
         <article class="gbs-risk-card"><span>Uptime</span><strong id="uptime" class="good">—</strong><small id="uptime-caption">Live service metric</small></article>
       </div>
@@ -2227,6 +2232,11 @@
   }
   let latestSummary = null;
   let baseSystemPerformance = null;
+  let viewerSystemPerformance = null;
+  let viewerDefaultStake = 0.50;
+  let currentSimulationStake = 0.50;
+  let lastModelDataVersion = null;
+  let viewerPerformanceRequest = 0;
   let nextSessionCloseAt = null;
   let stakeSimulationTimer = 0;
 
@@ -2298,6 +2308,14 @@
 
     const system = data.system_performance || {};
     const today = system.today || {};
+    const nextModelDataVersion = String(
+      today.model_data_version || `trades:${Number(today.total_trades || 0)}`
+    );
+    const modelDataChanged = (
+      lastModelDataVersion !== null
+      && nextModelDataVersion !== lastModelDataVersion
+    );
+    lastModelDataVersion = nextModelDataVersion;
     $("model-trades-today").textContent = number(today.total_trades);
     nextSessionCloseAt = system.next_session_close_at
       ? new Date(system.next_session_close_at).getTime()
@@ -2306,7 +2324,10 @@
 
     if (Object.keys(system).length) {
       baseSystemPerformance = system;
-      renderSystemPerformance(system);
+      renderSystemPerformance(system, !viewerSystemPerformance);
+      if (modelDataChanged) {
+        resetSimulationToViewerDefault();
+      }
     }
 
     const uptimeValue = data.uptime_pct ?? data.uptime_percent ?? data.uptime_percentage;
@@ -2338,7 +2359,7 @@
     snapshot.dataset.snapshotState = "ready";
   }
 
-  function renderSystemPerformance(system) {
+  function renderSystemPerformance(system, renderMonetaryValues = true) {
     const periods = {
       today: system.today || {},
       yesterday: system.yesterday || {},
@@ -2347,14 +2368,24 @@
     };
 
     const baseToday = periods.today;
-    setMoneyElement("model-pl-martingale", baseToday.martingale_pnl, "martingale");
-    setMoneyElement("model-pl-fixed", baseToday.fixed_pnl, "fixed");
+    if (renderMonetaryValues) {
+      setMoneyElement("model-pl-martingale", baseToday.martingale_pnl, "martingale");
+      setMoneyElement("model-pl-fixed", baseToday.fixed_pnl, "fixed");
+      if ($("model-maximum-stake")) {
+        $("model-maximum-stake").textContent = `$${number(baseToday.maximum_martingale_stake ?? baseToday.simulated_base_stake ?? 0.50, 2)}`;
+      }
+      if ($("model-flat-stake")) {
+        $("model-flat-stake").textContent = `$${number(baseToday.flat_stake ?? baseToday.simulated_base_stake ?? 0.50, 2)}`;
+      }
+    }
 
     for (const [key, stats] of Object.entries(periods)) {
-      setMoneyElement(`${key}-martingale`, stats.martingale_pnl, "martingale");
-      setMoneyElement(`${key}-fixed`, stats.fixed_pnl, "fixed");
-      setReturnPct(`${key}-martingale-pct`, readReturnPct(stats, "martingale"), "martingale");
-      setReturnPct(`${key}-fixed-pct`, readReturnPct(stats, "fixed"), "fixed");
+      if (renderMonetaryValues) {
+        setMoneyElement(`${key}-martingale`, stats.martingale_pnl, "martingale");
+        setMoneyElement(`${key}-fixed`, stats.fixed_pnl, "fixed");
+        setReturnPct(`${key}-martingale-pct`, readReturnPct(stats, "martingale"), "martingale");
+        setReturnPct(`${key}-fixed-pct`, readReturnPct(stats, "fixed"), "fixed");
+      }
     }
 
     $("total-trades").textContent = number(baseToday.total_trades);
@@ -2365,9 +2396,7 @@
     $("longest-win-streak").textContent = number(baseToday.longest_win_streak || 0);
     $("today-longest-loss-streak").textContent = number(baseToday.longest_loss_streak || 0);
     $("longest-loss-streak").textContent = number(baseToday.longest_loss_streak || 0);
-    const allTime = system.all_time || {};
-    $("longest-loss-streak").textContent = number(allTime.longest_loss_streak || 0);
-    $("all-time-longest-win-streak").textContent = number(allTime.longest_win_streak || 0);
+    $("risk-longest-win-streak").textContent = number(baseToday.longest_win_streak || 0);
 
     const statusText = currentStatus === "RUNNING" ? "ACTIVE" : String(currentStatus || "UNKNOWN").replaceAll("_", " ");
     $("model-status").textContent = statusText;
@@ -2394,6 +2423,7 @@
 
   async function loadStakeSimulation(stake) {
     const base = Math.max(0.50, Math.min(1000, Number(stake || 0.50)));
+    currentSimulationStake = base;
     try {
       const today = await api(`/metrics/system-performance?period=today&simulated_base_stake=${encodeURIComponent(base)}`);
       renderStakeSimulation(today, base);
@@ -2405,12 +2435,46 @@
 
   function updateStakeSimulator(value) {
     const base = Math.max(0.50, Math.min(1000, Number(value || 0.50)));
+    currentSimulationStake = base;
     const input = $("stake-simulator-input");
     const slider = $("stake-simulator-slider");
     if (input && document.activeElement !== input) input.value = base.toFixed(2);
     if (slider) slider.value = String(base);
     window.clearTimeout(stakeSimulationTimer);
     stakeSimulationTimer = window.setTimeout(() => loadStakeSimulation(base), 180);
+  }
+
+  async function loadViewerSystemPerformance() {
+    const requestId = ++viewerPerformanceRequest;
+    const base = viewerDefaultStake;
+    try {
+      const [today, yesterday, week, month] = await Promise.all(
+        ["today", "yesterday", "week", "month"].map(period => api(
+          `/metrics/system-performance?period=${period}&simulated_base_stake=${encodeURIComponent(base)}`
+        ))
+      );
+      if (requestId !== viewerPerformanceRequest) return;
+      viewerSystemPerformance = {
+        ...(baseSystemPerformance || {}),
+        today,
+        yesterday,
+        week,
+        month,
+      };
+      renderSystemPerformance(viewerSystemPerformance, true);
+    } catch (_) {
+      // Retain the last valid viewer-specific values. A simulator request has
+      // its own explicit Unavailable state and can be retried independently.
+    }
+  }
+
+  function setViewerDefaultStake(value) {
+    viewerDefaultStake = Math.max(0.50, Math.min(1000, Number(value || 0.50)));
+  }
+
+  function resetSimulationToViewerDefault() {
+    updateStakeSimulator(viewerDefaultStake);
+    loadViewerSystemPerformance();
   }
 
   function updateSessionClock() {
@@ -2661,6 +2725,7 @@
         body: JSON.stringify(payload)
       });
       const settings = response.settings || payload;
+      const previousViewerStake = viewerDefaultStake;
       setPersonalSettingValue("personal-stake", settings.stake_amount);
       setPersonalSettingValue("personal-take-profit", settings.take_profit);
       setPersonalSettingValue("personal-stop-loss", settings.stop_loss);
@@ -2671,6 +2736,11 @@
       if (message) {
         message.textContent = "Controls saved. Changes apply from the next contract.";
         message.className = "settings-message positive";
+      }
+      setViewerDefaultStake(settings.stake_amount ?? 0.50);
+      if (Math.abs(previousViewerStake - viewerDefaultStake) > 0.0001) {
+        viewerSystemPerformance = null;
+        resetSimulationToViewerDefault();
       }
     } catch (error) {
       if (message) {
@@ -2708,7 +2778,7 @@
   });
   $("stake-simulator-input")?.addEventListener("change", (e) => {
     let value = Number(e.target.value || 0.50);
-    value = Math.max(0.50, Math.min(100, value));
+    value = Math.max(0.50, Math.min(1000, value));
     updateStakeSimulator(value);
   });
   $("global-refresh")?.addEventListener("click", async () => {
@@ -2823,6 +2893,17 @@
         availableAccountTypes = ["demo"];
       }
       updateAccountModeSwitch();
+      const nextViewerStake = me.authenticated
+        ? Number(me.settings?.stake_amount ?? 0.50)
+        : 0.50;
+      const viewerStakeChanged = Math.abs(
+        nextViewerStake - viewerDefaultStake
+      ) > 0.0001;
+      if (viewerStakeChanged || !viewerSystemPerformance) {
+        setViewerDefaultStake(nextViewerStake);
+        viewerSystemPerformance = null;
+        resetSimulationToViewerDefault();
+      }
 
       if (me.authenticated) {
         $("personal-section").style.display = "block";

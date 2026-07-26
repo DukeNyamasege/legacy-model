@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import case, func, select, update
+from sqlalchemy import case, exists, func, select, update
 
 from app.config import Test2Config
 from app.database import Database
@@ -29,7 +29,6 @@ from app.models import (
     ProposalRecord,
     RuntimePreference,
     SystemModelTrade,
-    SystemModelState,
     TestRun,
     Tick,
     Trade,
@@ -582,7 +581,12 @@ class Test2Repository:
             if row is not None:
                 session.delete(row)
 
-    def account_summary(self, account_id: str) -> dict[str, Any]:
+    def account_summary(
+        self,
+        account_id: str,
+        *,
+        managed_account_id: int | None = None,
+    ) -> dict[str, Any]:
         masked = mask_account_id(account_id)
         today_start, today_end = self._local_period_bounds("today")
         with self.database.session() as session:
@@ -643,10 +647,10 @@ class Test2Repository:
                 )
             wins = int(trade_stats["wins"])
             losses = int(trade_stats["losses"])
-            protection_state = session.scalar(
-                select(AccountRiskState).where(
-                    AccountRiskState.account_id_masked == masked
-                )
+            protection_state = (
+                session.get(AccountRiskState, int(managed_account_id))
+                if managed_account_id is not None
+                else None
             )
             virtual_protection = (
                 {
@@ -1078,6 +1082,7 @@ class Test2Repository:
             trade.commission = commission
             trade.cumulative_profit = state.total_profit
             trade.drawdown = state.current_drawdown
+            session.flush()
             if trade.signal_id:
                 system_trade = session.scalar(
                     select(SystemModelTrade)
@@ -1087,12 +1092,47 @@ class Test2Repository:
                     )
                     .with_for_update()
                 )
-                if system_trade is not None and system_trade.settlement_timestamp is None:
-                    system_trade.outcome = outcome.upper()
-                    system_trade.settlement_timestamp = utc_now()
-                    ref_stake = max(0.35, float(system_trade.reference_base_stake or 0.0))
-                    actual_stake = max(1e-9, float(buy_price or ref_stake))
-                    system_trade.fixed_stake_profit = round(profit * ref_stake / actual_stake, 2)
+                # One copied model signal may settle on many user accounts. Use
+                # only the earliest valid monetary settlement to calibrate the
+                # canonical $0.50 result, even when tick settlement happened
+                # first. Deriv's Trade.profit already includes quote/markup
+                # economics, so app_markup_amount must never be deducted again.
+                earliest_actual = session.scalar(
+                    select(Trade)
+                    .where(
+                        Trade.signal_id == trade.signal_id,
+                        Trade.settlement_time.is_not(None),
+                        Trade.profit.is_not(None),
+                        Trade.buy_price.is_not(None),
+                        Trade.buy_price > 0,
+                    )
+                    .order_by(
+                        func.coalesce(
+                            Trade.provider_purchase_time,
+                            Trade.purchase_time,
+                        ).asc(),
+                        Trade.id.asc(),
+                    )
+                    .limit(1)
+                )
+                if system_trade is not None and earliest_actual is not None:
+                    canonical_stake = 0.50
+                    actual_stake = float(earliest_actual.buy_price or 0.0)
+                    normalized_profit = (
+                        float(earliest_actual.profit or 0.0)
+                        * canonical_stake
+                        / actual_stake
+                    )
+                    system_trade.reference_base_stake = canonical_stake
+                    system_trade.is_virtual = False
+                    system_trade.fixed_stake_profit = round(normalized_profit, 8)
+                    system_trade.outcome = str(earliest_actual.outcome).upper()
+                    if system_trade.settlement_timestamp is None:
+                        system_trade.settlement_timestamp = (
+                            earliest_actual.provider_settlement_time
+                            or earliest_actual.settlement_time
+                            or utc_now()
+                        )
             return True
 
     def completed_outcomes(self) -> tuple[int, int]:
@@ -2075,16 +2115,10 @@ class Test2Repository:
         entry_spot: float,
         expected_profit_ratio: float,
         reference_base_stake: float = 0.50,
-        is_virtual: bool | None = None,
+        is_virtual: bool = False,
     ) -> bool:
         now = utc_now()
         with self.database.session() as session:
-            state = session.get(SystemModelState, self.run_id, with_for_update=True)
-            if state is None:
-                state = SystemModelState(run_id=self.run_id)
-                session.add(state)
-                session.flush()
-            virtual = state.mode == "VIRTUAL" if is_virtual is None else bool(is_virtual)
             trade = SystemModelTrade(
                 run_id=self.run_id,
                 signal_id=str(signal_id),
@@ -2097,12 +2131,17 @@ class Test2Repository:
                 entry_spot=float(entry_spot),
                 signal_timestamp=now,
                 entry_timestamp=now,
-                reference_base_stake=float(reference_base_stake),
+                # The canonical ledger is account-independent and permanently
+                # denominated at $0.50. Viewer stakes are replay inputs only.
+                reference_base_stake=0.50,
                 expected_profit_ratio=max(0.0, float(expected_profit_ratio)),
-                is_virtual=virtual,
+                # Canonical rows are created only after a real contract is
+                # registered. Account virtual protection lives exclusively in
+                # AccountRiskState/VirtualTrade and cannot classify this row.
+                is_virtual=False,
             )
             session.merge(trade)
-            return virtual
+            return False
 
     def settle_due_system_model_trades(
         self,
@@ -2121,15 +2160,11 @@ class Test2Repository:
                     SystemModelTrade.symbol == str(symbol),
                     SystemModelTrade.outcome.is_(None),
                     SystemModelTrade.expiry_tick_sequence <= int(tick_sequence),
+                    exists().where(Trade.signal_id == SystemModelTrade.signal_id),
                 ).with_for_update()
             ).all()
             if not rows:
                 return settled
-            state = session.get(SystemModelState, self.run_id, with_for_update=True)
-            if state is None:
-                state = SystemModelState(run_id=self.run_id)
-                session.add(state)
-                session.flush()
             for trade in rows:
                 outcome = shadow_outcome(
                     trade.direction,
@@ -2137,30 +2172,16 @@ class Test2Repository:
                     Decimal(str(exit_spot)),
                 )
                 trade.outcome = outcome
+                trade.is_virtual = False
                 trade.exit_spot = float(exit_spot)
                 trade.settlement_timestamp = now
                 ratio = max(0.0, float(trade.expected_profit_ratio or 0.0))
                 trade.fixed_stake_profit = ratio * 0.50 if outcome == "WIN" else -0.50
-                if trade.is_virtual:
-                    state.consecutive_virtual_wins = (
-                        state.consecutive_virtual_wins + 1 if outcome == "WIN" else 0
-                    )
-                    if state.consecutive_virtual_wins >= 2:
-                        state.mode = "REAL"
-                        state.consecutive_virtual_wins = 0
-                else:
-                    state.consecutive_real_losses = (
-                        state.consecutive_real_losses + 1 if outcome == "LOSS" else 0
-                    )
-                    if state.consecutive_real_losses >= 2:
-                        state.mode = "VIRTUAL"
-                        state.consecutive_virtual_wins = 0
-                state.updated_at = now
                 settled.append(
                     {
                         "signal_id": trade.signal_id,
                         "outcome": outcome,
-                        "is_virtual": bool(trade.is_virtual),
+                        "is_virtual": False,
                     }
                 )
         return settled
@@ -2180,13 +2201,47 @@ class Test2Repository:
                     SystemModelTrade.signal_timestamp >= start,
                     SystemModelTrade.signal_timestamp < end,
                     SystemModelTrade.outcome.in_(["WIN", "LOSS"]),
+                    exists().where(Trade.signal_id == SystemModelTrade.signal_id),
                 )
                 .order_by(SystemModelTrade.signal_timestamp.asc(), SystemModelTrade.id.asc())
             ).all()
+            signal_ids = [row.signal_id for row in rows]
+            earliest_actual_by_signal: dict[str, Trade] = {}
+            if signal_ids:
+                actual_rows = session.scalars(
+                    select(Trade)
+                    .where(
+                        Trade.signal_id.in_(signal_ids),
+                        Trade.settlement_time.is_not(None),
+                        Trade.profit.is_not(None),
+                        Trade.buy_price.is_not(None),
+                        Trade.buy_price > 0,
+                    )
+                    .order_by(
+                        Trade.signal_id.asc(),
+                        func.coalesce(
+                            Trade.provider_purchase_time,
+                            Trade.purchase_time,
+                        ).asc(),
+                        Trade.id.asc(),
+                    )
+                ).all()
+                for actual in actual_rows:
+                    earliest_actual_by_signal.setdefault(actual.signal_id, actual)
         results = []
         for row in rows:
-            if row.is_virtual and not include_virtual:
-                continue
+            actual = earliest_actual_by_signal.get(row.signal_id)
+            reference_base_stake = 0.50
+            if actual is not None:
+                fixed_stake_profit = (
+                    float(actual.profit or 0.0)
+                    * reference_base_stake
+                    / float(actual.buy_price or reference_base_stake)
+                )
+                outcome = str(actual.outcome or row.outcome).upper()
+            else:
+                fixed_stake_profit = float(row.fixed_stake_profit or 0.0)
+                outcome = row.outcome
             results.append(
                 {
                     "signal_id": row.signal_id,
@@ -2196,10 +2251,10 @@ class Test2Repository:
                     "duration_ticks": row.duration_ticks,
                     "signal_timestamp": row.signal_timestamp.isoformat() if row.signal_timestamp else None,
                     "settlement_timestamp": row.settlement_timestamp.isoformat() if row.settlement_timestamp else None,
-                    "outcome": row.outcome,
-                    "is_virtual": bool(row.is_virtual),
-                    "reference_base_stake": float(row.reference_base_stake or 0.0),
-                    "fixed_stake_profit": float(row.fixed_stake_profit or 0.0),
+                    "outcome": outcome,
+                    "is_virtual": False,
+                    "reference_base_stake": reference_base_stake,
+                    "fixed_stake_profit": round(fixed_stake_profit, 8),
                     "expected_profit_ratio": float(row.expected_profit_ratio or 0.90),
                     "martingale_stake": float(row.martingale_stake or 0.0),
                     "martingale_profit": float(row.martingale_profit or 0.0),
@@ -2253,7 +2308,8 @@ class Test2Repository:
         longest_real_win_streak = 0
         current_real_loss_streak = 0
         longest_real_loss_streak = 0
-        fixed_stake = max(0.35, float(simulated_base_stake))
+        fixed_stake = min(1000.0, max(0.50, float(simulated_base_stake)))
+        maximum_martingale_stake = fixed_stake
         recovery_debt = 0.0
         recovery_wins_remaining = 2
         martingale_level = 0
@@ -2261,9 +2317,15 @@ class Test2Repository:
         total_martingale_staked = 0.0
         for trade in real_trades:
             outcome = str(trade["outcome"]).upper()
-            ref_stake = max(0.35, float(trade.get("reference_base_stake") or 0.0))
-            profit_ratio = max(0.01, float(trade.get("expected_profit_ratio") or 0.90))
-            fixed_pnl = fixed_stake * (float(trade.get("fixed_stake_profit") or 0.0) / ref_stake) if ref_stake > 1e-9 else 0.0
+            ref_stake = max(0.50, float(trade.get("reference_base_stake") or 0.0))
+            canonical_pnl = float(trade.get("fixed_stake_profit") or 0.0)
+            realized_return_ratio = canonical_pnl / ref_stake if ref_stake > 1e-9 else 0.0
+            profit_ratio = (
+                realized_return_ratio
+                if outcome == "WIN" and realized_return_ratio > 0.0
+                else max(0.01, float(trade.get("expected_profit_ratio") or 0.90))
+            )
+            fixed_pnl = fixed_stake * realized_return_ratio
             # Select the stake from debt carried into this trade.  The previous
             # implementation increased the stake after observing this trade's
             # result, retroactively multiplying the loss that triggered it.
@@ -2274,6 +2336,10 @@ class Test2Repository:
                 martingale_stake = max(fixed_stake, required_recovery_stake)
             else:
                 martingale_stake = fixed_stake
+            maximum_martingale_stake = max(
+                maximum_martingale_stake,
+                martingale_stake,
+            )
             martingale_pnl = (
                 fixed_pnl * (martingale_stake / fixed_stake)
                 if fixed_stake > 1e-9
@@ -2317,10 +2383,20 @@ class Test2Repository:
             current_martingale_drawdown = martingale_peak - martingale_profit
             max_martingale_drawdown = max(max_martingale_drawdown, current_martingale_drawdown)
         total = real_wins + real_losses
+        version_material = "|".join(
+            f"{trade.get('signal_id', '')}:{trade.get('outcome', '')}:"
+            f"{float(trade.get('fixed_stake_profit') or 0.0):.8f}"
+            for trade in real_trades
+        )
         return {
             "start": start.isoformat(),
             "end": end.isoformat(),
             "simulated_base_stake": round(fixed_stake, 2),
+            "flat_stake": round(fixed_stake, 2),
+            "maximum_martingale_stake": round(maximum_martingale_stake, 2),
+            "model_data_version": hashlib.sha256(
+                version_material.encode("utf-8")
+            ).hexdigest()[:16],
             "total_trades": total,
             "wins": real_wins,
             "losses": real_losses,
@@ -2353,7 +2429,7 @@ class Test2Repository:
             return int(session.scalar(
                 select(func.count()).select_from(SystemModelTrade).where(
                     SystemModelTrade.run_id == self.run_id,
-                    SystemModelTrade.is_virtual.is_(False),
                     SystemModelTrade.outcome.is_(None),
+                    exists().where(Trade.signal_id == SystemModelTrade.signal_id),
                 )
             ) or 0)

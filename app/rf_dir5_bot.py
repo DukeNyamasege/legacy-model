@@ -1152,17 +1152,6 @@ class RFDir5TradingBot(TradingBot):
         signal: SignalEvent,
         economics: ProposalEconomics,
     ) -> None:
-        self.repository.record_system_model_trade(
-            signal_id=signal.signal_id,
-            symbol=signal.symbol,
-            direction=signal.direction,
-            contract_type=signal.contract_type,
-            duration_ticks=int(signal.duration_ticks),
-            entry_tick_sequence=int(signal.tick_sequence),
-            entry_spot=float(signal.reference_entry_quote),
-            expected_profit_ratio=float(economics.potential_profit / economics.stake),
-            reference_base_stake=0.50,
-        )
         eligible = self._eligible_purchase_accounts()
         skip_reasons: Counter[str] = Counter()
         stake_by_token: dict[str, float] = {}
@@ -1238,7 +1227,10 @@ class RFDir5TradingBot(TradingBot):
                         signal.signal_id,
                     )
                 continue
-            summary = self.repository.account_summary(account_id)
+            summary = self.repository.account_summary(
+                account_id,
+                managed_account_id=managed_id,
+            )
             if not summary.get("updated_at"):
                 self._set_account_execution_status(
                     managed_id,
@@ -1473,6 +1465,24 @@ class RFDir5TradingBot(TradingBot):
                     registered_account_masks=[],
                 )
                 return
+            # The Global model ledger represents real execution signals, not
+            # qualifying decisions or account-level virtual observations. One
+            # canonical row is created only after at least one monetary Deriv
+            # contract has been registered successfully.
+            self.repository.record_system_model_trade(
+                signal_id=signal.signal_id,
+                symbol=signal.symbol,
+                direction=signal.direction,
+                contract_type=signal.contract_type,
+                duration_ticks=int(signal.duration_ticks),
+                entry_tick_sequence=int(signal.tick_sequence),
+                entry_spot=float(signal.reference_entry_quote),
+                expected_profit_ratio=float(
+                    economics.potential_profit / economics.stake
+                ),
+                reference_base_stake=0.50,
+                is_virtual=False,
+            )
             self._complete_market_rotation_after_purchase(signal.symbol)
             self._save_state()
             self.rf_last_purchase_monotonic = time.monotonic()
@@ -1698,7 +1708,10 @@ class RFDir5TradingBot(TradingBot):
         account_id = str(state.get("account_id") or "")
         if managed_id in {None, ""} or not account_id:
             return
-        summary = self.repository.account_summary(account_id)
+        summary = self.repository.account_summary(
+            account_id,
+            managed_account_id=int(managed_id),
+        )
         current_balance = float(summary.get("balance") or 0.0) + float(profit)
         virtual_config = getattr(self, "virtual_config", None)
         account_martingale = bool(

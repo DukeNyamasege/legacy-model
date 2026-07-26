@@ -14,7 +14,7 @@ www.derivadmin.site {
 
 derivadmin.site {
     encode zstd gzip
-    reverse_proxy 10.89.0.10:8080
+    reverse_proxy 127.0.0.1:8080
 
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains"

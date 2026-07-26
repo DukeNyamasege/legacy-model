@@ -1016,13 +1016,13 @@ def dashboard_summary(
             include_virtual=False,
             trades=canonical_trades,
         )
-          system_all_time = REPOSITORY.system_performance_summary(
-              start=all_time_start,
-              end=utc_now_value,
-              simulated_base_stake=0.50,
-              include_virtual=False,
-              trades=canonical_trades,
-          )
+        system_all_time = REPOSITORY.system_performance_summary(
+            start=all_time_start,
+            end=utc_now_value,
+            simulated_base_stake=0.50,
+            include_virtual=False,
+            trades=canonical_trades,
+        )
         # Both overview cards and detailed statistics use this same canonical
         # model ledger. Personal/user contracts never contribute here.
         result["purchased_trades"] = system_today["total_trades"]
@@ -1721,7 +1721,10 @@ def get_me(request: Request) -> dict:
     if not account:
         return {"authenticated": False}
     schedule_personal_account_refresh(account)
-    personal = REPOSITORY.account_summary(account["account_id"])
+    personal = REPOSITORY.account_summary(
+        account["account_id"],
+        managed_account_id=int(account["id"]),
+    )
             
     return {
         "authenticated": True,
@@ -2481,22 +2484,26 @@ def system_model_trades(
 def system_performance(
     period: str = "today",
     simulated_base_stake: float = 0.50,
-    include_virtual: bool = False,
-    _: str = Depends(require_control_auth),
 ) -> dict:
-    start, end = _system_period_bounds(period)
-    stake = max(0.35, float(simulated_base_stake))
+    normalized_period = str(period or "today").strip().lower()
+    if normalized_period not in {"today", "yesterday", "week", "month"}:
+        raise HTTPException(status_code=400, detail="Unsupported performance period")
+    if not math.isfinite(simulated_base_stake):
+        raise HTTPException(status_code=400, detail="Simulation stake must be finite")
+    start, end = _system_period_bounds(normalized_period)
+    stake = min(1000.0, max(0.50, float(simulated_base_stake)))
     summary = REPOSITORY.system_performance_summary(
         start=start,
         end=end,
         simulated_base_stake=stake,
-        include_virtual=include_virtual,
+        include_virtual=False,
     )
     summary.update(
         {
-            "period": period,
+            "period": normalized_period,
             "timezone": str(_system_reporting_timezone()),
-            "minimum_stake": 0.35,
+            "minimum_stake": 0.50,
+            "maximum_stake": 1000.0,
         }
     )
     return summary

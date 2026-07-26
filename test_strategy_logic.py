@@ -541,6 +541,43 @@ class DashboardMetricsTests(unittest.TestCase):
                 path,
             )
 
+    def test_aggregate_simulator_is_public_but_raw_model_trades_stay_private(self) -> None:
+        import app.api as api
+
+        routes = {
+            route.path: route
+            for route in api.app.routes
+            if hasattr(route, "dependant")
+        }
+        self.assertEqual(
+            len(routes["/metrics/system-performance"].dependant.dependencies),
+            0,
+        )
+        self.assertGreater(
+            len(routes["/metrics/system-trades"].dependant.dependencies),
+            0,
+        )
+        with patch.object(
+            api.REPOSITORY,
+            "system_performance_summary",
+            return_value={
+                "simulated_base_stake": 0.50,
+                "flat_stake": 0.50,
+                "maximum_martingale_stake": 0.50,
+                "fixed_pnl": 0.0,
+                "martingale_pnl": 0.0,
+                "total_trades": 0,
+                "wins": 0,
+                "losses": 0,
+            },
+        ):
+            result = api.system_performance(
+                period="today",
+                simulated_base_stake=0.50,
+            )
+        self.assertEqual(result["fixed_pnl"], 0.0)
+        self.assertEqual(result["martingale_pnl"], 0.0)
+
     def test_personal_api_tokens_have_a_strict_input_size_limit(self) -> None:
         import app.api as api
         from pydantic import ValidationError
