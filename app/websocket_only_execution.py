@@ -13,6 +13,30 @@ def _masked_app_id(value: Any) -> str:
     return f"{app_id[:4]}...{app_id[-3:]}"
 
 
+def _insufficient_balance_error(error: Any) -> bool:
+    if not isinstance(error, dict):
+        return False
+    code = str(error.get("code") or "").strip().lower().replace("_", "")
+    message = str(error.get("message") or "").strip().lower()
+    if code in {
+        "insufficientbalance",
+        "insufficientfunds",
+        "balanceinsufficient",
+        "notenoughbalance",
+    }:
+        return True
+    return any(
+        marker in message
+        for marker in (
+            "insufficient balance",
+            "insufficient funds",
+            "not enough balance",
+            "balance is too low",
+            "not enough funds",
+        )
+    )
+
+
 async def _websocket_only_purchase_accounts_by_stake(
     self: TradingBot,
     *,
@@ -33,6 +57,7 @@ async def _websocket_only_purchase_accounts_by_stake(
 
     private_groups: dict[float, list[tuple[str, str]]] = {}
     rejected: list[dict[str, Any]] = []
+    token_by_account = {account_id: token for token, account_id in eligible_accounts}
 
     for token, account_id in eligible_accounts:
         environment = self._account_environment_for_token(token)
@@ -105,6 +130,34 @@ async def _websocket_only_purchase_accounts_by_stake(
 
         for transaction in result:
             item = dict(transaction)
+            account_id = str(item.get("account_id") or "")
+            error = item.get("error") or {}
+            if account_id and _insufficient_balance_error(error):
+                token = token_by_account.get(account_id)
+                managed_id = self._managed_account_id_for_token(token) if token else None
+                reason = sanitize_account_ids(
+                    str(error.get("message") or "Insufficient account balance to continue")
+                )
+                if managed_id is not None:
+                    # account_lifecycle patches this status into a persistent PAUSE.
+                    # Recovery debt/session state remain intact until Resume or Stop.
+                    self._set_account_execution_status(
+                        managed_id,
+                        "purchase_insufficient_balance",
+                        f"Insufficient funds: {reason}",
+                    )
+                self.valid_clients = [
+                    candidate
+                    for candidate in self.valid_clients
+                    if candidate[0] != token
+                ]
+                self.logger.warning(
+                    "ACCOUNT_PAUSED_INSUFFICIENT_FUNDS account=%s stake=%.2f "
+                    "recovery_state_preserved=true",
+                    account_id,
+                    stake,
+                )
+
             item["stake_amount"] = stake
             item["execution_transport"] = (
                 "PRIVATE_WS_MARKUP"
