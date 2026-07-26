@@ -1886,6 +1886,7 @@
       </div>
     </section>
 
+    <div id="telegram-dashboard-snapshot" class="telegram-dashboard-snapshot">
     <section class="gbs-section" aria-labelledby="platform-overview-title">
       <h3 id="platform-overview-title" class="gbs-section-title">
         <svg class="gbs-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="8" cy="7" r="3"/><circle cx="17" cy="9" r="2.4"/><path d="M3 20v-2a5 5 0 0 1 10 0v2M14 20v-1a4 4 0 0 1 7 0v1"/></svg>
@@ -2007,6 +2008,7 @@
         <article class="gbs-risk-card"><span>Uptime</span><strong id="uptime" class="good">—</strong><small id="uptime-caption">Live service metric</small></article>
       </div>
     </section>
+    </div>
   </section>
 
   <section id="recent-contracts" class="panel section contract-history">
@@ -2442,6 +2444,11 @@
     const snapshot = $("global-dashboard-snapshot");
     snapshot.dataset.snapshotReady = "true";
     snapshot.dataset.snapshotState = "ready";
+    // Screenshot capture registers this listener and still checks the dataset
+    // first, so it works whether capture starts before or after live data lands.
+    window.dispatchEvent(new CustomEvent("dashboard:snapshot-ready", {
+      detail: { updatedAt: Date.now() }
+    }));
   }
 
   function renderSystemPerformance(system, renderMonetaryValues = true) {

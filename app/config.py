@@ -286,8 +286,11 @@ class TelegramSettings(StrictModel):
     request_timeout_seconds: float = Field(default=15.0, gt=0, le=60)
     dashboard_screenshot_enabled: bool = True
     dashboard_url: str = "http://api:8080/"
-    dashboard_selector: str = "#global-dashboard-snapshot"
-    dashboard_screenshot_timeout_seconds: float = Field(default=30.0, gt=0, le=60)
+    dashboard_selector: str = "#telegram-dashboard-snapshot"
+    # The dashboard is fed by live worker/database state.  Production captures
+    # deliberately wait longer than ordinary HTTP requests rather than posting
+    # a half-rendered "Loading" card to Telegram.
+    dashboard_screenshot_timeout_seconds: float = Field(default=300.0, gt=0, le=300)
     timezone: str = "Africa/Nairobi"
 
 

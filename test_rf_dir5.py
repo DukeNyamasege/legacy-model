@@ -375,6 +375,24 @@ class RiseFallContractTests(unittest.TestCase):
         )
         self.assertIn('snapshot.dataset.snapshotState = "ready";', dashboard)
         self.assertIn('snapshot.dataset.snapshotState = "error";', dashboard)
+        self.assertIn('id="telegram-dashboard-snapshot"', dashboard)
+        self.assertIn('dashboard:snapshot-ready', dashboard)
+
+    def test_telegram_screenshot_waits_for_complete_desktop_dashboard(self) -> None:
+        from app.services.dashboard_screenshot import (
+            DESKTOP_VIEWPORT,
+            WAIT_FOR_DASHBOARD_READY,
+        )
+
+        settings = TelegramSettings()
+        self.assertEqual(settings.dashboard_screenshot_timeout_seconds, 300.0)
+        self.assertEqual(settings.dashboard_selector, "#telegram-dashboard-snapshot")
+        self.assertEqual(DESKTOP_VIEWPORT, {"width": 1440, "height": 980})
+        self.assertIn("MutationObserver", WAIT_FOR_DASHBOARD_READY)
+        self.assertIn('dashboard:snapshot-ready', WAIT_FOR_DASHBOARD_READY)
+        self.assertIn('dataset.snapshotState !== "ready"', WAIT_FOR_DASHBOARD_READY)
+        self.assertIn('loader?.classList.contains("active")', WAIT_FOR_DASHBOARD_READY)
+        self.assertIn('"model-maximum-stake"', WAIT_FOR_DASHBOARD_READY)
 
     def test_public_simulator_and_viewer_reset_are_wired_safely(self) -> None:
         api_source = (Path(__file__).parent / "app" / "api.py").read_text(
