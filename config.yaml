@@ -11,10 +11,10 @@ deriv:
   oauth_redirect_url: https://derivadmin.site/oauth/callback
   token_encryption_key: ''
 model:
-  name: Hybrid O2-U7 + PUT Recovery
-  version: 9.0.0-rf-hybrid-o2u7-put-recovery
+  name: Hybrid O2-U7 + Fixed PUT Recovery
+  version: 9.1.0-rf-hybrid-o2u7-fixed-put-recovery
   brand: Father of Automation Series
-  run_id: hybrid_o2u7_put_v1
+  run_id: hybrid_o2u7_put_v2
 files:
   tokens: tokens.txt
   state: bot_state.json
@@ -131,13 +131,13 @@ rf_strategy:
   relaxed_bayesian_minimum_samples: 10
   relaxed_bayesian_safety_margin: 0.0
   relaxed_bayesian_minimum_edge_confidence: 0.0
-  relaxed_bayesian_minimum_probability: 0.35
+  relaxed_minimum_probability: 0.35
   relaxed_minimum_expected_return_on_stake: -0.25
   relaxed_hmm_minimum_fall_probability: 0.20
 risk:
   recovery_enabled: true
   recovery_trigger_losses: 1
-  maximum_recovery_balance_fraction: 1.0
+  maximum_recovery_balance_fraction: 0.10
   minimum_balance_reserve: 0.50
   maximum_open_contracts_per_account: 1
 virtual_protection:
