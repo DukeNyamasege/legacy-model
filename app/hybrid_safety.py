@@ -25,12 +25,14 @@ _ACCOUNTING_INSTALLED = False
 _WORKER_INSTALLED = False
 
 
-def _repair_one_canonical_row(repository: Test2Repository, contract_id: str, fallback_outcome: str) -> None:
+def _repair_one_canonical_row(
+    repository: Test2Repository,
+    contract_id: str,
+    fallback_outcome: str,
+) -> None:
     """Keep SystemModelTrade outcome/P&L coherent and independent of copier timing."""
     with repository.database.session() as session:
-        actual = session.scalar(
-            select(Trade).where(Trade.contract_id == str(contract_id))
-        )
+        actual = session.scalar(select(Trade).where(Trade.contract_id == str(contract_id)))
         if actual is None or not actual.signal_id:
             return
         row = session.scalar(
@@ -62,25 +64,27 @@ def _repair_one_canonical_row(repository: Test2Repository, contract_id: str, fal
 
 
 def install_hybrid_accounting_integrity() -> None:
-    """Prevent copier settlements from corrupting account-independent model P/L."""
+    """Prevent copier settlements/simulations from corrupting canonical model P/L."""
     global _ACCOUNTING_INSTALLED
     if _ACCOUNTING_INSTALLED:
         return
 
     original_settle_trade = Test2Repository.settle_trade
     original_system_model_trades = Test2Repository.system_model_trades
+    original_system_performance_summary = Test2Repository.system_performance_summary
 
-    def settle_trade_coherent(self: Test2Repository, **kwargs: Any) -> bool:
-        settled = original_settle_trade(self, **kwargs)
+    def settle_trade_coherent(self: Test2Repository, *args: Any, **kwargs: Any) -> bool:
+        settled = original_settle_trade(self, *args, **kwargs)
         if settled:
-            _repair_one_canonical_row(
-                self,
-                str(kwargs.get("contract_id") or ""),
-                str(kwargs.get("outcome") or ""),
-            )
+            contract_id = str(kwargs.get("contract_id") or (args[0] if args else ""))
+            fallback_outcome = str(kwargs.get("outcome") or "")
+            _repair_one_canonical_row(self, contract_id, fallback_outcome)
         return settled
 
-    def system_model_trades_coherent(self: Test2Repository, **kwargs: Any) -> list[dict[str, Any]]:
+    def system_model_trades_coherent(
+        self: Test2Repository,
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
         rows = original_system_model_trades(self, **kwargs)
         for row in rows:
             outcome = str(row.get("outcome") or "").upper()
@@ -95,8 +99,42 @@ def install_hybrid_accounting_integrity() -> None:
                 row["execution_source"] = "canonical_model"
         return rows
 
+    def fixed_base_performance_summary(
+        self: Test2Repository,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        result = original_system_performance_summary(self, **kwargs)
+        # The hybrid recovery sequence itself already contains the PUT recovery
+        # trades. Replaying another debt-sized Martingale on top double-counts
+        # recovery and recreates the exact escalation V3 removes.
+        fixed_pnl = round(float(result.get("fixed_pnl") or 0.0), 2)
+        fixed_stake = round(
+            float(result.get("simulated_base_stake") or CANONICAL_BASE_STAKE),
+            2,
+        )
+        fixed_max_dd = round(float(result.get("max_drawdown_fixed") or 0.0), 2)
+        fixed_current_dd = round(float(result.get("current_drawdown_fixed") or 0.0), 2)
+        fixed_max_dd_pct = round(float(result.get("max_drawdown_fixed_pct") or 0.0), 2)
+        fixed_current_dd_pct = round(
+            float(result.get("current_drawdown_fixed_pct") or 0.0),
+            2,
+        )
+        result.update(
+            {
+                "simulated_martingale_pnl": fixed_pnl,
+                "simulated_maximum_martingale_stake": fixed_stake,
+                "simulated_max_drawdown_martingale": fixed_max_dd,
+                "simulated_current_drawdown_martingale": fixed_current_dd,
+                "simulated_max_drawdown_martingale_pct": fixed_max_dd_pct,
+                "simulated_current_drawdown_martingale_pct": fixed_current_dd_pct,
+                "recovery_simulation_policy": "fixed_base_hybrid_sequence",
+            }
+        )
+        return result
+
     Test2Repository.settle_trade = settle_trade_coherent
     Test2Repository.system_model_trades = system_model_trades_coherent
+    Test2Repository.system_performance_summary = fixed_base_performance_summary
     _ACCOUNTING_INSTALLED = True
 
 
@@ -149,7 +187,10 @@ def _assert_runtime_invariants(bot: RFDir5TradingBot) -> None:
         failures.append("recent_window_must_be_20")
     if len(HYBRID_V3_TRIGGER) > 30:
         failures.append("ledger_trigger_exceeds_varchar30")
-    if float(risk.maximum_recovery_balance_fraction) > MAX_RECOVERY_BALANCE_FRACTION + 1e-9:
+    if (
+        float(risk.maximum_recovery_balance_fraction)
+        > MAX_RECOVERY_BALANCE_FRACTION + 1e-9
+    ):
         failures.append(
             f"maximum_recovery_balance_fraction={risk.maximum_recovery_balance_fraction}"
         )
@@ -178,7 +219,7 @@ def install_hybrid_worker_safety() -> None:
 
     install_hybrid_accounting_integrity()
 
-    # New epoch: V1/V2 debt/runtime state can never be silently inherited.
+    # New epoch: old PUT_RECOVERY runtime state can never be silently inherited.
     hybrid.HYBRID_STATE_KEY = HYBRID_V3_STATE_KEY
     hybrid.ACCOUNT_EPOCH_PREFIX = HYBRID_V3_ACCOUNT_EPOCH_PREFIX
     hybrid._apply_canonical_settlement = _fixed_canonical_settlement
@@ -194,7 +235,7 @@ def install_hybrid_worker_safety() -> None:
     # Account recovery debt remains durable, but debt can never increase the next
     # monetary PUT stake in this hybrid strategy. Calling the existing planner with
     # recovery sizing disabled preserves base-stake affordability and the virtual
-    # protection block while eliminating debt-derived martingale escalation.
+    # protection block while eliminating debt-derived Martingale escalation.
     original_plan_stake = RFDir5Repository.plan_stake
 
     def fixed_base_plan(self: RFDir5Repository, **kwargs: Any) -> StakePlan:
