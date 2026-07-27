@@ -6,6 +6,8 @@ import signal
 from app.account_execution_diagnostics import install_account_execution_diagnostics
 from app.account_execution_feedback import install_account_execution_feedback
 from app.account_lifecycle import install_worker_account_lifecycle
+from app.hybrid_digit_put import install_hybrid_digit_put_strategy
+from app.hybrid_runtime_config import install_hybrid_runtime_config
 from app.rf_dir5_bot import RFDir5TradingBot
 from app.strict_streak_guard import install_strict_streak_guard
 from app.telegram_admin_integration import install_telegram_admin_integration
@@ -13,34 +15,26 @@ from app.websocket_only_execution import install_websocket_only_execution
 
 
 async def run_worker() -> None:
-    # Install account-scoped Pause/Stop semantics before the bot instance is
-    # created. Pause preserves recovery/session state; Stop/Start Again resets it.
+    # Account lifecycle remains account-scoped. Pause preserves recovery/session;
+    # Stop/Start Again resets that user's state without stopping other traders.
     install_worker_account_lifecycle()
 
-    # Production execution is deliberately WebSocket-only. This guard is
-    # installed before the bot instance is created so REST Bulk Purchase cannot
-    # become active because of a configuration change or future refactor.
+    # All production purchases remain private Deriv WebSocket-only.
     install_websocket_only_execution()
 
-    # Persist every account-level execution failure and protect small accounts
-    # from inheriting/attempting oversized recovery stakes. This wraps the
-    # WebSocket-only transport, so it cannot re-enable REST execution.
+    # Keep account-level execution explanations and small-account recovery safety.
     install_account_execution_feedback()
-
-    # Surface transient eligibility, contract verification and registration
-    # failures instead of leaving a joined account at 0 trades with no reason.
     install_account_execution_diagnostics()
 
-    # Private Telegram control is restricted to @riskmanagerduke and its instant
-    # account lifecycle/status alerts are REAL-account only. The public/channel
-    # hourly reporter remains independent.
+    # Telegram private admin/lifecycle features remain independent of strategy.
     install_telegram_admin_integration()
 
-    # Keep the existing RF-PUT5 five-tick brain, but require broader 15-tick
-    # directional agreement and one confirming tick before execution. After one
-    # canonical loss the next setup must meet stronger score/efficiency context;
-    # the existing per-account 2-loss virtual protection remains the hard break.
+    # Build the existing strict PUT recovery brain first. The hybrid controller is
+    # deliberately installed afterwards so PUT is reachable only when the hybrid
+    # state is recovering and still retains the 15 -> 5 -> 1 confirmation gate.
     install_strict_streak_guard()
+    install_hybrid_runtime_config()
+    install_hybrid_digit_put_strategy()
 
     bot = RFDir5TradingBot()
     loop = asyncio.get_running_loop()
