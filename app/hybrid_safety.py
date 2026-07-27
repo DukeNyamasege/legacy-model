@@ -28,9 +28,13 @@ _WORKER_INSTALLED = False
 def _repair_one_canonical_row(
     repository: Test2Repository,
     contract_id: str,
-    fallback_outcome: str,
 ) -> None:
-    """Keep SystemModelTrade outcome/P&L coherent and independent of copier timing."""
+    """Repair canonical P/L only after the canonical model outcome already exists.
+
+    A copied account is never allowed to define the canonical outcome. If the copier
+    settles first, this function intentionally leaves the open SystemModelTrade alone;
+    the tick/model settlement path will later set both outcome and canonical P/L.
+    """
     with repository.database.session() as session:
         actual = session.scalar(select(Trade).where(Trade.contract_id == str(contract_id)))
         if actual is None or not actual.signal_id:
@@ -45,22 +49,18 @@ def _repair_one_canonical_row(
         )
         if row is None:
             return
-        outcome = str(row.outcome or fallback_outcome or "").upper()
+        outcome = str(row.outcome or "").upper()
         if outcome not in {"WIN", "LOSS"}:
+            # Canonical tick/model settlement has not happened yet. Never infer the
+            # model result from one copier's provider settlement timing/outcome.
             return
-        if row.outcome is None:
-            row.outcome = outcome
         row.reference_base_stake = CANONICAL_BASE_STAKE
         row.fixed_stake_profit = canonical_fixed_profit(
             outcome,
             float(row.expected_profit_ratio or 0.0),
         )
         if row.settlement_timestamp is None:
-            row.settlement_timestamp = (
-                actual.provider_settlement_time
-                or actual.settlement_time
-                or utc_now()
-            )
+            row.settlement_timestamp = utc_now()
 
 
 def install_hybrid_accounting_integrity() -> None:
@@ -77,8 +77,7 @@ def install_hybrid_accounting_integrity() -> None:
         settled = original_settle_trade(self, *args, **kwargs)
         if settled:
             contract_id = str(kwargs.get("contract_id") or (args[0] if args else ""))
-            fallback_outcome = str(kwargs.get("outcome") or "")
-            _repair_one_canonical_row(self, contract_id, fallback_outcome)
+            _repair_one_canonical_row(self, contract_id)
         return settled
 
     def system_model_trades_coherent(
