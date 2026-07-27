@@ -14,6 +14,7 @@ from app.hybrid_safety import install_hybrid_worker_safety
 from app.rf_dir5_bot import RFDir5TradingBot
 from app.strict_streak_guard import install_strict_streak_guard
 from app.telegram_admin_integration import install_telegram_admin_integration
+from app.tick_debug_logging import install_every_tick_debug_logging
 from app.websocket_only_execution import install_websocket_only_execution
 
 
@@ -51,6 +52,9 @@ async def run_worker() -> None:
     # contracts at each account's configured base stake, starts a new state epoch,
     # repairs canonical accounting, and refuses startup if safety invariants drift.
     install_hybrid_worker_safety()
+
+    # Optional high-volume diagnostics. Disabled unless EVERY_TICK_LOGS=true.
+    install_every_tick_debug_logging()
 
     bot = RFDir5TradingBot()
     loop = asyncio.get_running_loop()
