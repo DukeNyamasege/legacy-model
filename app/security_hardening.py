@@ -65,7 +65,8 @@ def install_api_security_hardening(app: Any) -> None:
 
         # Avoid unnecessary implementation disclosure and browser persistence of
         # sensitive/account-scoped responses.
-        response.headers.pop("Server", None)
+        if "server" in response.headers:
+            del response.headers["server"]
         response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive, nosnippet"
         response.headers["X-Permitted-Cross-Domain-Policies"] = "none"
         response.headers["Origin-Agent-Cluster"] = "?1"
