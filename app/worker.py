@@ -10,6 +10,7 @@ from app.hybrid_data_integrity import install_hybrid_data_integrity
 from app.hybrid_digit_put import install_hybrid_digit_put_strategy
 from app.hybrid_recent_digit_bias import install_recent_digit_bias_strategy
 from app.hybrid_runtime_config import install_hybrid_runtime_config
+from app.hybrid_safety import install_hybrid_worker_safety
 from app.rf_dir5_bot import RFDir5TradingBot
 from app.strict_streak_guard import install_strict_streak_guard
 from app.telegram_admin_integration import install_telegram_admin_integration
@@ -31,9 +32,9 @@ async def run_worker() -> None:
     # Telegram private admin/lifecycle features remain independent of strategy.
     install_telegram_admin_integration()
 
-    # Build the existing strict PUT recovery brain first. The hybrid controller is
-    # deliberately installed afterwards so PUT is reachable only when the hybrid
-    # state is recovering and still retains the 15 -> 5 -> 1 confirmation gate.
+    # Build the strict PUT recovery brain first. The hybrid controller is installed
+    # afterwards so PUT remains reachable only while the hybrid state is recovering
+    # and still retains the established 15 -> 5 -> 1 confirmation gate.
     install_strict_streak_guard()
     install_hybrid_runtime_config()
 
@@ -42,10 +43,14 @@ async def run_worker() -> None:
     install_hybrid_data_integrity()
     install_hybrid_digit_put_strategy()
 
-    # V2 primary entry: replace the overly strict 100/500/1000 + Wilson gate with
-    # one recent 20-digit O2/U7 bias and a small live-payout edge requirement.
-    # This does not alter the PUT recovery scheduler or account recovery state.
+    # Primary entry uses one recent 20-digit O2/U7 bias; the old 100/500/1000 +
+    # Wilson gate is not part of production entry decisions.
     install_recent_digit_bias_strategy()
+
+    # Install last so it wraps the fully assembled strategy. V3 keeps all recovery
+    # contracts at each account's configured base stake, starts a new state epoch,
+    # repairs canonical accounting, and refuses startup if safety invariants drift.
+    install_hybrid_worker_safety()
 
     bot = RFDir5TradingBot()
     loop = asyncio.get_running_loop()
