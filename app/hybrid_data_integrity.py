@@ -6,17 +6,20 @@ from app.models import DirectionalSignal
 from app.repositories.test2_repository import Test2Repository
 
 
-HYBRID_VERSION = "HYBRID-O2-U7-PUTREC-V1"
+HYBRID_VERSION_PREFIX = "HYBRID-O2-U7-"
 _INSTALLED = False
 
 
 def install_hybrid_data_integrity() -> None:
     """Ensure every executable hybrid digit candidate has its durable FK anchor.
 
-    SystemModelTrade.signal_id references directional_signals.signal_id.  The hybrid
+    SystemModelTrade.signal_id references directional_signals.signal_id. The hybrid
     O2/U7 path also records CandidateSignalRecord rows for dashboard compatibility,
-    so this wrapper mirrors only hybrid digit candidates into DirectionalSignal before
+    so this wrapper mirrors hybrid digit candidates into DirectionalSignal before
     any purchase can create the canonical system-model trade row.
+
+    The strategy version is intentionally read from each signal instead of being
+    pinned to V1, so newer O2/U7 entry controllers keep the same ledger integrity.
     """
     global _INSTALLED
     if _INSTALLED:
@@ -30,7 +33,8 @@ def install_hybrid_data_integrity() -> None:
     ) -> None:
         original_record_candidate(self, signal)
 
-        if str(getattr(signal, "strategy_version", "")) != HYBRID_VERSION:
+        strategy_version = str(getattr(signal, "strategy_version", ""))
+        if not strategy_version.startswith(HYBRID_VERSION_PREFIX):
             return
         contract_type = str(getattr(signal, "contract_type", "")).upper()
         if contract_type not in {"DIGITOVER", "DIGITUNDER"}:
@@ -48,7 +52,7 @@ def install_hybrid_data_integrity() -> None:
                 DirectionalSignal(
                     signal_id=signal_id,
                     run_id=self.run_id,
-                    strategy_version=HYBRID_VERSION,
+                    strategy_version=strategy_version,
                     symbol=str(getattr(signal, "symbol", "")),
                     direction=str(getattr(signal, "direction", "")),
                     contract_type=contract_type,
@@ -61,6 +65,9 @@ def install_hybrid_data_integrity() -> None:
                     movements=[],
                     feature_values={
                         "barrier": str(getattr(signal, "barrier", "")),
+                        # These legacy field names are retained for schema/report
+                        # compatibility. V2 stores recent-rate/opposite-rate/bias-gap
+                        # in the same slots; it does not use the old multi-TF gate.
                         "p100": float(getattr(signal, "p100", 0.0)),
                         "p500": float(getattr(signal, "p500", 0.0)),
                         "p1000": float(getattr(signal, "p1000", 0.0)),
