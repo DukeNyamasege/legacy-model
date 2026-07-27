@@ -14,10 +14,10 @@ RECENT_WINDOW = 20
 MIN_RECENT_HIT_RATE = 0.75
 MIN_BIAS_GAP = 0.05
 MIN_LIVE_EDGE = 0.02
-STRATEGY_VERSION = "HYBRID-O2-U7-RECENT20-PUTREC-V2"
+STRATEGY_VERSION = "HYBRID-O2-U7-RECENT20-PUTFIX-V3"
 # candidate_signals.trigger_name is VARCHAR(30). Keep the durable trigger code
 # compact while retaining STRATEGY_VERSION as the full runtime/model identity.
-LEDGER_TRIGGER_NAME = "O2U7-RECENT20-PUTREC-V2"
+LEDGER_TRIGGER_NAME = "O2U7-R20-PUTFIX-V3"
 
 
 def _recent_bias_metrics(digits: list[int]) -> dict[str, float]:
@@ -249,7 +249,8 @@ def install_recent_digit_bias_strategy() -> None:
 
     This intentionally does not touch the hybrid state machine or strict PUT
     scheduler. PUT therefore remains recovery-only and still uses the established
-    15 -> 5 -> 1 confirmation conditions.
+    15 -> 5 -> 1 confirmation conditions. V3 changes recovery stake sizing only:
+    debt is tracked but never allowed to increase the account's monetary stake.
     """
     if getattr(hybrid, "_recent_digit_bias_installed", False):
         return
