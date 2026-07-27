@@ -8,8 +8,9 @@ from sqlalchemy import select
 import app.hybrid_digit_put as hybrid
 import app.hybrid_recent_digit_bias as recent
 import app.hybrid_runtime_config as runtime
+from enhanced_bot import optional_float
 from app.model_accounting import CANONICAL_BASE_STAKE, canonical_fixed_profit
-from app.models import AccountRiskState, SystemModelTrade, Trade, utc_now
+from app.models import AccountRiskState, CandidateSignalRecord, SystemModelTrade, Trade, utc_now
 from app.repositories.rf_dir5_repository import RFDir5Repository, StakePlan
 from app.repositories.test2_repository import Test2Repository
 from app.rf_dir5_bot import RFDir5TradingBot
@@ -63,6 +64,45 @@ def _repair_one_canonical_row(
             row.settlement_timestamp = utc_now()
 
 
+def _primary_digit_signal(repository: Test2Repository, signal_id: str) -> bool:
+    if not signal_id:
+        return False
+    with repository.database.session() as session:
+        candidate = session.get(CandidateSignalRecord, str(signal_id))
+        if candidate is None:
+            return False
+        contract_type = str(candidate.contract_type or "").upper()
+        if contract_type not in {"DIGITOVER", "DIGITUNDER"}:
+            return False
+        if str(candidate.run_id or "") != HYBRID_V3_RUN_ID:
+            return False
+        trigger_name = str(candidate.trigger_name or "")
+        strategy_version = str(getattr(candidate, "strategy_version", "") or "")
+        return (
+            trigger_name == HYBRID_V3_TRIGGER
+            or strategy_version == HYBRID_V3_VERSION
+            or trigger_name.startswith("O2U7")
+        )
+
+
+def _contract_terminal_outcome(contract: dict[str, Any]) -> str:
+    status = str(contract.get("status") or "").strip().lower()
+    if status == "won":
+        return "win"
+    if status == "lost":
+        return "loss"
+    profit = optional_float(contract.get("profit"))
+    if profit is None:
+        return ""
+    return "win" if profit > 0 else "loss"
+
+
+def _signal_id_for_contract(repository: Test2Repository, contract_id: int | str) -> str:
+    with repository.database.session() as session:
+        trade = session.scalar(select(Trade).where(Trade.contract_id == str(contract_id)))
+        return str(trade.signal_id or "") if trade is not None else ""
+
+
 def install_hybrid_accounting_integrity() -> None:
     """Prevent copier settlements/simulations from corrupting canonical model P/L."""
     global _ACCOUNTING_INSTALLED
@@ -85,6 +125,7 @@ def install_hybrid_accounting_integrity() -> None:
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
         rows = original_system_model_trades(self, **kwargs)
+        settled_rows: list[dict[str, Any]] = []
         for row in rows:
             outcome = str(row.get("outcome") or "").upper()
             if outcome not in {"WIN", "LOSS"}:
@@ -96,7 +137,8 @@ def install_hybrid_accounting_integrity() -> None:
             )
             if row.get("execution_source") != "viewer_actual":
                 row["execution_source"] = "canonical_model"
-        return rows
+            settled_rows.append(row)
+        return settled_rows
 
     def fixed_base_performance_summary(
         self: Test2Repository,
@@ -277,6 +319,35 @@ def install_hybrid_worker_safety() -> None:
 
     RFDir5Repository.plan_stake = fixed_base_plan
 
+    original_handle_contract_update = RFDir5TradingBot.handle_contract_update
+
+    async def recovery_safe_handle_contract_update(
+        self: RFDir5TradingBot,
+        token: str,
+        contract_id: int,
+        contract: dict[str, Any],
+    ) -> None:
+        terminal = self._contract_is_terminal(contract)
+        outcome = _contract_terminal_outcome(contract) if terminal else ""
+        signal_id = str(getattr(self, "contract_signal_ids", {}).get(int(contract_id)) or "")
+        await original_handle_contract_update(self, token, contract_id, contract)
+        if not terminal or outcome != "loss":
+            return
+        signal_id = signal_id or _signal_id_for_contract(self.repository, contract_id)
+        if not _primary_digit_signal(self.repository, signal_id):
+            return
+        if hybrid._mode(self) != hybrid.PRIMARY_DIGITS:
+            return
+        hybrid._enter_recovery(self, signal_id)
+        self.logger.warning(
+            "HYBRID_PUT_RECOVERY_ARMED_BY_ACTUAL_SETTLEMENT signal_id=%s "
+            "contract_id=%s next_action=WAIT_STRICT_15_5_1_PUT",
+            signal_id,
+            contract_id,
+        )
+
+    RFDir5TradingBot.handle_contract_update = recovery_safe_handle_contract_update
+
     original_init = RFDir5TradingBot.__init__
 
     def safe_init(self: RFDir5TradingBot, config_path: str | None = None) -> None:
@@ -286,7 +357,7 @@ def install_hybrid_worker_safety() -> None:
         self.logger.warning(
             "HYBRID_SAFETY_ACTIVE version=%s recovery_stake_policy=fixed_account_base "
             "debt_escalation=false virtual_guard=2_losses_then_2_consecutive_virtual_wins "
-            "max_recovery_balance_fraction=%.2f state_epoch=v2",
+            "max_recovery_balance_fraction=%.2f state_epoch=v2 actual_loss_arms_put=true",
             HYBRID_V3_VERSION,
             float(self.risk_config.maximum_recovery_balance_fraction),
         )
