@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import signal
 
+from app.account_execution_diagnostics import install_account_execution_diagnostics
 from app.account_execution_feedback import install_account_execution_feedback
 from app.account_lifecycle import install_worker_account_lifecycle
 from app.rf_dir5_bot import RFDir5TradingBot
@@ -24,6 +25,10 @@ async def run_worker() -> None:
     # from inheriting/attempting oversized recovery stakes. This wraps the
     # WebSocket-only transport, so it cannot re-enable REST execution.
     install_account_execution_feedback()
+
+    # Surface transient eligibility, contract verification and registration
+    # failures instead of leaving a joined account at 0 trades with no reason.
+    install_account_execution_diagnostics()
 
     # Keep the existing RF-PUT5 five-tick brain, but require broader 15-tick
     # directional agreement and one confirming tick before execution. After one
