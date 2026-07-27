@@ -12,9 +12,9 @@ deriv:
   token_encryption_key: ''
 model:
   name: RF-PUT5 AI
-  version: 8.0.0-rf-put5-ai-bayesian-hmm
+  version: 8.1.0-rf-put5-ai-strict-streak
   brand: Father of Automation Series
-  run_id: rfdir5v1
+  run_id: rfdir5v2
 files:
   tokens: tokens.txt
   state: bot_state.json
