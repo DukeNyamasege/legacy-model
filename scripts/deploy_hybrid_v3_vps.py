@@ -477,8 +477,18 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except DeployError as exc:
-        print(f"\nDEPLOYMENT ERROR: {exc}", file=sys.stderr, flush=True)
+    except SystemExit:
+        raise
+    except KeyboardInterrupt:
+        stop_worker()
+        print("Deployment interrupted; worker stopped. Database/accounts preserved.", flush=True)
+        raise SystemExit(130)
+    except Exception as exc:
+        print(
+            f"\nDEPLOYMENT ERROR [{type(exc).__name__}]: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
         stop_worker()
         print("Worker has been stopped. Database/accounts remain preserved.", flush=True)
         raise SystemExit(1)
