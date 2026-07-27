@@ -11,10 +11,10 @@ deriv:
   oauth_redirect_url: https://derivadmin.site/oauth/callback
   token_encryption_key: ''
 model:
-  name: RF-PUT5 AI
-  version: 8.1.0-rf-put5-ai-strict-streak
+  name: Hybrid O2-U7 + PUT Recovery
+  version: 9.0.0-rf-hybrid-o2u7-put-recovery
   brand: Father of Automation Series
-  run_id: rfdir5v2
+  run_id: hybrid_o2u7_put_v1
 files:
   tokens: tokens.txt
   state: bot_state.json
@@ -88,6 +88,9 @@ recovery:
   regime_guard_enabled: false
   rolling_window_trades: 30
   pause_below_win_rate: 0.58
+  resume_above_shadow_win_rate: 0.70
+  shadow_min_samples: 30
+  shadow_consecutive_wins_required: 2
   pause_after_consecutive_losses: 3
 rf_strategy:
   name: RF-PUT5-AI-V8
@@ -153,8 +156,6 @@ telegram:
   request_timeout_seconds: 15.0
   dashboard_screenshot_enabled: true
   dashboard_url: http://api:8080/
-  # This boundary intentionally excludes the interactive page header and AI
-  # banner, matching the desktop statistics image attached to hourly updates.
   dashboard_selector: "#telegram-dashboard-snapshot"
   dashboard_screenshot_timeout_seconds: 300.0
   timezone: Africa/Nairobi
