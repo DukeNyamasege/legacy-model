@@ -15,6 +15,9 @@ MIN_RECENT_HIT_RATE = 0.75
 MIN_BIAS_GAP = 0.05
 MIN_LIVE_EDGE = 0.02
 STRATEGY_VERSION = "HYBRID-O2-U7-RECENT20-PUTREC-V2"
+# candidate_signals.trigger_name is VARCHAR(30). Keep the durable trigger code
+# compact while retaining STRATEGY_VERSION as the full runtime/model identity.
+LEDGER_TRIGGER_NAME = "O2U7-RECENT20-PUTREC-V2"
 
 
 def _recent_bias_metrics(digits: list[int]) -> dict[str, float]:
@@ -102,7 +105,7 @@ def _make_recent_candidate(
         connection_session_id=bot.connection_session_id,
         tick_sequence=int(market.tick_sequence),
         barrier=str(barrier),
-        trigger_name=STRATEGY_VERSION,
+        trigger_name=LEDGER_TRIGGER_NAME,
         trigger_digits=trigger_digits,
         signal_last_digit=trigger_digits[-1],
         p100=selected_rate,
