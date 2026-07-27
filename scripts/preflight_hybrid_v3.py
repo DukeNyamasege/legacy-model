@@ -43,6 +43,9 @@ def main() -> None:
 
     assert bot.test2_config.model.run_id == HYBRID_V3_RUN_ID
     assert bot.test2_config.hybrid_strategy.version == HYBRID_V3_VERSION
+    assert bot.test2_config.deriv.environment == "demo"
+    assert bot.test2_config.deriv.allow_real_trading is False
+    assert bot.test2_config.execution.real_enabled is False
     assert bot.hybrid_state["mode"] == PRIMARY_DIGITS
     assert bot.hybrid_state.get("canonical_debt", 0.0) == 0.0
     assert len(HYBRID_V3_TRIGGER) <= 30
@@ -87,57 +90,64 @@ def main() -> None:
             )
         )
 
-    # Debt must never change the V3 stake. $1,000 debt still plans exactly $0.50.
-    plan = bot.rf_repository.plan_stake(
-        managed_account_id=managed_id,
-        account_id_masked=masked,
-        current_balance=10000.0,
-        requested_stake=0.50,
-        proposal_profit_ratio=0.38,
-        recovery_enabled=True,
-        recovery_trigger_losses=1,
-        minimum_stake=0.35,
-        virtual_protection_enabled=True,
-        maximum_recovery_balance_fraction=0.10,
-        minimum_balance_reserve=0.50,
-    )
-    assert plan.stake == 0.50, plan
-    assert plan.is_recovery is True
-    assert plan.recovery_debt == 1000.0
+    plan = None
+    virtual_plan = None
+    try:
+        # Debt must never change V3 stake: $1,000 debt still plans exactly $0.50.
+        plan = bot.rf_repository.plan_stake(
+            managed_account_id=managed_id,
+            account_id_masked=masked,
+            current_balance=10000.0,
+            requested_stake=0.50,
+            proposal_profit_ratio=0.38,
+            recovery_enabled=True,
+            recovery_trigger_losses=1,
+            minimum_stake=0.35,
+            virtual_protection_enabled=True,
+            maximum_recovery_balance_fraction=0.10,
+            minimum_balance_reserve=0.50,
+        )
+        assert plan.stake == 0.50, plan
+        assert plan.is_recovery is True
+        assert plan.recovery_debt == 1000.0
 
-    # Two-loss virtual protection must still block a real monetary recovery trade.
-    with bot.repository.database.session() as session:
-        state = session.get(AccountRiskState, managed_id, with_for_update=True)
-        assert state is not None
-        state.consecutive_losses = 2
-        state.protection_mode = "VIRTUAL_WAITING_FOR_WIN"
+        # Two-loss virtual protection must still block a real monetary recovery trade.
+        with bot.repository.database.session() as session:
+            state = session.get(AccountRiskState, managed_id, with_for_update=True)
+            assert state is not None
+            state.consecutive_losses = 2
+            state.protection_mode = "VIRTUAL_WAITING_FOR_WIN"
 
-    virtual_plan = bot.rf_repository.plan_stake(
-        managed_account_id=managed_id,
-        account_id_masked=masked,
-        current_balance=10000.0,
-        requested_stake=0.50,
-        proposal_profit_ratio=0.38,
-        recovery_enabled=True,
-        recovery_trigger_losses=1,
-        minimum_stake=0.35,
-        virtual_protection_enabled=True,
-        maximum_recovery_balance_fraction=0.10,
-        minimum_balance_reserve=0.50,
-    )
-    assert virtual_plan.stake is None, virtual_plan
+        virtual_plan = bot.rf_repository.plan_stake(
+            managed_account_id=managed_id,
+            account_id_masked=masked,
+            current_balance=10000.0,
+            requested_stake=0.50,
+            proposal_profit_ratio=0.38,
+            recovery_enabled=True,
+            recovery_trigger_losses=1,
+            minimum_stake=0.35,
+            virtual_protection_enabled=True,
+            maximum_recovery_balance_fraction=0.10,
+            minimum_balance_reserve=0.50,
+        )
+        assert virtual_plan.stake is None, virtual_plan
+    finally:
+        # Always remove the artificial state, even when a preflight assertion fails.
+        with bot.repository.database.session() as session:
+            state = session.get(AccountRiskState, managed_id)
+            if state is not None and state.account_id_masked == masked:
+                session.delete(state)
 
-    # Remove the artificial state so production still begins from a true zero ledger.
-    with bot.repository.database.session() as session:
-        state = session.get(AccountRiskState, managed_id)
-        if state is not None:
-            session.delete(state)
+    assert plan is not None
+    assert virtual_plan is not None
 
     print("============================================================")
     print("HYBRID V3 SAFETY PREFLIGHT PASSED")
     print("============================================================")
     print("Run ID              :", HYBRID_V3_RUN_ID)
     print("Strategy             :", HYBRID_V3_VERSION)
+    print("Environment          : DEMO ONLY")
     print("Initial mode         :", PRIMARY_DIGITS)
     print("State key            :", HYBRID_V3_STATE_KEY)
     print("Account epoch prefix :", HYBRID_V3_ACCOUNT_EPOCH_PREFIX)
