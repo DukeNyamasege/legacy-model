@@ -131,7 +131,7 @@ rf_strategy:
   relaxed_bayesian_minimum_samples: 10
   relaxed_bayesian_safety_margin: 0.0
   relaxed_bayesian_minimum_edge_confidence: 0.0
-  relaxed_minimum_probability: 0.35
+  relaxed_bayesian_minimum_probability: 0.35
   relaxed_minimum_expected_return_on_stake: -0.25
   relaxed_hmm_minimum_fall_probability: 0.20
 risk:
