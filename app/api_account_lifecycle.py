@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import copy
 import math
+import threading
 
 from fastapi import HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
@@ -30,6 +32,7 @@ from app.dashboard_consistency import (
     install_dashboard_consistency,
 )
 from app.dashboard_consistency_legacy import install_legacy_reference_compatibility
+from app.models import DashboardSnapshot
 from app.security_hardening import install_api_security_hardening
 from app.services.telegram_api_alerts import queue_real_api_lifecycle_alert
 
@@ -38,6 +41,14 @@ install_legacy_reference_compatibility(dashboard_consistency_module)
 install_dashboard_consistency(base_api)
 install_api_security_hardening(app)
 
+# Serialize expensive reference-ledger rebuilds per account mode. Browser polls
+# may arrive concurrently; only one request should rebuild a dirty/missing
+# snapshot while the others continue to receive the last-good payload.
+_DASHBOARD_BUILD_LOCKS = {
+    "demo": threading.Lock(),
+    "real": threading.Lock(),
+}
+
 # Replace routes where this production wrapper adds lifecycle, private Telegram,
 # or dashboard-accounting guarantees. Everything else remains in app.api.
 _replaced_routes = {
@@ -45,6 +56,7 @@ _replaced_routes = {
     ("/me", "GET"),
     ("/me/auto-trade", "POST"),
     ("/me/resume-trading", "POST"),
+    ("/metrics/summary", "GET"),
     ("/metrics/system-performance", "GET"),
 }
 app.router.routes[:] = [
@@ -56,6 +68,151 @@ app.router.routes[:] = [
         for path, method in _replaced_routes
     )
 ]
+
+
+def _cache_needs_rebuild(account_type: str) -> bool:
+    target = base_api.normalize_account_type(account_type)
+    with base_api.DASHBOARD_SUMMARY_LOCK:
+        state = base_api.DASHBOARD_SUMMARY_CACHE[target]
+        return not isinstance(state.get("data"), dict) or bool(state.get("dirty"))
+
+
+def _install_verified_dashboard_snapshot(
+    account_type: str,
+    data: dict,
+    generated_at,
+    source_watermark: dict,
+) -> int:
+    """Persist and publish one verified v2 snapshot atomically enough for readers."""
+    target = base_api.normalize_account_type(account_type)
+
+    # Durable last-good copy. This is deliberately independent of the worker so
+    # an API restart can restore dashboard data before trading resumes.
+    with REPOSITORY.database.session() as session:
+        row = session.get(DashboardSnapshot, target)
+        if row is None:
+            version = 1
+            row = DashboardSnapshot(
+                account_type=target,
+                payload=copy.deepcopy(data),
+                generated_at=generated_at,
+                snapshot_version=version,
+                source_watermark=copy.deepcopy(source_watermark),
+            )
+            session.add(row)
+        else:
+            version = int(row.snapshot_version or 0) + 1
+            row.payload = copy.deepcopy(data)
+            row.generated_at = generated_at
+            row.snapshot_version = version
+            row.source_watermark = copy.deepcopy(source_watermark)
+
+    # In-memory last-good copy used by dashboard_summary()/WebSocket readers.
+    with base_api.DASHBOARD_SUMMARY_LOCK:
+        state = base_api.DASHBOARD_SUMMARY_CACHE[target]
+        state.update(
+            {
+                "data": copy.deepcopy(data),
+                "generated_at": generated_at,
+                "snapshot_version": version,
+                "dirty": False,
+                "dirty_at": 0.0,
+                "refreshing": False,
+                "last_error": None,
+                "source_watermark": copy.deepcopy(source_watermark),
+            }
+        )
+    return version
+
+
+def _verified_dashboard_summary(account_type: str) -> dict:
+    """Return current v2 data, rebuilding once when cache is missing or dirty.
+
+    The old base endpoint was cache-only. After a cache clear/restart it could
+    therefore return ``snapshot_unavailable`` forever until some unrelated
+    background path happened to populate the cache. This production wrapper
+    self-heals that state and also refreshes after worker settlements mark the
+    cache dirty.
+    """
+    target = base_api.normalize_account_type(account_type)
+    cached = base_api._cached_dashboard_payload(target)
+    if cached is not None and not _cache_needs_rebuild(target):
+        return cached
+
+    build_lock = _DASHBOARD_BUILD_LOCKS[target]
+    if not build_lock.acquire(blocking=False):
+        # Never make ordinary dashboard polling fan out into duplicate expensive
+        # accounting queries. A last-good snapshot remains safe while one request
+        # refreshes it. On first boot with no snapshot, wait for the single builder.
+        if cached is not None:
+            return cached
+        build_lock.acquire()
+        build_lock.release()
+        recovered = base_api._cached_dashboard_payload(target)
+        if recovered is not None:
+            return recovered
+        raise HTTPException(
+            status_code=503,
+            detail="Dashboard snapshot rebuild did not produce verified data",
+        )
+
+    try:
+        with base_api.DASHBOARD_SUMMARY_LOCK:
+            state = base_api.DASHBOARD_SUMMARY_CACHE[target]
+            state["refreshing"] = True
+
+        data, generated_at, watermark = base_api._build_dashboard_snapshot(target)
+        consistency = dict(data.get("data_consistency") or {})
+        today = dict((data.get("system_performance") or {}).get("today") or {})
+        total = int(today.get("total_trades") or 0)
+        wins = int(today.get("wins") or 0)
+        losses = int(today.get("losses") or 0)
+        if (
+            consistency.get("version") != 2
+            or consistency.get("invariant_ok") is not True
+            or total != wins + losses
+        ):
+            raise RuntimeError(
+                "dashboard v2 verification failed before snapshot publication"
+            )
+
+        version = _install_verified_dashboard_snapshot(
+            target,
+            data,
+            generated_at,
+            watermark,
+        )
+        LOGGER.info(
+            "DASHBOARD_V2_REFRESHED mode=%s version=%s reference=%s trades=%s wins=%s losses=%s",
+            target,
+            version,
+            consistency.get("reference_account", ""),
+            total,
+            wins,
+            losses,
+        )
+        payload = base_api._cached_dashboard_payload(target)
+        if payload is None:
+            raise RuntimeError("dashboard cache installation failed")
+        return payload
+    except Exception as exc:
+        LOGGER.exception("DASHBOARD_V2_REFRESH_FAILED mode=%s", target)
+        with base_api.DASHBOARD_SUMMARY_LOCK:
+            state = base_api.DASHBOARD_SUMMARY_CACHE[target]
+            state["refreshing"] = False
+            state["last_error"] = str(exc)[:300]
+        # If there was a previous verified snapshot, degrade to last-good data
+        # rather than replacing the dashboard with zeros during a transient error.
+        if cached is not None:
+            cached["refreshing"] = False
+            cached["last_refresh_error"] = str(exc)[:300]
+            return cached
+        raise HTTPException(
+            status_code=503,
+            detail=f"Dashboard data rebuild failed: {type(exc).__name__}",
+        ) from exc
+    finally:
+        build_lock.release()
 
 
 @app.get("/", include_in_schema=False)
@@ -120,6 +277,20 @@ def security_hardening_script() -> FileResponse:
         media_type="application/javascript",
         headers={"Cache-Control": "no-store, max-age=0"},
     )
+
+
+@app.get("/metrics/summary")
+def metrics_summary_consistent(mode: str = "demo") -> dict:
+    account_type = base_api.normalize_account_type(mode)
+    summary = _verified_dashboard_summary(account_type)
+    summary.update(
+        {
+            "strategy_name": CONFIG.rf_strategy.name,
+            "execution_phase": "LIVE_EXECUTION",
+            "dashboard_account_type": account_type,
+        }
+    )
+    return summary
 
 
 @app.get("/me")
