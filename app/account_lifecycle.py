@@ -6,6 +6,7 @@ from typing import Any
 from app.models import AccountRiskState, ManagedAccount, utc_now
 from app.repositories.test2_repository import Test2Repository
 
+
 PAUSED_STATUSES = {
     "manual_pause",
     "take_profit",
@@ -15,6 +16,9 @@ PAUSED_STATUSES = {
     "credential_error",
     "invalid_account",
     "token_required",
+    "bulk_execution_pat_required",
+    "contract_unavailable",
+    "purchase_error",
     "real_disabled",
 }
 STOPPED_STATUS = "stopped"
