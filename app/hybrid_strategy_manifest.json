@@ -1,0 +1,25 @@
+{
+  "strategy": "HYBRID-O2-U7-PUTREC-V1",
+  "primary": {
+    "contracts": ["DIGITOVER:2", "DIGITUNDER:7"],
+    "duration_ticks": 1,
+    "windows": [100, 500, 1000],
+    "live_break_even_required": true,
+    "p100_edge": 0.04,
+    "p500_edge": 0.02,
+    "p1000_edge": 0.01,
+    "wilson_lower_bound_required": true
+  },
+  "recovery": {
+    "contract": "PUT",
+    "strict_guard": "15-5-1",
+    "forced_immediate_entry": false,
+    "new_joiners_inherit_recovery": false
+  },
+  "daily_loss_cap": false,
+  "live_shadow_prerequisite": false,
+  "virtual_protection": {
+    "actual_losses_to_enter": 2,
+    "consecutive_virtual_wins_to_exit": 2
+  }
+}
