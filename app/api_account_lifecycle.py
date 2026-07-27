@@ -41,16 +41,11 @@ install_legacy_reference_compatibility(dashboard_consistency_module)
 install_dashboard_consistency(base_api)
 install_api_security_hardening(app)
 
-# Serialize expensive reference-ledger rebuilds per account mode. Browser polls
-# may arrive concurrently; only one request should rebuild a dirty/missing
-# snapshot while the others continue to receive the last-good payload.
 _DASHBOARD_BUILD_LOCKS = {
     "demo": threading.Lock(),
     "real": threading.Lock(),
 }
 
-# Replace routes where this production wrapper adds lifecycle, private Telegram,
-# or dashboard-accounting guarantees. Everything else remains in app.api.
 _replaced_routes = {
     ("/", "GET"),
     ("/me", "GET"),
@@ -83,11 +78,7 @@ def _install_verified_dashboard_snapshot(
     generated_at,
     source_watermark: dict,
 ) -> int:
-    """Persist and publish one verified v2 snapshot atomically enough for readers."""
     target = base_api.normalize_account_type(account_type)
-
-    # Durable last-good copy. This is deliberately independent of the worker so
-    # an API restart can restore dashboard data before trading resumes.
     with REPOSITORY.database.session() as session:
         row = session.get(DashboardSnapshot, target)
         if row is None:
@@ -107,7 +98,6 @@ def _install_verified_dashboard_snapshot(
             row.snapshot_version = version
             row.source_watermark = copy.deepcopy(source_watermark)
 
-    # In-memory last-good copy used by dashboard_summary()/WebSocket readers.
     with base_api.DASHBOARD_SUMMARY_LOCK:
         state = base_api.DASHBOARD_SUMMARY_CACHE[target]
         state.update(
@@ -125,25 +115,16 @@ def _install_verified_dashboard_snapshot(
     return version
 
 
-def _verified_dashboard_summary(account_type: str) -> dict:
-    """Return current v2 data, rebuilding once when cache is missing or dirty.
-
-    The old base endpoint was cache-only. After a cache clear/restart it could
-    therefore return ``snapshot_unavailable`` forever until some unrelated
-    background path happened to populate the cache. This production wrapper
-    self-heals that state and also refreshes after worker settlements mark the
-    cache dirty.
-    """
+def _verified_dashboard_summary(account_type: str = "demo", force: bool = False) -> dict:
+    """Return verified v2 data and self-heal missing/dirty dashboard state."""
     target = base_api.normalize_account_type(account_type)
     cached = base_api._cached_dashboard_payload(target)
-    if cached is not None and not _cache_needs_rebuild(target):
+    needs_rebuild = bool(force) or _cache_needs_rebuild(target)
+    if cached is not None and not needs_rebuild:
         return cached
 
     build_lock = _DASHBOARD_BUILD_LOCKS[target]
     if not build_lock.acquire(blocking=False):
-        # Never make ordinary dashboard polling fan out into duplicate expensive
-        # accounting queries. A last-good snapshot remains safe while one request
-        # refreshes it. On first boot with no snapshot, wait for the single builder.
         if cached is not None:
             return cached
         build_lock.acquire()
@@ -183,10 +164,10 @@ def _verified_dashboard_summary(account_type: str) -> dict:
             watermark,
         )
         LOGGER.info(
-            "DASHBOARD_V2_REFRESHED mode=%s version=%s reference=%s trades=%s wins=%s losses=%s",
+            "DASHBOARD_V2_REFRESHED mode=%s version=%s ledger=%s trades=%s wins=%s losses=%s",
             target,
             version,
-            consistency.get("reference_account", ""),
+            consistency.get("ledger", ""),
             total,
             wins,
             losses,
@@ -201,8 +182,6 @@ def _verified_dashboard_summary(account_type: str) -> dict:
             state = base_api.DASHBOARD_SUMMARY_CACHE[target]
             state["refreshing"] = False
             state["last_error"] = str(exc)[:300]
-        # If there was a previous verified snapshot, degrade to last-good data
-        # rather than replacing the dashboard with zeros during a transient error.
         if cached is not None:
             cached["refreshing"] = False
             cached["last_refresh_error"] = str(exc)[:300]
@@ -213,6 +192,12 @@ def _verified_dashboard_summary(account_type: str) -> dict:
         ) from exc
     finally:
         build_lock.release()
+
+
+# The base WebSocket handler resolves this global at call time. Rebinding it here
+# gives HTTP and WebSocket clients the exact same verified source and removes the
+# startup race where WS could emit snapshot_unavailable before HTTP self-healed.
+base_api.dashboard_summary = _verified_dashboard_summary
 
 
 @app.get("/", include_in_schema=False)
@@ -295,13 +280,6 @@ def metrics_summary_consistent(mode: str = "demo") -> dict:
 
 @app.get("/me")
 def get_me_consistent(request: Request) -> dict:
-    """Keep the personal card mathematically settled-trade consistent.
-
-    An account can briefly have one purchased-but-unsettled contract. Displaying
-    that as a completed Trade while Wins + Losses is still one lower makes the
-    card look corrupt. Completed Trades therefore equals Wins + Losses; any open
-    amount is reported separately for consumers that need it.
-    """
     payload = base_get_me(request)
     if not payload.get("authenticated"):
         return payload
@@ -471,8 +449,6 @@ def stop_personal_trading(request: Request) -> dict:
     if not account:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
-    # Snapshot opening/closing balance and session P/L before Stop intentionally
-    # clears the account session state.
     queue_real_api_lifecycle_alert(
         REPOSITORY,
         CONFIG,
