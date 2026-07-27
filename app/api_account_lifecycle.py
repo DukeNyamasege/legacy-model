@@ -10,26 +10,37 @@ from app.account_lifecycle import (
     stop_account,
 )
 from app.api import (
+    AutoTradeRequest,
+    CONFIG,
+    LOGGER,
     ROOT,
     REPOSITORY,
+    ResumeTradeRequest,
     app,
     get_current_account,
     oauth_callback,
 )
 from app.security_hardening import install_api_security_hardening
+from app.services.telegram_api_alerts import queue_real_api_lifecycle_alert
 
 install_repository_account_lifecycle()
 install_api_security_hardening(app)
 
-# Replace only the public dashboard GET route so the approved dashboard can load
-# lifecycle and inspection-deterrence enhancements without rewriting the large
-# dashboard source file.
+# Replace the public dashboard GET plus the two legacy lifecycle mutation routes.
+# This keeps the approved API behavior while adding REAL-account-only private
+# Telegram notifications without rewriting the large base API module.
+_replaced_routes = {
+    ("/", "GET"),
+    ("/me/auto-trade", "POST"),
+    ("/me/resume-trading", "POST"),
+}
 app.router.routes[:] = [
     route
     for route in app.router.routes
-    if not (
-        getattr(route, "path", None) == "/"
-        and "GET" in set(getattr(route, "methods", set()) or set())
+    if not any(
+        getattr(route, "path", None) == path
+        and method in set(getattr(route, "methods", set()) or set())
+        for path, method in _replaced_routes
     )
 ]
 
@@ -88,16 +99,110 @@ def security_hardening_script() -> FileResponse:
     )
 
 
+@app.post("/me/auto-trade")
+def toggle_auto_trade_with_private_alert(request: Request, body: AutoTradeRequest) -> dict:
+    account = get_current_account(request)
+    if not account:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if body.enabled and not account.get("has_trading_api_token", False):
+        raise HTTPException(
+            status_code=409,
+            detail="Save a Deriv API token for this account before joining auto trading.",
+        )
+
+    before_status = str(account.get("execution_status") or "inactive").strip().lower()
+    REPOSITORY.set_managed_account_enabled(int(account["id"]), bool(body.enabled))
+    REPOSITORY.set_status("RUNNING", "")
+
+    if body.enabled:
+        event = "start" if before_status in {"inactive", "disabled", "stopped"} else "resume"
+        queue_real_api_lifecycle_alert(
+            REPOSITORY,
+            CONFIG,
+            LOGGER,
+            managed_account_id=int(account["id"]),
+            event=event,
+        )
+    else:
+        queue_real_api_lifecycle_alert(
+            REPOSITORY,
+            CONFIG,
+            LOGGER,
+            managed_account_id=int(account["id"]),
+            event="pause",
+            reason="Auto trading paused by trader",
+        )
+
+    REPOSITORY.audit(
+        "PERSONAL_AUTO_TRADE_UPDATED",
+        str(account.get("account_id_masked", "account")),
+        request.client.host if request.client else "unknown",
+        {
+            "managed_account_id": int(account["id"]),
+            "enabled": bool(body.enabled),
+        },
+    )
+    return {"success": True, "enabled": bool(body.enabled)}
+
+
+@app.post("/me/resume-trading")
+def resume_trading_with_private_alert(request: Request, body: ResumeTradeRequest) -> dict:
+    account = get_current_account(request)
+    if not account:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if not account.get("has_trading_api_token", False):
+        raise HTTPException(
+            status_code=409,
+            detail="Save a Deriv API token before resuming auto trading.",
+        )
+
+    before_status = str(account.get("execution_status") or "inactive").strip().lower()
+    reset_stake = body.mode == "start_again"
+    REPOSITORY.resume_managed_account(int(account["id"]), reset_recovery=reset_stake)
+    REPOSITORY.set_managed_account_enabled(int(account["id"]), True)
+    REPOSITORY.set_status("RUNNING", "")
+
+    event = "start" if reset_stake or before_status in {"inactive", "disabled", "stopped"} else "resume"
+    queue_real_api_lifecycle_alert(
+        REPOSITORY,
+        CONFIG,
+        LOGGER,
+        managed_account_id=int(account["id"]),
+        event=event,
+    )
+
+    REPOSITORY.audit(
+        "PERSONAL_RESUME_TRADING",
+        str(account.get("account_id_masked", "account")),
+        request.client.host if request.client else "unknown",
+        {
+            "managed_account_id": int(account["id"]),
+            "mode": body.mode,
+            "recovery_reset": reset_stake,
+        },
+    )
+    return {"success": True, "mode": body.mode, "recovery_reset": reset_stake}
+
+
 @app.post("/me/pause-trading")
 def pause_personal_trading(request: Request) -> dict:
     account = get_current_account(request)
     if not account:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    reason = "Auto trading paused by user; recovery and session state preserved"
     pause_account(
         REPOSITORY,
         int(account["id"]),
         status="manual_pause",
-        reason="Auto trading paused by user; recovery and session state preserved",
+        reason=reason,
+    )
+    queue_real_api_lifecycle_alert(
+        REPOSITORY,
+        CONFIG,
+        LOGGER,
+        managed_account_id=int(account["id"]),
+        event="pause",
+        reason=reason,
     )
     REPOSITORY.audit(
         "PERSONAL_TRADING_PAUSED",
@@ -120,6 +225,16 @@ def stop_personal_trading(request: Request) -> dict:
     account = get_current_account(request)
     if not account:
         raise HTTPException(status_code=401, detail="Not authenticated")
+
+    # Snapshot opening/closing balance and session P/L before Stop intentionally
+    # clears the account session state.
+    queue_real_api_lifecycle_alert(
+        REPOSITORY,
+        CONFIG,
+        LOGGER,
+        managed_account_id=int(account["id"]),
+        event="stop",
+    )
     stop_account(REPOSITORY, int(account["id"]))
     REPOSITORY.audit(
         "PERSONAL_TRADING_STOPPED",
