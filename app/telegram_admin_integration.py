@@ -6,9 +6,10 @@ import logging
 from sqlalchemy import select
 
 from app.models import CandidateSignalRecord
-from app.repositories.test2_repository import Test2Repository
+from app.repositories.test2_repository import Test2Repository, mask_account_id
 from app.rf_dir5_bot import RFDir5TradingBot
 from app.services.telegram_admin import TelegramAdminController, queue_real_status_alert
+from app.token_store import decrypt_auth_payload
 
 
 _INSTALLED = False
@@ -24,6 +25,7 @@ def install_telegram_admin_integration() -> None:
     original_set_status = Test2Repository.set_managed_account_execution_status
     original_run = RFDir5TradingBot.run
     original_handle_admin_message = TelegramAdminController._handle_admin_message
+    original_help_text = TelegramAdminController._help_text
 
     def set_status_with_real_admin_alert(
         self: Test2Repository,
@@ -116,6 +118,88 @@ def install_telegram_admin_integration() -> None:
                 )
         return "\n".join(lines)
 
+    def all_balance_pages(self: TelegramAdminController) -> list[str]:
+        """Rank every linked Demo + Real account by latest stored balance."""
+        summary = self.repository.summary()
+        snapshots = {
+            str(item.get("account") or ""): item
+            for item in list(summary.get("accounts") or [])
+            if str(item.get("account") or "")
+        }
+        rows: list[dict] = []
+        for managed in self.repository.list_managed_accounts():
+            try:
+                payload = decrypt_auth_payload(
+                    managed.token_secret,
+                    self.config.deriv.token_encryption_key,
+                )
+            except Exception:
+                continue
+            account_id = str(payload.get("account_id") or "").strip()
+            if not account_id:
+                continue
+            masked = mask_account_id(account_id)
+            snapshot = snapshots.get(masked, {})
+            raw_type = str(
+                payload.get("account_type")
+                or payload.get("environment")
+                or payload.get("trading_mode")
+                or "demo"
+            ).strip().lower()
+            account_type = "REAL" if raw_type == "real" else "DEMO"
+            rows.append(
+                {
+                    "masked": masked,
+                    "type": account_type,
+                    "balance": float(snapshot.get("balance") or 0.0),
+                    "currency": str(snapshot.get("currency") or "USD"),
+                    "enabled": bool(managed.enabled),
+                    "status": str(managed.execution_status or "inactive"),
+                }
+            )
+
+        rows.sort(key=lambda item: (-item["balance"], item["masked"]))
+        if not rows:
+            return ["💰 ALL BALANCES\n\nNo linked account balances are currently available."]
+
+        currency_totals: dict[str, float] = {}
+        for item in rows:
+            currency = item["currency"]
+            currency_totals[currency] = currency_totals.get(currency, 0.0) + item["balance"]
+        totals = " · ".join(
+            f"{currency} {amount:,.2f}"
+            for currency, amount in sorted(currency_totals.items())
+        )
+
+        page_size = 40
+        pages: list[str] = []
+        page_count = (len(rows) + page_size - 1) // page_size
+        for page_index in range(page_count):
+            start = page_index * page_size
+            batch = rows[start : start + page_size]
+            lines = [
+                "💰 ALL BALANCES — HIGHEST TO LOWEST",
+                f"Accounts: {len(rows)} | Page {page_index + 1}/{page_count}",
+                f"Combined by currency: {totals}",
+                "",
+            ]
+            for rank, item in enumerate(batch, start=start + 1):
+                state = "ON" if item["enabled"] else "OFF"
+                lines.append(
+                    f"{rank}. {item['masked']} [{item['type']}] — "
+                    f"{item['balance']:,.2f} {item['currency']} — {state}"
+                )
+            pages.append("\n".join(lines))
+        return pages
+
+    def help_text_with_all_balance(self: TelegramAdminController) -> str:
+        text = original_help_text(self)
+        marker = "/help — show commands"
+        addition = "/allbalance — all Demo + Real balances, highest to lowest"
+        if addition in text:
+            return text
+        return text.replace(marker, f"{addition}\n{marker}")
+
     async def handle_admin_message_with_natural_queries(
         self: TelegramAdminController,
         chat_id: str,
@@ -140,6 +224,19 @@ def install_telegram_admin_integration() -> None:
                 "how is my bot doing",
             )
         )
+        all_balance_question = lower in {
+            "/allbalance",
+            "/allbalances",
+            "all balance",
+            "all balances",
+            "show all balances",
+            "show me all balances",
+        }
+        if all_balance_question:
+            for page in all_balance_pages(self):
+                await self._send_private(chat_id, page)
+                await asyncio.sleep(0.15)
+            return
         if missed_trade_question:
             await self._send_private(chat_id, why_latest_trade_text(self))
             return
@@ -179,6 +276,7 @@ def install_telegram_admin_integration() -> None:
 
     Test2Repository.set_managed_account_execution_status = set_status_with_real_admin_alert
     TelegramAdminController._last_trade_text = last_trade_text
+    TelegramAdminController._help_text = help_text_with_all_balance
     TelegramAdminController._handle_admin_message = handle_admin_message_with_natural_queries
     RFDir5TradingBot.run = run_with_admin_control
     _INSTALLED = True
