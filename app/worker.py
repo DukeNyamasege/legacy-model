@@ -8,6 +8,7 @@ from app.account_execution_feedback import install_account_execution_feedback
 from app.account_lifecycle import install_worker_account_lifecycle
 from app.rf_dir5_bot import RFDir5TradingBot
 from app.strict_streak_guard import install_strict_streak_guard
+from app.telegram_admin_integration import install_telegram_admin_integration
 from app.websocket_only_execution import install_websocket_only_execution
 
 
@@ -29,6 +30,11 @@ async def run_worker() -> None:
     # Surface transient eligibility, contract verification and registration
     # failures instead of leaving a joined account at 0 trades with no reason.
     install_account_execution_diagnostics()
+
+    # Private Telegram control is restricted to @riskmanagerduke and its instant
+    # account lifecycle/status alerts are REAL-account only. The public/channel
+    # hourly reporter remains independent.
+    install_telegram_admin_integration()
 
     # Keep the existing RF-PUT5 five-tick brain, but require broader 15-tick
     # directional agreement and one confirming tick before execution. After one
