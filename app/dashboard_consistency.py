@@ -36,6 +36,27 @@ def _periods(api_module: Any, as_of: datetime) -> dict[str, tuple[datetime, date
     }
 
 
+def _canonicalize_model_rows(trades: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Remove copier timing/P&L from the account-independent model ledger.
+
+    SystemModelTrade already contains the model outcome and proposal profit ratio.
+    A copier can enter a fraction later and legitimately settle differently; that
+    must affect the Personal Account card, never the Global Model result.
+    """
+    result: list[dict[str, Any]] = []
+    for original in trades:
+        trade = dict(original)
+        outcome = str(trade.get("outcome") or "").upper()
+        ratio = max(0.0, float(trade.get("expected_profit_ratio") or 0.0))
+        trade["reference_base_stake"] = BASELINE_STAKE
+        trade["fixed_stake_profit"] = (
+            ratio * BASELINE_STAKE if outcome == "WIN" else -BASELINE_STAKE
+        )
+        trade["execution_source"] = "canonical_model"
+        result.append(trade)
+    return result
+
+
 def _canonical_model_performance(
     api_module: Any,
     *,
@@ -43,18 +64,14 @@ def _canonical_model_performance(
     end: datetime,
     base_stake: float,
 ) -> dict[str, Any]:
-    """Replay one account-independent model sequence at one explicit base stake.
-
-    There is exactly one model row per system signal. Copier/account executions
-    are never used as the population for Global Bot Statistics. This preserves
-    the original dashboard contract: model performance is based on recorded
-    model trades, while Personal Account remains actual account execution data.
-    """
+    """Replay one account-independent model sequence at one explicit base stake."""
     stake = min(1000.0, max(BASELINE_STAKE, float(base_stake)))
-    trades = api_module.REPOSITORY.system_model_trades(
-        start=start,
-        end=end,
-        include_virtual=False,
+    trades = _canonicalize_model_rows(
+        api_module.REPOSITORY.system_model_trades(
+            start=start,
+            end=end,
+            include_virtual=False,
+        )
     )
     raw = api_module.REPOSITORY.system_performance_summary(
         start=start,
@@ -62,8 +79,7 @@ def _canonical_model_performance(
         simulated_base_stake=stake,
         include_virtual=False,
         trades=trades,
-        # Never let the observed copier cohort replace model P/L. The Martingale
-        # path below is the deterministic recovery replay of these same trades.
+        # Never let a copied account cohort replace the canonical model sequence.
         observed_executions=[],
     )
 
@@ -89,7 +105,6 @@ def _canonical_model_performance(
             "win_rate": wins / total if total else 0.0,
             "viewer_actual_trades": 0,
             "simulated_trades": total,
-            # Main cards: both scenarios replay the same canonical sequence.
             "martingale_pnl": recovery_pnl,
             "observed_martingale_pnl": recovery_pnl,
             "maximum_martingale_stake": float(
@@ -143,8 +158,6 @@ def reference_performance_summary(
     end: datetime,
     simulated_base_stake: float = BASELINE_STAKE,
 ) -> dict[str, Any]:
-    # Kept under the historical function name because the production wrapper and
-    # simulator import it. Account type no longer changes the model population.
     del account_type
     return _canonical_model_performance(
         api_module,
@@ -172,8 +185,6 @@ def build_consistent_dashboard_snapshot(api_module: Any, account_type: str):
     if int(today["total_trades"]) != int(today["wins"]) + int(today["losses"]):
         raise RuntimeError("dashboard canonical totals invariant violated")
 
-    # Account population/status cards may still be filtered by selected Demo/Real
-    # mode. Model P/L and model trade statistics above remain global and identical.
     result = api_module.filter_summary_to_trading_ready_accounts(
         api_module.REPOSITORY.summary(),
         account_type=target,
