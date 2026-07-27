@@ -5,6 +5,7 @@ import signal
 
 from app.account_lifecycle import install_worker_account_lifecycle
 from app.rf_dir5_bot import RFDir5TradingBot
+from app.strict_streak_guard import install_strict_streak_guard
 from app.websocket_only_execution import install_websocket_only_execution
 
 
@@ -17,6 +18,12 @@ async def run_worker() -> None:
     # installed before the bot instance is created so REST Bulk Purchase cannot
     # become active because of a configuration change or future refactor.
     install_websocket_only_execution()
+
+    # Keep the existing RF-PUT5 five-tick brain, but require broader 15-tick
+    # directional agreement and one confirming tick before execution. After one
+    # canonical loss the next setup must meet stronger score/efficiency context;
+    # the existing per-account 2-loss virtual protection remains the hard break.
+    install_strict_streak_guard()
 
     bot = RFDir5TradingBot()
     loop = asyncio.get_running_loop()
