@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import math
+
 from fastapi import HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 
+import app.api as base_api
 from app.account_lifecycle import (
     PAUSED_STATUSES,
     install_repository_account_lifecycle,
@@ -18,21 +21,28 @@ from app.api import (
     ResumeTradeRequest,
     app,
     get_current_account,
+    get_me as base_get_me,
     oauth_callback,
+)
+from app.dashboard_consistency import (
+    consistent_period_response,
+    install_dashboard_consistency,
 )
 from app.security_hardening import install_api_security_hardening
 from app.services.telegram_api_alerts import queue_real_api_lifecycle_alert
 
 install_repository_account_lifecycle()
+install_dashboard_consistency(base_api)
 install_api_security_hardening(app)
 
-# Replace the public dashboard GET plus the two legacy lifecycle mutation routes.
-# This keeps the approved API behavior while adding REAL-account-only private
-# Telegram notifications without rewriting the large base API module.
+# Replace routes where this production wrapper adds lifecycle, private Telegram,
+# or dashboard-accounting guarantees. Everything else remains in app.api.
 _replaced_routes = {
     ("/", "GET"),
+    ("/me", "GET"),
     ("/me/auto-trade", "POST"),
     ("/me/resume-trading", "POST"),
+    ("/metrics/system-performance", "GET"),
 }
 app.router.routes[:] = [
     route
@@ -64,6 +74,7 @@ def lifecycle_dashboard(
     html = (ROOT / "dashboard" / "index.html").read_text(encoding="utf-8")
     scripts = (
         '<script src="/ui/account-lifecycle.js?v=20260727"></script>',
+        '<script src="/ui/data-consistency.js?v=20260727"></script>',
         '<script src="/ui/security-hardening.js?v=20260727"></script>',
     )
     injection = []
@@ -90,6 +101,15 @@ def lifecycle_script() -> FileResponse:
     )
 
 
+@app.get("/ui/data-consistency.js", include_in_schema=False)
+def data_consistency_script() -> FileResponse:
+    return FileResponse(
+        ROOT / "dashboard" / "data-consistency.js",
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
+
+
 @app.get("/ui/security-hardening.js", include_in_schema=False)
 def security_hardening_script() -> FileResponse:
     return FileResponse(
@@ -97,6 +117,57 @@ def security_hardening_script() -> FileResponse:
         media_type="application/javascript",
         headers={"Cache-Control": "no-store, max-age=0"},
     )
+
+
+@app.get("/me")
+def get_me_consistent(request: Request) -> dict:
+    """Keep the personal card mathematically settled-trade consistent.
+
+    An account can briefly have one purchased-but-unsettled contract. Displaying
+    that as a completed Trade while Wins + Losses is still one lower makes the
+    card look corrupt. Completed Trades therefore equals Wins + Losses; any open
+    amount is reported separately for consumers that need it.
+    """
+    payload = base_get_me(request)
+    if not payload.get("authenticated"):
+        return payload
+    stats = dict(payload.get("stats") or {})
+    reported_trades = int(stats.get("trades") or 0)
+    wins = int(stats.get("wins") or 0)
+    losses = int(stats.get("losses") or 0)
+    settled_trades = wins + losses
+    stats.update(
+        {
+            "trades": settled_trades,
+            "settled_trades": settled_trades,
+            "open_trades": max(0, reported_trades - settled_trades),
+        }
+    )
+    payload["stats"] = stats
+    payload["data_consistency"] = {
+        "invariant_ok": settled_trades == wins + losses,
+        "rule": "completed_trades_equal_wins_plus_losses",
+    }
+    return payload
+
+
+@app.get("/metrics/system-performance")
+def system_performance_consistent(
+    request: Request,
+    period: str = "today",
+    simulated_base_stake: float = 0.50,
+) -> dict:
+    if not math.isfinite(float(simulated_base_stake)):
+        raise HTTPException(status_code=400, detail="Simulation stake must be finite")
+    try:
+        return consistent_period_response(
+            base_api,
+            request=request,
+            period=period,
+            simulated_base_stake=float(simulated_base_stake),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/me/auto-trade")
