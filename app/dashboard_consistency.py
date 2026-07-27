@@ -82,7 +82,7 @@ def _reference_trade_rows(
                 Trade.profit.is_not(None),
                 Trade.buy_price.is_not(None),
                 Trade.buy_price > 0,
-                *repository._current_run_trade_filter(),
+                repository._current_run_trade_filter(),
                 purchased_at >= start,
                 purchased_at < end,
             )
