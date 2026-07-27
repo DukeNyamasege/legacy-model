@@ -13,23 +13,22 @@ from app.strategy.over2_strategy import TEST2_SYMBOLS
 @dataclass(frozen=True, slots=True)
 class HybridRuntimeConfig:
     enabled: bool = True
-    version: str = "HYBRID-O2-U7-RECENT20-PUTREC-V2"
+    version: str = "HYBRID-O2-U7-RECENT20-PUTFIX-V3"
     primary_markets: tuple[str, ...] = TEST2_SYMBOLS
     over_barrier: int = 2
     under_barrier: int = 7
     duration_ticks: int = 1
     candidate_window_ms: int = 75
 
-    # V2 primary entry: one recent-digit window only. The previous 100/500/1000
-    # alignment + Wilson lower-bound gate is deliberately no longer used.
+    # Production primary entry uses one recent-digit window only. The previous
+    # 100/500/1000 alignment + Wilson lower-bound gate is deliberately unused.
     recent_window: int = 20
     minimum_recent_hit_rate: float = 0.75
     minimum_bias_gap: float = 0.05
     minimum_live_edge: float = 0.02
 
-    # Kept only so the legacy V1 functions remain import-compatible. Production
-    # worker replaces those V1 functions with hybrid_recent_digit_bias before the
-    # bot starts; these values are not part of the V2 trading decision.
+    # Kept only so legacy V1 functions remain import-compatible. Production worker
+    # replaces those functions with hybrid_recent_digit_bias before the bot starts.
     windows: tuple[int, int, int] = (100, 500, 1000)
     p100_edge: float = 0.04
     p500_edge: float = 0.02
@@ -44,9 +43,9 @@ _INSTALLED = False
 def install_hybrid_runtime_config() -> None:
     """Expose immutable hybrid parameters and prevent premature recovery exit.
 
-    This deliberately avoids a daily loss cap and a live shadow-training gate.
-    The account-independent strategy is fixed in source so stale VPS environment
-    variables cannot silently change the primary or recovery behaviour.
+    There is no daily loss cap or live shadow prerequisite at the global strategy
+    layer. V3 recovery stake sizing is separately forced to each account's base
+    stake by hybrid_safety; this module only owns shared mode/settlement sequencing.
     """
     global _INSTALLED
     if _INSTALLED:
