@@ -1,3 +1,0 @@
-UI-only rollback note
-
-The dashboard visual shell is being restored to the earlier d9797f9-era version. Trading strategy, rfdir5v2 run identity, pause/stop lifecycle, WebSocket-only execution, 3% markup, API hardening, and backend security changes remain unchanged.
