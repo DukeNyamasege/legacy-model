@@ -60,6 +60,7 @@ def main() -> None:
     assert bot.hybrid_state.get("canonical_debt", 0.0) == 0.0
     assert len(HYBRID_V3_TRIGGER) <= 30
     assert bot.risk_config.maximum_recovery_balance_fraction <= 0.10
+    assert bot.risk_config.minimum_balance_reserve == 0.0
     assert bot.virtual_config.trigger_actual_losses == 2
     assert bot.virtual_config.exit_after_wins == 2
     assert bot.handle_contract_update.__name__ == "recovery_safe_handle_contract_update"
@@ -102,6 +103,8 @@ def main() -> None:
         )
 
     plan = None
+    min_balance_plan = None
+    insufficient_plan = None
     virtual_plan = None
     try:
         # Debt must never change V3 stake: $1,000 debt still plans exactly $0.50.
@@ -116,11 +119,42 @@ def main() -> None:
             minimum_stake=0.35,
             virtual_protection_enabled=True,
             maximum_recovery_balance_fraction=0.10,
-            minimum_balance_reserve=0.50,
+            minimum_balance_reserve=0.00,
         )
         assert plan.stake == 0.50, plan
         assert plan.is_recovery is True
         assert plan.recovery_debt == 1000.0
+
+        # No reserve buffer: if the requested stake is available, the account can trade.
+        min_balance_plan = bot.rf_repository.plan_stake(
+            managed_account_id=managed_id,
+            account_id_masked=masked,
+            current_balance=0.35,
+            requested_stake=0.35,
+            proposal_profit_ratio=0.38,
+            recovery_enabled=False,
+            recovery_trigger_losses=1,
+            minimum_stake=0.35,
+            virtual_protection_enabled=True,
+            maximum_recovery_balance_fraction=0.10,
+            minimum_balance_reserve=0.00,
+        )
+        assert min_balance_plan.stake == 0.35, min_balance_plan
+
+        insufficient_plan = bot.rf_repository.plan_stake(
+            managed_account_id=managed_id,
+            account_id_masked=masked,
+            current_balance=0.34,
+            requested_stake=0.35,
+            proposal_profit_ratio=0.38,
+            recovery_enabled=False,
+            recovery_trigger_losses=1,
+            minimum_stake=0.35,
+            virtual_protection_enabled=True,
+            maximum_recovery_balance_fraction=0.10,
+            minimum_balance_reserve=0.00,
+        )
+        assert insufficient_plan.stake is None, insufficient_plan
 
         # Two-loss virtual protection must still block a real monetary recovery trade.
         with bot.repository.database.session() as session:
@@ -140,7 +174,7 @@ def main() -> None:
             minimum_stake=0.35,
             virtual_protection_enabled=True,
             maximum_recovery_balance_fraction=0.10,
-            minimum_balance_reserve=0.50,
+            minimum_balance_reserve=0.00,
         )
         assert virtual_plan.stake is None, virtual_plan
     finally:
@@ -151,6 +185,8 @@ def main() -> None:
                 session.delete(state)
 
     assert plan is not None
+    assert min_balance_plan is not None
+    assert insufficient_plan is not None
     assert virtual_plan is not None
 
     print("============================================================")
@@ -166,6 +202,8 @@ def main() -> None:
     print("Canonical WIN @ 38%  :", f"${win_pnl:+.2f}")
     print("Canonical LOSS       :", f"${loss_pnl:+.2f}")
     print("$1,000 debt stake    :", f"${plan.stake:.2f}")
+    print("Minimum live balance : $0.35 stake allowed with $0.35 balance")
+    print("Reserve requirement  : DISABLED")
     print("Virtual monetary buy : BLOCKED")
     print("Debt escalation      : DISABLED")
     print("Actual loss -> PUT   : ARMED")
