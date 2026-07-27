@@ -62,6 +62,7 @@ def main() -> None:
     assert bot.risk_config.maximum_recovery_balance_fraction <= 0.10
     assert bot.virtual_config.trigger_actual_losses == 2
     assert bot.virtual_config.exit_after_wins == 2
+    assert bot.handle_contract_update.__name__ == "recovery_safe_handle_contract_update"
 
     # Canonical P/L must never have an impossible sign/outcome combination.
     win_pnl = canonical_fixed_profit("WIN", 0.38)
@@ -167,6 +168,7 @@ def main() -> None:
     print("$1,000 debt stake    :", f"${plan.stake:.2f}")
     print("Virtual monetary buy : BLOCKED")
     print("Debt escalation      : DISABLED")
+    print("Actual loss -> PUT   : ARMED")
     print("============================================================")
 
 
