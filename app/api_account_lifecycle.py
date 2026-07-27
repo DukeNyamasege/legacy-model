@@ -6,6 +6,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 
 import app.api as base_api
+import app.dashboard_consistency as dashboard_consistency_module
 from app.account_lifecycle import (
     PAUSED_STATUSES,
     install_repository_account_lifecycle,
@@ -28,10 +29,12 @@ from app.dashboard_consistency import (
     consistent_period_response,
     install_dashboard_consistency,
 )
+from app.dashboard_consistency_legacy import install_legacy_reference_compatibility
 from app.security_hardening import install_api_security_hardening
 from app.services.telegram_api_alerts import queue_real_api_lifecycle_alert
 
 install_repository_account_lifecycle()
+install_legacy_reference_compatibility(dashboard_consistency_module)
 install_dashboard_consistency(base_api)
 install_api_security_hardening(app)
 
