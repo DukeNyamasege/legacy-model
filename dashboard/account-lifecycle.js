@@ -25,6 +25,9 @@
     "credential_error",
     "invalid_account",
     "token_required",
+    "bulk_execution_pat_required",
+    "contract_unavailable",
+    "purchase_error",
     "real_disabled",
   ]);
 
@@ -32,23 +35,35 @@
   let busy = false;
 
   function ensureControls() {
-    const actions = document.querySelector(".personal-actions");
+    // Support both dashboard generations. The compact/previous UI uses
+    // #auto-trade-panel; the newer UI used .personal-actions.
+    const actions = document.querySelector(".personal-actions") || $("auto-trade-panel");
     const primary = $("btn-toggle-auto");
     if (!actions || !primary) return null;
+
+    const legacyResume = $("resume-panel");
+    if (legacyResume) legacyResume.style.display = "none";
+    const oldStartAgain = $("btn-start-again");
+    if (oldStartAgain) oldStartAgain.hidden = true;
 
     let notice = $("account-lifecycle-notice");
     if (!notice) {
       notice = document.createElement("div");
       notice.id = "account-lifecycle-notice";
+      notice.setAttribute("role", "status");
+      notice.setAttribute("aria-live", "polite");
       notice.style.cssText = [
         "display:none",
-        "padding:9px 10px",
-        "border:1px solid rgba(255,183,15,.28)",
-        "border-radius:8px",
-        "background:rgba(255,183,15,.07)",
-        "color:#e8c975",
-        "font-size:.66rem",
-        "line-height:1.4",
+        "max-width:320px",
+        "margin-bottom:9px",
+        "padding:10px 11px",
+        "border:1px solid rgba(255,183,15,.32)",
+        "border-radius:9px",
+        "background:rgba(255,183,15,.08)",
+        "color:#f2d98a",
+        "font-size:.72rem",
+        "line-height:1.45",
+        "text-align:left",
       ].join(";");
       actions.prepend(notice);
     }
@@ -59,8 +74,19 @@
       stop.id = "btn-lifecycle-stop";
       stop.type = "button";
       stop.textContent = "Stop Auto Trading";
-      stop.className = "settings-button";
-      stop.style.cssText = "border-color:rgba(255,76,85,.58);color:#ffb5ba";
+      stop.className = "stop";
+      stop.style.cssText = [
+        "display:none",
+        "min-height:44px",
+        "margin-top:8px",
+        "padding:0 15px",
+        "border:1px solid rgba(255,76,85,.72)",
+        "border-radius:12px",
+        "background:rgba(150,25,35,.2)",
+        "color:#ffc0c4",
+        "font-weight:700",
+        "cursor:pointer",
+      ].join(";");
       primary.insertAdjacentElement("afterend", stop);
       stop.addEventListener("click", event => {
         event.preventDefault();
@@ -69,8 +95,6 @@
       });
     }
 
-    const oldStartAgain = $("btn-start-again");
-    if (oldStartAgain) oldStartAgain.hidden = true;
     return { actions, primary, stop, notice };
   }
 
@@ -79,6 +103,10 @@
     if (status === "stopped") return "stopped";
     if (!me?.enabled || pausedStatuses.has(status)) return "paused";
     return "running";
+  }
+
+  function setText(node, value) {
+    if (node && node.textContent !== value) node.textContent = value;
   }
 
   function render(me) {
@@ -93,24 +121,40 @@
 
     controls.primary.disabled = busy || (!hasToken && lifecycle !== "running");
     controls.stop.disabled = busy;
+    controls.primary.style.display = "inline-flex";
 
     if (lifecycle === "running") {
-      controls.primary.textContent = busy ? "Pausing…" : "Pause Auto Trading";
+      setText(controls.primary, busy ? "Pausing…" : "Pause Auto Trading");
       controls.primary.classList.remove("join");
-      controls.stop.hidden = false;
-      controls.notice.style.display = "none";
+      controls.primary.classList.add("stop");
+      controls.stop.style.display = "inline-flex";
+
+      // Running does not always mean "nothing to report". A small account can
+      // remain joined while an oversized recovery stake is deliberately skipped,
+      // or while a private connection is recovering. Surface that state here.
+      const informative = Boolean(reason && !["active", "connecting", "validating"].includes(status));
+      controls.notice.style.display = informative ? "block" : "none";
+      if (informative) setText(controls.notice, reason);
     } else if (lifecycle === "paused") {
-      controls.primary.textContent = busy ? "Resuming…" : "Resume Auto Trading";
+      setText(controls.primary, busy ? "Resuming…" : "Resume Auto Trading");
+      controls.primary.classList.remove("stop");
       controls.primary.classList.add("join");
-      controls.stop.hidden = false;
+      controls.stop.style.display = "inline-flex";
       controls.notice.style.display = "block";
-      controls.notice.textContent = reason || "Trading is paused. Recovery and session state are preserved.";
+      setText(
+        controls.notice,
+        reason || "Trading is paused. Recovery and session state are preserved."
+      );
     } else {
-      controls.primary.textContent = busy ? "Starting…" : "Start Again";
+      setText(controls.primary, busy ? "Starting…" : "Start Trading");
+      controls.primary.classList.remove("stop");
       controls.primary.classList.add("join");
-      controls.stop.hidden = true;
+      controls.stop.style.display = "none";
       controls.notice.style.display = "block";
-      controls.notice.textContent = reason || "Trading is stopped. The next start begins from the configured base stake.";
+      setText(
+        controls.notice,
+        reason || "Trading is stopped. Starting again begins from your configured base stake."
+      );
     }
 
     controls.primary.dataset.lifecycle = lifecycle;
@@ -153,7 +197,7 @@
       const controls = ensureControls();
       if (controls) {
         controls.notice.style.display = "block";
-        controls.notice.textContent = error.message || "Unable to update trading state.";
+        setText(controls.notice, error.message || "Unable to update trading state.");
       }
     } finally {
       busy = false;
@@ -184,5 +228,12 @@
   ensureControls();
   bindPrimary();
   loadMe();
-  window.setInterval(loadMe, 15000);
+
+  // The restored compact dashboard has its own legacy button renderer. Re-apply
+  // lifecycle labels locally so a 30-second dashboard refresh cannot turn
+  // "Pause" back into the old misleading "Stop/Join" label.
+  window.setInterval(() => {
+    if (state?.authenticated) render(state);
+  }, 1000);
+  window.setInterval(loadMe, 7000);
 })();
