@@ -2,8 +2,16 @@ from __future__ import annotations
 
 from typing import Any
 
+from sqlalchemy import select
+
+from app.models import AccountRiskState
 from app.recovery import ceil_cents
-from app.repositories.rf_dir5_repository import RFDir5Repository, StakePlan
+from app.repositories.rf_dir5_repository import (
+    RECOVERY_PENDING,
+    RFDir5Repository,
+    StakePlan,
+    VIRTUAL_MODE,
+)
 from enhanced_bot import TradingBot, mask_account_id, sanitize_account_ids
 
 
@@ -54,17 +62,12 @@ def _error_text(error: Any) -> tuple[str, str]:
 def _status_for_purchase_error(error: Any) -> tuple[str, str, bool]:
     code, message = _error_text(error)
     combined = f"{code} {message}".lower().replace("_", " ")
-
     if any(marker in combined for marker in _CREDENTIAL_ERROR_MARKERS):
-        return (
-            "credential_error",
-            f"Trading credential rejected: {message}",
-            True,
-        )
+        return "credential_error", f"Trading credential rejected: {message}", True
     if any(marker in combined for marker in _TRANSIENT_ERROR_MARKERS):
         return (
             "reconnecting",
-            f"Purchase was not sent because the private trading connection is recovering: {message}",
+            f"Purchase was skipped while the private trading connection recovers: {message}",
             False,
         )
     if any(marker in combined for marker in _CONTRACT_ERROR_MARKERS):
@@ -73,25 +76,15 @@ def _status_for_purchase_error(error: Any) -> tuple[str, str, bool]:
             f"Contract skipped because Deriv did not accept this market/contract: {message}",
             True,
         )
-    return (
-        "purchase_error",
-        f"Contract purchase was rejected: {message}",
-        True,
-    )
+    return "purchase_error", f"Contract purchase was rejected: {message}", True
 
 
 def install_account_execution_feedback() -> None:
-    """Make account execution fail loudly and keep small accounts on sane stakes.
+    """Fail loudly at account level and protect small balances from stake escalation.
 
-    This layer does not change the RF-PUT5 signal brain. It fixes account-level
-    execution behaviour around that brain:
-      * account eligibility uses the account's configured base stake, not the
-        global model's $0.50 reference stake;
-      * $10-$50 style accounts never have to follow an oversized recovery stake;
-        an unsafe recovery amount is skipped and the configured base stake is
-        used instead while recovery debt remains explicit;
-      * provider purchase failures are persisted into the account status so the
-        dashboard always explains why an enabled account missed a system trade.
+    The RF-PUT5 signal brain is untouched. This layer only governs whether a
+    particular linked account can execute a selected system trade and what the
+    user is told when it cannot.
     """
     if getattr(TradingBot, "_account_execution_feedback_installed", False):
         return
@@ -99,6 +92,8 @@ def install_account_execution_feedback() -> None:
     original_validate_accounts = TradingBot.validate_accounts
     original_purchase_accounts = TradingBot._purchase_accounts_by_stake
     original_plan_stake = RFDir5Repository.plan_stake
+    original_start_virtual_trade = RFDir5Repository.start_virtual_trade
+    original_settle_virtual_trades = RFDir5Repository.settle_due_virtual_trades
 
     async def validate_accounts_with_personal_stake(self: TradingBot) -> None:
         await original_validate_accounts(self)
@@ -116,10 +111,9 @@ def install_account_execution_feedback() -> None:
         )
         rescued: list[tuple[str, str]] = []
 
-        # The legacy validator compares every account against the model-level
-        # $0.50 reference stake. Correct only false insufficient-balance results
-        # using the user's own saved stake. Real insufficient-balance accounts
-        # remain paused with a precise personal requirement.
+        # Legacy validation compares every account with the model's $0.50
+        # reference stake. Correct only false insufficient-balance decisions by
+        # recalculating eligibility from that user's saved base stake.
         for token in list(getattr(self, "tokens", []) or []):
             profile = (getattr(self, "user_profiles", {}) or {}).get(token, {})
             managed_id = self._managed_account_id_for_token(token)
@@ -224,36 +218,34 @@ def install_account_execution_feedback() -> None:
         balance = max(0.0, float(current_balance))
         base_stake = ceil_cents(max(float(minimum_stake), float(requested_stake)))
         spendable = max(0.0, balance - float(minimum_balance_reserve))
-        recovery_requested = bool(
-            plan.is_recovery
-            and (
-                float(plan.required_recovery_stake or 0.0) > base_stake + 0.009
-                or (plan.stake is not None and float(plan.stake) > base_stake + 0.009)
-            )
-        )
         base_is_affordable = base_stake <= spendable + 1e-9
         small_account = balance <= SMALL_ACCOUNT_MAX_BALANCE + 1e-9
-        oversized_or_blocked = bool(
-            plan.stake is None
-            or (plan.stake is not None and float(plan.stake) > base_stake + 0.009)
-        )
-
-        # Preserve virtual mode. The account must still earn its two consecutive
-        # virtual wins before any real purchase is allowed.
         waiting_virtual = "virtual protection" in str(plan.reason or "").lower()
 
-        if (
-            recovery_requested
+        required_recovery = max(
+            float(plan.required_recovery_stake or 0.0),
+            float(plan.stake or 0.0) if plan.is_recovery else 0.0,
+        )
+        elevated_recovery = bool(
+            plan.is_recovery and required_recovery > base_stake + 0.009
+        )
+        blocked_recovery = bool(
+            plan.is_recovery
+            and plan.stake is None
+            and float(plan.required_recovery_stake or 0.0) > 0
+        )
+
+        # Never bypass the 2-loss virtual guard. While it is active there is no
+        # real purchase, even at base stake.
+        protect_with_base = bool(
+            elevated_recovery
             and base_is_affordable
             and not waiting_virtual
-            and (small_account or oversized_or_blocked)
-        ):
-            requested_recovery = max(
-                float(plan.required_recovery_stake or 0.0),
-                float(plan.stake or 0.0),
-            )
+            and (small_account or blocked_recovery)
+        )
+        if protect_with_base:
             reason = (
-                f"Small-account protection: recovery stake {requested_recovery:.2f} was skipped; "
+                f"Small-account protection: recovery stake {required_recovery:.2f} was skipped; "
                 f"using your base stake {base_stake:.2f}. Recovery debt "
                 f"{float(plan.recovery_debt or 0.0):.2f} remains and will be reduced by actual profits."
             )
@@ -267,18 +259,89 @@ def install_account_execution_feedback() -> None:
                 reason,
                 is_recovery=True,
                 recovery_debt=float(plan.recovery_debt or 0.0),
-                required_recovery_stake=requested_recovery,
+                required_recovery_stake=required_recovery,
             )
 
         if plan.stake is not None:
             account = self.base.managed_account(int(managed_account_id)) or {}
-            if str(account.get("execution_status") or "").lower() == "base_stake_protection":
+            if str(account.get("execution_status") or "").lower() in {
+                "base_stake_protection",
+                "recovery_pending",
+            }:
                 self.base.set_managed_account_execution_status(
                     int(managed_account_id),
                     "active",
-                    "Recovery stake protection cleared; normal account execution is active",
+                    "Account execution is active",
                 )
         return plan
+
+    def start_virtual_trade_with_feedback(
+        self: RFDir5Repository,
+        *,
+        managed_account_id: int,
+        account_id_masked: str,
+        signal: Any,
+        configured_stake: float,
+        simulated_stake: float,
+        expected_payout: float | None,
+    ) -> dict[str, Any] | None:
+        opened = original_start_virtual_trade(
+            self,
+            managed_account_id=managed_account_id,
+            account_id_masked=account_id_masked,
+            signal=signal,
+            configured_stake=configured_stake,
+            simulated_stake=simulated_stake,
+            expected_payout=expected_payout,
+        )
+        if opened is not None:
+            self.base.set_managed_account_execution_status(
+                int(managed_account_id),
+                "virtual_protection",
+                (
+                    "2 actual losses triggered protection. Real contracts are being skipped "
+                    "until 2 consecutive virtual wins confirm recovery."
+                ),
+            )
+        return opened
+
+    def settle_virtual_trades_with_feedback(self: RFDir5Repository, **kwargs: Any) -> list[dict[str, Any]]:
+        settled = original_settle_virtual_trades(self, **kwargs)
+        for item in settled:
+            account_masked = str(item.get("account") or "")
+            if not account_masked:
+                continue
+            with self.database.session() as session:
+                state = session.scalar(
+                    select(AccountRiskState).where(
+                        AccountRiskState.account_id_masked == account_masked
+                    )
+                )
+                managed_id = int(state.managed_account_id) if state is not None else None
+            if managed_id is None:
+                continue
+
+            protection = item.get("protection") or {}
+            mode = str(protection.get("mode") or "")
+            virtual_wins = int(protection.get("virtual_wins") or 0)
+            result = str(item.get("result") or "").replace("_", " ").lower()
+            if mode == RECOVERY_PENDING:
+                reason = (
+                    "2 consecutive virtual wins confirmed recovery. The next real entry is armed; "
+                    "small-account protection will replace any oversized recovery stake with your base stake."
+                )
+                status = "recovery_pending"
+            elif mode == VIRTUAL_MODE:
+                reason = (
+                    f"Virtual protection active: latest observation {result}; "
+                    f"consecutive virtual wins {virtual_wins}/2. Real contracts remain skipped."
+                )
+                status = "virtual_protection"
+            else:
+                reason = "Virtual protection cleared; account execution is active"
+                status = "active"
+            self.base.set_managed_account_execution_status(managed_id, status, reason)
+        return settled
 
     async def purchase_accounts_with_feedback(
         self: TradingBot,
@@ -312,8 +375,8 @@ def install_account_execution_feedback() -> None:
             if managed_id is None:
                 continue
 
-            # Insufficient-funds handling is already performed by the WebSocket
-            # transport and carries the exact stake. Do not replace its message.
+            # The WebSocket guard already records the exact insufficient-funds
+            # stake and pauses that account. Preserve that more specific reason.
             current = self.repository.managed_account(managed_id) or {}
             current_status = str(current.get("execution_status") or "").lower()
             if current_status in {"insufficient_balance", "purchase_insufficient_balance"}:
@@ -344,5 +407,7 @@ def install_account_execution_feedback() -> None:
 
     TradingBot.validate_accounts = validate_accounts_with_personal_stake
     RFDir5Repository.plan_stake = plan_stake_with_small_account_protection
+    RFDir5Repository.start_virtual_trade = start_virtual_trade_with_feedback
+    RFDir5Repository.settle_due_virtual_trades = settle_virtual_trades_with_feedback
     TradingBot._purchase_accounts_by_stake = purchase_accounts_with_feedback
     TradingBot._account_execution_feedback_installed = True
