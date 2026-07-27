@@ -209,7 +209,7 @@ def build_consistent_dashboard_snapshot(api_module: Any, account_type: str):
         "next_session_close_at": (periods["today"][0] + timedelta(days=1)).isoformat(),
     }
     result["data_consistency"] = {
-        "version": 3,
+        "version": 2,
         "ledger": "canonical_system_model_ledger_settled_only",
         "reference_account": "SYSTEM MODEL",
         "reference_account_type": "global",
@@ -262,3 +262,25 @@ def consistent_period_response(
         }
     )
     return response
+
+
+def install_dashboard_consistency(api_module: Any) -> None:
+    """Install the settled-only global dashboard builder into the API module.
+
+    ``app.api_account_lifecycle`` imports this symbol at startup.  The previous
+    hotfix accidentally removed it, which caused the API container to restart with
+    ImportError before serving the dashboard.  The installer keeps HTTP and
+    WebSocket dashboard consumers on the same canonical settled-only source.
+    """
+    api_module._build_dashboard_snapshot = (  # noqa: SLF001 - intentional patch point
+        lambda account_type: build_consistent_dashboard_snapshot(api_module, account_type)
+    )
+    api_module.reference_performance_summary = (  # retained for older callers
+        lambda *, account_type, start, end, simulated_base_stake=BASELINE_STAKE: reference_performance_summary(
+            api_module,
+            account_type=account_type,
+            start=start,
+            end=end,
+            simulated_base_stake=simulated_base_stake,
+        )
+    )
