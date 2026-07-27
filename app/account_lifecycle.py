@@ -19,6 +19,7 @@ PAUSED_STATUSES = {
     "bulk_execution_pat_required",
     "contract_unavailable",
     "purchase_error",
+    "purchase_registration_error",
     "real_disabled",
 }
 STOPPED_STATUS = "stopped"
