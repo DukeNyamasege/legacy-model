@@ -6,6 +6,7 @@ import signal
 from app.account_execution_diagnostics import install_account_execution_diagnostics
 from app.account_execution_feedback import install_account_execution_feedback
 from app.account_lifecycle import install_worker_account_lifecycle
+from app.hybrid_data_integrity import install_hybrid_data_integrity
 from app.hybrid_digit_put import install_hybrid_digit_put_strategy
 from app.hybrid_runtime_config import install_hybrid_runtime_config
 from app.rf_dir5_bot import RFDir5TradingBot
@@ -34,6 +35,10 @@ async def run_worker() -> None:
     # state is recovering and still retains the 15 -> 5 -> 1 confirmation gate.
     install_strict_streak_guard()
     install_hybrid_runtime_config()
+
+    # Hybrid digit candidates must exist in both the generic candidate ledger and
+    # directional ledger before a canonical SystemModelTrade can reference them.
+    install_hybrid_data_integrity()
     install_hybrid_digit_put_strategy()
 
     bot = RFDir5TradingBot()
