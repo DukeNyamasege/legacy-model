@@ -22,13 +22,13 @@ def install_legacy_reference_compatibility(dashboard_consistency_module: Any) ->
 
     Older production trades can pre-date durable ManagedAccount attribution and
     therefore have ``managed_account_id`` unset even though their masked account
-    identity is correct.  The Personal Account card already counts those rows by
-    account mask.  The stable reference ledger must do the same or the global
+    identity is correct. The Personal Account card already counts those rows by
+    account mask. The stable reference ledger must do the same or the global
     dashboard can silently under-count historical executions.
 
     Period membership deliberately follows ``Trade.purchase_time`` because that
     is the same timestamp used by the Personal Account daily/weekly/monthly
-    accounting path.  This keeps the trusted account P/L and the global reference
+    accounting path. This keeps the trusted account P/L and the global reference
     ledger on the same Africa/Nairobi reporting boundary.
     """
     global _INSTALLED
@@ -79,7 +79,7 @@ def install_legacy_reference_compatibility(dashboard_consistency_module: Any) ->
                     Trade.profit.is_not(None),
                     Trade.buy_price.is_not(None),
                     Trade.buy_price > 0,
-                    *repository._current_run_trade_filter(),
+                    repository._current_run_trade_filter(),
                     Trade.purchase_time >= start,
                     Trade.purchase_time < end,
                 )
