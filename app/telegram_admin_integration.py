@@ -37,6 +37,27 @@ def install_telegram_admin_integration() -> None:
             reason=str(reason or ""),
         )
 
+    # Use the repository's joined signal/trade view so /lasttrade reports the
+    # actual market without assuming a non-existent Trade.market column.
+    def last_trade_text(self: TelegramAdminController) -> str:
+        rows = self.repository.recent_trades(limit=1)
+        if not rows:
+            return "No trade has been recorded yet."
+        trade = rows[0]
+        return "\n".join(
+            (
+                "🧾 LAST RECORDED TRADE",
+                "",
+                f"Account: {trade.get('account') or 'unknown'}",
+                f"Market: {trade.get('symbol') or 'unknown'}",
+                f"Contract: {trade.get('contract_type') or 'unknown'}",
+                f"Stake: {float(trade.get('buy_price') or 0):.2f} USD",
+                f"Outcome: {trade.get('outcome') or 'OPEN'}",
+                f"Profit: {float(trade.get('profit') or 0):+.2f} USD",
+                f"Purchased: {trade.get('purchase_time') or 'unknown'}",
+            )
+        )
+
     async def run_with_admin_control(self: RFDir5TradingBot) -> None:
         controller = TelegramAdminController(
             self.repository,
@@ -58,5 +79,6 @@ def install_telegram_admin_integration() -> None:
                 pass
 
     Test2Repository.set_managed_account_execution_status = set_status_with_real_admin_alert
+    TelegramAdminController._last_trade_text = last_trade_text
     RFDir5TradingBot.run = run_with_admin_control
     _INSTALLED = True
