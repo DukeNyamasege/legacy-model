@@ -249,6 +249,11 @@ def install_account_execution_feedback() -> None:
                 f"using your base stake {base_stake:.2f}. Recovery debt "
                 f"{float(plan.recovery_debt or 0.0):.2f} remains and will be reduced by actual profits."
             )
+            notices = getattr(self, "_small_account_protection_notices", None)
+            if not isinstance(notices, dict):
+                notices = {}
+                self._small_account_protection_notices = notices
+            notices[int(managed_account_id)] = reason
             self.base.set_managed_account_execution_status(
                 int(managed_account_id),
                 "base_stake_protection",
@@ -364,15 +369,30 @@ def install_account_execution_feedback() -> None:
 
         paused_tokens: set[str] = set()
         for transaction in transactions:
-            error = transaction.get("error") if isinstance(transaction, dict) else None
-            if not error:
-                continue
-            account_id = str(transaction.get("account_id") or "")
+            account_id = str(transaction.get("account_id") or "") if isinstance(transaction, dict) else ""
             token = token_by_account.get(account_id)
-            if not token:
+            managed_id = self._managed_account_id_for_token(token) if token else None
+            error = transaction.get("error") if isinstance(transaction, dict) else None
+
+            if not error:
+                if managed_id is not None:
+                    notices = getattr(
+                        getattr(self, "rf_repository", None),
+                        "_small_account_protection_notices",
+                        {},
+                    )
+                    reason = notices.pop(int(managed_id), "") if isinstance(notices, dict) else ""
+                    if reason:
+                        # The private buy path sets status=active on success. Restore
+                        # the important protection notice after that successful buy.
+                        self.repository.set_managed_account_execution_status(
+                            int(managed_id),
+                            "base_stake_protection",
+                            reason,
+                        )
                 continue
-            managed_id = self._managed_account_id_for_token(token)
-            if managed_id is None:
+
+            if not token or managed_id is None:
                 continue
 
             # The WebSocket guard already records the exact insufficient-funds
