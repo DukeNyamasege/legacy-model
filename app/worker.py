@@ -8,6 +8,7 @@ from app.account_execution_feedback import install_account_execution_feedback
 from app.account_lifecycle import install_worker_account_lifecycle
 from app.hybrid_data_integrity import install_hybrid_data_integrity
 from app.hybrid_digit_put import install_hybrid_digit_put_strategy
+from app.hybrid_recent_digit_bias import install_recent_digit_bias_strategy
 from app.hybrid_runtime_config import install_hybrid_runtime_config
 from app.rf_dir5_bot import RFDir5TradingBot
 from app.strict_streak_guard import install_strict_streak_guard
@@ -40,6 +41,11 @@ async def run_worker() -> None:
     # directional ledger before a canonical SystemModelTrade can reference them.
     install_hybrid_data_integrity()
     install_hybrid_digit_put_strategy()
+
+    # V2 primary entry: replace the overly strict 100/500/1000 + Wilson gate with
+    # one recent 20-digit O2/U7 bias and a small live-payout edge requirement.
+    # This does not alter the PUT recovery scheduler or account recovery state.
+    install_recent_digit_bias_strategy()
 
     bot = RFDir5TradingBot()
     loop = asyncio.get_running_loop()
