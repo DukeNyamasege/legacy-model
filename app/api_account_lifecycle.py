@@ -16,11 +16,14 @@ from app.api import (
     get_current_account,
     oauth_callback,
 )
+from app.security_hardening import install_api_security_hardening
 
 install_repository_account_lifecycle()
+install_api_security_hardening(app)
 
 # Replace only the public dashboard GET route so the approved dashboard can load
-# the lifecycle enhancement without rewriting the large dashboard source file.
+# lifecycle and inspection-deterrence enhancements without rewriting the large
+# dashboard source file.
 app.router.routes[:] = [
     route
     for route in app.router.routes
@@ -48,10 +51,23 @@ def lifecycle_dashboard(
             error_description=error_description,
         )
     html = (ROOT / "dashboard" / "index.html").read_text(encoding="utf-8")
-    marker = '<script src="/ui/account-lifecycle.js?v=20260727"></script>'
-    if marker not in html:
-        html = html.replace("</body>", f"  {marker}\n</body>")
-    return HTMLResponse(html)
+    scripts = (
+        '<script src="/ui/account-lifecycle.js?v=20260727"></script>',
+        '<script src="/ui/security-hardening.js?v=20260727"></script>',
+    )
+    injection = []
+    for marker in scripts:
+        if marker not in html:
+            injection.append(f"  {marker}")
+    if injection:
+        html = html.replace("</body>", "\n".join(injection) + "\n</body>")
+    return HTMLResponse(
+        html,
+        headers={
+            "Cache-Control": "no-store, max-age=0",
+            "Pragma": "no-cache",
+        },
+    )
 
 
 @app.get("/ui/account-lifecycle.js", include_in_schema=False)
@@ -59,7 +75,16 @@ def lifecycle_script() -> FileResponse:
     return FileResponse(
         ROOT / "dashboard" / "account-lifecycle.js",
         media_type="application/javascript",
-        headers={"Cache-Control": "no-store"},
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
+
+
+@app.get("/ui/security-hardening.js", include_in_schema=False)
+def security_hardening_script() -> FileResponse:
+    return FileResponse(
+        ROOT / "dashboard" / "security-hardening.js",
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-store, max-age=0"},
     )
 
 
