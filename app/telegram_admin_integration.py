@@ -65,8 +65,17 @@ def install_telegram_admin_integration() -> None:
             self.logger,
             self.telegram_alerts,
         )
+
+        async def delayed_private_admin() -> None:
+            # The existing channel publisher may do one immediate getUpdates call
+            # to discover its channel after boot. Let that finish first, then keep
+            # one long-poll consumer for private admin messages and future channel
+            # discovery. This avoids Telegram 409 getUpdates conflicts at startup.
+            await asyncio.sleep(2)
+            await controller.run(lambda: bool(self.is_running))
+
         admin_task = asyncio.create_task(
-            controller.run(lambda: bool(self.is_running)),
+            delayed_private_admin(),
             name="telegram_private_admin",
         )
         try:
