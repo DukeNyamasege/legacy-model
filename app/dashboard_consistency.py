@@ -39,14 +39,16 @@ def _periods(api_module: Any, as_of: datetime) -> dict[str, tuple[datetime, date
 def _canonicalize_model_rows(trades: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Remove copier timing/P&L from the account-independent model ledger.
 
-    SystemModelTrade already contains the model outcome and proposal profit ratio.
-    A copier can enter a fraction later and legitimately settle differently; that
-    must affect the Personal Account card, never the Global Model result.
+    Only settled canonical WIN/LOSS rows are included. Open model rows must not be
+    displayed as losses while a provider contract is still open; the dashboard has
+    a separate open-trades counter for that.
     """
     result: list[dict[str, Any]] = []
     for original in trades:
         trade = dict(original)
         outcome = str(trade.get("outcome") or "").upper()
+        if outcome not in {"WIN", "LOSS"}:
+            continue
         ratio = max(0.0, float(trade.get("expected_profit_ratio") or 0.0))
         trade["reference_base_stake"] = BASELINE_STAKE
         trade["fixed_stake_profit"] = (
@@ -207,12 +209,13 @@ def build_consistent_dashboard_snapshot(api_module: Any, account_type: str):
         "next_session_close_at": (periods["today"][0] + timedelta(days=1)).isoformat(),
     }
     result["data_consistency"] = {
-        "version": 2,
-        "ledger": "canonical_system_model_ledger",
+        "version": 3,
+        "ledger": "canonical_system_model_ledger_settled_only",
         "reference_account": "SYSTEM MODEL",
         "reference_account_type": "global",
         "settled_trades": int(today["total_trades"]),
         "wins_plus_losses": int(today["wins"]) + int(today["losses"]),
+        "open_trades": int(result["open_trades"] or 0),
         "pnl": float(today["martingale_pnl"]),
         "as_of": as_of.isoformat(),
         "invariant_ok": True,
@@ -259,15 +262,3 @@ def consistent_period_response(
         }
     )
     return response
-
-
-def install_dashboard_consistency(api_module: Any) -> None:
-    if getattr(api_module, "_dashboard_consistency_installed", False):
-        return
-    api_module._dashboard_consistency_original_builder = api_module._build_dashboard_snapshot
-
-    def builder(account_type: str):
-        return build_consistent_dashboard_snapshot(api_module, account_type)
-
-    api_module._build_dashboard_snapshot = builder
-    api_module._dashboard_consistency_installed = True
