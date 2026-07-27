@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import signal
 
+from app.account_execution_feedback import install_account_execution_feedback
 from app.account_lifecycle import install_worker_account_lifecycle
 from app.rf_dir5_bot import RFDir5TradingBot
 from app.strict_streak_guard import install_strict_streak_guard
@@ -18,6 +19,11 @@ async def run_worker() -> None:
     # installed before the bot instance is created so REST Bulk Purchase cannot
     # become active because of a configuration change or future refactor.
     install_websocket_only_execution()
+
+    # Persist every account-level execution failure and protect small accounts
+    # from inheriting/attempting oversized recovery stakes. This wraps the
+    # WebSocket-only transport, so it cannot re-enable REST execution.
+    install_account_execution_feedback()
 
     # Keep the existing RF-PUT5 five-tick brain, but require broader 15-tick
     # directional agreement and one confirming tick before execution. After one
