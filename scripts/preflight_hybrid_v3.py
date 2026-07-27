@@ -1,5 +1,15 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# When Python runs this file as ``python scripts/preflight_hybrid_v3.py``,
+# sys.path[0] is /app/scripts, not /app. Add the project root explicitly so
+# imports like ``from app...`` work inside the Docker worker image.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from app.account_execution_diagnostics import install_account_execution_diagnostics
 from app.account_execution_feedback import install_account_execution_feedback
 from app.account_lifecycle import install_worker_account_lifecycle
