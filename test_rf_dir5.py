@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 import unittest
+import uuid
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -72,6 +73,37 @@ def signal(direction: str = "RISE", tick_sequence: int = 200):
         signal_tick_id=f"tick-{tick_sequence}",
         connection_session_id="connection-1",
         tick_sequence=tick_sequence,
+    )
+
+
+def digit_signal(
+    *,
+    contract_type: str,
+    direction: str,
+    barrier: str,
+    tick_sequence: int,
+):
+    return SimpleNamespace(
+        signal_id=str(uuid.uuid4()),
+        run_id="rf-test",
+        strategy_version="HYBRID-O2-U7-RECENT20-PUTFIX-V3",
+        symbol="1HZ25V",
+        direction=direction,
+        contract_type=contract_type,
+        barrier=barrier,
+        duration_ticks=1,
+        reference_entry_quote=Decimal("100.42"),
+        signal_tick_epoch=1_700_000_000,
+        signal_tick_id=f"digit-{tick_sequence}",
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        generated_monotonic=time.monotonic(),
+        connection_session_id="connection-1",
+        tick_sequence=tick_sequence,
+        consumed=False,
+        proposal_ask_price=None,
+        proposal_payout=None,
+        break_even_probability=None,
+        validated_edge=None,
     )
 
 
@@ -225,7 +257,7 @@ class RiseFallContractTests(unittest.TestCase):
         )
         self.assertTrue(config.risk.recovery_enabled)
         self.assertEqual(config.risk.recovery_trigger_losses, 1)
-        self.assertEqual(config.risk.maximum_recovery_balance_fraction, 1.0)
+        self.assertEqual(config.risk.maximum_recovery_balance_fraction, 0.10)
         self.assertEqual(config.virtual_protection.exit_after_wins, 2)
 
     def test_proposal_values_accept_strings_numbers_and_missing_commission(self) -> None:
@@ -609,6 +641,64 @@ class RFTickStreamTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(bot.repository.record_tick.call_count, 6)
         bot.logger.warning.assert_not_called()
+
+    async def test_tick_settlements_refresh_dashboard_cache(self) -> None:
+        bot = object.__new__(RFDir5TradingBot)
+        market = SimpleNamespace(
+            symbol="1HZ100V",
+            pip_size=2,
+            tick_sequence=0,
+            ticks_history=deque(maxlen=216),
+            live_ticks_history=deque(maxlen=5),
+        )
+        bot.symbol = "1HZ100V"
+        bot.market_states = {"1HZ100V": market}
+        bot.rf_last_epoch = {}
+        bot.rf_last_tick_id = {}
+        bot.live_market_symbol = "1HZ100V"
+        bot.tick_sequence = 0
+        bot.connection_session_id = "connection-1"
+        bot.repository = MagicMock()
+        bot.repository.settle_due_system_model_trades.return_value = [
+            {"signal_id": "system-1", "outcome": "WIN", "is_virtual": True}
+        ]
+        bot.rf_repository = MagicMock()
+        bot.rf_repository.settle_due_virtual_trades.return_value = [
+            {
+                "account": "DOT***422",
+                "market": "1HZ100V",
+                "result": "VIRTUAL_WIN",
+                "protection": {
+                    "actual_recovery_debt": 4.0,
+                    "mode": "RECOVERY_PENDING",
+                },
+            }
+        ]
+        bot.rf_repository.settle_due_shadows.return_value = []
+        bot.virtual_config = SimpleNamespace(exit_after_wins=2, max_observations=4)
+        bot.rf_supported_contracts = {}
+        bot.logger = MagicMock()
+        bot._mark_tick_received = MagicMock()
+        bot._render_live_ticks = MagicMock()
+        bot._notify_dashboard_settlement = AsyncMock()
+
+        await bot._on_tick(
+            {
+                "tick": {
+                    "symbol": "1HZ100V",
+                    "epoch": 1_700_000_001,
+                    "quote": 100.43,
+                    "id": "settlement-tick",
+                }
+            }
+        )
+
+        bot._notify_dashboard_settlement.assert_awaited_once()
+        self.assertEqual(bot.repository.record_tick.call_args.kwargs["final_digit"], 3)
+        self.assertEqual(
+            bot.rf_repository.settle_due_virtual_trades.call_args.kwargs["exit_digit"],
+            3,
+        )
 
     async def test_qualified_live_signal_never_creates_shadow_contracts(self) -> None:
         bot = object.__new__(RFDir5TradingBot)
@@ -1312,6 +1402,118 @@ class RFRepositoryTests(unittest.TestCase):
             self.assertEqual(virtual.amount_charged, 0.0)
             self.assertEqual(virtual.actual_profit_loss, 0.0)
             self.assertEqual(virtual.recovery_debt_change, 0.0)
+
+    def test_digit_virtual_observations_settle_without_rf_direction_error(self) -> None:
+        cases = [
+            ("DIGITOVER", "OVER_2", "2", Decimal("100.43"), "VIRTUAL_WIN", 3),
+            ("DIGITOVER", "OVER_2", "2", Decimal("100.42"), "VIRTUAL_LOSS", 2),
+            ("DIGITUNDER", "UNDER_7", "7", Decimal("100.46"), "VIRTUAL_WIN", 6),
+            ("DIGITUNDER", "UNDER_7", "7", Decimal("100.47"), "VIRTUAL_LOSS", 7),
+        ]
+        for index, (
+            contract_type,
+            direction,
+            barrier,
+            exit_quote,
+            expected_result,
+            expected_digit,
+        ) in enumerate(cases, start=1):
+            with self.subTest(direction=direction, exit_quote=str(exit_quote)):
+                account_id = self.create_managed_account(f"Digit Virtual {index}")
+                account_mask = f"DOT***{index:03d}"
+                for balance in (98.0, 96.0):
+                    self.repository.record_account_outcome(
+                        managed_account_id=account_id,
+                        account_id_masked=account_mask,
+                        profit=-2.0,
+                        current_balance=balance,
+                        recovery_enabled=True,
+                        recovery_trigger_losses=1,
+                        virtual_protection_enabled=True,
+                        virtual_trigger_actual_losses=2,
+                    )
+                item = digit_signal(
+                    contract_type=contract_type,
+                    direction=direction,
+                    barrier=barrier,
+                    tick_sequence=1_300 + index * 10,
+                )
+                opened = self.repository.start_virtual_trade(
+                    managed_account_id=account_id,
+                    account_id_masked=account_mask,
+                    signal=item,
+                    configured_stake=2.0,
+                    simulated_stake=2.0,
+                    expected_payout=3.6,
+                )
+                self.assertIsNotNone(opened)
+
+                settled = self.repository.settle_due_virtual_trades(
+                    symbol=item.symbol,
+                    tick_sequence=item.tick_sequence + item.duration_ticks,
+                    exit_quote=exit_quote,
+                )
+
+                self.assertEqual(len(settled), 1)
+                self.assertEqual(settled[0]["result"], expected_result)
+                with self.database.session() as session:
+                    virtual = session.scalar(
+                        select(VirtualTrade).where(
+                            VirtualTrade.virtual_trade_id == opened["virtual_trade_id"]
+                        )
+                    )
+                    self.assertIsNotNone(virtual)
+                    self.assertEqual(virtual.prediction_digit, int(barrier))
+                    self.assertEqual(virtual.actual_last_digit, expected_digit)
+                    self.assertEqual(virtual.result, expected_result)
+
+    def test_digit_virtual_settlement_uses_display_precision_exit_digit(self) -> None:
+        account_id = self.create_managed_account("Display Digit Virtual")
+        for balance in (98.0, 96.0):
+            self.repository.record_account_outcome(
+                managed_account_id=account_id,
+                account_id_masked="DOT***440",
+                profit=-2.0,
+                current_balance=balance,
+                recovery_enabled=True,
+                recovery_trigger_losses=1,
+                virtual_protection_enabled=True,
+                virtual_trigger_actual_losses=2,
+            )
+        item = digit_signal(
+            contract_type="DIGITOVER",
+            direction="OVER_2",
+            barrier="2",
+            tick_sequence=1_440,
+        )
+        opened = self.repository.start_virtual_trade(
+            managed_account_id=account_id,
+            account_id_masked="DOT***440",
+            signal=item,
+            configured_stake=2.0,
+            simulated_stake=2.0,
+            expected_payout=3.6,
+        )
+        self.assertIsNotNone(opened)
+
+        settled = self.repository.settle_due_virtual_trades(
+            symbol=item.symbol,
+            tick_sequence=item.tick_sequence + item.duration_ticks,
+            exit_quote=Decimal("100.4"),
+            exit_digit=0,
+        )
+
+        self.assertEqual(len(settled), 1)
+        self.assertEqual(settled[0]["result"], "VIRTUAL_LOSS")
+        with self.database.session() as session:
+            virtual = session.scalar(
+                select(VirtualTrade).where(
+                    VirtualTrade.virtual_trade_id == opened["virtual_trade_id"]
+                )
+            )
+            self.assertIsNotNone(virtual)
+            self.assertEqual(virtual.actual_last_digit, 0)
+            self.assertEqual(virtual.result, "VIRTUAL_LOSS")
 
     def test_virtual_win_arms_real_recovery_without_changing_debt(self) -> None:
         account_id = self.create_managed_account("Virtual Win")

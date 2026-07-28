@@ -42,6 +42,78 @@ class StakePlan:
     required_recovery_stake: float = 0.0
 
 
+def _final_digit_from_quote(value: Decimal) -> int:
+    rendered = format(Decimal(str(value)), "f")
+    for char in reversed(rendered):
+        if char.isdigit():
+            return int(char)
+    raise ValueError(f"Could not derive final digit from quote {value!r}")
+
+
+def _prediction_digit(
+    *,
+    direction: str,
+    barrier: str | int | None,
+    prediction_digit: int | None,
+) -> int | None:
+    candidates: list[str | int | None] = [prediction_digit, barrier]
+    normalized = str(direction or "").upper()
+    for prefix in ("OVER_", "UNDER_"):
+        if normalized.startswith(prefix):
+            candidates.append(normalized.removeprefix(prefix))
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        text = str(candidate).strip()
+        if text.isdigit():
+            digit = int(text)
+            if 0 <= digit <= 9:
+                return digit
+    return None
+
+
+def _virtual_trade_outcome(
+    *,
+    direction: str,
+    contract_type: str,
+    barrier: str | int | None,
+    prediction_digit: int | None,
+    entry_quote: Decimal,
+    exit_quote: Decimal,
+    exit_digit: int | None = None,
+) -> tuple[str, int | None]:
+    normalized_contract = str(contract_type or "").upper()
+    normalized_direction = str(direction or "").upper()
+    is_digit_contract = normalized_contract in {"DIGITOVER", "DIGITUNDER"}
+    is_digit_direction = normalized_direction.startswith(("OVER_", "UNDER_"))
+    if is_digit_contract or is_digit_direction:
+        digit = (
+            int(exit_digit)
+            if exit_digit is not None and 0 <= int(exit_digit) <= 9
+            else _final_digit_from_quote(exit_quote)
+        )
+        barrier_digit = _prediction_digit(
+            direction=normalized_direction,
+            barrier=barrier,
+            prediction_digit=prediction_digit,
+        )
+        if barrier_digit is None:
+            raise ValueError(
+                "Digit virtual trade is missing a valid prediction barrier: "
+                f"direction={direction!r} contract_type={contract_type!r} barrier={barrier!r}"
+            )
+        if normalized_contract == "DIGITUNDER" or normalized_direction.startswith(
+            "UNDER_"
+        ):
+            return ("WIN" if digit < barrier_digit else "LOSS", digit)
+        return ("WIN" if digit > barrier_digit else "LOSS", digit)
+
+    return (
+        shadow_outcome(direction, entry_quote, exit_quote),
+        _final_digit_from_quote(exit_quote),
+    )
+
+
 class RFDir5Repository:
     def __init__(self, base_repository: Any) -> None:
         self.base = base_repository
@@ -746,6 +818,12 @@ class RFDir5Repository:
             )
             if active is not None:
                 return None
+            barrier = str(getattr(signal, "barrier", "") or "")
+            prediction_digit = _prediction_digit(
+                direction=str(getattr(signal, "direction", "") or ""),
+                barrier=barrier,
+                prediction_digit=None,
+            )
             trade = VirtualTrade(
                 virtual_trade_id=f"virtual-{uuid.uuid4()}",
                 managed_account_id=int(managed_account_id),
@@ -757,8 +835,8 @@ class RFDir5Repository:
                 market=signal.symbol,
                 direction=signal.direction,
                 contract_type=signal.contract_type,
-                barrier=str(signal.barrier or ""),
-                prediction_digit=None,
+                barrier=barrier,
+                prediction_digit=prediction_digit,
                 duration=int(signal.duration_ticks),
                 duration_unit="t",
                 signal_time=now,
@@ -794,6 +872,7 @@ class RFDir5Repository:
         tick_sequence: int,
         exit_quote: Decimal,
         exit_epoch: int = 0,
+        exit_digit: int | None = None,
         exit_after_wins: int = 2,
         max_observations: int = 0,
     ) -> list[dict[str, Any]]:
@@ -829,18 +908,29 @@ class RFDir5Repository:
                     trade.recovery_debt_change = 0.0
                     trade.settled_at = now
                     continue
-                outcome = shadow_outcome(
-                    trade.direction,
-                    Decimal(str(trade.entry_spot)),
-                    Decimal(str(exit_quote)),
-                )
+                try:
+                    outcome, actual_exit_digit = _virtual_trade_outcome(
+                        direction=trade.direction,
+                        contract_type=trade.contract_type,
+                        barrier=trade.barrier,
+                        prediction_digit=trade.prediction_digit,
+                        entry_quote=Decimal(str(trade.entry_spot)),
+                        exit_quote=Decimal(str(exit_quote)),
+                        exit_digit=exit_digit,
+                    )
+                except ValueError as exc:
+                    trade.result = "VIRTUAL_STALE"
+                    trade.reason = str(exc)
+                    trade.amount_charged = 0.0
+                    trade.actual_profit_loss = 0.0
+                    trade.actual_payout = 0.0
+                    trade.recovery_debt_change = 0.0
+                    trade.settled_at = now
+                    continue
                 result = VIRTUAL_WIN if outcome == "WIN" else VIRTUAL_LOSS
                 trade.exit_spot = float(exit_quote)
                 trade.exit_tick_epoch = int(exit_epoch or 0)
-                try:
-                    trade.actual_last_digit = int(str(exit_quote).replace(".", "")[-1])
-                except (TypeError, ValueError, IndexError):
-                    trade.actual_last_digit = None
+                trade.actual_last_digit = actual_exit_digit
                 trade.result = result
                 trade.reason = "Hypothetical Outcome - No Purchase"
                 trade.amount_charged = 0.0

@@ -679,6 +679,11 @@ class RFDir5TradingBot(TradingBot):
         self.rf_last_tick_id[symbol] = tick_id
 
         display_value = f"{quote:.{market.pip_size}f}"
+        display_last_digit = None
+        for char in reversed(display_value):
+            if char.isdigit():
+                display_last_digit = int(char)
+                break
         self.tick_sequence += 1
         market.tick_sequence += 1
         snapshot = {
@@ -713,15 +718,19 @@ class RFDir5TradingBot(TradingBot):
             epoch=epoch,
             tick_id=tick_id,
             quote=float(quote),
-            final_digit=-1,
+            final_digit=display_last_digit if display_last_digit is not None else -1,
             connection_session_id=self.connection_session_id,
         )
         self._render_live_ticks()
-        for model_trade in self.repository.settle_due_system_model_trades(
-            symbol=symbol,
-            tick_sequence=market.tick_sequence,
-            exit_spot=float(quote),
-        ):
+        system_settled = list(
+            self.repository.settle_due_system_model_trades(
+                symbol=symbol,
+                tick_sequence=market.tick_sequence,
+                exit_spot=float(quote),
+            )
+            or []
+        )
+        for model_trade in system_settled:
             self.logger.info(
                 "SYSTEM_MODEL_SETTLED signal_id=%s outcome=%s virtual=%s",
                 model_trade["signal_id"],
@@ -729,14 +738,19 @@ class RFDir5TradingBot(TradingBot):
                 model_trade["is_virtual"],
             )
         virtual_config = getattr(self, "virtual_config", None)
-        for settled in self.rf_repository.settle_due_virtual_trades(
-            symbol=symbol,
-            tick_sequence=market.tick_sequence,
-            exit_quote=quote,
-            exit_epoch=epoch,
-            exit_after_wins=getattr(virtual_config, "exit_after_wins", 2),
-            max_observations=getattr(virtual_config, "max_observations", 0),
-        ):
+        virtual_settled = list(
+            self.rf_repository.settle_due_virtual_trades(
+                symbol=symbol,
+                tick_sequence=market.tick_sequence,
+                exit_quote=quote,
+                exit_epoch=epoch,
+                exit_digit=display_last_digit,
+                exit_after_wins=getattr(virtual_config, "exit_after_wins", 2),
+                max_observations=getattr(virtual_config, "max_observations", 0),
+            )
+            or []
+        )
+        for settled in virtual_settled:
             self.logger.warning(
                 "VIRTUAL_TRADE_SETTLED account=%s market=%s result=%s "
                 "actual_financial_impact=0 recovery_debt=%.2f",
@@ -752,6 +766,9 @@ class RFDir5TradingBot(TradingBot):
                     settled["account"],
                     settled["protection"].get("mode"),
                 )
+
+        if system_settled or virtual_settled:
+            await self._notify_dashboard_settlement()
 
         for settled_shadow in self.rf_repository.settle_due_shadows(
             symbol=symbol,
