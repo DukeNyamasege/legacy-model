@@ -127,20 +127,14 @@ def _mode(bot: RFDir5TradingBot) -> str:
 
 
 def _enabled_participants(bot: RFDir5TradingBot) -> set[int]:
-    participant_ids = {int(value) for value in bot.hybrid_state.get("participants", [])}
-    if not participant_ids:
-        return set()
     return {
         int(row.id)
         for row in bot.repository.list_managed_accounts()
-        if int(row.id) in participant_ids and bool(row.enabled)
+        if bool(row.enabled)
     }
 
 
 def _participant_needs_recovery(bot: RFDir5TradingBot, managed_id: int) -> bool:
-    profile = bot.repository.managed_account(int(managed_id)) or {}
-    if not bool(profile.get("martingale_enabled", True)):
-        return False
     with bot.repository.database.session() as session:
         state = session.get(AccountRiskState, int(managed_id))
         if state is None:
@@ -162,20 +156,9 @@ def _recovery_account_ids(bot: RFDir5TradingBot) -> set[int]:
 
 
 def _set_waiting_statuses(bot: RFDir5TradingBot) -> None:
-    if _mode(bot) != PUT_RECOVERY:
-        return
-    participants = _enabled_participants(bot)
-    for row in bot.repository.list_managed_accounts():
-        if not row.enabled or int(row.id) in participants:
-            continue
-        bot.repository.set_managed_account_execution_status(
-            int(row.id),
-            "waiting_model_recovery",
-            (
-                "Model recovery is in progress. Your first contract will wait until recovery "
-                "is complete, then start at your configured base stake."
-            ),
-        )
+    # Recovery is account-scoped. Never mark healthy accounts as waiting merely
+    # because another account is observing virtual PUT contracts.
+    del bot
 
 
 def _return_to_primary(bot: RFDir5TradingBot, reason: str) -> None:
@@ -195,13 +178,6 @@ def _return_to_primary(bot: RFDir5TradingBot, reason: str) -> None:
     if isinstance(pending, dict):
         pending.clear()
     bot.rf_candidate_queue.clear()
-    for row in bot.repository.list_managed_accounts():
-        if row.enabled and str(row.execution_status or "").lower() == "waiting_model_recovery":
-            bot.repository.set_managed_account_execution_status(
-                int(row.id),
-                "active",
-                "Model recovery is complete. Waiting for the next O2/U7 primary entry.",
-            )
     bot.logger.warning("HYBRID_PRIMARY_RESUMED reason=%s", reason)
 
 
@@ -263,46 +239,16 @@ def _enter_recovery(bot: RFDir5TradingBot, signal_id: str) -> None:
 
 
 def _apply_canonical_settlement(bot: RFDir5TradingBot, payload: dict[str, Any]) -> None:
-    contract_type = str(payload.get("contract_type") or "").upper()
-    outcome = str(payload.get("outcome") or "").upper()
-    signal_id = str(payload.get("signal_id") or "")
-    ratio = max(0.01, float(payload.get("expected_profit_ratio") or 0.01))
-
-    if contract_type in {"DIGITOVER", "DIGITUNDER"}:
-        if _mode(bot) == PRIMARY_DIGITS and outcome == "LOSS":
-            _enter_recovery(bot, signal_id)
-        return
-
-    if contract_type != "PUT" or _mode(bot) != PUT_RECOVERY:
-        return
-
-    debt = max(0.0, float(bot.hybrid_state.get("canonical_debt") or 0.0))
-    if debt > 0.009:
-        calculation = calculate_recovery_stake(
-            base_stake=0.50,
-            recovery_debt=debt,
-            pre_trade_profit_ratio=ratio,
-            minimum_stake=0.50,
-        )
-        canonical_stake = max(0.50, float(calculation.requested_stake))
-    else:
-        canonical_stake = 0.50
-
-    if outcome == "WIN":
-        debt = max(0.0, round(debt - canonical_stake * ratio, 2))
-    else:
-        debt = round(debt + canonical_stake, 2)
-    bot.hybrid_state["canonical_debt"] = debt
-    _save_state(bot)
-    bot.logger.warning(
-        "HYBRID_CANONICAL_RECOVERY_SETTLED signal_id=%s outcome=%s canonical_stake=%.2f "
-        "canonical_debt=%.2f",
-        signal_id,
-        outcome,
-        canonical_stake,
-        debt,
+    # Canonical model rows are accounting input only. AccountRiskState owns all
+    # live recovery transitions; this callback must never create a global stop or
+    # a second recovery debt ledger.
+    bot.logger.info(
+        "HYBRID_CANONICAL_SETTLED signal_id=%s contract_type=%s outcome=%s "
+        "account_state=per_account",
+        payload.get("signal_id", ""),
+        payload.get("contract_type", ""),
+        payload.get("outcome", ""),
     )
-    _maybe_complete_recovery(bot)
 
 
 def _digit_metrics(digits: list[int], *, over: bool, barrier: int, z: float) -> dict[str, float]:
@@ -342,16 +288,10 @@ def _make_digit_candidate(bot: RFDir5TradingBot, symbol: str, tick: dict[str, An
 
     over = _digit_metrics(digits, over=True, barrier=cfg.over_barrier, z=cfg.confidence_z)
     under = _digit_metrics(digits, over=False, barrier=cfg.under_barrier, z=cfg.confidence_z)
-    if over["weighted"] >= under["weighted"]:
-        contract_type = "DIGITOVER"
-        barrier = cfg.over_barrier
-        direction = f"OVER_{barrier}"
-        metrics = over
-    else:
-        contract_type = "DIGITUNDER"
-        barrier = cfg.under_barrier
-        direction = f"UNDER_{barrier}"
-        metrics = under
+    contract_type = "DIGITOVER"
+    barrier = int(getattr(cfg, "primary_barrier", cfg.over_barrier))
+    direction = f"OVER_{barrier}"
+    metrics = over
 
     # Cheap pre-filter only. Live proposal economics below remain authoritative.
     if min(metrics["p100"], metrics["p500"], metrics["p1000"]) < 0.60:
@@ -548,24 +488,21 @@ def install_hybrid_digit_put_strategy() -> None:
         self.hybrid_digit_candidates: dict[str, DigitSignal] = {}
         self.hybrid_digit_arbitration_task: asyncio.Task | None = None
         self.hybrid_last_waiting_refresh = 0.0
-        self.hybrid_primary_symbols = tuple(cfg.primary_markets)
-        self.hybrid_recovery_symbols = tuple(self.rf_config.markets)
-        # PublicMarketDataClient reads self.symbols after construction. Subscribe
-        # to the union so O2/U7 can scan all digit markets while PUT recovery keeps
-        # its established RF subset and model objects.
+        self.hybrid_primary_symbols = (str(cfg.primary_markets[0]),)
+        self.hybrid_recovery_symbols = (str(cfg.recovery_markets[0]),)
+        # V4 intentionally subscribes to one underlying for both the primary
+        # digit contract and the PUT recovery contract.
         self.symbols = list(dict.fromkeys((*self.hybrid_primary_symbols, *self.hybrid_recovery_symbols)))
         self.repository._hybrid_digit_by_symbol = {}
         self.repository._hybrid_settlement_callback = lambda payload: _apply_canonical_settlement(self, payload)
         self.logger.warning(
-            "HYBRID_O2U7_PUT_ACTIVE version=%s mode=%s primary_markets=%s recovery_markets=%s "
-            "daily_loss_cap=false new_joiners_inherit_recovery=false",
+            "HYBRID_OVER2_PUT_ACTIVE version=%s mode=PER_ACCOUNT primary_market=%s "
+            "recovery_market=%s primary_contract=DIGITOVER barrier=2 "
+            "daily_loss_cap=false global_recovery_stop=false",
             cfg.version,
-            _mode(self),
-            ",".join(self.hybrid_primary_symbols),
-            ",".join(self.hybrid_recovery_symbols),
+            self.hybrid_primary_symbols[0],
+            self.hybrid_recovery_symbols[0],
         )
-        if _mode(self) == PUT_RECOVERY:
-            _set_waiting_statuses(self)
 
     def hybrid_history(self: RFDir5TradingBot, *, symbol: str, prices: list[Any], times: list[Any], pip_size: Any) -> None:
         original_history(self, symbol=symbol, prices=prices, times=times, pip_size=pip_size)
@@ -603,13 +540,6 @@ def install_hybrid_digit_put_strategy() -> None:
             return
         market.raw_tick_digits.append(int(digit))
 
-        if _mode(self) == PUT_RECOVERY:
-            now = time.monotonic()
-            if now - float(getattr(self, "hybrid_last_waiting_refresh", 0.0)) >= 5.0:
-                self.hybrid_last_waiting_refresh = now
-                _set_waiting_statuses(self)
-                _maybe_complete_recovery(self)
-            return
         if symbol not in self.hybrid_primary_symbols:
             return
         if self.is_trading_locked or bool(self.pending_contracts_for_current_cycle):
@@ -639,17 +569,9 @@ def install_hybrid_digit_put_strategy() -> None:
             task.add_done_callback(done)
 
     def hybrid_schedule(self: RFDir5TradingBot) -> None:
-        if _mode(self) != PUT_RECOVERY:
-            queued = list(self.rf_candidate_queue)
-            self.rf_candidate_queue = []
-            for signal in queued:
-                self._mark_rf_decision(
-                    signal,
-                    "SKIP_RECOVERY_NOT_ACTIVE",
-                    "PUT is recovery-only; primary mode trades O2/U7",
-                    selected=False,
-                )
-            return
+        # PUT candidates are useful whenever at least one enabled account is in
+        # virtual protection or has completed its two virtual wins. Other
+        # accounts continue receiving the primary OVER_2 stream independently.
         recovery_symbols = set(self.hybrid_recovery_symbols)
         rejected = [s for s in self.rf_candidate_queue if s.symbol not in recovery_symbols]
         self.rf_candidate_queue = [s for s in self.rf_candidate_queue if s.symbol in recovery_symbols]
@@ -669,16 +591,8 @@ def install_hybrid_digit_put_strategy() -> None:
         strict_schedule(self)
 
     async def hybrid_arbitrate(self: RFDir5TradingBot) -> None:
-        if _mode(self) != PUT_RECOVERY:
-            queued = list(self.rf_candidate_queue)
-            self.rf_candidate_queue = []
-            for signal in queued:
-                self._mark_rf_decision(
-                    signal,
-                    "SKIP_RECOVERY_COMPLETED",
-                    "recovery completed before PUT arbitration",
-                    selected=True,
-                )
+        if not _recovery_account_ids(self):
+            self.rf_candidate_queue.clear()
             return
         await strict_arbitrate(self)
 
@@ -694,31 +608,12 @@ def install_hybrid_digit_put_strategy() -> None:
         return values
 
     def hybrid_eligible(self: RFDir5TradingBot) -> list[tuple[str, str]]:
-        eligible = original_eligible(self)
-        if _mode(self) != PUT_RECOVERY:
-            return eligible
-        allowed_ids = _recovery_account_ids(self)
-        filtered: list[tuple[str, str]] = []
-        for token, account_id in eligible:
-            managed_id = self._managed_account_id_for_token(token)
-            if managed_id is not None and int(managed_id) in allowed_ids:
-                filtered.append((token, account_id))
-                continue
-            if managed_id is not None:
-                self.repository.set_managed_account_execution_status(
-                    int(managed_id),
-                    "waiting_model_recovery",
-                    (
-                        "Model recovery is in progress. Your first contract will wait until recovery "
-                        "is complete, then start at your configured base stake."
-                    ),
-                )
-        return filtered
+        return original_eligible(self)
 
     def hybrid_update_recovery(self: RFDir5TradingBot, state: dict[str, Any], *, outcome: str, profit: float) -> None:
         original_update_recovery(self, state, outcome=outcome, profit=profit)
-        if _mode(self) == PUT_RECOVERY:
-            _maybe_complete_recovery(self)
+        # AccountRiskState is authoritative. There is no global completion
+        # transition that can pause healthy accounts.
 
     def hybrid_record_tick(
         self: Test2Repository,

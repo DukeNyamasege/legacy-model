@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from app.model.bayesian_probability import BayesianGroupKey, KeyedBayesianProbability
 from app.model.directional_regime_hmm import DirectionalRegimeHmm
 from app.repositories.rf_dir5_repository import (
+    NORMAL_MODE,
     RECOVERY_PENDING,
     RFDir5Repository,
     VIRTUAL_MODE,
@@ -1201,6 +1202,31 @@ class RFDir5TradingBot(TradingBot):
                 managed_account_id=managed_id,
                 account_id_masked=mask_account_id(account_id),
             )
+            protection_mode = str(protection.get("mode") or NORMAL_MODE)
+            is_primary_digit = str(signal.contract_type or "").upper() in {
+                "DIGITOVER",
+                "DIGITUNDER",
+            }
+            is_put_recovery = str(signal.contract_type or "").upper() == "PUT"
+            if is_put_recovery and protection_mode not in {
+                VIRTUAL_MODE,
+                RECOVERY_PENDING,
+            }:
+                # PUT is recovery-only. A healthy account continues the primary
+                # OVER_2 stream and must never receive another contract family.
+                skip_reasons["put_recovery_not_armed"] += 1
+                continue
+            if is_primary_digit and protection_mode == RECOVERY_PENDING:
+                # A protected account must complete its one real PUT recovery
+                # before returning to the primary digit strategy.
+                skip_reasons["put_recovery_pending"] += 1
+                continue
+            if is_primary_digit and protection_mode == VIRTUAL_MODE:
+                # Virtual protection observes PUT candidates, matching the
+                # recovery model. It does not simulate another primary digit
+                # contract while waiting for recovery confirmation.
+                virtual_waiting_accounts.add(mask_account_id(account_id))
+                continue
             if self.virtual_config.enabled and protection.get("mode") == VIRTUAL_MODE:
                 configured_stake = float(state.get("base_stake") or self.base_stake)
                 simulated_stake = round(configured_stake, 2)

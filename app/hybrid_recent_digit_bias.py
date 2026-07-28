@@ -14,10 +14,10 @@ RECENT_WINDOW = 20
 MIN_RECENT_HIT_RATE = 0.75
 MIN_BIAS_GAP = 0.05
 MIN_LIVE_EDGE = 0.02
-STRATEGY_VERSION = "HYBRID-O2-U7-RECENT20-PUTFIX-V3"
+STRATEGY_VERSION = "HYBRID-OVER2-PUT-RECOVERY-V4"
 # candidate_signals.trigger_name is VARCHAR(30). Keep the durable trigger code
 # compact while retaining STRATEGY_VERSION as the full runtime/model identity.
-LEDGER_TRIGGER_NAME = "O2U7-R20-PUTFIX-V3"
+LEDGER_TRIGGER_NAME = "OVER2-PUT-V4"
 
 
 def _recent_bias_metrics(digits: list[int]) -> dict[str, float]:
@@ -26,9 +26,8 @@ def _recent_bias_metrics(digits: list[int]) -> dict[str, float]:
         return {}
 
     over_hits = sum(digit > 2 for digit in sample)
-    under_hits = sum(digit < 7 for digit in sample)
     over_rate = over_hits / RECENT_WINDOW
-    under_rate = under_hits / RECENT_WINDOW
+    under_rate = sum(digit < 7 for digit in sample) / RECENT_WINDOW
 
     # OVER 2 loses on 0/1/2. UNDER 7 loses on 7/8/9. The preferred contract is
     # therefore the side whose losing tail is currently less common.
@@ -60,20 +59,22 @@ def _make_recent_candidate(
     under_rate = float(metrics["under_rate"])
     bias_gap = float(metrics["bias_gap"])
 
-    if over_rate > under_rate:
-        contract_type = "DIGITOVER"
-        barrier = int(cfg.over_barrier)
-        direction = f"OVER_{barrier}"
-        selected_rate = over_rate
-        opposite_rate = under_rate
-    elif under_rate > over_rate:
-        contract_type = "DIGITUNDER"
-        barrier = int(cfg.under_barrier)
-        direction = f"UNDER_{barrier}"
-        selected_rate = under_rate
-        opposite_rate = over_rate
-    else:
+    pattern_ranges = tuple(getattr(cfg, "primary_pattern_ranges", ()))
+    if len(pattern_ranges) != len(trigger_digits := tuple(digits[-5:])):
         return None
+    if not all(
+        lower <= digit <= upper
+        for digit, (lower, upper) in zip(trigger_digits, pattern_ranges, strict=True)
+    ):
+        return None
+
+    # V4 deliberately trades one side only. The model may decline a signal when
+    # the recent OVER-2 rate is weak, but it never changes the contract to UNDER-7.
+    contract_type = "DIGITOVER"
+    barrier = int(getattr(cfg, "primary_barrier", cfg.over_barrier))
+    direction = f"OVER_{barrier}"
+    selected_rate = over_rate
+    opposite_rate = under_rate
 
     minimum_rate = float(getattr(cfg, "minimum_recent_hit_rate", MIN_RECENT_HIT_RATE))
     minimum_gap = float(getattr(cfg, "minimum_bias_gap", MIN_BIAS_GAP))
@@ -122,7 +123,7 @@ async def _arbitrate_recent_digits(bot: RFDir5TradingBot) -> None:
     queued = list(bot.hybrid_digit_candidates.values())
     bot.hybrid_digit_candidates.clear()
 
-    if hybrid._mode(bot) != hybrid.PRIMARY_DIGITS or not queued:
+    if not queued:
         return
 
     bot._prune_stale_pending_contracts("hybrid_recent_digit_pre_proposal")
@@ -218,7 +219,8 @@ async def _arbitrate_recent_digits(bot: RFDir5TradingBot) -> None:
     )
 
     # New primary trades always use each trader's own configured base stake. Any
-    # model recovery remains isolated to the PUT_RECOVERY state.
+    # account in virtual or PUT-recovery state is filtered by the account-scoped
+    # execution guard, while healthy accounts receive this same signal.
     for token, account_id in bot._eligible_purchase_accounts():
         managed_id = bot._managed_account_id_for_token(token)
         if managed_id is None:
@@ -233,7 +235,7 @@ async def _arbitrate_recent_digits(bot: RFDir5TradingBot) -> None:
                     account_id,
                     managed_account_id=managed_id,
                 ).get("account", "***"),
-                STRATEGY_VERSION,
+        STRATEGY_VERSION,
             )
 
     original_recovery_enabled = bool(bot.risk_config.recovery_enabled)

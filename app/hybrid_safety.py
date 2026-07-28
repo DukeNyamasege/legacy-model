@@ -11,15 +11,22 @@ import app.hybrid_runtime_config as runtime
 from enhanced_bot import optional_float
 from app.model_accounting import CANONICAL_BASE_STAKE, canonical_fixed_profit
 from app.models import AccountRiskState, CandidateSignalRecord, SystemModelTrade, Trade, utc_now
+from app.recovery import calculate_recovery_stake
 from app.repositories.rf_dir5_repository import RFDir5Repository, StakePlan
 from app.repositories.test2_repository import Test2Repository
 from app.rf_dir5_bot import RFDir5TradingBot
 
-HYBRID_V3_VERSION = "HYBRID-O2-U7-RECENT20-PUTFIX-V3"
-HYBRID_V3_TRIGGER = "O2U7-R20-PUTFIX-V3"
-HYBRID_V3_STATE_KEY = "hybrid_o2u7_put_v2:state"
-HYBRID_V3_ACCOUNT_EPOCH_PREFIX = "hybrid_o2u7_put_v2:account_epoch:"
-HYBRID_V3_RUN_ID = "hybrid_o2u7_put_v2"
+HYBRID_V4_VERSION = "HYBRID-OVER2-PUT-RECOVERY-V4"
+HYBRID_V4_TRIGGER = "OVER2-PUT-V4"
+HYBRID_V4_STATE_KEY = "hybrid_over2_put_v4:state"
+HYBRID_V4_ACCOUNT_EPOCH_PREFIX = "hybrid_over2_put_v4:account_epoch:"
+HYBRID_V4_RUN_ID = "hybrid_over2_put_v4"
+# Compatibility names retained for deployment/preflight scripts written for V3.
+HYBRID_V3_VERSION = HYBRID_V4_VERSION
+HYBRID_V3_TRIGGER = HYBRID_V4_TRIGGER
+HYBRID_V3_STATE_KEY = HYBRID_V4_STATE_KEY
+HYBRID_V3_ACCOUNT_EPOCH_PREFIX = HYBRID_V4_ACCOUNT_EPOCH_PREFIX
+HYBRID_V3_RUN_ID = HYBRID_V4_RUN_ID
 MAX_RECOVERY_BALANCE_FRACTION = 0.10
 
 _ACCOUNTING_INSTALLED = False
@@ -74,14 +81,14 @@ def _primary_digit_signal(repository: Test2Repository, signal_id: str) -> bool:
         contract_type = str(candidate.contract_type or "").upper()
         if contract_type not in {"DIGITOVER", "DIGITUNDER"}:
             return False
-        if str(candidate.run_id or "") != HYBRID_V3_RUN_ID:
+        if str(candidate.run_id or "") != HYBRID_V4_RUN_ID:
             return False
         trigger_name = str(candidate.trigger_name or "")
         strategy_version = str(getattr(candidate, "strategy_version", "") or "")
         return (
-            trigger_name == HYBRID_V3_TRIGGER
-            or strategy_version == HYBRID_V3_VERSION
-            or trigger_name.startswith("O2U7")
+            trigger_name == HYBRID_V4_TRIGGER
+            or strategy_version == HYBRID_V4_VERSION
+            or trigger_name.startswith("OVER2")
         )
 
 
@@ -140,78 +147,130 @@ def install_hybrid_accounting_integrity() -> None:
             settled_rows.append(row)
         return settled_rows
 
-    def fixed_base_performance_summary(
+    def coherent_performance_summary(
         self: Test2Repository,
         **kwargs: Any,
     ) -> dict[str, Any]:
         result = original_system_performance_summary(self, **kwargs)
-        # The hybrid recovery sequence itself already contains the PUT recovery
-        # trades. Replaying another debt-sized Martingale on top double-counts
-        # recovery and recreates the exact escalation V3 removes.
-        fixed_pnl = round(float(result.get("fixed_pnl") or 0.0), 2)
-        fixed_stake = round(
-            float(result.get("simulated_base_stake") or CANONICAL_BASE_STAKE),
-            2,
+        trades = kwargs.get("trades")
+        if trades is None:
+            trades = self.system_model_trades(
+                start=kwargs["start"],
+                end=kwargs["end"],
+                include_virtual=False,
+                viewer_managed_account_id=kwargs.get("viewer_managed_account_id"),
+            )
+        base = min(1000.0, max(CANONICAL_BASE_STAKE, float(
+            kwargs.get("simulated_base_stake", CANONICAL_BASE_STAKE)
+        )))
+        ordered = sorted(
+            [row for row in trades if str(row.get("outcome") or "").upper() in {"WIN", "LOSS"}],
+            key=lambda row: str(row.get("settlement_timestamp") or row.get("signal_timestamp") or ""),
         )
-        fixed_max_dd = round(float(result.get("max_drawdown_fixed") or 0.0), 2)
-        fixed_current_dd = round(float(result.get("current_drawdown_fixed") or 0.0), 2)
-        fixed_max_dd_pct = round(float(result.get("max_drawdown_fixed_pct") or 0.0), 2)
-        fixed_current_dd_pct = round(
-            float(result.get("current_drawdown_fixed_pct") or 0.0),
-            2,
-        )
+        fixed_profit = 0.0
+        martingale_profit = 0.0
+        current_fixed_drawdown = 0.0
+        current_martingale_drawdown = 0.0
+        fixed_peak = 0.0
+        martingale_peak = 0.0
+        max_fixed_drawdown = 0.0
+        max_martingale_drawdown = 0.0
+        recovery_debt = 0.0
+        primary_loss_streak = 0
+        maximum_martingale_stake = base
+        total_martingale_staked = 0.0
+        for trade in ordered:
+            outcome = str(trade.get("outcome") or "").upper()
+            ratio = max(0.0, float(trade.get("expected_profit_ratio") or 0.0))
+            fixed_stake = base
+            fixed_pnl = ratio * fixed_stake if outcome == "WIN" else -fixed_stake
+            contract_type = str(trade.get("contract_type") or "").upper()
+            if contract_type == "PUT" and recovery_debt > 0.009:
+                calculation = calculate_recovery_stake(
+                    base_stake=base,
+                    recovery_debt=recovery_debt,
+                    pre_trade_profit_ratio=ratio,
+                    minimum_stake=base,
+                )
+                martingale_stake = float(calculation.requested_stake)
+            else:
+                martingale_stake = base
+            martingale_pnl = ratio * martingale_stake if outcome == "WIN" else -martingale_stake
+            fixed_profit += fixed_pnl
+            martingale_profit += martingale_pnl
+            total_martingale_staked += martingale_stake
+            maximum_martingale_stake = max(maximum_martingale_stake, martingale_stake)
+            fixed_peak = max(fixed_peak, fixed_profit)
+            martingale_peak = max(martingale_peak, martingale_profit)
+            current_fixed_drawdown = fixed_peak - fixed_profit
+            current_martingale_drawdown = martingale_peak - martingale_profit
+            max_fixed_drawdown = max(max_fixed_drawdown, current_fixed_drawdown)
+            max_martingale_drawdown = max(max_martingale_drawdown, current_martingale_drawdown)
+            if contract_type == "DIGITOVER":
+                if outcome == "LOSS":
+                    primary_loss_streak += 1
+                    if primary_loss_streak >= 2:
+                        recovery_debt = round(recovery_debt + fixed_stake, 2)
+                else:
+                    primary_loss_streak = 0
+                    recovery_debt = 0.0
+            elif contract_type == "PUT":
+                if outcome == "WIN":
+                    recovery_debt = max(0.0, round(recovery_debt - martingale_pnl, 2))
+                    if recovery_debt <= 0.009:
+                        primary_loss_streak = 0
+                else:
+                    recovery_debt = round(recovery_debt + martingale_stake, 2)
+
+        total = len(ordered)
+        wins = sum(str(row.get("outcome") or "").upper() == "WIN" for row in ordered)
+        losses = total - wins
+        # Keep the canonical outcome/streak fields from the settled model rows,
+        # but ensure all monetary fields describe this exact replay.
         result.update(
             {
-                "simulated_martingale_pnl": fixed_pnl,
-                "simulated_maximum_martingale_stake": fixed_stake,
-                "simulated_max_drawdown_martingale": fixed_max_dd,
-                "simulated_current_drawdown_martingale": fixed_current_dd,
-                "simulated_max_drawdown_martingale_pct": fixed_max_dd_pct,
-                "simulated_current_drawdown_martingale_pct": fixed_current_dd_pct,
-                "recovery_simulation_policy": "fixed_base_hybrid_sequence",
+                "total_trades": total,
+                "wins": wins,
+                "losses": losses,
+                "win_rate": wins / total if total else 0.0,
+                "fixed_pnl": round(fixed_profit, 2),
+                "martingale_pnl": round(martingale_profit, 2),
+                "observed_martingale_pnl": round(martingale_profit, 2),
+                "simulated_martingale_pnl": round(martingale_profit, 2),
+                "maximum_martingale_stake": round(maximum_martingale_stake, 2),
+                "observed_maximum_stake": round(maximum_martingale_stake, 2),
+                "simulated_maximum_martingale_stake": round(maximum_martingale_stake, 2),
+                "max_drawdown_fixed": round(max_fixed_drawdown, 2),
+                "max_drawdown_martingale": round(max_martingale_drawdown, 2),
+                "simulated_max_drawdown_martingale": round(max_martingale_drawdown, 2),
+                "current_drawdown_fixed": round(current_fixed_drawdown, 2),
+                "current_drawdown_martingale": round(current_martingale_drawdown, 2),
+                "simulated_current_drawdown_martingale": round(current_martingale_drawdown, 2),
+                "simulated_max_drawdown_martingale_pct": round(
+                    max_martingale_drawdown / total_martingale_staked * 100.0, 2
+                ) if total_martingale_staked else 0.0,
+                "simulated_current_drawdown_martingale_pct": round(
+                    current_martingale_drawdown / total_martingale_staked * 100.0, 2
+                ) if total_martingale_staked else 0.0,
+                "recovery_simulation_policy": "two_primary_losses_one_put_recovery",
             }
         )
         return result
 
     Test2Repository.settle_trade = settle_trade_coherent
     Test2Repository.system_model_trades = system_model_trades_coherent
-    Test2Repository.system_performance_summary = fixed_base_performance_summary
+    Test2Repository.system_performance_summary = coherent_performance_summary
     _ACCOUNTING_INSTALLED = True
 
 
 def _fixed_canonical_settlement(bot: RFDir5TradingBot, payload: dict[str, Any]) -> None:
-    contract_type = str(payload.get("contract_type") or "").upper()
-    outcome = str(payload.get("outcome") or "").upper()
-    signal_id = str(payload.get("signal_id") or "")
-    ratio = max(0.0, float(payload.get("expected_profit_ratio") or 0.0))
-
-    if contract_type in {"DIGITOVER", "DIGITUNDER"}:
-        if hybrid._mode(bot) == hybrid.PRIMARY_DIGITS and outcome == "LOSS":
-            hybrid._enter_recovery(bot, signal_id)
-        return
-
-    if contract_type != "PUT" or hybrid._mode(bot) != hybrid.PUT_RECOVERY:
-        return
-    if outcome not in {"WIN", "LOSS"}:
-        return
-
-    debt = max(0.0, float(bot.hybrid_state.get("canonical_debt") or 0.0))
-    canonical_stake = CANONICAL_BASE_STAKE
-    if outcome == "WIN":
-        debt = max(0.0, round(debt - canonical_stake * ratio, 2))
-    else:
-        debt = round(debt + canonical_stake, 2)
-    bot.hybrid_state["canonical_debt"] = debt
-    hybrid._save_state(bot)
-    bot.logger.warning(
-        "HYBRID_FIXED_RECOVERY_SETTLED signal_id=%s outcome=%s stake=%.2f "
-        "canonical_debt=%.2f stake_policy=fixed_base",
-        signal_id,
-        outcome,
-        canonical_stake,
-        debt,
+    bot.logger.info(
+        "HYBRID_CANONICAL_SETTLED signal_id=%s contract_type=%s outcome=%s "
+        "account_state=per_account",
+        payload.get("signal_id", ""),
+        payload.get("contract_type", ""),
+        payload.get("outcome", ""),
     )
-    hybrid._maybe_complete_recovery(bot)
 
 
 def _assert_runtime_invariants(bot: RFDir5TradingBot) -> None:
@@ -220,9 +279,9 @@ def _assert_runtime_invariants(bot: RFDir5TradingBot) -> None:
     virtual = bot.virtual_config
 
     failures: list[str] = []
-    if str(bot.test2_config.model.run_id) != HYBRID_V3_RUN_ID:
+    if str(bot.test2_config.model.run_id) != HYBRID_V4_RUN_ID:
         failures.append(f"run_id={bot.test2_config.model.run_id}")
-    if str(cfg.version) != HYBRID_V3_VERSION:
+    if str(cfg.version) != HYBRID_V4_VERSION:
         failures.append(f"hybrid_version={cfg.version}")
     if int(getattr(cfg, "recent_window", 0)) != 20:
         failures.append("recent_window_must_be_20")
@@ -239,7 +298,15 @@ def _assert_runtime_invariants(bot: RFDir5TradingBot) -> None:
         failures.append(f"virtual_trigger_actual_losses={virtual.trigger_actual_losses}")
     if int(virtual.exit_after_wins) != 2:
         failures.append(f"virtual_exit_after_wins={virtual.exit_after_wins}")
-    if hybrid.HYBRID_STATE_KEY != HYBRID_V3_STATE_KEY:
+    if tuple(cfg.primary_markets) != ("1HZ100V",):
+        failures.append(f"primary_markets={cfg.primary_markets}")
+    if tuple(cfg.recovery_markets) != ("1HZ100V",):
+        failures.append(f"recovery_markets={cfg.recovery_markets}")
+    if str(cfg.primary_contract_type).upper() != "DIGITOVER" or int(cfg.primary_barrier) != 2:
+        failures.append("primary_contract_must_be_DIGITOVER_2")
+    if int(risk.recovery_trigger_losses) != 2:
+        failures.append(f"recovery_trigger_losses={risk.recovery_trigger_losses}")
+    if hybrid.HYBRID_STATE_KEY != HYBRID_V4_STATE_KEY:
         failures.append(f"state_key={hybrid.HYBRID_STATE_KEY}")
     if hybrid.ACCOUNT_EPOCH_PREFIX != HYBRID_V3_ACCOUNT_EPOCH_PREFIX:
         failures.append(f"account_epoch_prefix={hybrid.ACCOUNT_EPOCH_PREFIX}")
@@ -248,76 +315,29 @@ def _assert_runtime_invariants(bot: RFDir5TradingBot) -> None:
 
 
 def install_hybrid_worker_safety() -> None:
-    """Install V3 fixed-base recovery and fail closed on unsafe configuration.
-
-    Persistent recovery debt is still measured. It no longer controls stake size.
-    The strict PUT 15->5->1 entry brain and two-loss virtual protection remain in
-    force; an account in virtual mode still makes no monetary purchase.
-    """
+    """Install V4 invariants and keep recovery transitions account-scoped."""
     global _WORKER_INSTALLED
     if _WORKER_INSTALLED:
         return
 
     install_hybrid_accounting_integrity()
 
-    # New epoch: old PUT_RECOVERY runtime state can never be silently inherited.
-    hybrid.HYBRID_STATE_KEY = HYBRID_V3_STATE_KEY
-    hybrid.ACCOUNT_EPOCH_PREFIX = HYBRID_V3_ACCOUNT_EPOCH_PREFIX
+    # New epoch: old global O2/U7 runtime state can never be silently inherited.
+    hybrid.HYBRID_STATE_KEY = HYBRID_V4_STATE_KEY
+    hybrid.ACCOUNT_EPOCH_PREFIX = HYBRID_V4_ACCOUNT_EPOCH_PREFIX
     hybrid._apply_canonical_settlement = _fixed_canonical_settlement
 
-    recent.STRATEGY_VERSION = HYBRID_V3_VERSION
-    recent.LEDGER_TRIGGER_NAME = HYBRID_V3_TRIGGER
+    recent.STRATEGY_VERSION = HYBRID_V4_VERSION
+    recent.LEDGER_TRIGGER_NAME = HYBRID_V4_TRIGGER
 
     runtime.HYBRID_RUNTIME_CONFIG = replace(
         runtime.HYBRID_RUNTIME_CONFIG,
-        version=HYBRID_V3_VERSION,
+        version=HYBRID_V4_VERSION,
+        primary_markets=("1HZ100V",),
+        recovery_markets=("1HZ100V",),
+        primary_contract_type="DIGITOVER",
+        primary_barrier=2,
     )
-
-    # Account recovery debt remains durable, but debt can never increase the next
-    # monetary PUT stake in this hybrid strategy. Calling the existing planner with
-    # recovery sizing disabled preserves base-stake affordability and the virtual
-    # protection block while eliminating debt-derived Martingale escalation.
-    original_plan_stake = RFDir5Repository.plan_stake
-
-    def fixed_base_plan(self: RFDir5Repository, **kwargs: Any) -> StakePlan:
-        hybrid_fixed = bool(getattr(self, "_hybrid_fixed_base_recovery", False))
-        requested_recovery = bool(kwargs.get("recovery_enabled", False))
-        if not (hybrid_fixed and requested_recovery):
-            return original_plan_stake(self, **kwargs)
-
-        debt = 0.0
-        managed_id = kwargs.get("managed_account_id")
-        if managed_id is not None:
-            with self.database.session() as session:
-                state = session.get(AccountRiskState, int(managed_id))
-                if state is not None:
-                    debt = max(0.0, float(state.recovery_loss_debt or 0.0))
-
-        safe_kwargs = dict(kwargs)
-        safe_kwargs["recovery_enabled"] = False
-        plan = original_plan_stake(self, **safe_kwargs)
-        if plan.stake is None:
-            return StakePlan(
-                None,
-                plan.reason,
-                is_recovery=debt > 0.009,
-                recovery_debt=debt,
-                required_recovery_stake=0.0,
-            )
-        return StakePlan(
-            stake=float(plan.stake),
-            reason=(
-                "Hybrid fixed-base recovery: debt retained for accounting; "
-                "stake escalation disabled"
-                if debt > 0.009
-                else plan.reason
-            ),
-            is_recovery=debt > 0.009,
-            recovery_debt=debt,
-            required_recovery_stake=float(plan.stake),
-        )
-
-    RFDir5Repository.plan_stake = fixed_base_plan
 
     original_handle_contract_update = RFDir5TradingBot.handle_contract_update
 
@@ -328,23 +348,12 @@ def install_hybrid_worker_safety() -> None:
         contract: dict[str, Any],
     ) -> None:
         terminal = self._contract_is_terminal(contract)
-        outcome = _contract_terminal_outcome(contract) if terminal else ""
-        signal_id = str(getattr(self, "contract_signal_ids", {}).get(int(contract_id)) or "")
         await original_handle_contract_update(self, token, contract_id, contract)
-        if not terminal or outcome != "loss":
-            return
-        signal_id = signal_id or _signal_id_for_contract(self.repository, contract_id)
-        if not _primary_digit_signal(self.repository, signal_id):
-            return
-        if hybrid._mode(self) != hybrid.PRIMARY_DIGITS:
-            return
-        hybrid._enter_recovery(self, signal_id)
-        self.logger.warning(
-            "HYBRID_PUT_RECOVERY_ARMED_BY_ACTUAL_SETTLEMENT signal_id=%s "
-            "contract_id=%s next_action=WAIT_STRICT_15_5_1_PUT",
-            signal_id,
-            contract_id,
-        )
+        if terminal:
+            self.logger.info(
+                "ACCOUNT_CONTRACT_SETTLED account_state=per_account contract_id=%s",
+                contract_id,
+            )
 
     RFDir5TradingBot.handle_contract_update = recovery_safe_handle_contract_update
 
@@ -352,13 +361,13 @@ def install_hybrid_worker_safety() -> None:
 
     def safe_init(self: RFDir5TradingBot, config_path: str | None = None) -> None:
         original_init(self, config_path)
-        self.rf_repository._hybrid_fixed_base_recovery = True
         _assert_runtime_invariants(self)
         self.logger.warning(
-            "HYBRID_SAFETY_ACTIVE version=%s recovery_stake_policy=fixed_account_base "
-            "debt_escalation=false virtual_guard=2_losses_then_2_consecutive_virtual_wins "
-            "max_recovery_balance_fraction=%.2f state_epoch=v2 actual_loss_arms_put=true",
-            HYBRID_V3_VERSION,
+            "HYBRID_SAFETY_ACTIVE version=%s recovery_stake_policy=%s "
+            "two_losses_then_two_virtual_wins one_put_per_cycle global_recovery_stop=false "
+            "max_recovery_balance_fraction=%.2f",
+            HYBRID_V4_VERSION,
+            "martingale_or_flat_base",
             float(self.risk_config.maximum_recovery_balance_fraction),
         )
 

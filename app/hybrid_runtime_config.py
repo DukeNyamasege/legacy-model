@@ -13,15 +13,25 @@ from app.strategy.over2_strategy import TEST2_SYMBOLS
 @dataclass(frozen=True, slots=True)
 class HybridRuntimeConfig:
     enabled: bool = True
-    version: str = "HYBRID-O2-U7-RECENT20-PUTFIX-V3"
-    primary_markets: tuple[str, ...] = TEST2_SYMBOLS
+    version: str = "HYBRID-OVER2-PUT-RECOVERY-V4"
+    primary_markets: tuple[str, ...] = ("1HZ100V",)
+    recovery_markets: tuple[str, ...] = ("1HZ100V",)
+    primary_contract_type: str = "DIGITOVER"
+    primary_barrier: int = 2
+    primary_pattern_ranges: tuple[tuple[int, int], ...] = (
+        (6, 9),
+        (6, 9),
+        (0, 2),
+        (0, 2),
+        (3, 5),
+    )
     over_barrier: int = 2
     under_barrier: int = 7
     duration_ticks: int = 1
     candidate_window_ms: int = 75
 
-    # Production primary entry uses one recent-digit window only. The previous
-    # 100/500/1000 alignment + Wilson lower-bound gate is deliberately unused.
+    # Production primary entry uses one recent-digit window plus the established
+    # five-final-digit trigger. The previous 100/500/1000 gate is unused.
     recent_window: int = 20
     minimum_recent_hit_rate: float = 0.75
     minimum_bias_gap: float = 0.05

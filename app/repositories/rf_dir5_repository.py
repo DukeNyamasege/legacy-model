@@ -609,16 +609,17 @@ class RFDir5Repository:
                     recovery_debt=state.recovery_loss_debt,
                 )
 
+            # Martingale controls the recovery stake size, not whether the
+            # account enters the per-account PUT recovery cycle.
             is_recovery = bool(
-                recovery_enabled
-                and state.recovery_pending
+                state.recovery_pending
                 and not state.recovery_attempt_active
                 and state.recovery_loss_debt > 0
             )
             required_recovery_stake = 0.0
             target_stake = base_stake
             reason = ""
-            if is_recovery:
+            if is_recovery and recovery_enabled:
                 calculation = calculate_recovery_stake(
                     base_stake=base_stake,
                     recovery_debt=state.recovery_loss_debt,
@@ -694,7 +695,7 @@ class RFDir5Repository:
         profit: float,
         current_balance: float,
         recovery_enabled: bool = False,
-        recovery_trigger_losses: int = 1,
+        recovery_trigger_losses: int = 2,
         virtual_protection_enabled: bool = True,
         virtual_trigger_actual_losses: int = 2,
     ) -> dict[str, Any]:
@@ -721,19 +722,25 @@ class RFDir5Repository:
             was_recovery = bool(state.recovery_attempt_active)
             state.recovery_attempt_active = False
             previous_mode = state.protection_mode
+            trigger_losses = max(2, int(recovery_trigger_losses or 2))
             if profit <= 0:
                 state.consecutive_losses += 1
-                state.recovery_loss_debt = round(
-                    state.recovery_loss_debt + abs(float(profit)),
-                    2,
-                )
-                state.recovery_pending = bool(
-                    recovery_enabled
-                    and state.consecutive_losses >= int(recovery_trigger_losses)
-                )
+                loss_amount = abs(float(profit))
+                if was_recovery or state.consecutive_losses >= trigger_losses:
+                    state.recovery_loss_debt = round(
+                        state.recovery_loss_debt + loss_amount,
+                        2,
+                    )
+                else:
+                    # Keep a first-loss marker, but do not arm recovery until
+                    # the next primary loss is also consecutive.
+                    state.recovery_loss_debt = round(loss_amount, 2)
+                state.recovery_pending = state.consecutive_losses >= trigger_losses
                 if (
                     virtual_protection_enabled
-                    and state.consecutive_losses >= int(virtual_trigger_actual_losses)
+                    and state.consecutive_losses >= max(
+                        2, int(virtual_trigger_actual_losses or 2)
+                    )
                 ):
                     if state.protection_mode != VIRTUAL_WAITING_FOR_WIN:
                         state.entered_virtual_mode_at = utc_now()
@@ -741,13 +748,17 @@ class RFDir5Repository:
                         state.current_virtual_loss_streak = 0
                     state.protection_mode = VIRTUAL_WAITING_FOR_WIN
             else:
-                state.recovery_loss_debt = max(
-                    0.0,
-                    round(state.recovery_loss_debt - float(profit), 2),
-                )
-                state.recovery_pending = bool(
-                    recovery_enabled and state.recovery_loss_debt >= 0.01
-                )
+                if was_recovery:
+                    state.recovery_loss_debt = max(
+                        0.0,
+                        round(state.recovery_loss_debt - float(profit), 2),
+                    )
+                    state.recovery_pending = state.recovery_loss_debt >= 0.01
+                else:
+                    # A primary win breaks a one-loss streak and cancels its
+                    # provisional debt before the next base entry.
+                    state.recovery_loss_debt = 0.0
+                    state.recovery_pending = False
                 state.consecutive_losses = 0
                 if not state.recovery_pending:
                     state.recovery_pending_since = None
@@ -760,6 +771,13 @@ class RFDir5Repository:
                     if state.recovery_loss_debt <= 0:
                         state.protection_mode = NORMAL_MODE
                         state.entered_virtual_mode_at = None
+                    else:
+                        # One PUT is one recovery attempt. A residual debt
+                        # requires a fresh pair of virtual wins before another.
+                        state.protection_mode = VIRTUAL_WAITING_FOR_WIN
+                        state.virtual_win_count = 0
+                        state.current_virtual_loss_streak = 0
+                        state.entered_virtual_mode_at = utc_now()
                 else:
                     state.protection_mode = NORMAL_MODE
                     state.entered_virtual_mode_at = None
@@ -918,6 +936,12 @@ class RFDir5Repository:
                         exit_quote=Decimal(str(exit_quote)),
                         exit_digit=exit_digit,
                     )
+            elif is_recovery:
+                target_stake = base_stake
+                reason = (
+                    "Martingale disabled: one flat-stake PUT recovery is armed; "
+                    "debt is recorded without stake escalation"
+                )
                 except ValueError as exc:
                     trade.result = "VIRTUAL_STALE"
                     trade.reason = str(exc)
