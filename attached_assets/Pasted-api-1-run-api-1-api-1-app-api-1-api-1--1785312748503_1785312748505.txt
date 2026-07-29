@@ -1,0 +1,40 @@
+api-1  |     run(
+api-1  |     ~~~^
+api-1  |         app,
+api-1  |         ^^^^
+api-1  |     ...<48 lines>...
+api-1  |         reset_contextvars=reset_contextvars,
+api-1  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+api-1  |     )
+api-1  |     ^
+api-1  |   File "/usr/local/lib/python3.13/site-packages/uvicorn/main.py", line 609, in run
+api-1  |     config.load_app()
+api-1  |     ~~~~~~~~~~~~~~~^^
+api-1  |   File "/usr/local/lib/python3.13/site-packages/uvicorn/config.py", line 427, in load_app
+api-1  |     return import_from_string(self.app)
+api-1  |   File "/usr/local/lib/python3.13/site-packages/uvicorn/importer.py", line 19, in import_from_string
+api-1  |     module = importlib.import_module(module_str)
+api-1  |   File "/usr/local/lib/python3.13/importlib/__init__.py", line 88, in import_module
+api-1  |     return _bootstrap._gcd_import(name[level:], package, level)
+api-1  |            ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+api-1  |   File "<frozen importlib._bootstrap>", line 1395, in _gcd_import
+api-1  |   File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+api-1  |   File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+api-1  |   File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+api-1  |   File "<frozen importlib._bootstrap_external>", line 1023, in exec_module
+api-1  |   File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+api-1  |   File "/app/app/api_v3.py", line 6, in <module>
+api-1  |     from app.hybrid_safety import install_hybrid_accounting_integrity
+api-1  |   File "/app/app/hybrid_safety.py", line 8, in <module>
+api-1  |     import app.hybrid_digit_put as hybrid
+api-1  |   File "/app/app/hybrid_digit_put.py", line 18, in <module>
+api-1  |     from app.rf_dir5_bot import RFDir5TradingBot
+api-1  |   File "/app/app/rf_dir5_bot.py", line 15, in <module>
+api-1  |     from app.repositories.rf_dir5_repository import (
+api-1  |     ...<5 lines>...
+api-1  |     )
+api-1  |   File "/app/app/repositories/rf_dir5_repository.py", line 939
+api-1  |     elif is_recovery:
+api-1  | SyntaxError: expected 'except' or 'finally' block
+Connection to 31.97.37.152 closed.
+PS C:\Windows\system32>
