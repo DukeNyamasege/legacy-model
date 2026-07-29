@@ -936,12 +936,6 @@ class RFDir5Repository:
                         exit_quote=Decimal(str(exit_quote)),
                         exit_digit=exit_digit,
                     )
-            elif is_recovery:
-                target_stake = base_stake
-                reason = (
-                    "Martingale disabled: one flat-stake PUT recovery is armed; "
-                    "debt is recorded without stake escalation"
-                )
                 except ValueError as exc:
                     trade.result = "VIRTUAL_STALE"
                     trade.reason = str(exc)
