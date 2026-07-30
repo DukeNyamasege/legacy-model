@@ -26,6 +26,9 @@ _TRANSIENT_ERROR_MARKERS = (
     "temporarily unavailable",
     "network",
     "socket",
+    "input validation",
+    "validation failed",
+    "parameters",
 )
 _CREDENTIAL_ERROR_MARKERS = (
     "invalid token",
