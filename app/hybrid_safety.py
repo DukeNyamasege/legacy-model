@@ -15,6 +15,7 @@ from app.recovery import calculate_recovery_stake
 from app.repositories.rf_dir5_repository import RFDir5Repository, StakePlan
 from app.repositories.test2_repository import Test2Repository
 from app.rf_dir5_bot import RFDir5TradingBot
+from app.strategy.over2_strategy import TEST2_SYMBOLS
 
 HYBRID_V4_VERSION = "HYBRID-OVER2-PUT-RECOVERY-V4"
 HYBRID_V4_TRIGGER = "OVER2-PUT-V4"
@@ -298,13 +299,13 @@ def _assert_runtime_invariants(bot: RFDir5TradingBot) -> None:
         failures.append(f"virtual_trigger_actual_losses={virtual.trigger_actual_losses}")
     if int(virtual.exit_after_wins) != 2:
         failures.append(f"virtual_exit_after_wins={virtual.exit_after_wins}")
-    if tuple(cfg.primary_markets) != ("1HZ100V",):
+    if tuple(cfg.primary_markets) != tuple(TEST2_SYMBOLS):
         failures.append(f"primary_markets={cfg.primary_markets}")
-    if tuple(cfg.recovery_markets) != ("1HZ100V",):
+    if tuple(cfg.recovery_markets) != tuple(TEST2_SYMBOLS):
         failures.append(f"recovery_markets={cfg.recovery_markets}")
     if str(cfg.primary_contract_type).upper() != "DIGITOVER" or int(cfg.primary_barrier) != 2:
         failures.append("primary_contract_must_be_DIGITOVER_2")
-    if int(risk.recovery_trigger_losses) not in (1, 2):
+    if int(risk.recovery_trigger_losses) != 2:
         failures.append(f"recovery_trigger_losses={risk.recovery_trigger_losses}")
     if hybrid.HYBRID_STATE_KEY != HYBRID_V4_STATE_KEY:
         failures.append(f"state_key={hybrid.HYBRID_STATE_KEY}")
@@ -333,8 +334,8 @@ def install_hybrid_worker_safety() -> None:
     runtime.HYBRID_RUNTIME_CONFIG = replace(
         runtime.HYBRID_RUNTIME_CONFIG,
         version=HYBRID_V4_VERSION,
-        primary_markets=("1HZ100V",),
-        recovery_markets=("1HZ100V",),
+        primary_markets=tuple(TEST2_SYMBOLS),
+        recovery_markets=tuple(TEST2_SYMBOLS),
         primary_contract_type="DIGITOVER",
         primary_barrier=2,
     )

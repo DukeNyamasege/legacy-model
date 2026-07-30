@@ -760,10 +760,19 @@ class RFDir5Repository:
                     state.protection_mode = VIRTUAL_WAITING_FOR_WIN
             else:
                 if was_recovery:
-                    state.recovery_loss_debt = max(
-                        0.0,
-                        round(state.recovery_loss_debt - float(profit), 2),
-                    )
+                    if recovery_enabled:
+                        # Martingale-enabled accounts buy one recovery PUT sized to
+                        # recover the full accumulated debt plus the current target
+                        # profit. Any residual debt means the recovery did not fully
+                        # complete and must re-enter virtual confirmation.
+                        state.recovery_loss_debt = max(
+                            0.0,
+                            round(state.recovery_loss_debt - float(profit), 2),
+                        )
+                    else:
+                        # Flat-stake users do not chase residual debt. One successful
+                        # PUT recovery completes the cycle and returns them to primary.
+                        state.recovery_loss_debt = 0.0
                     state.recovery_pending = state.recovery_loss_debt >= 0.01
                 else:
                     # A primary win breaks a one-loss streak and cancels its

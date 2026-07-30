@@ -127,7 +127,10 @@
       setText(controls.primary, busy ? "Pausing…" : "Pause Auto Trading");
       controls.primary.classList.remove("join");
       controls.primary.classList.add("stop");
-      controls.stop.style.display = "inline-flex";
+      // Keep only one visible auto-trading action in the compact dashboard.
+      // Showing both Pause and Stop side-by-side made the labels read as one
+      // broken string on narrow layouts and confused the current account state.
+      controls.stop.style.display = "none";
 
       // Running does not always mean "nothing to report". A small account can
       // remain joined while an oversized recovery stake is deliberately skipped,
@@ -139,7 +142,7 @@
       setText(controls.primary, busy ? "Resuming…" : "Resume Auto Trading");
       controls.primary.classList.remove("stop");
       controls.primary.classList.add("join");
-      controls.stop.style.display = "inline-flex";
+      controls.stop.style.display = "none";
       controls.notice.style.display = "block";
       setText(
         controls.notice,

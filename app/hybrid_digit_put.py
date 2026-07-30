@@ -506,20 +506,21 @@ def install_hybrid_digit_put_strategy() -> None:
         self.hybrid_digit_candidates: dict[str, DigitSignal] = {}
         self.hybrid_digit_arbitration_task: asyncio.Task | None = None
         self.hybrid_last_waiting_refresh = 0.0
-        self.hybrid_primary_symbols = (str(cfg.primary_markets[0]),)
-        self.hybrid_recovery_symbols = (str(cfg.recovery_markets[0]),)
-        # V4 intentionally subscribes to one underlying for both the primary
-        # digit contract and the PUT recovery contract.
+        self.hybrid_primary_symbols = tuple(str(symbol) for symbol in cfg.primary_markets)
+        self.hybrid_recovery_symbols = tuple(str(symbol) for symbol in cfg.recovery_markets)
+        # V4 scans every supported volatility market for both the primary digit
+        # contract and the PUT recovery contract, while arbitration still permits
+        # only one selected purchase cycle at a time.
         self.symbols = list(dict.fromkeys((*self.hybrid_primary_symbols, *self.hybrid_recovery_symbols)))
         self.repository._hybrid_digit_by_symbol = {}
         self.repository._hybrid_settlement_callback = lambda payload: _apply_canonical_settlement(self, payload)
         self.logger.warning(
-            "HYBRID_OVER2_PUT_ACTIVE version=%s mode=PER_ACCOUNT primary_market=%s "
-            "recovery_market=%s primary_contract=DIGITOVER barrier=2 "
+            "HYBRID_OVER2_PUT_ACTIVE version=%s mode=PER_ACCOUNT primary_markets=%s "
+            "recovery_markets=%s primary_contract=DIGITOVER barrier=2 "
             "daily_loss_cap=false global_recovery_stop=false",
             cfg.version,
-            self.hybrid_primary_symbols[0],
-            self.hybrid_recovery_symbols[0],
+            ",".join(self.hybrid_primary_symbols),
+            ",".join(self.hybrid_recovery_symbols),
         )
 
     def hybrid_history(self: RFDir5TradingBot, *, symbol: str, prices: list[Any], times: list[Any], pip_size: Any) -> None:

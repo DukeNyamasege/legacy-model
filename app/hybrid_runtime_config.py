@@ -14,8 +14,8 @@ from app.strategy.over2_strategy import TEST2_SYMBOLS
 class HybridRuntimeConfig:
     enabled: bool = True
     version: str = "HYBRID-OVER2-PUT-RECOVERY-V4"
-    primary_markets: tuple[str, ...] = ("1HZ100V",)
-    recovery_markets: tuple[str, ...] = ("1HZ100V",)
+    primary_markets: tuple[str, ...] = TEST2_SYMBOLS
+    recovery_markets: tuple[str, ...] = TEST2_SYMBOLS
     primary_contract_type: str = "DIGITOVER"
     primary_barrier: int = 2
     primary_pattern_ranges: tuple[tuple[int, int], ...] = (

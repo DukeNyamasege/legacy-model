@@ -26,6 +26,15 @@ strategy:
   symbol: 1HZ100V
   symbols:
     - 1HZ100V
+    - 1HZ10V
+    - 1HZ25V
+    - 1HZ50V
+    - 1HZ75V
+    - R_10
+    - R_100
+    - R_25
+    - R_50
+    - R_75
   contract_type: DIGITOVER
   prediction: 2
   duration: 1
@@ -88,6 +97,15 @@ rf_strategy:
   allowed_direction: FALL
   markets:
     - 1HZ100V
+    - 1HZ10V
+    - 1HZ25V
+    - 1HZ50V
+    - 1HZ75V
+    - R_10
+    - R_100
+    - R_25
+    - R_50
+    - R_75
   analysis_movements: 5
   required_quotes: 6
   minimum_history_movements: 100
@@ -123,7 +141,7 @@ rf_strategy:
   relaxed_hmm_minimum_fall_probability: 0.20
 risk:
   recovery_enabled: true
-  recovery_trigger_losses: 1
+  recovery_trigger_losses: 2
   maximum_recovery_balance_fraction: 0.10
   minimum_balance_reserve: 0.00
   maximum_open_contracts_per_account: 1
