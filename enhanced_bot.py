@@ -334,6 +334,21 @@ def optional_epoch_datetime(value: Any) -> Optional[datetime]:
         return None
 
 
+def _is_rate_limit_html(text: str) -> bool:
+    """Return True when the API returned a Cloudflare rate-limit HTML page (Error 1015)."""
+    lower = text.lower()
+    return (
+        "<!doctype html" in lower
+        and (
+            "rate limit" in lower
+            or "1015" in lower
+            or "cloudflare" in lower
+            or "you are being rate limited" in lower
+            or "banned you temporarily" in lower
+        )
+    )
+
+
 async def _rest_request(
     method: str,
     path: str,
@@ -358,6 +373,8 @@ async def _rest_request(
                             return err_body
                         except Exception:
                             text = await resp.text()
+                            if _is_rate_limit_html(text):
+                                return {"error": {"message": "Deriv API rate-limited this IP (Cloudflare 1015) — backing off", "code": "RATE_LIMITED"}}
                             return {"error": {"message": text, "code": f"HTTP_{resp.status}"}}
             else:
                 async with session.get(url, headers=headers) as resp:
@@ -369,6 +386,8 @@ async def _rest_request(
                             return err_body
                         except Exception:
                             text = await resp.text()
+                            if _is_rate_limit_html(text):
+                                return {"error": {"message": "Deriv API rate-limited this IP (Cloudflare 1015) — backing off", "code": "RATE_LIMITED"}}
                             return {"error": {"message": text, "code": f"HTTP_{resp.status}"}}
     except Exception as e:
         return {"error": {"message": str(e), "code": "CONNECTION_ERROR"}}
@@ -874,12 +893,32 @@ class ClientSession:
         app_id = self.bot.app_id
         base_url = self.bot.rest_base_url
         path = f"/trading/v1/options/accounts/{self.account_id}/otp"
-        res = await _rest_request("POST", path, app_id, base_url, token=self.credential)
+        # Throttle concurrent OTP requests to avoid flooding api.derivws.com and
+        # triggering Cloudflare rate-limiting (Error 1015) on startup with many accounts.
+        semaphore = getattr(self.bot, "_otp_semaphore", None)
+        if semaphore is None:
+            semaphore = asyncio.Semaphore(8)
+            self.bot._otp_semaphore = semaphore
+        async with semaphore:
+            res = await _rest_request("POST", path, app_id, base_url, token=self.credential)
         if "error" in res:
             error = res["error"]
+            code = str(error.get("code") or "")
             message = sanitize_account_ids(
                 str(error.get("message") or "OTP request failed")
             )
+            # Cloudflare rate-limit: the whole VPS IP is throttled.
+            # Return None with a long backoff signal instead of spamming retries.
+            if code == "RATE_LIMITED":
+                self.bot.logger.warning(
+                    "OTP_RATE_LIMITED account=%s — Deriv is throttling this IP; "
+                    "this account will pause 60 s before retrying",
+                    mask_account_id(self.account_id),
+                    extra={"token_tag": self.token_tag},
+                )
+                # Attach backoff hint on the error so connect_and_run can read it.
+                error["_backoff_seconds"] = 60
+                return None
             permanent = is_permanent_credential_error(error)
             self.bot._set_account_execution_status(
                 self.managed_account_id,
@@ -917,7 +956,13 @@ class ClientSession:
                 # 1. Fetch short-lived OTP WebSocket URL
                 url = await self.get_otp_url()
                 if not url:
-                    await asyncio.sleep(self.bot.reconnect_delay_seconds)
+                    # If rate-limited, use the longer backoff hint; otherwise use the
+                    # normal reconnect delay plus random jitter to avoid a thundering herd
+                    # when hundreds of accounts retry at the same moment.
+                    import random as _random
+                    base_delay = self.bot.reconnect_delay_seconds
+                    jitter = _random.uniform(0, base_delay * 0.5)
+                    await asyncio.sleep(base_delay + jitter)
                     continue
 
                 self.bot.logger.info(
@@ -1210,6 +1255,9 @@ class TradingBot:
         self.pattern_length = int(self.cfg["strategy"].get("pattern_length", 3))
         self.max_tick_silence_seconds = max(5, int(self.cfg["trade"].get("max_tick_silence_seconds", 45)))
         self.reconnect_delay_seconds = max(1, int(self.cfg["trade"].get("reconnect_delay_seconds", 10)))
+        # Limit concurrent OTP HTTP requests so startup with hundreds of accounts
+        # does not flood api.derivws.com and trigger Cloudflare rate-limiting (Error 1015).
+        self._otp_semaphore: asyncio.Semaphore = asyncio.Semaphore(8)
         self.settle_wait_seconds = max(1, int(self.cfg["trade"].get("settle_wait_seconds", 2)))
         self.settlement_sla_seconds = max(
             0.1,
