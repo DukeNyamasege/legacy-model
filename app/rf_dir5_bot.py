@@ -1593,7 +1593,7 @@ class RFDir5TradingBot(TradingBot):
         stake_amount: float,
         duration_ticks: int,
     ) -> dict[str, Any]:
-        return {
+        parameters: dict[str, Any] = {
             "amount": round(float(stake_amount), 2),
             "basis": "stake",
             "contract_type": signal.contract_type,
@@ -1602,6 +1602,10 @@ class RFDir5TradingBot(TradingBot):
             "duration_unit": "t",
             "underlying_symbol": signal.symbol,
         }
+        contract_type = str(getattr(signal, "contract_type", "")).upper()
+        if contract_type in {"DIGITOVER", "DIGITUNDER"}:
+            parameters["barrier"] = str(getattr(signal, "barrier", "") or "")
+        return parameters
 
     def _contract_parameters(
         self,

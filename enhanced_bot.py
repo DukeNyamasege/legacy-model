@@ -1693,8 +1693,9 @@ class TradingBot:
             if tokens:
                 return tokens, profiles
             self.logger.warning(
-                "Managed accounts are configured, but none are enabled and valid; "
-                "staying in watch mode until a user joins auto trading."
+                "Managed accounts are configured, but none are enabled and valid after "
+                "initial validation; staying in watch mode until a user joins auto "
+                "trading or validation completes."
             )
             return [], {}
 
