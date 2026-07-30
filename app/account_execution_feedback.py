@@ -26,9 +26,17 @@ _TRANSIENT_ERROR_MARKERS = (
     "temporarily unavailable",
     "network",
     "socket",
+)
+# Contract-parameter rejections from the Deriv API.  These are NOT connection
+# drops — treating them as transient causes an infinite reconnect loop where
+# the account is never paused and never successfully trades.  We give them a
+# dedicated non-pausing status so the account retries on the next signal while
+# the dashboard shows a meaningful explanation instead of "RECONNECTING".
+_PARAMETER_ERROR_MARKERS = (
     "input validation",
     "validation failed",
-    "parameters",
+    "invalid parameters",
+    "bad parameters",
 )
 _CREDENTIAL_ERROR_MARKERS = (
     "invalid token",
@@ -71,6 +79,15 @@ def _status_for_purchase_error(error: Any) -> tuple[str, str, bool]:
         return (
             "reconnecting",
             f"Purchase was skipped while the private trading connection recovers: {message}",
+            False,
+        )
+    if any(marker in combined for marker in _PARAMETER_ERROR_MARKERS):
+        # Deriv rejected the contract parameters.  This is not a connection drop —
+        # the account will retry automatically on the next qualifying signal.
+        return (
+            "parameter_error",
+            f"Purchase skipped: contract parameters were rejected by the provider "
+            f"(will retry on next signal): {message}",
             False,
         )
     if any(marker in combined for marker in _CONTRACT_ERROR_MARKERS):

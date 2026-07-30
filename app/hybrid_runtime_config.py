@@ -93,6 +93,15 @@ def install_hybrid_runtime_config() -> None:
         if bool(bot.hybrid_state.get("awaiting_participant_settlement")):
             signal_id = str(bot.hybrid_state.get("primary_loss_signal") or "")
             if not signal_id:
+                # No signal ID — cannot verify settlement; clear the lock so the
+                # bot can return to primary mode instead of deadlocking.
+                bot.hybrid_state["awaiting_participant_settlement"] = False
+                hybrid._save_state(bot)
+                bot.logger.warning(
+                    "HYBRID_SETTLEMENT_WAIT_CLEARED reason=no_signal_id "
+                    "action=recovery_completion_unblocked",
+                )
+                original_maybe_complete(bot)
                 return
             with bot.repository.database.session() as session:
                 rows = session.scalars(
@@ -101,6 +110,24 @@ def install_hybrid_runtime_config() -> None:
                         Trade.managed_account_id.in_(sorted(enabled)),
                     )
                 ).all()
+
+            if not rows:
+                # The primary-loss signal has no Trade records (e.g. trades were
+                # reset or deleted from the database).  Settlement can never be
+                # confirmed; clear the wait flag and allow recovery to complete so
+                # the bot returns to primary DIGITOVER mode immediately.
+                bot.hybrid_state["awaiting_participant_settlement"] = False
+                hybrid._save_state(bot)
+                bot.logger.warning(
+                    "HYBRID_SETTLEMENT_WAIT_CLEARED signal_id=%s "
+                    "reason=no_trade_records_found participants=%s "
+                    "action=recovery_completion_unblocked",
+                    signal_id,
+                    len(enabled),
+                )
+                original_maybe_complete(bot)
+                return
+
             by_account = {
                 int(row.managed_account_id): row
                 for row in rows

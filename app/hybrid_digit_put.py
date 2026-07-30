@@ -171,6 +171,9 @@ def _return_to_primary(bot: RFDir5TradingBot, reason: str) -> None:
             "participants": [],
             "primary_loss_signal": "",
             "recovery_started_at": "",
+            # Clear the settlement-wait flag so a future recovery cycle starts
+            # clean and cannot deadlock when trade records are missing.
+            "awaiting_participant_settlement": False,
         }
     )
     _save_state(bot)
