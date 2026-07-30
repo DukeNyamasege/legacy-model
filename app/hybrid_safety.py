@@ -304,7 +304,7 @@ def _assert_runtime_invariants(bot: RFDir5TradingBot) -> None:
         failures.append(f"recovery_markets={cfg.recovery_markets}")
     if str(cfg.primary_contract_type).upper() != "DIGITOVER" or int(cfg.primary_barrier) != 2:
         failures.append("primary_contract_must_be_DIGITOVER_2")
-    if int(risk.recovery_trigger_losses) != 2:
+    if int(risk.recovery_trigger_losses) not in (1, 2):
         failures.append(f"recovery_trigger_losses={risk.recovery_trigger_losses}")
     if hybrid.HYBRID_STATE_KEY != HYBRID_V4_STATE_KEY:
         failures.append(f"state_key={hybrid.HYBRID_STATE_KEY}")
@@ -364,10 +364,11 @@ def install_hybrid_worker_safety() -> None:
         _assert_runtime_invariants(self)
         self.logger.warning(
             "HYBRID_SAFETY_ACTIVE version=%s recovery_stake_policy=%s "
-            "two_losses_then_two_virtual_wins one_put_per_cycle global_recovery_stop=false "
+            "%s_then_two_virtual_wins one_put_per_cycle global_recovery_stop=false "
             "max_recovery_balance_fraction=%.2f",
             HYBRID_V4_VERSION,
             "martingale_or_flat_base",
+            "one_loss" if int(getattr(self.risk_config, "recovery_trigger_losses", 2)) == 1 else "two_losses",
             float(self.risk_config.maximum_recovery_balance_fraction),
         )
 

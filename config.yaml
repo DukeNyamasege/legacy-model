@@ -123,7 +123,7 @@ rf_strategy:
   relaxed_hmm_minimum_fall_probability: 0.20
 risk:
   recovery_enabled: true
-  recovery_trigger_losses: 2
+  recovery_trigger_losses: 1
   maximum_recovery_balance_fraction: 0.10
   minimum_balance_reserve: 0.00
   maximum_open_contracts_per_account: 1

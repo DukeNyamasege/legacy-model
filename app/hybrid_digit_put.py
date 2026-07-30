@@ -485,6 +485,12 @@ def install_hybrid_digit_put_strategy() -> None:
         strict_init(self, config_path)
         cfg = self.test2_config.hybrid_strategy
         self.hybrid_state = _load_state(self)
+        if _mode(self) == PUT_RECOVERY:
+            try:
+                if not _recovery_account_ids(self):
+                    _return_to_primary(self, "startup_no_recovery_needed")
+            except Exception:
+                pass
         self.hybrid_digit_candidates: dict[str, DigitSignal] = {}
         self.hybrid_digit_arbitration_task: asyncio.Task | None = None
         self.hybrid_last_waiting_refresh = 0.0

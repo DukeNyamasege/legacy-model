@@ -583,6 +583,17 @@ class RFDir5Repository:
                 state.daily_start_balance = balance
                 state.session_profit = 0.0
                 state.equity_high_water = balance
+                state.consecutive_losses = 0
+                state.recovery_loss_debt = 0.0
+                state.recovery_pending = False
+                state.recovery_attempt_active = False
+                state.recovery_pending_since = None
+                state.protection_mode = "NORMAL_MODE"
+                state.entered_virtual_mode_at = None
+                state.virtual_observation_count = 0
+                state.virtual_win_count = 0
+                state.virtual_loss_count = 0
+                state.current_virtual_loss_streak = 0
 
             state.equity_high_water = max(state.equity_high_water, balance)
             if (
@@ -722,7 +733,7 @@ class RFDir5Repository:
             was_recovery = bool(state.recovery_attempt_active)
             state.recovery_attempt_active = False
             previous_mode = state.protection_mode
-            trigger_losses = max(2, int(recovery_trigger_losses or 2))
+            trigger_losses = max(1, int(recovery_trigger_losses or 2))
             if profit <= 0:
                 state.consecutive_losses += 1
                 loss_amount = abs(float(profit))
