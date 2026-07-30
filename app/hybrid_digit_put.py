@@ -294,7 +294,16 @@ def _make_digit_candidate(bot: RFDir5TradingBot, symbol: str, tick: dict[str, An
     metrics = over
 
     # Cheap pre-filter only. Live proposal economics below remain authoritative.
-    if min(metrics["p100"], metrics["p500"], metrics["p1000"]) < 0.60:
+    if min(metrics["p100"], metrics["p500"], metrics["p1000"]) < 0.55:
+        bot.logger.info(
+            "HYBRID_DIGIT_PREFILTER symbol=%s barrier=%s p100=%.5f p500=%.5f p1000=%.5f "
+            "threshold=0.55",
+            symbol,
+            barrier,
+            metrics["p100"],
+            metrics["p500"],
+            metrics["p1000"],
+        )
         return None
 
     quote = Decimal(str(tick["quote"]))
@@ -387,7 +396,7 @@ async def _arbitrate_digits(bot: RFDir5TradingBot) -> None:
             signal.p100 - break_even - cfg.p100_edge,
             signal.p500 - break_even - cfg.p500_edge,
             signal.p1000 - break_even - cfg.p1000_edge,
-            signal.lower95 - break_even,
+            signal.lower95 - break_even + 0.02,
         )
         edge = min(margins)
         signal.validated_edge = edge

@@ -40,9 +40,9 @@ class HybridRuntimeConfig:
     # Kept only so legacy V1 functions remain import-compatible. Production worker
     # replaces those functions with hybrid_recent_digit_bias before the bot starts.
     windows: tuple[int, int, int] = (100, 500, 1000)
-    p100_edge: float = 0.04
-    p500_edge: float = 0.02
-    p1000_edge: float = 0.01
+    p100_edge: float = 0.02
+    p500_edge: float = 0.01
+    p1000_edge: float = 0.005
     confidence_z: float = 1.959963984540054
 
 
