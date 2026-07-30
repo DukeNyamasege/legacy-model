@@ -75,12 +75,9 @@ def _status_for_purchase_error(error: Any) -> tuple[str, str, bool]:
     combined = f"{code} {message}".lower().replace("_", " ")
     if any(marker in combined for marker in _CREDENTIAL_ERROR_MARKERS):
         return "credential_error", f"Trading credential rejected: {message}", True
-    if any(marker in combined for marker in _TRANSIENT_ERROR_MARKERS):
-        return (
-            "reconnecting",
-            f"Purchase was skipped while the private trading connection recovers: {message}",
-            False,
-        )
+    # Parameter errors can arrive with broad wrapper text that also mentions the
+    # connection or purchase channel. Classify them before transient markers so
+    # the dashboard does not get stuck showing a misleading RECONNECTING state.
     if any(marker in combined for marker in _PARAMETER_ERROR_MARKERS):
         # Deriv rejected the contract parameters.  This is not a connection drop —
         # the account will retry automatically on the next qualifying signal.
@@ -88,6 +85,12 @@ def _status_for_purchase_error(error: Any) -> tuple[str, str, bool]:
             "parameter_error",
             f"Purchase skipped: contract parameters were rejected by the provider "
             f"(will retry on next signal): {message}",
+            False,
+        )
+    if any(marker in combined for marker in _TRANSIENT_ERROR_MARKERS):
+        return (
+            "reconnecting",
+            f"Purchase was skipped while the private trading connection recovers: {message}",
             False,
         )
     if any(marker in combined for marker in _CONTRACT_ERROR_MARKERS):
@@ -256,9 +259,12 @@ def install_account_execution_feedback() -> None:
         )
 
         # Never bypass the 2-loss virtual guard. While it is active there is no
-        # real purchase, even at base stake.
+        # real purchase. Martingale-enabled accounts must either place the single
+        # full-debt recovery stake or be blocked by the balance/safety cap; they
+        # must not be silently downgraded to a flat base-stake recovery.
         protect_with_base = bool(
             elevated_recovery
+            and not recovery_enabled
             and base_is_affordable
             and not waiting_virtual
             and (small_account or blocked_recovery)

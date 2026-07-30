@@ -1,14 +1,4 @@
 services:
-  api:
-    networks:
-      test2:
-        ipv4_address: 10.89.0.10
   worker:
     deploy:
       replicas: 1
-
-networks:
-  test2:
-    ipam:
-      config:
-        - subnet: 10.89.0.0/24

@@ -228,7 +228,18 @@ class RiseFallContractTests(unittest.TestCase):
         self.assertEqual(config.rf_strategy.allowed_direction, "FALL")
         self.assertEqual(
             config.rf_strategy.markets,
-            ("R_10", "R_100", "R_75", "1HZ10V", "1HZ75V"),
+            (
+                "1HZ100V",
+                "1HZ10V",
+                "1HZ25V",
+                "1HZ50V",
+                "1HZ75V",
+                "R_10",
+                "R_100",
+                "R_25",
+                "R_50",
+                "R_75",
+            ),
         )
         self.assertEqual(config.rf_strategy.minimum_directional_moves, 3)
         self.assertEqual(config.rf_strategy.minimum_recent_directional_moves, 2)
@@ -256,7 +267,7 @@ class RiseFallContractTests(unittest.TestCase):
             config.rf_strategy.relaxed_hmm_minimum_fall_probability,
         )
         self.assertTrue(config.risk.recovery_enabled)
-        self.assertEqual(config.risk.recovery_trigger_losses, 1)
+        self.assertEqual(config.risk.recovery_trigger_losses, 2)
         self.assertEqual(config.risk.maximum_recovery_balance_fraction, 0.10)
         self.assertEqual(config.virtual_protection.exit_after_wins, 2)
 
