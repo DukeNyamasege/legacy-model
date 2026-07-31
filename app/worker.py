@@ -20,6 +20,7 @@ from app.primary_over2_recovery_gate import install_primary_over2_recovery_gate
 from app.private_buy_parameter_hardening import install_private_buy_parameter_hardening
 from app.private_websocket_rate_limit import install_private_websocket_rate_limit
 from app.production_worker_integration import install_production_worker_integration
+from app.profit_accuracy_guard import install_profit_accuracy_guard
 from app.real_demo_trading_support import install_dual_demo_real_trading_support
 from app.rf_dir5_bot import RFDir5TradingBot
 from app.stake_only_balance_policy import install_stake_only_balance_policy
@@ -97,9 +98,13 @@ async def run_worker() -> None:
     # becomes the authoritative stake planner used by the completed worker.
     install_hybrid_worker_safety()
 
-    # Production recovery policy: one OVER-2 loss arms PUT; repeat PUT after PUT
-    # losses; one successful real PUT exits recovery and returns to OVER-2.
+    # Production recovery policy: one OVER-2 loss arms PUT; a failed real PUT enters
+    # virtual PUT protection until two consecutive virtual wins confirm the next PUT.
     install_one_put_recovery_policy()
+
+    # Dashboard P/L is audited from settled provider rows. Without Martingale is
+    # flat-stake simulation; With Martingale is observed actual P/L when available.
+    install_profit_accuracy_guard()
 
     # Admission requires only the selected stake. No safety/recovery reserve or
     # recovery-balance cap may pre-empt a provider buy request. Deriv returns the
