@@ -9,6 +9,7 @@ PENDING_FROM_COMMIT_FILE="$STATE_DIR/pending_from_commit"
 BACKUP_DIR="$PROJECT_DIR/deploy-backups"
 DEPLOY_STARTED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 STACK_STOPPED=false
+ACCOUNT_REENROLLMENT_STATUS="NOT REQUESTED"
 cd "$PROJECT_DIR"
 
 compose() {
@@ -119,6 +120,26 @@ backup_database() {
 
   rm -f "$backup_file"
   return 1
+}
+
+maybe_reset_account_enrollment() {
+  flag=$(printf '%s' "${DEPLOY_RESET_ACCOUNT_ENROLLMENT:-false}" | tr '[:upper:]' '[:lower:]')
+  case "$flag" in
+    1|true|yes)
+      echo ""
+      echo "8a. Archive existing trader registrations before worker startup"
+      compose run --rm --no-deps api python scripts/reset_account_enrollment.py \
+        --confirm RESET_ALL_AUTO_TRADERS \
+        --deployment-id "$CURRENT_COMMIT" \
+        --allow-open-trades \
+        || return 1
+      ACCOUNT_REENROLLMENT_STATUS="RESET APPLIED"
+      ;;
+    *)
+      ACCOUNT_REENROLLMENT_STATUS="NOT REQUESTED"
+      ;;
+  esac
+  return 0
 }
 
 wait_for_telegram_release() {
@@ -235,6 +256,8 @@ if ! curl -fsS http://127.0.0.1:8080/health/database >/dev/null 2>&1; then
   fail "API database-health endpoint is unavailable."
 fi
 
+maybe_reset_account_enrollment || fail "Account re-enrollment reset failed."
+
 echo ""
 echo "8. Replace worker only after API and PostgreSQL are healthy"
 compose up -d --force-recreate worker || fail "Worker container could not start."
@@ -304,6 +327,7 @@ echo "Demo dashboard        : OK"
 echo "Real dashboard        : OK"
 echo "Dashboard WebSocket   : OK"
 echo "Telegram release note : $TELEGRAM_RELEASE_STATUS"
+echo "Account enrollment    : $ACCOUNT_REENROLLMENT_STATUS"
 echo "Worker                : RUNNING"
 echo "Database              : READY"
 echo "Pre-migration backup  : CREATED"
