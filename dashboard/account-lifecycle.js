@@ -16,6 +16,12 @@
     return body;
   };
 
+  const stoppedStatuses = new Set([
+    "inactive",
+    "disabled",
+    "stopped",
+  ]);
+
   const pausedStatuses = new Set([
     "manual_pause",
     "take_profit",
@@ -102,7 +108,8 @@
 
   function lifecycleFrom(me) {
     const status = String(me?.execution_status || "inactive").trim().toLowerCase();
-    if (status === "stopped") return "stopped";
+    if (stoppedStatuses.has(status)) return "stopped";
+    if (!me?.enabled && !pausedStatuses.has(status)) return "stopped";
     if (!me?.enabled || pausedStatuses.has(status)) return "paused";
     return "running";
   }
@@ -120,6 +127,7 @@
     const lifecycle = lifecycleFrom(me);
     const reason = String(me.execution_status_reason || "").trim();
     const hasToken = Boolean(me.has_trading_api_token) && !Boolean(me.trading_api_token_invalid);
+    const modeLabel = String(me.account_type || "account").toUpperCase();
 
     controls.primary.style.display = "inline-flex";
     controls.primary.dataset.lifecycle = lifecycle;
@@ -157,7 +165,7 @@
       controls.notice.style.display = "block";
       setText(
         controls.notice,
-        reason || "Trading is paused. Resume continues the same session; Stop clears recovery and starts fresh next time."
+        reason || `${modeLabel} trading is paused. Resume continues this same account mode; Stop clears recovery and starts fresh next time.`
       );
     } else {
       setText(controls.primary, busy ? "Starting…" : "Start Auto Trade");
@@ -168,7 +176,7 @@
       controls.notice.style.display = "block";
       setText(
         controls.notice,
-        reason || "Trading is stopped. Start begins from your configured base stake."
+        reason || `${modeLabel} trading is not started. It will not execute until you press Start Auto Trade on this account mode.`
       );
     }
 
