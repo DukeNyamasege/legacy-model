@@ -27,12 +27,6 @@ from app.one_put_recovery_policy import install_one_put_recovery_policy
 
 install_one_put_recovery_policy()
 
-# Dashboard P/L is audited from settled actual trades when available. Without
-# Martingale is flat-stake simulation; With Martingale is observed provider P/L.
-from app.profit_accuracy_guard import install_profit_accuracy_guard
-
-install_profit_accuracy_guard()
-
 from app.api_account_lifecycle import app  # noqa: E402
 from app.account_mode_execution_lock import install_account_mode_execution_lock  # noqa: E402
 from app.database_runtime_hardening import (  # noqa: E402
@@ -41,10 +35,12 @@ from app.database_runtime_hardening import (  # noqa: E402
 from app.production_integration_hardening import (  # noqa: E402
     install_production_integration_hardening,
 )
+from app.profit_accuracy_guard import install_profit_accuracy_guard  # noqa: E402
 
-# The lifecycle routes are now loaded. Install the final per-mode guard after the
-# repository lifecycle patch so Demo and Real cannot start each other implicitly.
+# The lifecycle routes and dashboard consistency wrappers are now loaded. Install
+# final guards afterwards so no older compatibility layer can override them.
 install_account_mode_execution_lock()
+install_profit_accuracy_guard()
 
 # Install the final OAuth/dashboard integration first, then add the final
 # database-aware health and exception boundary. No later wrapper may replace
