@@ -3,6 +3,7 @@
 
   const originalFetch = window.fetch.bind(window);
   const perModeStoragePrefix = "legacy-dashboard-last-good-snapshot-v2:";
+  let personalRefreshTimer = 0;
 
   function normalizedMode(value) {
     return String(value || "demo").toLowerCase() === "real" ? "real" : "demo";
@@ -47,6 +48,15 @@
       localStorage.setItem(`${perModeStoragePrefix}${payloadMode}`, JSON.stringify(data));
     } catch (_) {}
   };
+
+  function queuePersonalRefresh() {
+    window.clearTimeout(personalRefreshTimer);
+    personalRefreshTimer = window.setTimeout(() => {
+      if (!document.hidden) {
+        refresh({ showLoader: false, blocking: false }).catch(() => {});
+      }
+    }, 120);
+  }
 
   function resetModeScopedState(mode) {
     latestSummary = null;
@@ -109,6 +119,9 @@
         lastWebSocketRefresh = Date.now();
         armWsWatchdog();
         renderStatus(message.data);
+        // The global snapshot is now current. Refresh /me and recent contracts
+        // immediately without reloading the page or waiting for the 30-second poll.
+        queuePersonalRefresh();
       } catch (_) {}
     };
     wsConnection.onclose = () => {
