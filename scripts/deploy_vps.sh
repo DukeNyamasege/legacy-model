@@ -3,6 +3,8 @@ set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PROJECT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+STATE_DIR="$PROJECT_DIR/.deployment_state"
+LAST_SUCCESSFUL_COMMIT_FILE="$STATE_DIR/last_successful_commit"
 cd "$PROJECT_DIR"
 
 compose() {
@@ -26,6 +28,10 @@ fail() {
   exit 1
 }
 
+valid_commit() {
+  [ -n "${1:-}" ] && git cat-file -e "$1^{commit}" >/dev/null 2>&1
+}
+
 wait_for_database_container() {
   attempts=0
   while [ "$attempts" -lt 60 ]; do
@@ -39,11 +45,47 @@ wait_for_database_container() {
   return 1
 }
 
+mkdir -p "$STATE_DIR"
+CURRENT_COMMIT=$(git rev-parse HEAD)
+PREVIOUS_COMMIT=${DEPLOY_PREVIOUS_COMMIT:-}
+
+if ! valid_commit "$PREVIOUS_COMMIT" && [ -f "$LAST_SUCCESSFUL_COMMIT_FILE" ]; then
+  PREVIOUS_COMMIT=$(sed -n '1p' "$LAST_SUCCESSFUL_COMMIT_FILE" | tr -d '[:space:]')
+fi
+if ! valid_commit "$PREVIOUS_COMMIT"; then
+  PREVIOUS_COMMIT=$(git rev-parse HEAD^ 2>/dev/null || printf '%s' "$CURRENT_COMMIT")
+fi
+if ! git merge-base --is-ancestor "$PREVIOUS_COMMIT" "$CURRENT_COMMIT" >/dev/null 2>&1; then
+  PREVIOUS_COMMIT=$(git rev-parse HEAD^ 2>/dev/null || printf '%s' "$CURRENT_COMMIT")
+fi
+
+RELEASE_EXPORTS=$(python3 scripts/generate_deployment_release.py \
+  --from-commit "$PREVIOUS_COMMIT" \
+  --to-commit "$CURRENT_COMMIT" \
+  --shell) || fail "Could not generate the deployment release summary."
+eval "$RELEASE_EXPORTS"
+export DEPLOYMENT_RELEASE_ID
+export DEPLOYMENT_RELEASE_FROM
+export DEPLOYMENT_RELEASE_CHANGE_COUNT
+export DEPLOYMENT_RELEASE_MESSAGE_B64
+
 echo "============================================================"
 echo "SAFE VPS DEPLOYMENT"
 echo "============================================================"
-echo "Project: $PROJECT_DIR"
-echo "Commit : $(git rev-parse HEAD 2>/dev/null || echo unknown)"
+echo "Project : $PROJECT_DIR"
+echo "Previous: $PREVIOUS_COMMIT"
+echo "Target  : $CURRENT_COMMIT"
+echo "Changes : $DEPLOYMENT_RELEASE_CHANGE_COUNT"
+
+if [ "$DEPLOYMENT_RELEASE_CHANGE_COUNT" -gt 0 ]; then
+  echo ""
+  echo "Telegram deployment update preview:"
+  python3 scripts/generate_deployment_release.py \
+    --from-commit "$PREVIOUS_COMMIT" \
+    --to-commit "$CURRENT_COMMIT"
+else
+  echo "No new commits were detected; no Telegram deployment announcement will be sent."
+fi
 
 echo ""
 echo "1. Validate Compose, Python and dashboard JavaScript syntax"
@@ -117,18 +159,36 @@ if compose logs --since=10m api worker 2>&1 \
   fail "A fatal startup or integration traceback was detected."
 fi
 
+TELEGRAM_RELEASE_STATUS="NOT REQUIRED"
+if [ "$DEPLOYMENT_RELEASE_CHANGE_COUNT" -gt 0 ]; then
+  if compose logs --since=10m worker 2>&1 \
+    | grep -F "TELEGRAM_DEPLOYMENT_RELEASE_SENT release_id=$(printf '%s' "$CURRENT_COMMIT" | cut -c1-12)" \
+    >/dev/null 2>&1; then
+    TELEGRAM_RELEASE_STATUS="SENT"
+  elif compose logs --since=10m worker 2>&1 \
+    | grep -F "TELEGRAM_DEPLOYMENT_RELEASE_FAILED release_id=$(printf '%s' "$CURRENT_COMMIT" | cut -c1-12)" \
+    >/dev/null 2>&1; then
+    TELEGRAM_RELEASE_STATUS="FAILED — it remains pending and will retry on the next worker start"
+  else
+    TELEGRAM_RELEASE_STATUS="PENDING — check worker logs for Telegram channel discovery"
+  fi
+fi
+
+printf '%s\n' "$CURRENT_COMMIT" > "$LAST_SUCCESSFUL_COMMIT_FILE"
+
 echo ""
 echo "============================================================"
 echo "VPS DEPLOYMENT PASSED"
 echo "============================================================"
 compose ps
-echo "API liveness       : OK"
+echo "API liveness        : OK"
 echo "API/worker readiness: OK"
-echo "OAuth + PKCE        : OK"
-echo "Deriv public WS     : OK"
-echo "Demo dashboard      : OK"
-echo "Real dashboard      : OK"
-echo "Dashboard WebSocket : OK"
-echo "Worker              : RUNNING"
-echo "Database            : READY"
-echo "Named volumes were preserved; docker compose down was not used."
+echo "OAuth + PKCE         : OK"
+echo "Deriv public WS      : OK"
+echo "Demo dashboard       : OK"
+echo "Real dashboard       : OK"
+echo "Dashboard WebSocket  : OK"
+echo "Telegram release note: $TELEGRAM_RELEASE_STATUS"
+echo "Worker               : RUNNING"
+echo "Database             : READY"
+echo "Named volumes and trading history were preserved; no reset was performed."
