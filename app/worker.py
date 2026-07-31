@@ -11,6 +11,7 @@ from app.hybrid_digit_put import install_hybrid_digit_put_strategy
 from app.hybrid_recent_digit_bias import install_recent_digit_bias_strategy
 from app.hybrid_runtime_config import install_hybrid_runtime_config
 from app.hybrid_safety import install_hybrid_worker_safety
+from app.production_worker_integration import install_production_worker_integration
 from app.rf_dir5_bot import RFDir5TradingBot
 from app.stake_only_balance_policy import install_stake_only_balance_policy
 from app.strict_streak_guard import install_strict_streak_guard
@@ -57,6 +58,10 @@ async def run_worker() -> None:
     # recovery-balance cap may pre-empt a provider buy request. Deriv returns the
     # actual insufficient-funds error when a later requested stake cannot be paid.
     install_stake_only_balance_policy()
+
+    # Install last so committed settlement notifications retry and publish again
+    # after the final account-balance reconciliation has reached PostgreSQL.
+    install_production_worker_integration()
 
     # Optional high-volume diagnostics. Disabled unless EVERY_TICK_LOGS=true.
     install_every_tick_debug_logging()
