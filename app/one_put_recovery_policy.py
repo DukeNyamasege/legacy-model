@@ -13,11 +13,7 @@ from app.repositories.rf_dir5_repository import (
     REAL_RECOVERY_PENDING,
     RFDir5Repository,
     StakePlan,
-    VIRTUAL_LOSS,
-    VIRTUAL_STALE,
-    VIRTUAL_TRADE,
     VIRTUAL_WAITING_FOR_WIN,
-    VIRTUAL_WIN,
 )
 from app.repositories.test2_repository import Test2Repository
 from app.rf_dir5_bot import RFDir5TradingBot
@@ -36,24 +32,23 @@ def _reset_virtual_counters(state: AccountRiskState) -> None:
 
 
 def _mode_for_state(state: AccountRiskState | None) -> str:
-    if state is None:
-        return NORMAL_MODE
-    if state.protection_mode == REAL_RECOVERY_PENDING:
+    if state is not None and state.protection_mode == REAL_RECOVERY_PENDING:
         return "RECOVERY_PENDING"
     return NORMAL_MODE
 
 
 def _normalize_stale_virtual_state(state: AccountRiskState) -> None:
-    if state.protection_mode == VIRTUAL_WAITING_FOR_WIN:
-        if float(state.recovery_loss_debt or 0.0) > 0.009:
-            state.protection_mode = REAL_RECOVERY_PENDING
-            state.recovery_pending = True
-            if state.recovery_pending_since is None:
-                state.recovery_pending_since = utc_now()
-        else:
-            _reset_virtual_counters(state)
-            state.recovery_pending = False
-            state.recovery_attempt_active = False
+    if state.protection_mode != VIRTUAL_WAITING_FOR_WIN:
+        return
+    if float(state.recovery_loss_debt or 0.0) > 0.009:
+        state.protection_mode = REAL_RECOVERY_PENDING
+        state.recovery_pending = True
+        if state.recovery_pending_since is None:
+            state.recovery_pending_since = utc_now()
+    else:
+        _reset_virtual_counters(state)
+        state.recovery_pending = False
+        state.recovery_attempt_active = False
 
 
 def _one_put_runtime_invariants(bot: RFDir5TradingBot) -> None:
@@ -93,14 +88,7 @@ def _record_account_outcome_one_put(
     virtual_protection_enabled: bool = False,
     virtual_trigger_actual_losses: int = 1,
 ) -> dict[str, Any]:
-    """One primary loss arms PUT; one real PUT win exits recovery.
-
-    Every monetary loss is added to recovery debt once. A winning recovery PUT
-    clears the whole cycle and returns the account to OVER-2, preventing residual
-    cents or previously recovered losses from being chased again.
-    """
-
-    del virtual_protection_enabled, virtual_trigger_actual_losses
+    del recovery_trigger_losses, virtual_protection_enabled, virtual_trigger_actual_losses
     today = datetime.now(timezone.utc).date().isoformat()
     with self.database.session() as session:
         state = session.get(AccountRiskState, int(managed_account_id), with_for_update=True)
@@ -141,15 +129,8 @@ def _record_account_outcome_one_put(
 
         if float(profit) <= 0:
             loss_amount = round(abs(float(profit)), 2)
-            if was_recovery:
-                # A failed PUT is a new real monetary loss. Add it once and keep
-                # trying PUT until a single real PUT win closes the cycle.
-                state.consecutive_losses = max(1, int(state.consecutive_losses or 0) + 1)
-                state.recovery_loss_debt = round(float(state.recovery_loss_debt or 0.0) + loss_amount, 2)
-            else:
-                # First OVER-2 loss enters recovery immediately.
-                state.consecutive_losses = int(state.consecutive_losses or 0) + 1
-                state.recovery_loss_debt = round(float(state.recovery_loss_debt or 0.0) + loss_amount, 2)
+            state.consecutive_losses = int(state.consecutive_losses or 0) + 1
+            state.recovery_loss_debt = round(float(state.recovery_loss_debt or 0.0) + loss_amount, 2)
             state.recovery_pending = bool(recovery_enabled and state.recovery_loss_debt > 0.009)
             if state.recovery_pending:
                 state.protection_mode = REAL_RECOVERY_PENDING
@@ -159,22 +140,16 @@ def _record_account_outcome_one_put(
                 _reset_virtual_counters(state)
         else:
             if was_recovery:
-                # One winning PUT is the end of this recovery cycle. Do not chase
-                # residual debt from quote rounding or already recovered losses.
-                state.recovery_loss_debt = 0.0
-                state.recovery_pending = False
-                state.recovery_pending_since = None
-                state.recovery_attempt_active = False
-                state.consecutive_losses = 0
-                _reset_virtual_counters(state)
-            else:
-                # Normal OVER-2 win clears any provisional primary loss marker.
-                state.recovery_loss_debt = 0.0
-                state.recovery_pending = False
-                state.recovery_pending_since = None
-                state.recovery_attempt_active = False
-                state.consecutive_losses = 0
-                _reset_virtual_counters(state)
+                # A single winning PUT completes this recovery cycle.  Do not
+                # chase residual cents or re-recover losses that this PUT already
+                # targeted.
+                pass
+            state.recovery_loss_debt = 0.0
+            state.recovery_pending = False
+            state.recovery_pending_since = None
+            state.recovery_attempt_active = False
+            state.consecutive_losses = 0
+            _reset_virtual_counters(state)
 
         state.equity_high_water = max(float(state.equity_high_water or 0.0), float(current_balance))
         state.updated_at = utc_now()
@@ -193,9 +168,7 @@ def _record_account_outcome_one_put(
         }
 
 
-def _plan_stake_one_put(
-    original_plan_stake,
-):
+def _wrap_plan_stake(original_plan_stake):
     def wrapped(
         self: RFDir5Repository,
         *,
@@ -216,7 +189,6 @@ def _plan_stake_one_put(
             if state is not None:
                 _normalize_stale_virtual_state(state)
                 state.updated_at = utc_now()
-
         plan = original_plan_stake(
             self,
             managed_account_id=managed_account_id,
@@ -232,30 +204,25 @@ def _plan_stake_one_put(
             minimum_balance_reserve=minimum_balance_reserve,
         )
         if plan.reason and "virtual protection" in plan.reason.lower():
-            # Fail-safe: virtual mode is no longer part of the production policy.
             base_stake = ceil_cents(max(float(minimum_stake), float(requested_stake)))
             with self.database.session() as session:
                 state = session.get(AccountRiskState, int(managed_account_id), with_for_update=True)
                 debt = float(state.recovery_loss_debt or 0.0) if state is not None else 0.0
-            return StakePlan(base_stake, "one-PUT recovery policy bypassed stale virtual guard", is_recovery=debt > 0.009, recovery_debt=debt)
+            return StakePlan(
+                base_stake,
+                "one-PUT recovery policy bypassed stale virtual guard",
+                is_recovery=debt > 0.009,
+                recovery_debt=debt,
+            )
         return plan
-
     return wrapped
 
 
-def _start_virtual_trade_disabled(
-    self: RFDir5Repository,
-    **kwargs: Any,
-) -> dict[str, Any] | None:
+def _start_virtual_trade_disabled(self: RFDir5Repository, **kwargs: Any) -> dict[str, Any] | None:
     return None
 
 
-def _settle_due_virtual_trades_disabled(
-    self: RFDir5Repository,
-    **kwargs: Any,
-) -> list[dict[str, Any]]:
-    # Close old open virtual rows as stale so they stop appearing as active
-    # recovery blockers. Historical virtual results remain visible for audit.
+def _settle_due_virtual_trades_disabled(self: RFDir5Repository, **kwargs: Any) -> list[dict[str, Any]]:
     with self.database.session() as session:
         rows = session.scalars(
             select(VirtualTrade).where(
@@ -265,7 +232,7 @@ def _settle_due_virtual_trades_disabled(
         ).all()
         now = utc_now()
         for row in rows:
-            row.result = VIRTUAL_STALE
+            row.result = "VIRTUAL_STALE"
             row.reason = "Virtual protection disabled by one-PUT recovery policy"
             row.amount_charged = 0.0
             row.actual_profit_loss = 0.0
@@ -275,7 +242,7 @@ def _settle_due_virtual_trades_disabled(
     return []
 
 
-def _one_put_system_performance_summary(original_summary):
+def _wrap_system_performance_summary(original_summary):
     def wrapped(self: Test2Repository, **kwargs: Any) -> dict[str, Any]:
         result = original_summary(self, **kwargs)
         trades = kwargs.get("trades")
@@ -293,17 +260,13 @@ def _one_put_system_performance_summary(original_summary):
         )
         fixed_profit = 0.0
         martingale_profit = 0.0
-        fixed_peak = 0.0
-        martingale_peak = 0.0
-        max_fixed_drawdown = 0.0
-        max_martingale_drawdown = 0.0
-        current_fixed_drawdown = 0.0
-        current_martingale_drawdown = 0.0
-        total_martingale_staked = 0.0
+        fixed_peak = martingale_peak = 0.0
+        max_fixed_drawdown = max_martingale_drawdown = 0.0
+        current_fixed_drawdown = current_martingale_drawdown = 0.0
         maximum_martingale_stake = base
+        total_martingale_staked = 0.0
         recovery_debt = 0.0
         in_recovery = False
-
         for trade in ordered:
             outcome = str(trade.get("outcome") or "").upper()
             contract_type = str(trade.get("contract_type") or "").upper()
@@ -312,7 +275,6 @@ def _one_put_system_performance_summary(original_summary):
             actual_profit = trade.get("actual_profit")
             fixed_pnl = ratio * base if outcome == "WIN" else -base
             fixed_profit += fixed_pnl
-
             if actual_profit is not None and actual_stake > 0:
                 martingale_stake = actual_stake
                 martingale_pnl = float(actual_profit or 0.0)
@@ -331,7 +293,6 @@ def _one_put_system_performance_summary(original_summary):
             martingale_profit += martingale_pnl
             total_martingale_staked += martingale_stake
             maximum_martingale_stake = max(maximum_martingale_stake, martingale_stake)
-
             if contract_type == "DIGITOVER":
                 if outcome == "LOSS":
                     recovery_debt = round(recovery_debt + abs(martingale_pnl), 2)
@@ -346,63 +307,50 @@ def _one_put_system_performance_summary(original_summary):
                 else:
                     recovery_debt = round(recovery_debt + abs(martingale_pnl), 2)
                     in_recovery = True
-
             fixed_peak = max(fixed_peak, fixed_profit)
             martingale_peak = max(martingale_peak, martingale_profit)
             current_fixed_drawdown = fixed_peak - fixed_profit
             current_martingale_drawdown = martingale_peak - martingale_profit
             max_fixed_drawdown = max(max_fixed_drawdown, current_fixed_drawdown)
             max_martingale_drawdown = max(max_martingale_drawdown, current_martingale_drawdown)
-
         total = len(ordered)
         wins = sum(str(row.get("outcome") or "").upper() == "WIN" for row in ordered)
         losses = total - wins
-        result.update(
-            {
-                "total_trades": total,
-                "wins": wins,
-                "losses": losses,
-                "win_rate": wins / total if total else 0.0,
-                "fixed_pnl": round(fixed_profit, 2),
-                "martingale_pnl": round(martingale_profit, 2),
-                "observed_martingale_pnl": round(martingale_profit, 2),
-                "simulated_martingale_pnl": round(martingale_profit, 2),
-                "maximum_martingale_stake": round(maximum_martingale_stake, 2),
-                "observed_maximum_stake": round(maximum_martingale_stake, 2),
-                "simulated_maximum_martingale_stake": round(maximum_martingale_stake, 2),
-                "max_drawdown_fixed": round(max_fixed_drawdown, 2),
-                "max_drawdown_martingale": round(max_martingale_drawdown, 2),
-                "simulated_max_drawdown_martingale": round(max_martingale_drawdown, 2),
-                "current_drawdown_fixed": round(current_fixed_drawdown, 2),
-                "current_drawdown_martingale": round(current_martingale_drawdown, 2),
-                "simulated_current_drawdown_martingale": round(current_martingale_drawdown, 2),
-                "simulated_max_drawdown_martingale_pct": round(max_martingale_drawdown / total_martingale_staked * 100.0, 2) if total_martingale_staked else 0.0,
-                "simulated_current_drawdown_martingale_pct": round(current_martingale_drawdown / total_martingale_staked * 100.0, 2) if total_martingale_staked else 0.0,
-                "recovery_simulation_policy": "one_over2_loss_repeat_put_until_one_win",
-            }
-        )
+        result.update({
+            "total_trades": total,
+            "wins": wins,
+            "losses": losses,
+            "win_rate": wins / total if total else 0.0,
+            "fixed_pnl": round(fixed_profit, 2),
+            "martingale_pnl": round(martingale_profit, 2),
+            "observed_martingale_pnl": round(martingale_profit, 2),
+            "simulated_martingale_pnl": round(martingale_profit, 2),
+            "maximum_martingale_stake": round(maximum_martingale_stake, 2),
+            "observed_maximum_stake": round(maximum_martingale_stake, 2),
+            "simulated_maximum_martingale_stake": round(maximum_martingale_stake, 2),
+            "max_drawdown_fixed": round(max_fixed_drawdown, 2),
+            "max_drawdown_martingale": round(max_martingale_drawdown, 2),
+            "simulated_max_drawdown_martingale": round(max_martingale_drawdown, 2),
+            "current_drawdown_fixed": round(current_fixed_drawdown, 2),
+            "current_drawdown_martingale": round(current_martingale_drawdown, 2),
+            "simulated_current_drawdown_martingale": round(current_martingale_drawdown, 2),
+            "simulated_max_drawdown_martingale_pct": round(max_martingale_drawdown / total_martingale_staked * 100.0, 2) if total_martingale_staked else 0.0,
+            "simulated_current_drawdown_martingale_pct": round(current_martingale_drawdown / total_martingale_staked * 100.0, 2) if total_martingale_staked else 0.0,
+            "recovery_simulation_policy": "one_over2_loss_repeat_put_until_one_win",
+        })
         return result
-
     return wrapped
 
 
 def install_one_put_recovery_policy() -> None:
-    """Install the user's production recovery rule.
-
-    OVER-2 is the only primary mode. The first real OVER-2 loss arms PUT. PUT
-    repeats on real losses, and the first real PUT win clears the full recovery
-    cycle and returns to OVER-2.
-    """
-
     global _INSTALLED
     if _INSTALLED:
         return
-
     hybrid_safety._assert_runtime_invariants = _one_put_runtime_invariants
     RFDir5Repository.record_account_outcome = _record_account_outcome_one_put
-    RFDir5Repository.plan_stake = _plan_stake_one_put(RFDir5Repository.plan_stake)
+    RFDir5Repository.plan_stake = _wrap_plan_stake(RFDir5Repository.plan_stake)
     RFDir5Repository.start_virtual_trade = _start_virtual_trade_disabled
     RFDir5Repository.settle_due_virtual_trades = _settle_due_virtual_trades_disabled
-    Test2Repository.system_performance_summary = _one_put_system_performance_summary(Test2Repository.system_performance_summary)
+    Test2Repository.system_performance_summary = _wrap_system_performance_summary(Test2Repository.system_performance_summary)
     RFDir5TradingBot._one_put_recovery_policy_installed = True
     _INSTALLED = True
