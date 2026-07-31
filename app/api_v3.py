@@ -8,10 +8,15 @@ from app.hybrid_safety import install_hybrid_accounting_integrity
 install_hybrid_accounting_integrity()
 
 from app.api_account_lifecycle import app  # noqa: E402
+from app.database_runtime_hardening import (  # noqa: E402
+    install_database_runtime_hardening,
+)
 from app.production_integration_hardening import (  # noqa: E402
     install_production_integration_hardening,
 )
 
-# This must be the last API installer. It replaces the final OAuth, dashboard,
-# WebSocket and deployment-health boundaries after all legacy wrappers are loaded.
+# Install the final OAuth/dashboard integration first, then add the final
+# database-aware health and exception boundary. No later wrapper may replace
+# these production routes or return raw SQLAlchemy connection tracebacks.
 install_production_integration_hardening(app)
+install_database_runtime_hardening(app)
