@@ -13,6 +13,7 @@ from app.hybrid_digit_put import install_hybrid_digit_put_strategy
 from app.hybrid_recent_digit_bias import install_recent_digit_bias_strategy
 from app.hybrid_runtime_config import install_hybrid_runtime_config
 from app.hybrid_safety import install_hybrid_worker_safety
+from app.private_buy_parameter_hardening import install_private_buy_parameter_hardening
 from app.private_websocket_rate_limit import install_private_websocket_rate_limit
 from app.production_worker_integration import install_production_worker_integration
 from app.rf_dir5_bot import RFDir5TradingBot
@@ -35,6 +36,10 @@ async def run_worker() -> None:
 
     # All production purchases remain private Deriv WebSocket-only.
     install_websocket_only_execution()
+
+    # Keep authenticated direct buys on the same clean parameter schema that the
+    # proposal already accepted. Do not inject markup fields into contract params.
+    install_private_buy_parameter_hardening()
 
     # Coordinate OTP and private WebSocket startup across every account. This is
     # installed before the bot creates ClientSession tasks, preventing a restart
