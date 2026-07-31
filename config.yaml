@@ -12,7 +12,7 @@ deriv:
   token_encryption_key: ''
 model:
   name: OVER 2 + PUT Virtual Guard
-  version: 10.2.0-put-virtual-guard
+  version: 10.2.1-put-virtual-guard
   brand: Father of Automation Series
   run_id: hybrid_over2_put_v4
 files:
@@ -79,7 +79,10 @@ cooldown:
   require_pattern_reset: false
 recovery:
   enabled: true
-  mode: put_virtual_guard
+  # Keep this value compatible with app.config RecoverySettings. The active
+  # policy is installed by app.one_put_recovery_policy and controlled by the
+  # virtual_protection block below.
+  mode: single_step
   recovery_runs: 1
   debt_threshold: 0.50
   deep_debt_threshold: 2.00
