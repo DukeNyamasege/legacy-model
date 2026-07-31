@@ -9,6 +9,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
+# Reject broken releases during image build instead of discovering a SyntaxError
+# after the API and worker have already been replaced on the VPS.
+RUN python -m compileall -q app scripts
+
 RUN mkdir -p /app/model_artifacts
 RUN useradd --create-home --uid 10001 appuser && chown -R appuser:appuser /app
 USER appuser
