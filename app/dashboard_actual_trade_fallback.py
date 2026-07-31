@@ -36,13 +36,14 @@ def _normalized_outcome(value: Any) -> str:
     return outcome
 
 
-def _expected_profit_ratio(row: Trade, canonical_profit: float) -> float:
-    if canonical_profit > 0:
-        return round(canonical_profit / 0.50, 8)
+def _profit_ratio(row: Trade) -> float:
     buy_price = float(getattr(row, "buy_price", 0.0) or 0.0)
     payout = float(getattr(row, "payout", 0.0) or 0.0)
     if buy_price > 0 and payout > buy_price:
         return round((payout - buy_price) / buy_price, 8)
+    profit = float(getattr(row, "profit", 0.0) or 0.0)
+    if buy_price > 0 and profit > 0:
+        return round(profit / buy_price, 8)
     return 0.90
 
 
@@ -54,11 +55,10 @@ def _actual_model_trades(
 ) -> list[dict[str, Any]]:
     """Build one dashboard model event per settled purchased signal.
 
-    The canonical SystemModelTrade ledger is the preferred source. This fallback
-    exists because the newer private WebSocket OVER-2 path can successfully settle
-    personal `trades` before the canonical row has been written/refreshed. We use
-    only one earliest monetary trade per signal_id, so copied accounts are never
-    summed into the global model statistics.
+    The canonical SystemModelTrade ledger is preferred. Missing/stale signal_ids
+    are filled from the earliest settled monetary Trade row, so the global board
+    can show the same actual P/L as the personal account when only one trader is
+    active, while still avoiding copy-account double counting.
     """
 
     start_utc = start.astimezone(timezone.utc)
@@ -99,7 +99,9 @@ def _actual_model_trades(
             continue
         buy_price = max(1e-9, float(getattr(row, "buy_price", 0.0) or 0.0))
         actual_profit = float(getattr(row, "profit", 0.0) or 0.0)
-        canonical_profit = round(actual_profit * 0.50 / buy_price, 8)
+        actual_payout = float(getattr(row, "payout", 0.0) or 0.0)
+        ratio = _profit_ratio(row)
+        fixed_profit = round(ratio * 0.50, 8) if actual_profit > 0 else -0.50
         duration = getattr(row, "contract_duration", None)
         try:
             duration_ticks = int(duration or 1)
@@ -122,11 +124,14 @@ def _actual_model_trades(
                 "outcome": _normalized_outcome(getattr(row, "outcome", "")),
                 "is_virtual": False,
                 "reference_base_stake": 0.50,
-                "fixed_stake_profit": canonical_profit,
-                "expected_profit_ratio": _expected_profit_ratio(row, canonical_profit),
-                "martingale_stake": 0.0,
-                "martingale_profit": 0.0,
-                "martingale_level": 0,
+                "fixed_stake_profit": fixed_profit,
+                "expected_profit_ratio": ratio,
+                "martingale_stake": buy_price,
+                "martingale_profit": actual_profit,
+                "actual_stake": buy_price,
+                "actual_profit": actual_profit,
+                "actual_payout": actual_payout,
+                "martingale_level": 1 if buy_price > 0.50 + 1e-9 else 0,
                 "recovery_debt_before": 0.0,
                 "recovery_debt_after": 0.0,
                 "source": "actual_trade_fallback",
@@ -137,14 +142,6 @@ def _actual_model_trades(
 
 
 def install_dashboard_actual_trade_fallback() -> None:
-    """Let Global dashboard stats reflect settled private WebSocket trades.
-
-    The normal canonical ledger remains authoritative. Missing signal_ids are
-    filled from settled actual trades, one event per signal, so current personal
-    purchases appear immediately in Total Trades Today, P/L, wins/losses, and
-    period cards even when the canonical writer/cache lags behind.
-    """
-
     global _INSTALLED, _ORIGINAL_SYSTEM_MODEL_TRADES, _ORIGINAL_OPEN_SYSTEM_MODEL_TRADE_COUNT
     if _INSTALLED:
         return
