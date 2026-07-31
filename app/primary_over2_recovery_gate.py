@@ -30,9 +30,8 @@ def _discard_put_queue_until_recovery(bot: RFDir5TradingBot) -> bool:
     """Return True when PUT recovery must remain blocked.
 
     Production starts from OVER 2. PUT/FALL is only a recovery engine after an
-    enabled account has entered recovery state, which is produced by the configured
-    two-real-loss virtual-protection path. Before that point, queued PUT signals
-    are noise and must not become RF_DECISION log spam or purchase candidates.
+    enabled account has one actual OVER-2 loss. After a recovery PUT win, the
+    account returns to OVER 2 and PUT is blocked again.
     """
 
     recovery = _recovery_accounts(bot)
@@ -52,7 +51,7 @@ def _discard_put_queue_until_recovery(bot: RFDir5TradingBot) -> bool:
             setattr(bot, "_primary_over2_gate_last_log_at", now)
             bot.logger.info(
                 "PRIMARY_OVER2_ONLY active=true primary_contract=DIGITOVER barrier=2 "
-                "put_recovery_gate=two_real_losses_then_put "
+                "put_recovery_gate=one_over2_loss_then_repeat_put_until_one_win "
                 "recovery_accounts=0 suppressed_put_candidates=%s",
                 len(queued),
             )
