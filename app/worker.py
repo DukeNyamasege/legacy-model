@@ -14,6 +14,7 @@ from app.hybrid_digit_put import install_hybrid_digit_put_strategy
 from app.hybrid_recent_digit_bias import install_recent_digit_bias_strategy
 from app.hybrid_runtime_config import install_hybrid_runtime_config
 from app.hybrid_safety import install_hybrid_worker_safety
+from app.one_put_recovery_policy import install_one_put_recovery_policy
 from app.primary_over2_recovery_gate import install_primary_over2_recovery_gate
 from app.private_buy_parameter_hardening import install_private_buy_parameter_hardening
 from app.private_websocket_rate_limit import install_private_websocket_rate_limit
@@ -69,8 +70,7 @@ async def run_worker() -> None:
     install_dynamic_deployment_announcement()
 
     # Build the strict PUT recovery brain first. The hybrid controller is installed
-    # afterwards so PUT remains reachable only while the hybrid state is recovering
-    # and still retains the established 15 -> 5 -> 1 confirmation gate.
+    # afterwards so PUT remains reachable only while the hybrid state is recovering.
     install_strict_streak_guard()
     install_hybrid_runtime_config()
 
@@ -80,7 +80,7 @@ async def run_worker() -> None:
     install_hybrid_digit_put_strategy()
 
     # Keep PUT/FALL completely behind the account recovery gate. Before the user's
-    # account has two real losses/recovery state, queued PUT signals are discarded
+    # account has one real OVER-2 loss/recovery state, queued PUT signals are discarded
     # silently and primary execution remains OVER 2 only.
     install_primary_over2_recovery_gate()
 
@@ -91,6 +91,10 @@ async def run_worker() -> None:
     # Install hybrid safety before the final account-balance policy so the latter
     # becomes the authoritative stake planner used by the completed worker.
     install_hybrid_worker_safety()
+
+    # Production recovery policy: one OVER-2 loss arms PUT; repeat PUT after PUT
+    # losses; one successful real PUT exits recovery and returns to OVER-2.
+    install_one_put_recovery_policy()
 
     # Admission requires only the selected stake. No safety/recovery reserve or
     # recovery-balance cap may pre-empt a provider buy request. Deriv returns the
