@@ -27,7 +27,15 @@ class Database:
             path = Path(self.url.removeprefix("sqlite:///"))
             path.parent.mkdir(parents=True, exist_ok=True)
         is_sqlite = self.url.startswith("sqlite")
-        connect_args = {"check_same_thread": False} if is_sqlite else {}
+        if is_sqlite:
+            connect_args: dict[str, object] = {"check_same_thread": False}
+        else:
+            connect_args = {
+                "connect_timeout": max(
+                    1,
+                    int(os.getenv("DATABASE_CONNECT_TIMEOUT_SECONDS", "3")),
+                )
+            }
         engine_options: dict[str, object] = {
             "pool_pre_ping": True,
             "connect_args": connect_args,
