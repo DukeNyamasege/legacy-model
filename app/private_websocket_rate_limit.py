@@ -6,7 +6,6 @@ import random
 import time
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import Any
 
 import websockets
 
@@ -109,7 +108,7 @@ class _PrivateConnectionConfig:
 
 
 class _PrivateConnectionGate:
-    """Coordinate OTP/handshake starts across every account in one worker."""
+    """Coordinate OTP and handshake starts across every account in one worker."""
 
     def __init__(self, config: _PrivateConnectionConfig) -> None:
         self.config = config
@@ -193,27 +192,34 @@ def _rate_backoff(config: _PrivateConnectionConfig, attempt: int) -> float:
     ) + _jitter(config)
 
 
+def _still_configured(session: ClientSession) -> bool:
+    return any(
+        token == session.token
+        for token, _account_id in session.bot.valid_clients
+    )
+
+
 async def _rate_limited_connect_and_run(self: ClientSession) -> None:
     attempt = 0
     gate = _gate_for(self)
     config = gate.config
 
-    while self.bot.is_running and (
-        self.pending_contracts
-        or any(token == self.token for token, _account_id in self.bot.valid_clients)
-    ):
+    while self.bot.is_running and (self.pending_contracts or _still_configured(self)):
         retry_delay = 0.0
         websocket = None
         try:
+            # Space OTP requests as well as WebSocket handshakes. An account that
+            # is permanently rejected is removed by get_otp_url and exits here.
             await gate.wait_for_start_slot()
             url = await self.get_otp_url()
             if not url:
+                if not self.pending_contracts and not _still_configured(self):
+                    return
                 attempt += 1
                 retry_delay = min(
                     config.maximum_backoff_seconds,
                     config.otp_failure_backoff_seconds * (1.5 ** min(attempt - 1, 5)),
                 ) + _jitter(config)
-                await gate.penalize(min(retry_delay, config.rate_limit_backoff_seconds))
                 self.bot.logger.warning(
                     "PRIVATE_WS_OTP_RETRY account=%s attempt=%s backoff_seconds=%.1f",
                     mask_account_id(self.account_id),
@@ -224,67 +230,66 @@ async def _rate_limited_connect_and_run(self: ClientSession) -> None:
                         "masked_account_id": mask_account_id(self.account_id),
                     },
                 )
-                continue
-
-            self.bot.logger.info(
-                "Connecting to private WebSocket for account %s...",
-                mask_account_id(self.account_id),
-                extra={
-                    "token_tag": self.token_tag,
-                    "masked_account_id": mask_account_id(self.account_id),
-                },
-            )
-            websocket = await gate.open_websocket(url)
-            self.ws = websocket
-            self.is_connected = True
-            if any(token == self.token for token, _ in self.bot.valid_clients):
-                self.bot._set_account_execution_status(
-                    self.managed_account_id,
-                    "active",
-                    "Private trading connection is active",
+            else:
+                self.bot.logger.info(
+                    "Connecting to private WebSocket for account %s...",
+                    mask_account_id(self.account_id),
+                    extra={
+                        "token_tag": self.token_tag,
+                        "masked_account_id": mask_account_id(self.account_id),
+                    },
                 )
-            self.pending_requests.clear()
-            attempt = 0
-            self.bot.logger.info(
-                "Private WebSocket connected for account %s",
-                mask_account_id(self.account_id),
-                extra={
-                    "token_tag": self.token_tag,
-                    "masked_account_id": mask_account_id(self.account_id),
-                },
-            )
-            await websocket.send(
-                '{"balance":1,"subscribe":1,"req_id":900001}'
-            )
-
-            for contract_id in list(self.pending_contracts):
-                await self.subscribe_contract(contract_id)
-
-            self.bot._on_private_session_ready(self)
-            ping_task = asyncio.create_task(self._ping_loop())
-            self.reconcile_task = asyncio.create_task(self._reconcile_contracts_loop())
-            try:
-                async for message in websocket:
-                    await self._on_message(message)
-            finally:
-                if self.reconcile_task:
-                    self.reconcile_task.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await self.reconcile_task
-                    self.reconcile_task = None
-                ping_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await ping_task
-
-                self.is_connected = False
-                self.ws = None
-                if any(token == self.token for token, _ in self.bot.valid_clients):
+                websocket = await gate.open_websocket(url)
+                self.ws = websocket
+                self.is_connected = True
+                if _still_configured(self):
                     self.bot._set_account_execution_status(
                         self.managed_account_id,
-                        "reconnecting",
-                        "Private trading connection closed",
+                        "active",
+                        "Private trading connection is active",
                     )
-                retry_delay = _normal_backoff(self, config, attempt)
+                self.pending_requests.clear()
+                attempt = 0
+                self.bot.logger.info(
+                    "Private WebSocket connected for account %s",
+                    mask_account_id(self.account_id),
+                    extra={
+                        "token_tag": self.token_tag,
+                        "masked_account_id": mask_account_id(self.account_id),
+                    },
+                )
+                await websocket.send(
+                    '{"balance":1,"subscribe":1,"req_id":900001}'
+                )
+
+                for contract_id in list(self.pending_contracts):
+                    await self.subscribe_contract(contract_id)
+
+                self.bot._on_private_session_ready(self)
+                ping_task = asyncio.create_task(self._ping_loop())
+                self.reconcile_task = asyncio.create_task(self._reconcile_contracts_loop())
+                try:
+                    async for message in websocket:
+                        await self._on_message(message)
+                finally:
+                    if self.reconcile_task:
+                        self.reconcile_task.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await self.reconcile_task
+                        self.reconcile_task = None
+                    ping_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await ping_task
+
+                    self.is_connected = False
+                    self.ws = None
+                    if _still_configured(self):
+                        self.bot._set_account_execution_status(
+                            self.managed_account_id,
+                            "reconnecting",
+                            "Private trading connection closed",
+                        )
+                    retry_delay = _normal_backoff(self, config, attempt)
 
         except asyncio.CancelledError:
             raise
@@ -321,10 +326,10 @@ async def _rate_limited_connect_and_run(self: ClientSession) -> None:
                         "masked_account_id": mask_account_id(self.account_id),
                     },
                 )
-            if any(token == self.token for token, _ in self.bot.valid_clients):
+            if _still_configured(self):
                 self.bot._set_account_execution_status(
                     self.managed_account_id,
-                    "rate_limited" if rate_limited else "reconnecting",
+                    "reconnecting",
                     (
                         f"Deriv connection rate-limited; retrying in {retry_delay:.0f} seconds"
                         if rate_limited
