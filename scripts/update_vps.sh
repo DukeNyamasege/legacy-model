@@ -28,8 +28,12 @@ write_state_file() {
 command -v git >/dev/null 2>&1 || fail "git is not installed"
 [ -f .env ] || fail "Missing .env. Copy .env.vps.example to .env and configure it first."
 
-git diff --quiet || fail "Tracked files have local changes. Commit or restore them before deployment."
-git diff --cached --quiet || fail "The Git index contains staged changes. Commit or unstage them first."
+# VPS deployments may change executable bits with chmod. Git content safety must
+# still reject real edits, while permission-only changes must not block updates.
+git -c core.fileMode=false diff --quiet \
+  || fail "Tracked file contents have local changes. Commit, back up, or restore them before deployment."
+git -c core.fileMode=false diff --cached --quiet \
+  || fail "The Git index contains staged content changes. Commit or unstage them first."
 
 git checkout main
 mkdir -p "$STATE_DIR"
@@ -59,9 +63,11 @@ git pull --ff-only origin main
 CURRENT_COMMIT=$(git rev-parse HEAD)
 echo "Target VPS commit                       : $CURRENT_COMMIT"
 
-chmod +x scripts/deploy_vps.sh scripts/update_vps.sh
+# Invoke through sh instead of chmod so the updater never modifies its own Git
+# executable bit and never creates a false local-change blocker.
+sh -n scripts/deploy_vps.sh scripts/update_vps.sh
 
-if DEPLOY_PREVIOUS_COMMIT="$PREVIOUS_COMMIT" ./scripts/deploy_vps.sh; then
+if DEPLOY_PREVIOUS_COMMIT="$PREVIOUS_COMMIT" sh ./scripts/deploy_vps.sh; then
   exit 0
 else
   status=$?
