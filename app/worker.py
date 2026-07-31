@@ -12,6 +12,7 @@ from app.hybrid_recent_digit_bias import install_recent_digit_bias_strategy
 from app.hybrid_runtime_config import install_hybrid_runtime_config
 from app.hybrid_safety import install_hybrid_worker_safety
 from app.rf_dir5_bot import RFDir5TradingBot
+from app.stake_only_balance_policy import install_stake_only_balance_policy
 from app.strict_streak_guard import install_strict_streak_guard
 from app.telegram_admin_integration import install_telegram_admin_integration
 from app.tick_debug_logging import install_every_tick_debug_logging
@@ -26,7 +27,7 @@ async def run_worker() -> None:
     # All production purchases remain private Deriv WebSocket-only.
     install_websocket_only_execution()
 
-    # Keep account-level execution explanations and small-account recovery safety.
+    # Keep account-level execution explanations and error diagnostics.
     install_account_execution_feedback()
     install_account_execution_diagnostics()
 
@@ -44,14 +45,18 @@ async def run_worker() -> None:
     install_hybrid_data_integrity()
     install_hybrid_digit_put_strategy()
 
-    # Primary entry uses one recent 20-digit O2/U7 bias; the old 100/500/1000 +
+    # Primary entry uses one recent 20-digit OVER-2 bias; the old 100/500/1000 +
     # Wilson gate is not part of production entry decisions.
     install_recent_digit_bias_strategy()
 
-    # Install last so it wraps the fully assembled strategy. V3 keeps all recovery
-    # contracts at each account's configured base stake, starts a new state epoch,
-    # repairs canonical accounting, and refuses startup if safety invariants drift.
+    # Install hybrid safety before the final account-balance policy so the latter
+    # becomes the authoritative stake planner used by the completed worker.
     install_hybrid_worker_safety()
+
+    # Admission requires only the selected stake. No safety/recovery reserve or
+    # recovery-balance cap may pre-empt a provider buy request. Deriv returns the
+    # actual insufficient-funds error when a later requested stake cannot be paid.
+    install_stake_only_balance_policy()
 
     # Optional high-volume diagnostics. Disabled unless EVERY_TICK_LOGS=true.
     install_every_tick_debug_logging()
