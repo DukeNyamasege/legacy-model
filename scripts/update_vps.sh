@@ -63,8 +63,8 @@ chmod +x scripts/deploy_vps.sh scripts/update_vps.sh
 
 if DEPLOY_PREVIOUS_COMMIT="$PREVIOUS_COMMIT" ./scripts/deploy_vps.sh; then
   exit 0
+else
+  status=$?
+  echo "Deployment failed. The comparison base was retained in $PENDING_FROM_COMMIT_FILE" >&2
+  exit "$status"
 fi
-
-status=$?
-echo "Deployment failed. The comparison base was retained in $PENDING_FROM_COMMIT_FILE" >&2
-exit "$status"
