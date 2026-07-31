@@ -10,6 +10,7 @@ from app.rf_dir5_bot import RFDir5TradingBot
 
 _INSTALLED = False
 _LAST_RELEASE_KEY = "telegram_last_deployment_release_id"
+_READY_RELEASE_PREFIX = "telegram_deployment_release_ready:"
 
 
 def _decode_release_message(value: str) -> str:
@@ -29,24 +30,29 @@ def install_dynamic_deployment_announcement() -> None:
     if _INSTALLED:
         return
 
-    async def send_current_deployment_announcement(self: RFDir5TradingBot) -> None:
-        release_id = os.getenv("DEPLOYMENT_RELEASE_ID", "").strip()
-        message = _decode_release_message(
-            os.getenv("DEPLOYMENT_RELEASE_MESSAGE_B64", "")
-        )
-        change_count = int(os.getenv("DEPLOYMENT_RELEASE_CHANGE_COUNT", "0") or 0)
-
-        if not release_id or not message or change_count <= 0:
-            self.logger.info(
-                "TELEGRAM_DEPLOYMENT_RELEASE_SKIPPED reason=no_new_deployment_changes"
+    async def send_release_after_success(
+        self: RFDir5TradingBot,
+        *,
+        release_id: str,
+        message: str,
+        change_count: int,
+    ) -> None:
+        ready_key = f"{_READY_RELEASE_PREFIX}{release_id}"
+        for _ in range(300):
+            if not self.is_running:
+                return
+            if self.repository.runtime_preference(ready_key) == "ready":
+                break
+            await asyncio.sleep(1.0)
+        else:
+            self.logger.warning(
+                "TELEGRAM_DEPLOYMENT_RELEASE_EXPIRED release_id=%s "
+                "reason=deployment_was_not_marked_successful",
+                release_id[:12],
             )
             return
 
         if self.repository.runtime_preference(_LAST_RELEASE_KEY) == release_id:
-            self.logger.info(
-                "TELEGRAM_DEPLOYMENT_RELEASE_SKIPPED reason=already_sent release_id=%s",
-                release_id[:12],
-            )
             return
 
         for attempt in range(1, 4):
@@ -56,6 +62,7 @@ def install_dynamic_deployment_announcement() -> None:
                         _LAST_RELEASE_KEY,
                         release_id,
                     )
+                    self.repository.set_runtime_preference(ready_key, "sent")
                     self.logger.info(
                         "TELEGRAM_DEPLOYMENT_RELEASE_SENT release_id=%s changes=%s attempt=%s",
                         release_id[:12],
@@ -76,7 +83,53 @@ def install_dynamic_deployment_announcement() -> None:
 
         self.logger.warning(
             "TELEGRAM_DEPLOYMENT_RELEASE_FAILED release_id=%s changes=%s; "
-            "the release remains unsent and will be retried on the next worker start",
+            "the release remains ready and will be retried on the next worker start",
+            release_id[:12],
+            change_count,
+        )
+
+    async def queue_current_deployment_announcement(
+        self: RFDir5TradingBot,
+    ) -> None:
+        release_id = os.getenv("DEPLOYMENT_RELEASE_ID", "").strip()
+        message = _decode_release_message(
+            os.getenv("DEPLOYMENT_RELEASE_MESSAGE_B64", "")
+        )
+        try:
+            change_count = int(
+                os.getenv("DEPLOYMENT_RELEASE_CHANGE_COUNT", "0") or 0
+            )
+        except ValueError:
+            change_count = 0
+
+        if not release_id or not message or change_count <= 0:
+            self.logger.info(
+                "TELEGRAM_DEPLOYMENT_RELEASE_SKIPPED reason=no_new_deployment_changes"
+            )
+            return
+
+        if self.repository.runtime_preference(_LAST_RELEASE_KEY) == release_id:
+            self.logger.info(
+                "TELEGRAM_DEPLOYMENT_RELEASE_SKIPPED reason=already_sent release_id=%s",
+                release_id[:12],
+            )
+            return
+
+        existing = getattr(self, "_deployment_announcement_task", None)
+        if existing is not None and not existing.done():
+            return
+        task = asyncio.create_task(
+            send_release_after_success(
+                self,
+                release_id=release_id,
+                message=message,
+                change_count=change_count,
+            ),
+            name=f"telegram_deployment_release_{release_id[:12]}",
+        )
+        self._deployment_announcement_task = task
+        self.logger.info(
+            "TELEGRAM_DEPLOYMENT_RELEASE_QUEUED release_id=%s changes=%s",
             release_id[:12],
             change_count,
         )
@@ -89,7 +142,7 @@ def install_dynamic_deployment_announcement() -> None:
         self.logger.debug("TELEGRAM_LEGACY_VIRTUAL_ANNOUNCEMENT_DISABLED")
 
     RFDir5TradingBot._send_deploy_announcement = (
-        send_current_deployment_announcement
+        queue_current_deployment_announcement
     )
     RFDir5TradingBot._send_virtual_protection_announcement_once = (
         disable_legacy_virtual_announcement
