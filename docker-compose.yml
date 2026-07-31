@@ -58,6 +58,10 @@ services:
       DEPLOYMENT_ID: vps-worker
       LIVE_TICK_LOG_LINES: ${LIVE_TICK_LOG_LINES:-true}
       INTERNAL_DASHBOARD_REFRESH_URL: http://api:8080/control/internal/dashboard-settlement-refresh
+      DEPLOYMENT_RELEASE_ID: ${DEPLOYMENT_RELEASE_ID:-}
+      DEPLOYMENT_RELEASE_FROM: ${DEPLOYMENT_RELEASE_FROM:-}
+      DEPLOYMENT_RELEASE_CHANGE_COUNT: ${DEPLOYMENT_RELEASE_CHANGE_COUNT:-0}
+      DEPLOYMENT_RELEASE_MESSAGE_B64: ${DEPLOYMENT_RELEASE_MESSAGE_B64:-}
     volumes:
       - test2_models:/app/model_artifacts
     depends_on:
