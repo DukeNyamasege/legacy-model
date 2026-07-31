@@ -112,7 +112,7 @@ compose exec -T api python scripts/production_smoke.py \
 echo ""
 echo "9. Reject fatal startup and integration log errors"
 if compose logs --since=10m api worker 2>&1 \
-  | grep -E 'SyntaxError|ImportError|DATABASE_UNAVAILABLE|Traceback|MODE_AWARE_DASHBOARD_BROADCAST_FAILED' \
+  | grep -E 'SyntaxError|ImportError|DATABASE_UNAVAILABLE|Traceback|MODE_AWARE_DASHBOARD_BROADCAST_FAILED|DASHBOARD_SETTLEMENT_PUSH_DISABLED' \
   >/dev/null 2>&1; then
   fail "A fatal startup or integration traceback was detected."
 fi
