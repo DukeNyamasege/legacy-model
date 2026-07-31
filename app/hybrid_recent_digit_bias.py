@@ -29,8 +29,8 @@ def _recent_bias_metrics(digits: list[int]) -> dict[str, float]:
     over_rate = over_hits / RECENT_WINDOW
     under_rate = sum(digit < 7 for digit in sample) / RECENT_WINDOW
 
-    # OVER 2 loses on 0/1/2. UNDER 7 loses on 7/8/9. The preferred contract is
-    # therefore the side whose losing tail is currently less common.
+    # OVER 2 loses on 0/1/2. UNDER 7 is retained as an informational comparison
+    # only; V4 never switches the primary contract away from DIGITOVER barrier 2.
     low_tail = sum(digit <= 2 for digit in sample)
     high_tail = sum(digit >= 7 for digit in sample)
 
@@ -60,7 +60,8 @@ def _make_recent_candidate(
     bias_gap = float(metrics["bias_gap"])
 
     pattern_ranges = tuple(getattr(cfg, "primary_pattern_ranges", ()))
-    if len(pattern_ranges) != len(trigger_digits := tuple(digits[-5:])):
+    trigger_digits = tuple(digits[-5:])
+    if len(pattern_ranges) != len(trigger_digits):
         return None
     if not all(
         lower <= digit <= upper
@@ -68,17 +69,27 @@ def _make_recent_candidate(
     ):
         return None
 
-    # V4 deliberately trades one side only. The model may decline a signal when
-    # the recent OVER-2 rate is weak, but it never changes the contract to UNDER-7.
+    # V4 deliberately trades one side only. UNDER-7 statistics must not veto a
+    # valid OVER-2 setup because UNDER-7 is not a selectable primary contract.
     contract_type = "DIGITOVER"
     barrier = int(getattr(cfg, "primary_barrier", cfg.over_barrier))
     direction = f"OVER_{barrier}"
     selected_rate = over_rate
-    opposite_rate = under_rate
 
     minimum_rate = float(getattr(cfg, "minimum_recent_hit_rate", MIN_RECENT_HIT_RATE))
-    minimum_gap = float(getattr(cfg, "minimum_bias_gap", MIN_BIAS_GAP))
-    if selected_rate + 1e-12 < minimum_rate or bias_gap + 1e-12 < minimum_gap:
+    if selected_rate + 1e-12 < minimum_rate:
+        bot.logger.info(
+            "HYBRID_RECENT_DIGIT_PREFILTER symbol=%s type=%s barrier=%s "
+            "window=%s over_rate=%.5f minimum_rate=%.5f under_rate=%.5f bias_gap=%.5f",
+            symbol,
+            contract_type,
+            barrier,
+            RECENT_WINDOW,
+            selected_rate,
+            minimum_rate,
+            under_rate,
+            bias_gap,
+        )
         return None
 
     quote = Decimal(str(tick["quote"]))
@@ -87,8 +98,8 @@ def _make_recent_candidate(
     trigger_digits = tuple(digits[-RECENT_WINDOW:])
 
     # The legacy DigitSignal probability slots are retained for compatibility with
-    # the existing candidate ledger. They now carry recent-bias values only; the
-    # V1 100/500/1000 decision gate is not used by this controller.
+    # the existing candidate ledger. They carry recent-bias values only; the old
+    # 100/500/1000 decision gate is not used by this controller.
     return hybrid.DigitSignal(
         signal_id=str(uuid.uuid4()),
         run_id=bot.test2_config.model.run_id,
@@ -110,7 +121,7 @@ def _make_recent_candidate(
         trigger_digits=trigger_digits,
         signal_last_digit=trigger_digits[-1],
         p100=selected_rate,
-        p500=opposite_rate,
+        p500=under_rate,
         p1000=bias_gap,
         lower95=0.0,
         weighted_probability=selected_rate,
@@ -145,12 +156,18 @@ async def _arbitrate_recent_digits(bot: RFDir5TradingBot) -> None:
     )
 
     minimum_edge = float(getattr(cfg, "minimum_live_edge", MIN_LIVE_EDGE))
-    minimum_gap = float(getattr(cfg, "minimum_bias_gap", MIN_BIAS_GAP))
     qualified: list[tuple[float, float, hybrid.DigitSignal, Any]] = []
 
     for signal, economics in proposals:
         if economics is None:
             bot.repository.mark_signal(signal.signal_id, status="SKIP_UNPROFITABLE_QUOTE")
+            bot.logger.warning(
+                "HYBRID_RECENT_DIGIT_PROPOSAL_FAILED signal_id=%s symbol=%s type=%s barrier=%s",
+                signal.signal_id,
+                signal.symbol,
+                signal.contract_type,
+                signal.barrier,
+            )
             continue
 
         selected_rate = float(signal.weighted_probability)
@@ -164,12 +181,14 @@ async def _arbitrate_recent_digits(bot: RFDir5TradingBot) -> None:
         signal.break_even_probability = break_even
         signal.validated_edge = live_edge
 
-        if live_edge + 1e-12 < minimum_edge or bias_gap + 1e-12 < minimum_gap:
+        # V4 is OVER-2 only. The live proposal edge is authoritative; the old
+        # comparison against UNDER-7 is informational and no longer blocks buys.
+        if live_edge + 1e-12 < minimum_edge:
             bot.repository.mark_signal(signal.signal_id, status="SKIP_RECENT_DIGIT_EDGE")
             bot.logger.info(
                 "HYBRID_RECENT_DIGIT_SKIP signal_id=%s symbol=%s type=%s barrier=%s "
                 "window=%s selected_rate=%.5f opposite_rate=%.5f bias_gap=%.5f "
-                "break_even=%.5f live_edge=%.5f",
+                "break_even=%.5f live_edge=%.5f minimum_live_edge=%.5f",
                 signal.signal_id,
                 signal.symbol,
                 signal.contract_type,
@@ -180,6 +199,7 @@ async def _arbitrate_recent_digits(bot: RFDir5TradingBot) -> None:
                 bias_gap,
                 break_even,
                 live_edge,
+                minimum_edge,
             )
             continue
 
@@ -187,9 +207,9 @@ async def _arbitrate_recent_digits(bot: RFDir5TradingBot) -> None:
             bot.repository.mark_signal(signal.signal_id, status="SKIP_STALE_SIGNAL", stale=True)
             continue
 
-        # Rank mainly by live payout edge, then by how clearly one losing tail is
-        # suppressed relative to the other. Only one market wins each cycle.
-        score = live_edge + 0.25 * bias_gap
+        # Rank by executable proposal edge. Bias gap remains a small diagnostic
+        # tie-breaker only and cannot reject an otherwise valid OVER-2 candidate.
+        score = live_edge + 0.05 * bias_gap
         qualified.append((score, selected_rate, signal, economics))
 
     if not qualified:
@@ -235,7 +255,7 @@ async def _arbitrate_recent_digits(bot: RFDir5TradingBot) -> None:
                     account_id,
                     managed_account_id=managed_id,
                 ).get("account", "***"),
-        STRATEGY_VERSION,
+                STRATEGY_VERSION,
             )
 
     original_recovery_enabled = bool(bot.risk_config.recovery_enabled)
@@ -247,12 +267,11 @@ async def _arbitrate_recent_digits(bot: RFDir5TradingBot) -> None:
 
 
 def install_recent_digit_bias_strategy() -> None:
-    """Replace the V1 multi-window O2/U7 entry gate with one recent-digit bias.
+    """Install the recent-window OVER-2 primary entry controller.
 
-    This intentionally does not touch the hybrid state machine or strict PUT
-    scheduler. PUT therefore remains recovery-only and still uses the established
-    15 -> 5 -> 1 confirmation conditions. V3 changes recovery stake sizing only:
-    debt is tracked but never allowed to increase the account's monetary stake.
+    PUT remains recovery-only and retains the established 15 -> 5 -> 1
+    confirmation conditions. Account-level Martingale settings affect recovery
+    stake sizing only; primary entries always use each account's configured base.
     """
     if getattr(hybrid, "_recent_digit_bias_installed", False):
         return
