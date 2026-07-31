@@ -137,7 +137,14 @@ def grouped_updates(subjects: list[str]) -> list[str]:
     rules: tuple[tuple[str, tuple[str, ...], str], ...] = (
         (
             "Community update",
-            ("telegram", "announcement", "release note", "one-command vps update"),
+            (
+                "telegram",
+                "announcement",
+                "release note",
+                "one-command vps update",
+                "deployment-specific",
+                "community update",
+            ),
             "Deployment announcements now describe the exact changes in each release, exclude sensitive details, and are sent only once per deployed version.",
         ),
         (
@@ -147,8 +154,21 @@ def grouped_updates(subjects: list[str]) -> list[str]:
         ),
         (
             "Database",
-            ("database startup", "postgres", "alembic", "migration", "docker dns"),
-            "Database startup, Docker service discovery and migration readiness were strengthened before the API and worker can start.",
+            (
+                "database startup",
+                "database readiness",
+                "database network",
+                "database container",
+                "database outage",
+                "database-aware",
+                "detached database",
+                "postgres",
+                "postgresql",
+                "alembic",
+                "migration",
+                "docker dns",
+            ),
+            "PostgreSQL startup, container networking, service discovery, backups and migration readiness were strengthened before the API and worker can start.",
         ),
         (
             "Dashboard",
@@ -157,7 +177,15 @@ def grouped_updates(subjects: list[str]) -> list[str]:
         ),
         (
             "Trading",
-            ("private websocket", "private webSocket", "purchase", "contract", "settlement", "balance policy"),
+            (
+                "private websocket",
+                "purchase",
+                "contract",
+                "settlement",
+                "balance policy",
+                "stake-only",
+                "account execution",
+            ),
             "Proposal, authenticated purchase, contract monitoring, settlement reconciliation and post-trade balance delivery were strengthened.",
         ),
         (
@@ -167,8 +195,21 @@ def grouped_updates(subjects: list[str]) -> list[str]:
         ),
         (
             "Reliability",
-            ("deploy", "smoke test", "health", "startup", "worker integration", "syntax"),
-            "Deployment now validates builds, database readiness, API/worker health, provider connectivity and dashboard integration before reporting success.",
+            (
+                "deploy",
+                "smoke test",
+                "health",
+                "startup",
+                "worker integration",
+                "syntax",
+                "replacement images",
+                "old worker",
+                "production integration",
+                "hardening",
+                "release comparison",
+                "failure exit status",
+            ),
+            "Deployment now validates builds, preserves failed-release state, repairs service dependencies and checks provider/dashboard integration before reporting success.",
         ),
     )
 
