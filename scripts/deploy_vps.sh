@@ -45,6 +45,23 @@ wait_for_database_container() {
   return 1
 }
 
+wait_for_telegram_release() {
+  short_release=$(printf '%s' "$CURRENT_COMMIT" | cut -c1-12)
+  attempts=0
+  while [ "$attempts" -lt 30 ]; do
+    attempts=$((attempts + 1))
+    logs=$(compose logs --since=5m worker 2>&1 || true)
+    if printf '%s' "$logs" | grep -F "TELEGRAM_DEPLOYMENT_RELEASE_SENT release_id=$short_release" >/dev/null 2>&1; then
+      return 0
+    fi
+    if printf '%s' "$logs" | grep -F "TELEGRAM_DEPLOYMENT_RELEASE_FAILED release_id=$short_release" >/dev/null 2>&1; then
+      return 2
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 mkdir -p "$STATE_DIR"
 CURRENT_COMMIT=$(git rev-parse HEAD)
 PREVIOUS_COMMIT=${DEPLOY_PREVIOUS_COMMIT:-}
@@ -161,16 +178,22 @@ fi
 
 TELEGRAM_RELEASE_STATUS="NOT REQUIRED"
 if [ "$DEPLOYMENT_RELEASE_CHANGE_COUNT" -gt 0 ]; then
-  if compose logs --since=10m worker 2>&1 \
-    | grep -F "TELEGRAM_DEPLOYMENT_RELEASE_SENT release_id=$(printf '%s' "$CURRENT_COMMIT" | cut -c1-12)" \
-    >/dev/null 2>&1; then
-    TELEGRAM_RELEASE_STATUS="SENT"
-  elif compose logs --since=10m worker 2>&1 \
-    | grep -F "TELEGRAM_DEPLOYMENT_RELEASE_FAILED release_id=$(printf '%s' "$CURRENT_COMMIT" | cut -c1-12)" \
-    >/dev/null 2>&1; then
-    TELEGRAM_RELEASE_STATUS="FAILED — it remains pending and will retry on the next worker start"
+  echo ""
+  echo "10. Authorize the queued Telegram release note after all checks passed"
+  if compose exec -T api python scripts/mark_deployment_release_ready.py \
+    --release-id "$CURRENT_COMMIT"; then
+    if wait_for_telegram_release; then
+      TELEGRAM_RELEASE_STATUS="SENT"
+    else
+      release_result=$?
+      if [ "$release_result" -eq 2 ]; then
+        TELEGRAM_RELEASE_STATUS="FAILED — it remains ready and will retry on the next worker start"
+      else
+        TELEGRAM_RELEASE_STATUS="PENDING — check worker logs for Telegram channel discovery"
+      fi
+    fi
   else
-    TELEGRAM_RELEASE_STATUS="PENDING — check worker logs for Telegram channel discovery"
+    TELEGRAM_RELEASE_STATUS="FAILED — deployment passed but the release could not be authorized"
   fi
 fi
 
