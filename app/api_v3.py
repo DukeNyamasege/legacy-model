@@ -14,6 +14,13 @@ from app.hybrid_safety import install_hybrid_accounting_integrity
 
 install_hybrid_accounting_integrity()
 
+# The private WebSocket OVER-2 path can settle personal Trade rows before the
+# canonical system-model row/cache is refreshed. Global dashboard statistics must
+# still show one model event per purchased signal, never a false zero.
+from app.dashboard_actual_trade_fallback import install_dashboard_actual_trade_fallback
+
+install_dashboard_actual_trade_fallback()
+
 from app.api_account_lifecycle import app  # noqa: E402
 from app.database_runtime_hardening import (  # noqa: E402
     install_database_runtime_hardening,
