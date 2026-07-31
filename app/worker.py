@@ -18,6 +18,7 @@ from app.primary_over2_recovery_gate import install_primary_over2_recovery_gate
 from app.private_buy_parameter_hardening import install_private_buy_parameter_hardening
 from app.private_websocket_rate_limit import install_private_websocket_rate_limit
 from app.production_worker_integration import install_production_worker_integration
+from app.real_demo_trading_support import install_dual_demo_real_trading_support
 from app.rf_dir5_bot import RFDir5TradingBot
 from app.stake_only_balance_policy import install_stake_only_balance_policy
 from app.strict_streak_guard import install_strict_streak_guard
@@ -39,6 +40,10 @@ async def run_worker() -> None:
     # Account lifecycle remains account-scoped. Pause preserves recovery/session;
     # Stop/Start Again resets that user's state without stopping other traders.
     install_worker_account_lifecycle()
+
+    # Demo and Real accounts are both valid production targets. Real execution
+    # remains protected by ALLOW_REAL_TRADING plus the explicit acknowledgement.
+    install_dual_demo_real_trading_support()
 
     # All production purchases remain private Deriv WebSocket-only.
     install_websocket_only_execution()
