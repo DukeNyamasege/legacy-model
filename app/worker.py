@@ -6,6 +6,7 @@ import signal
 from app.account_execution_diagnostics import install_account_execution_diagnostics
 from app.account_execution_feedback import install_account_execution_feedback
 from app.account_lifecycle import install_worker_account_lifecycle
+from app.deployment_announcement import install_dynamic_deployment_announcement
 from app.hybrid_data_integrity import install_hybrid_data_integrity
 from app.hybrid_digit_put import install_hybrid_digit_put_strategy
 from app.hybrid_recent_digit_bias import install_recent_digit_bias_strategy
@@ -34,6 +35,10 @@ async def run_worker() -> None:
 
     # Telegram private admin/lifecycle features remain independent of strategy.
     install_telegram_admin_integration()
+
+    # Replace the historical hard-coded deployment message with a release note
+    # generated from the exact commit range installed by scripts/update_vps.sh.
+    install_dynamic_deployment_announcement()
 
     # Build the strict PUT recovery brain first. The hybrid controller is installed
     # afterwards so PUT remains reachable only while the hybrid state is recovering
