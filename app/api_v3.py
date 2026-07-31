@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+# Install account generation filtering before app.api creates its repository. The
+# API then exposes only registrations from the current enrollment generation while
+# historical accounts and their trade relationships remain preserved in PostgreSQL.
+from app.account_reenrollment import install_account_reenrollment
+
+install_account_reenrollment()
+
 # Install canonical fixed-base accounting before app.api creates the repository.
 # The API and worker therefore read the same account-independent model ledger and
 # cannot reintroduce debt-sized Martingale replay in dashboard calculations.
