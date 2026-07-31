@@ -7,6 +7,7 @@ from app.account_execution_diagnostics import install_account_execution_diagnost
 from app.account_execution_feedback import install_account_execution_feedback
 from app.account_lifecycle import install_worker_account_lifecycle
 from app.account_reenrollment import install_account_reenrollment
+from app.dashboard_actual_trade_fallback import install_dashboard_actual_trade_fallback
 from app.deployment_announcement import install_dynamic_deployment_announcement
 from app.hybrid_data_integrity import install_hybrid_data_integrity
 from app.hybrid_digit_put import install_hybrid_digit_put_strategy
@@ -30,6 +31,10 @@ async def run_worker() -> None:
     # the current generation are visible to the worker. Historical registrations
     # and their trade records remain preserved but can never auto-start.
     install_account_reenrollment()
+
+    # Dashboard/Telegram model reports should not show false zero while the new
+    # private WebSocket OVER-2 path has already settled actual personal trades.
+    install_dashboard_actual_trade_fallback()
 
     # Account lifecycle remains account-scoped. Pause preserves recovery/session;
     # Stop/Start Again resets that user's state without stopping other traders.
