@@ -11,7 +11,10 @@ import requests
 
 
 AUTH_BASE_URL = "https://auth.deriv.com/oauth2"
-DEFAULT_SCOPES = ("trade", "application_read", "account_manage")
+# Login needs trading-account discovery and application statistics. Creating or
+# modifying Deriv accounts is not part of this platform, so account_manage is
+# intentionally excluded unless an operator explicitly opts in at runtime.
+DEFAULT_SCOPES = ("trade", "application_read")
 
 
 def build_code_challenge(code_verifier: str) -> str:
@@ -93,11 +96,14 @@ def normalize_token_payload(
     *,
     fallback_refresh_token: str = "",
 ) -> dict[str, Any]:
+    access_token = str(payload.get("access_token", "")).strip()
+    if not access_token:
+        raise ValueError("OAuth token response did not include an access token")
     expires_in = int(payload.get("expires_in", 3600) or 3600)
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=max(60, expires_in))
     return {
         "auth_type": "oauth",
-        "access_token": str(payload.get("access_token", "")).strip(),
+        "access_token": access_token,
         "refresh_token": str(payload.get("refresh_token") or fallback_refresh_token).strip(),
         "expires_at": expires_at.isoformat(),
         "scope": str(payload.get("scope", "")).strip(),
