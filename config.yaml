@@ -12,7 +12,7 @@ deriv:
   token_encryption_key: ''
 model:
   name: OVER 2 + One PUT Recovery
-  version: 10.0.0-hybrid-over2-put-recovery
+  version: 10.1.0-one-put-recovery
   brand: Father of Automation Series
   run_id: hybrid_over2_put_v4
 files:
@@ -78,9 +78,9 @@ cooldown:
   after_five_consecutive_losses_ticks: 12
   require_pattern_reset: false
 recovery:
-  enabled: false
+  enabled: true
   mode: two_run
-  recovery_runs: 2
+  recovery_runs: 1
   debt_threshold: 0.50
   deep_debt_threshold: 2.00
   ladder_stakes: [0.50]
@@ -90,7 +90,7 @@ recovery:
   pause_below_win_rate: 0.58
   resume_above_shadow_win_rate: 0.70
   shadow_min_samples: 30
-  shadow_consecutive_wins_required: 2
+  shadow_consecutive_wins_required: 1
   pause_after_consecutive_losses: 3
 rf_strategy:
   name: RF-PUT5-AI-V8
@@ -141,12 +141,12 @@ rf_strategy:
   relaxed_hmm_minimum_fall_probability: 0.20
 risk:
   recovery_enabled: true
-  recovery_trigger_losses: 2
+  recovery_trigger_losses: 1
   maximum_recovery_balance_fraction: 0.10
   minimum_balance_reserve: 0.00
   maximum_open_contracts_per_account: 1
 virtual_protection:
-  enabled: true
+  enabled: false
   trigger_actual_losses: 2
   exit_after_wins: 2
   max_observations: 0
