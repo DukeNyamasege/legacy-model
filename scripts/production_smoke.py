@@ -23,6 +23,7 @@ from app.config import load_test2_config
 
 
 load_dotenv(ROOT / ".env")
+REDIRECT_STATUS_CODES = {302, 303, 307, 308}
 
 
 class SmokeFailure(RuntimeError):
@@ -101,7 +102,10 @@ def validate_oauth_start(
     config,
 ) -> dict[str, Any]:
     response = session.get(f"{base_url}/oauth/start", timeout=20, allow_redirects=False)
-    require(response.status_code in {302, 307}, f"OAuth start returned {response.status_code}")
+    require(
+        response.status_code in REDIRECT_STATUS_CODES,
+        f"OAuth start returned {response.status_code}",
+    )
     location = response.headers.get("location", "")
     parsed = urlparse(location)
     require(parsed.scheme == "https", "OAuth authorization redirect is not HTTPS")
@@ -132,15 +136,34 @@ def validate_oauth_start(
         timeout=20,
         allow_redirects=False,
     )
-    require(rejected.status_code in {302, 307}, "Invalid OAuth callback was not rejected safely")
+    require(
+        rejected.status_code in REDIRECT_STATUS_CODES,
+        f"Invalid OAuth callback returned non-redirect status {rejected.status_code}",
+    )
     rejected_location = rejected.headers.get("location", "")
-    require("oauth_error=" in rejected_location, "Invalid OAuth state did not produce a safe error redirect")
+    rejected_url = urlparse(rejected_location)
+    rejected_query = parse_qs(rejected_url.query)
+    require(
+        not rejected_url.scheme and not rejected_url.netloc and rejected_url.path == "/",
+        f"Invalid OAuth callback redirected outside the local dashboard: {rejected_location!r}",
+    )
+    oauth_errors = [
+        str(value).strip()
+        for value in rejected_query.get("oauth_error", [])
+        if str(value).strip()
+    ]
+    require(bool(oauth_errors), "Invalid OAuth state did not produce a safe error redirect")
+    require(
+        "code" not in rejected_query and "state" not in rejected_query,
+        "Invalid OAuth callback leaked code or state into the error redirect",
+    )
 
     return {
         "host": parsed.netloc,
         "redirect_uri": required["redirect_uri"],
         "scopes": sorted(scopes),
         "invalid_state_rejected": True,
+        "invalid_state_status": rejected.status_code,
     }
 
 
