@@ -35,8 +35,6 @@
   let busy = false;
 
   function ensureControls() {
-    // Support both dashboard generations. The compact/previous UI uses
-    // #auto-trade-panel; the newer UI used .personal-actions.
     const actions = document.querySelector(".personal-actions") || $("auto-trade-panel");
     const primary = $("btn-toggle-auto");
     if (!actions || !primary) return null;
@@ -45,6 +43,8 @@
     if (legacyResume) legacyResume.style.display = "none";
     const oldStartAgain = $("btn-start-again");
     if (oldStartAgain) oldStartAgain.hidden = true;
+    const oldStop = $("btn-lifecycle-stop");
+    if (oldStop) oldStop.style.display = "none";
 
     let notice = $("account-lifecycle-notice");
     if (!notice) {
@@ -54,7 +54,7 @@
       notice.setAttribute("aria-live", "polite");
       notice.style.cssText = [
         "display:none",
-        "max-width:320px",
+        "max-width:340px",
         "margin-bottom:9px",
         "padding:10px 11px",
         "border:1px solid rgba(255,183,15,.32)",
@@ -68,34 +68,36 @@
       actions.prepend(notice);
     }
 
-    let stop = $("btn-lifecycle-stop");
-    if (!stop) {
-      stop = document.createElement("button");
-      stop.id = "btn-lifecycle-stop";
-      stop.type = "button";
-      stop.textContent = "Stop Auto Trading";
-      stop.className = "stop";
-      stop.style.cssText = [
+    let pauseResume = $("btn-lifecycle-pause-resume");
+    if (!pauseResume) {
+      pauseResume = document.createElement("button");
+      pauseResume.id = "btn-lifecycle-pause-resume";
+      pauseResume.type = "button";
+      pauseResume.textContent = "Pause Auto Trading";
+      pauseResume.className = "join";
+      pauseResume.style.cssText = [
         "display:none",
         "min-height:44px",
         "margin-top:8px",
         "padding:0 15px",
-        "border:1px solid rgba(255,76,85,.72)",
+        "border:1px solid rgba(49,143,255,.65)",
         "border-radius:12px",
-        "background:rgba(150,25,35,.2)",
-        "color:#ffc0c4",
+        "background:rgba(49,143,255,.12)",
+        "color:#d6e9ff",
         "font-weight:700",
         "cursor:pointer",
       ].join(";");
-      primary.insertAdjacentElement("afterend", stop);
-      stop.addEventListener("click", event => {
+      primary.insertAdjacentElement("afterend", pauseResume);
+      pauseResume.addEventListener("click", event => {
         event.preventDefault();
         event.stopPropagation();
-        perform("stop");
+        const lifecycle = pauseResume.dataset.lifecycle || lifecycleFrom(state);
+        if (lifecycle === "running") perform("pause");
+        else if (lifecycle === "paused") perform("resume");
       });
     }
 
-    return { actions, primary, stop, notice };
+    return { actions, primary, pauseResume, notice };
   }
 
   function lifecycleFrom(me) {
@@ -119,49 +121,61 @@
     const reason = String(me.execution_status_reason || "").trim();
     const hasToken = Boolean(me.has_trading_api_token) && !Boolean(me.trading_api_token_invalid);
 
-    controls.primary.disabled = busy || (!hasToken && lifecycle !== "running");
-    controls.stop.disabled = busy;
     controls.primary.style.display = "inline-flex";
+    controls.primary.dataset.lifecycle = lifecycle;
+    controls.pauseResume.dataset.lifecycle = lifecycle;
+    controls.primary.disabled = busy || (lifecycle === "stopped" && !hasToken);
+    controls.pauseResume.disabled = busy || (lifecycle === "paused" && !hasToken);
 
     if (lifecycle === "running") {
-      setText(controls.primary, busy ? "Pausing…" : "Pause Auto Trading");
+      setText(controls.primary, busy ? "Stopping…" : "Stop Auto Trading");
       controls.primary.classList.remove("join");
       controls.primary.classList.add("stop");
-      // Keep only one visible auto-trading action in the compact dashboard.
-      // Showing both Pause and Stop side-by-side made the labels read as one
-      // broken string on narrow layouts and confused the current account state.
-      controls.stop.style.display = "none";
+      controls.primary.dataset.action = "stop";
 
-      // Running does not always mean "nothing to report". A small account can
-      // remain joined while an oversized recovery stake is deliberately skipped,
-      // or while a private connection is recovering. Surface that state here.
+      controls.pauseResume.style.display = "inline-flex";
+      setText(controls.pauseResume, busy ? "Pausing…" : "Pause Auto Trading");
+      controls.pauseResume.classList.remove("stop");
+      controls.pauseResume.classList.add("join");
+      controls.pauseResume.dataset.action = "pause";
+
       const informative = Boolean(reason && !["active", "connecting", "validating"].includes(status));
       controls.notice.style.display = informative ? "block" : "none";
       if (informative) setText(controls.notice, reason);
     } else if (lifecycle === "paused") {
-      setText(controls.primary, busy ? "Resuming…" : "Resume Auto Trading");
-      controls.primary.classList.remove("stop");
-      controls.primary.classList.add("join");
-      controls.stop.style.display = "none";
+      setText(controls.primary, busy ? "Stopping…" : "Stop Auto Trading");
+      controls.primary.classList.remove("join");
+      controls.primary.classList.add("stop");
+      controls.primary.dataset.action = "stop";
+
+      controls.pauseResume.style.display = "inline-flex";
+      setText(controls.pauseResume, busy ? "Resuming…" : "Resume Auto Trading");
+      controls.pauseResume.classList.remove("stop");
+      controls.pauseResume.classList.add("join");
+      controls.pauseResume.dataset.action = "resume";
+
       controls.notice.style.display = "block";
       setText(
         controls.notice,
-        reason || "Trading is paused. Recovery and session state are preserved."
+        reason || "Trading is paused. Resume continues the same session; Stop clears recovery and starts fresh next time."
       );
     } else {
-      setText(controls.primary, busy ? "Starting…" : "Start Trading");
+      setText(controls.primary, busy ? "Starting…" : "Start Auto Trade");
       controls.primary.classList.remove("stop");
       controls.primary.classList.add("join");
-      controls.stop.style.display = "none";
+      controls.primary.dataset.action = "start";
+      controls.pauseResume.style.display = "none";
       controls.notice.style.display = "block";
       setText(
         controls.notice,
-        reason || "Trading is stopped. Starting again begins from your configured base stake."
+        reason || "Trading is stopped. Start begins from your configured base stake."
       );
     }
 
-    controls.primary.dataset.lifecycle = lifecycle;
-    controls.primary.title = !hasToken && lifecycle !== "running"
+    controls.primary.title = !hasToken && lifecycle === "stopped"
+      ? "Fix the trading API token in Settings before starting."
+      : "";
+    controls.pauseResume.title = !hasToken && lifecycle === "paused"
       ? "Fix the trading API token in Settings before resuming."
       : "";
   }
@@ -215,10 +229,8 @@
     primary.addEventListener("click", event => {
       event.preventDefault();
       event.stopImmediatePropagation();
-      const lifecycle = primary.dataset.lifecycle || lifecycleFrom(state);
-      if (lifecycle === "running") perform("pause");
-      else if (lifecycle === "paused") perform("resume");
-      else perform("start");
+      const action = primary.dataset.action || (lifecycleFrom(state) === "stopped" ? "start" : "stop");
+      perform(action);
     }, true);
   }
 
@@ -232,9 +244,6 @@
   bindPrimary();
   loadMe();
 
-  // The restored compact dashboard has its own legacy button renderer. Re-apply
-  // lifecycle labels locally so a 30-second dashboard refresh cannot turn
-  // "Pause" back into the old misleading "Stop/Join" label.
   window.setInterval(() => {
     if (state?.authenticated) render(state);
   }, 1000);
