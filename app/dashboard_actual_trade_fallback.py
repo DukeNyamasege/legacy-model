@@ -52,32 +52,26 @@ def _actual_model_trades(
     *,
     start: datetime,
     end: datetime,
+    viewer_managed_account_id: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Build one dashboard model event per settled purchased signal.
-
-    The canonical SystemModelTrade ledger is preferred. Missing/stale signal_ids
-    are filled from the earliest settled monetary Trade row, so the global board
-    can show the same actual P/L as the personal account when only one trader is
-    active, while still avoiding copy-account double counting.
-    """
-
     start_utc = start.astimezone(timezone.utc)
     end_utc = end.astimezone(timezone.utc)
     with repository.database.session() as session:
-        rows = list(
-            session.scalars(
-                select(Trade)
-                .where(
-                    Trade.signal_id.is_not(None),
-                    Trade.signal_id != "",
-                    Trade.settlement_time.is_not(None),
-                    Trade.profit.is_not(None),
-                    Trade.buy_price.is_not(None),
-                    Trade.buy_price > 0,
-                )
-                .order_by(Trade.signal_id.asc(), Trade.purchase_time.asc(), Trade.id.asc())
-            ).all()
+        statement = (
+            select(Trade)
+            .where(
+                Trade.signal_id.is_not(None),
+                Trade.signal_id != "",
+                Trade.settlement_time.is_not(None),
+                Trade.profit.is_not(None),
+                Trade.buy_price.is_not(None),
+                Trade.buy_price > 0,
+            )
+            .order_by(Trade.signal_id.asc(), Trade.purchase_time.asc(), Trade.id.asc())
         )
+        if viewer_managed_account_id is not None:
+            statement = statement.where(Trade.managed_account_id == int(viewer_managed_account_id))
+        rows = list(session.scalars(statement).all())
 
     by_signal: dict[str, Trade] = {}
     for row in rows:
@@ -107,36 +101,31 @@ def _actual_model_trades(
             duration_ticks = int(duration or 1)
         except (TypeError, ValueError):
             duration_ticks = 1
-        events.append(
-            {
-                "signal_id": signal_id,
-                "run_id": getattr(row, "run_id", getattr(repository, "run_id", 0)),
-                "symbol": str(getattr(row, "symbol", "") or ""),
-                "direction": "OVER_2",
-                "contract_type": str(getattr(row, "contract_type", "") or "DIGITOVER"),
-                "duration_ticks": duration_ticks,
-                "signal_timestamp": timestamp.isoformat(),
-                "settlement_timestamp": _as_utc(
-                    getattr(row, "settlement_time", None)
-                ).isoformat()
-                if _as_utc(getattr(row, "settlement_time", None))
-                else None,
-                "outcome": _normalized_outcome(getattr(row, "outcome", "")),
-                "is_virtual": False,
-                "reference_base_stake": 0.50,
-                "fixed_stake_profit": fixed_profit,
-                "expected_profit_ratio": ratio,
-                "martingale_stake": buy_price,
-                "martingale_profit": actual_profit,
-                "actual_stake": buy_price,
-                "actual_profit": actual_profit,
-                "actual_payout": actual_payout,
-                "martingale_level": 1 if buy_price > 0.50 + 1e-9 else 0,
-                "recovery_debt_before": 0.0,
-                "recovery_debt_after": 0.0,
-                "source": "actual_trade_fallback",
-            }
-        )
+        events.append({
+            "signal_id": signal_id,
+            "run_id": getattr(row, "run_id", getattr(repository, "run_id", 0)),
+            "symbol": str(getattr(row, "symbol", "") or ""),
+            "direction": "OVER_2",
+            "contract_type": str(getattr(row, "contract_type", "") or "DIGITOVER"),
+            "duration_ticks": duration_ticks,
+            "signal_timestamp": timestamp.isoformat(),
+            "settlement_timestamp": _as_utc(getattr(row, "settlement_time", None)).isoformat()
+            if _as_utc(getattr(row, "settlement_time", None)) else None,
+            "outcome": _normalized_outcome(getattr(row, "outcome", "")),
+            "is_virtual": False,
+            "reference_base_stake": 0.50,
+            "fixed_stake_profit": fixed_profit,
+            "expected_profit_ratio": ratio,
+            "martingale_stake": buy_price,
+            "martingale_profit": actual_profit,
+            "actual_stake": buy_price,
+            "actual_profit": actual_profit,
+            "actual_payout": actual_payout,
+            "martingale_level": 1 if buy_price > 0.50 + 1e-9 else 0,
+            "recovery_debt_before": 0.0,
+            "recovery_debt_after": 0.0,
+            "source": "actual_trade_fallback",
+        })
     events.sort(key=lambda item: (str(item.get("signal_timestamp") or ""), str(item.get("signal_id") or "")))
     return events
 
@@ -155,6 +144,8 @@ def install_dashboard_actual_trade_fallback() -> None:
         start: datetime,
         end: datetime,
         include_virtual: bool = False,
+        viewer_managed_account_id: int | None = None,
+        **kwargs: Any,
     ) -> list[dict[str, Any]]:
         canonical = list(
             _ORIGINAL_SYSTEM_MODEL_TRADES(
@@ -162,10 +153,17 @@ def install_dashboard_actual_trade_fallback() -> None:
                 start=start,
                 end=end,
                 include_virtual=include_virtual,
+                viewer_managed_account_id=viewer_managed_account_id,
+                **kwargs,
             )
         )
         merged: dict[str, dict[str, Any]] = {}
-        for item in _actual_model_trades(self, start=start, end=end):
+        for item in _actual_model_trades(
+            self,
+            start=start,
+            end=end,
+            viewer_managed_account_id=viewer_managed_account_id,
+        ):
             signal_id = str(item.get("signal_id") or "")
             if signal_id:
                 merged[signal_id] = item
@@ -177,9 +175,7 @@ def install_dashboard_actual_trade_fallback() -> None:
         values.sort(key=lambda item: (str(item.get("signal_timestamp") or ""), str(item.get("signal_id") or "")))
         return values
 
-    def open_system_model_trade_count_with_actual_fallback(
-        self: Test2Repository,
-    ) -> int:
+    def open_system_model_trade_count_with_actual_fallback(self: Test2Repository) -> int:
         canonical_count = int(_ORIGINAL_OPEN_SYSTEM_MODEL_TRADE_COUNT(self) or 0)
         with self.database.session() as session:
             actual_count = int(
