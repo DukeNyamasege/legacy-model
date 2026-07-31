@@ -21,6 +21,12 @@ from app.dashboard_actual_trade_fallback import install_dashboard_actual_trade_f
 
 install_dashboard_actual_trade_fallback()
 
+# Production recovery policy: one OVER-2 loss arms PUT; repeat PUT after PUT
+# losses; one successful real PUT exits recovery and returns to OVER-2.
+from app.one_put_recovery_policy import install_one_put_recovery_policy
+
+install_one_put_recovery_policy()
+
 from app.api_account_lifecycle import app  # noqa: E402
 from app.database_runtime_hardening import (  # noqa: E402
     install_database_runtime_hardening,
