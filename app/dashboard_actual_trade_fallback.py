@@ -5,7 +5,7 @@ from typing import Any
 
 from sqlalchemy import func, select
 
-from app.models import Trade
+from app.models import CandidateSignalRecord, ProposalRecord, Trade
 from app.repositories.test2_repository import Test2Repository
 
 _INSTALLED = False
@@ -36,7 +36,7 @@ def _normalized_outcome(value: Any) -> str:
     return outcome
 
 
-def _profit_ratio(row: Trade) -> float:
+def _profit_ratio(row: Trade, proposal: ProposalRecord | None = None) -> float:
     buy_price = float(getattr(row, "buy_price", 0.0) or 0.0)
     payout = float(getattr(row, "payout", 0.0) or 0.0)
     if buy_price > 0 and payout > buy_price:
@@ -44,7 +44,26 @@ def _profit_ratio(row: Trade) -> float:
     profit = float(getattr(row, "profit", 0.0) or 0.0)
     if buy_price > 0 and profit > 0:
         return round(profit / buy_price, 8)
+    if proposal is not None:
+        stake = float(getattr(proposal, "stake", 0.0) or 0.0)
+        potential = float(getattr(proposal, "potential_profit", 0.0) or 0.0)
+        if stake > 0 and potential > 0:
+            return round(potential / stake, 8)
     return 0.90
+
+
+def _direction(contract_type: str, barrier: str) -> str:
+    normalized = str(contract_type or "").strip().upper()
+    barrier_text = str(barrier or "").strip()
+    if normalized == "PUT":
+        return "FALL"
+    if normalized == "CALL":
+        return "RISE"
+    if normalized == "DIGITOVER":
+        return f"OVER_{barrier_text or '2'}"
+    if normalized == "DIGITUNDER":
+        return f"UNDER_{barrier_text or '7'}"
+    return normalized or "UNKNOWN"
 
 
 def _actual_model_trades(
@@ -72,6 +91,22 @@ def _actual_model_trades(
         if viewer_managed_account_id is not None:
             statement = statement.where(Trade.managed_account_id == int(viewer_managed_account_id))
         rows = list(session.scalars(statement).all())
+        signal_ids = {str(getattr(row, "signal_id", "") or "").strip() for row in rows}
+        signal_ids.discard("")
+        signals = {
+            str(row.signal_id): row
+            for row in session.scalars(
+                select(CandidateSignalRecord).where(
+                    CandidateSignalRecord.signal_id.in_(signal_ids)
+                )
+            ).all()
+        } if signal_ids else {}
+        proposals = {
+            str(row.signal_id): row
+            for row in session.scalars(
+                select(ProposalRecord).where(ProposalRecord.signal_id.in_(signal_ids))
+            ).all()
+        } if signal_ids else {}
 
     by_signal: dict[str, Trade] = {}
     for row in rows:
@@ -84,6 +119,9 @@ def _actual_model_trades(
         outcome = _normalized_outcome(getattr(row, "outcome", ""))
         if outcome not in {"WIN", "LOSS"}:
             continue
+        # One model event per signal. For the current one-account deployment this
+        # is exactly the personal trade; after scaling it prevents copier rows
+        # from inflating model statistics.
         by_signal.setdefault(signal_id, row)
 
     events: list[dict[str, Any]] = []
@@ -91,27 +129,46 @@ def _actual_model_trades(
         timestamp = _trade_timestamp(row)
         if timestamp is None:
             continue
-        buy_price = max(1e-9, float(getattr(row, "buy_price", 0.0) or 0.0))
-        actual_profit = float(getattr(row, "profit", 0.0) or 0.0)
-        actual_payout = float(getattr(row, "payout", 0.0) or 0.0)
-        ratio = _profit_ratio(row)
-        fixed_profit = round(ratio * 0.50, 8) if actual_profit > 0 else -0.50
+        signal = signals.get(signal_id)
+        proposal = proposals.get(signal_id)
+        buy_price = round(float(getattr(row, "buy_price", 0.0) or 0.0), 2)
+        actual_profit = round(float(getattr(row, "profit", 0.0) or 0.0), 2)
+        actual_payout = round(float(getattr(row, "payout", 0.0) or 0.0), 2)
+        ratio = _profit_ratio(row, proposal)
+        outcome = _normalized_outcome(getattr(row, "outcome", ""))
+        contract_type = str(
+            getattr(signal, "contract_type", "")
+            or getattr(proposal, "contract_type", "")
+            or "DIGITOVER"
+        ).strip().upper()
+        barrier = str(
+            getattr(signal, "barrier", "")
+            or getattr(proposal, "barrier", "")
+            or ("2" if contract_type == "DIGITOVER" else "")
+        ).strip()
+        symbol = str(
+            getattr(signal, "symbol", "")
+            or getattr(proposal, "symbol", "")
+            or ""
+        ).strip()
+        fixed_profit = round(ratio * 0.50, 8) if outcome == "WIN" else -0.50
         duration = getattr(row, "contract_duration", None)
         try:
             duration_ticks = int(duration or 1)
         except (TypeError, ValueError):
             duration_ticks = 1
+        settled_at = _as_utc(getattr(row, "settlement_time", None))
         events.append({
             "signal_id": signal_id,
-            "run_id": getattr(row, "run_id", getattr(repository, "run_id", 0)),
-            "symbol": str(getattr(row, "symbol", "") or ""),
-            "direction": "OVER_2",
-            "contract_type": str(getattr(row, "contract_type", "") or "DIGITOVER"),
+            "run_id": getattr(repository, "run_id", 0),
+            "symbol": symbol,
+            "direction": _direction(contract_type, barrier),
+            "contract_type": contract_type,
+            "barrier": barrier,
             "duration_ticks": duration_ticks,
             "signal_timestamp": timestamp.isoformat(),
-            "settlement_timestamp": _as_utc(getattr(row, "settlement_time", None)).isoformat()
-            if _as_utc(getattr(row, "settlement_time", None)) else None,
-            "outcome": _normalized_outcome(getattr(row, "outcome", "")),
+            "settlement_timestamp": settled_at.isoformat() if settled_at else None,
+            "outcome": outcome,
             "is_virtual": False,
             "reference_base_stake": 0.50,
             "fixed_stake_profit": fixed_profit,
