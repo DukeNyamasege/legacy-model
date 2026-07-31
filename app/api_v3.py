@@ -7,4 +7,11 @@ from app.hybrid_safety import install_hybrid_accounting_integrity
 
 install_hybrid_accounting_integrity()
 
-from app.api_account_lifecycle import app  # noqa: E402,F401
+from app.api_account_lifecycle import app  # noqa: E402
+from app.production_integration_hardening import (  # noqa: E402
+    install_production_integration_hardening,
+)
+
+# This must be the last API installer. It replaces the final OAuth, dashboard,
+# WebSocket and deployment-health boundaries after all legacy wrappers are loaded.
+install_production_integration_hardening(app)
