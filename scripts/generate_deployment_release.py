@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MAX_BULLETS = 18
+MAX_BULLETS = 20
 
 
 class ReleaseGenerationError(RuntimeError):
@@ -53,10 +53,20 @@ def is_ancestor(older: str, newer: str) -> bool:
 
 def sanitize_subject(subject: str) -> str:
     text = str(subject or "").strip()
-    text = re.sub(r"^(?:feat|fix|perf|refactor|security|chore|build|ci|docs|test)(?:\([^)]*\))?:\s*", "", text, flags=re.I)
+    text = re.sub(
+        r"^(?:feat|fix|perf|refactor|security|chore|build|ci|docs|test)(?:\([^)]*\))?:\s*",
+        "",
+        text,
+        flags=re.I,
+    )
     text = re.sub(r"https?://\S+", "the service endpoint", text, flags=re.I)
     text = re.sub(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b", "[redacted]", text)
-    text = re.sub(r"\b(?:pat_|ory_at_)[A-Za-z0-9._-]{12,}\b", "[redacted credential]", text, flags=re.I)
+    text = re.sub(
+        r"\b(?:pat_|ory_at_)[A-Za-z0-9._-]{12,}\b",
+        "[redacted credential]",
+        text,
+        flags=re.I,
+    )
     text = re.sub(r"\b\d{1,3}(?:\.\d{1,3}){3}\b", "[redacted host]", text)
     text = re.sub(r"\b[A-Fa-f0-9]{32,}\b", "[redacted identifier]", text)
     text = re.sub(r"\b[A-Z]{2,6}\d{4,}\b", "[redacted account]", text)
@@ -102,6 +112,7 @@ def release_subjects(previous: str, current: str) -> list[str]:
         "document ",
         "update readme",
         "add production architecture",
+        "ignore local deployment release state",
     )
     cleaned: list[str] = []
     seen: set[str] = set()
@@ -117,11 +128,74 @@ def release_subjects(previous: str, current: str) -> list[str]:
     return cleaned
 
 
+def grouped_updates(subjects: list[str]) -> list[str]:
+    """Collapse implementation commits while preserving unmatched future changes."""
+    lower_subjects = [subject.lower() for subject in subjects]
+    consumed: set[int] = set()
+    updates: list[str] = []
+
+    rules: tuple[tuple[str, tuple[str, ...], str], ...] = (
+        (
+            "Community update",
+            ("telegram", "announcement", "release note", "one-command vps update"),
+            "Deployment announcements now describe the exact changes in each release, exclude sensitive details, and are sent only once per deployed version.",
+        ),
+        (
+            "Authentication",
+            ("oauth", "pkce", "authentication", "scope", "redirect"),
+            "Login and account linking were strengthened with strict OAuth state, PKCE, redirect and least-privilege scope checks.",
+        ),
+        (
+            "Database",
+            ("database startup", "postgres", "alembic", "migration", "docker dns"),
+            "Database startup, Docker service discovery and migration readiness were strengthened before the API and worker can start.",
+        ),
+        (
+            "Dashboard",
+            ("dashboard", "realtime", "real-time", "websocket", "settlement delivery"),
+            "Demo and Real dashboard data now stays account-mode correct and refreshes promptly after settlements and balance updates.",
+        ),
+        (
+            "Trading",
+            ("private websocket", "private webSocket", "purchase", "contract", "settlement", "balance policy"),
+            "Proposal, authenticated purchase, contract monitoring, settlement reconciliation and post-trade balance delivery were strengthened.",
+        ),
+        (
+            "Strategy",
+            ("over2", "over 2", "under7", "under 7", "strategy", "signal gate", "recovery"),
+            "Obsolete strategy gates were removed and the active entry, recovery and account-protection rules were aligned with the current model.",
+        ),
+        (
+            "Reliability",
+            ("deploy", "smoke test", "health", "startup", "worker integration", "syntax"),
+            "Deployment now validates builds, database readiness, API/worker health, provider connectivity and dashboard integration before reporting success.",
+        ),
+    )
+
+    for category, keywords, summary in rules:
+        matched = [
+            index
+            for index, lower in enumerate(lower_subjects)
+            if index not in consumed and any(keyword.lower() in lower for keyword in keywords)
+        ]
+        if not matched:
+            continue
+        consumed.update(matched)
+        updates.append(f"{category}: {summary}")
+
+    for index, subject in enumerate(subjects):
+        if index in consumed:
+            continue
+        updates.append(f"{category_for(subject)}: {subject}")
+    return updates
+
+
 def build_message(subjects: list[str]) -> str:
     if not subjects:
         return ""
 
-    visible = subjects[:MAX_BULLETS]
+    updates = grouped_updates(subjects)
+    visible = updates[:MAX_BULLETS]
     lines = [
         "🚀 NEW SYSTEM DEPLOYMENT",
         "",
@@ -129,11 +203,10 @@ def build_message(subjects: list[str]) -> str:
         "",
         "What changed:",
     ]
-    for subject in visible:
-        lines.append(f"• {category_for(subject)}: {subject}")
-    if len(subjects) > len(visible):
+    lines.extend(f"• {update}" for update in visible)
+    if len(updates) > len(visible):
         lines.append(
-            f"• System: {len(subjects) - len(visible)} additional validated maintenance updates were included."
+            f"• System: {len(updates) - len(visible)} additional validated maintenance updates were included."
         )
     lines.extend(
         (
