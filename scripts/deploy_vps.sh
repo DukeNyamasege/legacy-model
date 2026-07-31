@@ -55,20 +55,27 @@ echo "2. Pull PostgreSQL and build exact API/worker images"
 compose pull database || fail "Failed to pull the PostgreSQL image."
 compose build api worker || fail "API/worker image build failed."
 
+# Stop the old execution process only after the replacement images have passed
+# Compose, syntax, and image-build validation. This prevents duplicate execution
+# during migrations without taking the working bot down for a failed build.
 echo ""
-echo "3. Start PostgreSQL first and preserve its named volume"
+echo "3. Stop old worker after replacement images validate"
+compose stop worker || true
+
+echo ""
+echo "4. Start PostgreSQL first and preserve its named volume"
 compose up -d database || fail "Database container could not start."
 wait_for_database_container || fail "PostgreSQL did not become healthy."
 
 echo ""
-echo "4. Verify Docker DNS and run migrations once"
+echo "5. Verify Docker DNS and run migrations once"
 compose run --rm --no-deps worker sh -ec '
   python scripts/wait_for_database.py --timeout 180
   alembic upgrade head
 ' || fail "Database DNS/readiness or Alembic migration failed."
 
 echo ""
-echo "5. Replace API and wait until its health endpoint passes"
+echo "6. Replace API and wait until its health endpoint passes"
 compose up -d --force-recreate api || fail "API container could not start."
 compose up -d --wait --wait-timeout 180 database api || fail "API did not become healthy."
 
@@ -77,7 +84,7 @@ if ! curl -fsS http://127.0.0.1:8080/health >/dev/null 2>&1; then
 fi
 
 echo ""
-echo "6. Replace worker only after API and database are healthy"
+echo "7. Replace worker only after API and database are healthy"
 compose up -d --force-recreate worker || fail "Worker container could not start."
 sleep 15
 
