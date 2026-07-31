@@ -6,6 +6,7 @@ import signal
 from app.account_execution_diagnostics import install_account_execution_diagnostics
 from app.account_execution_feedback import install_account_execution_feedback
 from app.account_lifecycle import install_worker_account_lifecycle
+from app.account_mode_execution_lock import install_account_mode_execution_lock
 from app.account_reenrollment import install_account_reenrollment
 from app.dashboard_actual_trade_fallback import install_dashboard_actual_trade_fallback
 from app.deployment_announcement import install_dynamic_deployment_announcement
@@ -41,6 +42,10 @@ async def run_worker() -> None:
     # Account lifecycle remains account-scoped. Pause preserves recovery/session;
     # Stop/Start Again resets that user's state without stopping other traders.
     install_worker_account_lifecycle()
+
+    # Demo and Real are separate manual lifecycles. Worker validation, OAuth/API
+    # refresh, and dashboard repair must never start Real because Demo is running.
+    install_account_mode_execution_lock()
 
     # Demo and Real accounts are both valid production targets. Real execution
     # remains protected by ALLOW_REAL_TRADING plus the explicit acknowledgement.
