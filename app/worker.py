@@ -13,6 +13,7 @@ from app.hybrid_digit_put import install_hybrid_digit_put_strategy
 from app.hybrid_recent_digit_bias import install_recent_digit_bias_strategy
 from app.hybrid_runtime_config import install_hybrid_runtime_config
 from app.hybrid_safety import install_hybrid_worker_safety
+from app.primary_over2_recovery_gate import install_primary_over2_recovery_gate
 from app.private_buy_parameter_hardening import install_private_buy_parameter_hardening
 from app.private_websocket_rate_limit import install_private_websocket_rate_limit
 from app.production_worker_integration import install_production_worker_integration
@@ -67,6 +68,11 @@ async def run_worker() -> None:
     # directional ledger before a canonical SystemModelTrade can reference them.
     install_hybrid_data_integrity()
     install_hybrid_digit_put_strategy()
+
+    # Keep PUT/FALL completely behind the account recovery gate. Before the user's
+    # account has two real losses/recovery state, queued PUT signals are discarded
+    # silently and primary execution remains OVER 2 only.
+    install_primary_over2_recovery_gate()
 
     # Primary entry uses one recent 20-digit OVER-2 bias; the old 100/500/1000 +
     # Wilson gate is not part of production entry decisions.
