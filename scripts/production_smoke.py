@@ -220,8 +220,16 @@ async def verify_deriv_public_websocket(url: str) -> dict[str, Any]:
             response = json.loads(await asyncio.wait_for(websocket.recv(), timeout=remaining))
             if response.get("req_id") != req_id:
                 continue
-            require("error" not in response, f"Deriv public WebSocket error: {response['error']}")
-            require(response.get("msg_type") == "ping", "Unexpected Deriv ping response")
+            if "error" in response:
+                raise SmokeFailure(
+                    "Deriv public WebSocket error: "
+                    + json.dumps(response.get("error"), sort_keys=True)[:700]
+                )
+            require(
+                response.get("msg_type") == "ping",
+                "Unexpected Deriv public WebSocket response: "
+                + json.dumps(response, sort_keys=True)[:700],
+            )
             return {"url": url, "msg_type": response.get("msg_type")}
 
 
