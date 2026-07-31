@@ -37,13 +37,13 @@ CURRENT_CHECKOUT=$(git rev-parse HEAD)
 PREVIOUS_COMMIT=${DEPLOY_PREVIOUS_COMMIT:-}
 
 # A failed deployment can leave the Git checkout newer than the code that last
-# passed deployment. Prefer durable deployment state over the current checkout
-# so Telegram release notes never lose changes from a failed attempt.
-if ! valid_commit "$PREVIOUS_COMMIT" && [ -f "$PENDING_FROM_COMMIT_FILE" ]; then
-  PREVIOUS_COMMIT=$(sed -n '1p' "$PENDING_FROM_COMMIT_FILE" | tr -d '[:space:]')
-fi
+# passed deployment. Prefer the confirmed successful marker. The pending marker
+# is only a fallback for an attempt made before any successful marker existed.
 if ! valid_commit "$PREVIOUS_COMMIT" && [ -f "$LAST_SUCCESSFUL_COMMIT_FILE" ]; then
   PREVIOUS_COMMIT=$(sed -n '1p' "$LAST_SUCCESSFUL_COMMIT_FILE" | tr -d '[:space:]')
+fi
+if ! valid_commit "$PREVIOUS_COMMIT" && [ -f "$PENDING_FROM_COMMIT_FILE" ]; then
+  PREVIOUS_COMMIT=$(sed -n '1p' "$PENDING_FROM_COMMIT_FILE" | tr -d '[:space:]')
 fi
 if ! valid_commit "$PREVIOUS_COMMIT"; then
   PREVIOUS_COMMIT=$CURRENT_CHECKOUT
