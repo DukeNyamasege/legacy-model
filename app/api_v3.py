@@ -21,11 +21,17 @@ from app.dashboard_actual_trade_fallback import install_dashboard_actual_trade_f
 
 install_dashboard_actual_trade_fallback()
 
-# Production recovery policy: one OVER-2 loss arms PUT; repeat PUT after PUT
-# losses; one successful real PUT exits recovery and returns to OVER-2.
+# Production recovery policy: one OVER-2 loss arms PUT; a failed real PUT enters
+# virtual PUT protection until two consecutive virtual wins confirm the next PUT.
 from app.one_put_recovery_policy import install_one_put_recovery_policy
 
 install_one_put_recovery_policy()
+
+# Dashboard P/L is audited from settled actual trades when available. Without
+# Martingale is flat-stake simulation; With Martingale is observed provider P/L.
+from app.profit_accuracy_guard import install_profit_accuracy_guard
+
+install_profit_accuracy_guard()
 
 from app.api_account_lifecycle import app  # noqa: E402
 from app.account_mode_execution_lock import install_account_mode_execution_lock  # noqa: E402
