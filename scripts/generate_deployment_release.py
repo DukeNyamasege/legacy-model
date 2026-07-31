@@ -113,6 +113,8 @@ def release_subjects(previous: str, current: str) -> list[str]:
         "update readme",
         "add production architecture",
         "ignore local deployment release state",
+        "keep vps database backups out of git",
+        "hide internal backup housekeeping from release posts",
     )
     cleaned: list[str] = []
     seen: set[str] = set()
@@ -162,6 +164,7 @@ def grouped_updates(subjects: list[str]) -> list[str]:
                 "database outage",
                 "database-aware",
                 "detached database",
+                "database backup",
                 "postgres",
                 "postgresql",
                 "alembic",
@@ -208,6 +211,7 @@ def grouped_updates(subjects: list[str]) -> list[str]:
                 "hardening",
                 "release comparison",
                 "failure exit status",
+                "deployment state",
             ),
             "Deployment now validates builds, preserves failed-release state, repairs service dependencies and checks provider/dashboard integration before reporting success.",
         ),
