@@ -11,6 +11,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 import requests
 import websockets
 from dotenv import load_dotenv
@@ -18,7 +22,6 @@ from dotenv import load_dotenv
 from app.config import load_test2_config
 
 
-ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env")
 
 
@@ -122,7 +125,23 @@ def validate_oauth_start(
     )
     require(scopes == expected_scopes, f"OAuth scopes mismatch: {scopes} != {expected_scopes}")
     require("trade" in scopes, "OAuth trade scope is missing")
-    return {"host": parsed.netloc, "redirect_uri": required["redirect_uri"], "scopes": sorted(scopes)}
+
+    rejected = session.get(
+        f"{base_url}/oauth/callback",
+        params={"code": "smoke-invalid-code", "state": "smoke-invalid-state"},
+        timeout=20,
+        allow_redirects=False,
+    )
+    require(rejected.status_code in {302, 307}, "Invalid OAuth callback was not rejected safely")
+    rejected_location = rejected.headers.get("location", "")
+    require("oauth_error=" in rejected_location, "Invalid OAuth state did not produce a safe error redirect")
+
+    return {
+        "host": parsed.netloc,
+        "redirect_uri": required["redirect_uri"],
+        "scopes": sorted(scopes),
+        "invalid_state_rejected": True,
+    }
 
 
 def websocket_url(base_url: str, path: str, query: dict[str, str] | None = None) -> str:
