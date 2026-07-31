@@ -2,6 +2,7 @@
 bot_state.json
 trading_bot.log
 __pycache__/
+.deployment_state/
 
 # Python virtual environment
 .venv/
