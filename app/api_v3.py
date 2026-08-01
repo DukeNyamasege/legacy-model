@@ -25,8 +25,10 @@ from app.api_account_lifecycle import app  # noqa: E402
 from app.account_mode_execution_lock import install_account_mode_execution_lock  # noqa: E402
 from app.ai_digit_recovery_v1 import install_ai_digit_recovery_v1_strategy  # noqa: E402
 from app.aidr_api_metadata import install_aidr_api_metadata  # noqa: E402
+from app.aidr_execution_flow_fix import install_aidr_execution_flow_fix  # noqa: E402
 from app.custom_martingale import install_custom_martingale_api  # noqa: E402
 from app.dashboard_readability import install_dashboard_readability  # noqa: E402
+from app.dashboard_stability_fix import install_dashboard_stability_fix  # noqa: E402
 from app.database_runtime_hardening import (  # noqa: E402
     install_database_runtime_hardening,
 )
@@ -61,6 +63,7 @@ install_custom_martingale_api()
 # Active public-release strategy metadata: DIGITOVER 1 normal, DIGITOVER 3
 # recovery, virtual OVER-3 confirmation and split recovery after virtual mode.
 install_ai_digit_recovery_v1_strategy()
+install_aidr_execution_flow_fix()
 
 # Global Bot Statistics must be a standard reference-model replay. A trader using
 # a $1,000 or $3,000 personal stake must not inflate public model P/L or maximum
@@ -99,6 +102,10 @@ install_settings_persistence_fix(app)
 # Readability is installed after the production dashboard route so the final HTML
 # always includes the high-contrast text boost and simplified desktop/mobile UI.
 install_dashboard_readability(app)
+
+# Stable mobile dashboard is installed last. It keeps Recent Trades from changing
+# structure during silent refreshes and reduces mobile typography.
+install_dashboard_stability_fix(app)
 
 # Database failures are converted into controlled 503 responses after every final
 # route has been installed.
