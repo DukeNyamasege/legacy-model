@@ -103,109 +103,28 @@
       .contract-table {
         font-size: .94rem !important;
       }
+      #reference-policy-card,
       .reference-policy-card {
-        grid-column: 1 / -1;
-        margin-top: 12px;
-        padding: 14px 16px;
-        border: 1px solid rgba(61, 240, 187, .42);
-        border-radius: 14px;
-        color: var(--readable-muted);
-        background: rgba(4, 30, 45, .58);
+        display: none !important;
       }
-      .reference-policy-card strong { color: #ffffff; }
-      .reference-policy-card h4 {
-        margin: 0 0 8px;
-        color: #3df0bb;
-        font-size: 1rem;
-        letter-spacing: .06em;
-        text-transform: uppercase;
-      }
-      .reference-profile-grid {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(150px, 1fr));
-        gap: 10px;
-        margin-top: 10px;
-      }
-      .reference-profile {
-        padding: 10px 12px;
-        border: 1px solid rgba(108, 159, 255, .28);
-        border-radius: 12px;
-        background: rgba(6, 23, 57, .62);
-      }
-      .reference-profile span,
-      .reference-profile small { display: block; color: var(--readable-soft); }
-      .reference-profile strong { display: block; margin-top: 5px; font-size: 1.1rem; }
       @media (max-width: 760px) {
         body { font-size: 15.5px !important; }
-        .reference-profile-grid { grid-template-columns: 1fr; }
         .gbs-money { font-size: 2rem !important; }
       }
     `;
     document.head.appendChild(style);
   }
 
-  function money(value) {
-    const amount = Number(value || 0);
-    const sign = amount >= 0 ? "+" : "-";
-    return `${sign}$${Math.abs(amount).toFixed(2)}`;
-  }
-
-  function renderReferencePolicy(summary) {
-    const today = summary?.system_performance?.today || {};
-    const policy = today.global_reference_policy || {};
-    if (!Object.keys(today).length) return;
-    const anchor = byId("model-pl-fixed")?.closest(".gbs-pnl-wrap") || byId("model-pl-fixed")?.closest("section") || byId("global-dashboard-snapshot");
-    if (!anchor) return;
-    let card = byId("reference-policy-card");
-    if (!card) {
-      card = document.createElement("section");
-      card.id = "reference-policy-card";
-      card.className = "reference-policy-card";
-      anchor.appendChild(card);
-    }
-    const profiles = Array.isArray(today.custom_martingale_profiles) ? today.custom_martingale_profiles : [];
-    const profileHtml = profiles.slice(0, 3).map((profile) => `
-      <div class="reference-profile">
-        <span>${profile.label || "Custom profile"}</span>
-        <strong>${money(profile.pnl)}</strong>
-        <small>Max stake: $${Number(profile.maximum_stake || 0).toFixed(2)}</small>
-      </div>
-    `).join("");
-    card.innerHTML = `
-      <h4>Global P/L Reference</h4>
-      <div><strong>Public Global Statistics use a standard $0.50 model replay.</strong> They do not sum or copy a trader's $1,000, $3,000 or custom stake size.</div>
-      <div style="margin-top:6px;">${policy.with_martingale || "System Martingale follows the built-in recovery and virtual-guard sequence."}</div>
-      ${profileHtml ? `<div class="reference-profile-grid">${profileHtml}</div>` : ""}
-    `;
-  }
-
-  function endpointUrl(input) {
-    if (typeof input === "string") return input;
-    if (input && typeof input.url === "string") return input.url;
-    return "";
-  }
-
-  function installFetchBridge() {
-    if (window.__readabilityBoostFetchInstalled) return;
-    window.__readabilityBoostFetchInstalled = true;
-    const nativeFetch = window.fetch.bind(window);
-    window.fetch = async (input, init = {}) => {
-      const response = await nativeFetch(input, init);
-      const url = endpointUrl(input);
-      if (response.ok && url.includes("/metrics/summary")) {
-        response.clone().json().then(renderReferencePolicy).catch(() => {});
-      }
-      return response;
-    };
+  function removeReferencePolicyCard() {
+    const card = byId("reference-policy-card") || document.querySelector(".reference-policy-card");
+    if (card) card.remove();
   }
 
   function boot() {
     injectStyles();
-    installFetchBridge();
-    fetch("/metrics/summary?mode=demo", { credentials: "same-origin", cache: "no-store" })
-      .then((response) => response.ok ? response.json() : null)
-      .then((payload) => payload && renderReferencePolicy(payload))
-      .catch(() => {});
+    removeReferencePolicyCard();
+    const observer = new MutationObserver(removeReferencePolicyCard);
+    observer.observe(document.documentElement, { childList: true, subtree: true });
   }
 
   if (document.readyState === "loading") {
