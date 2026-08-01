@@ -7,28 +7,23 @@ from app.account_reenrollment import install_account_reenrollment
 
 install_account_reenrollment()
 
-# Install canonical fixed-base accounting before app.api creates the repository.
+# Install canonical fixed-base accounting before app.api creates its repository.
 # The API and worker therefore read the same account-independent model ledger and
 # cannot reintroduce debt-sized Martingale replay in dashboard calculations.
 from app.hybrid_safety import install_hybrid_accounting_integrity
 
 install_hybrid_accounting_integrity()
 
-# The private WebSocket OVER-2 path can settle personal Trade rows before the
+# The private WebSocket digit path can settle personal Trade rows before the
 # canonical system-model row/cache is refreshed. Global dashboard statistics must
 # still show one model event per purchased signal, never a false zero.
 from app.dashboard_actual_trade_fallback import install_dashboard_actual_trade_fallback
 
 install_dashboard_actual_trade_fallback()
 
-# Production recovery policy: one OVER-2 loss arms PUT; a failed real PUT enters
-# virtual PUT protection until two consecutive virtual wins confirm the next PUT.
-from app.one_put_recovery_policy import install_one_put_recovery_policy
-
-install_one_put_recovery_policy()
-
 from app.api_account_lifecycle import app  # noqa: E402
 from app.account_mode_execution_lock import install_account_mode_execution_lock  # noqa: E402
+from app.ai_digit_recovery_v1 import install_ai_digit_recovery_v1_strategy  # noqa: E402
 from app.custom_martingale import install_custom_martingale_api  # noqa: E402
 from app.dashboard_readability import install_dashboard_readability  # noqa: E402
 from app.database_runtime_hardening import (  # noqa: E402
@@ -58,6 +53,10 @@ install_personal_autotrade_start_fix()
 # Advanced Martingale remains account-scoped. System exact-debt recovery is the
 # default; custom multiplier and flat-stake profiles are explicit user choices.
 install_custom_martingale_api()
+
+# Active public-release strategy metadata: DIGITOVER 1 normal, DIGITOVER 3
+# recovery, virtual OVER-3 confirmation and split recovery after virtual mode.
+install_ai_digit_recovery_v1_strategy()
 
 # Global Bot Statistics must be a standard reference-model replay. A trader using
 # a $1,000 or $3,000 personal stake must not inflate public model P/L or maximum
