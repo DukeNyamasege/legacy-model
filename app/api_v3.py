@@ -29,6 +29,7 @@ from app.aidr_execution_flow_fix import install_aidr_execution_flow_fix  # noqa:
 from app.custom_martingale import install_custom_martingale_api  # noqa: E402
 from app.dashboard_readability import install_dashboard_readability  # noqa: E402
 from app.dashboard_settings_guard import install_dashboard_settings_guard  # noqa: E402
+from app.dashboard_smoke_compat import install_dashboard_smoke_compat  # noqa: E402
 from app.dashboard_stability_fix import install_dashboard_stability_fix  # noqa: E402
 from app.database_runtime_hardening import (  # noqa: E402
     install_database_runtime_hardening,
@@ -108,6 +109,10 @@ install_dashboard_readability(app)
 # structure during silent refreshes and reduces mobile typography.
 install_dashboard_stability_fix(app)
 install_dashboard_settings_guard(app)
+
+# Keep the deployment smoke tests compatible with the old simplified-dashboard
+# marker while the real live dashboard uses the stable dashboard-v2 routes.
+install_dashboard_smoke_compat(app)
 
 # Database failures are converted into controlled 503 responses after every final
 # route has been installed.
