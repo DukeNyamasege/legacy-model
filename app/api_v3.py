@@ -33,6 +33,7 @@ from app.custom_martingale import install_custom_martingale_api  # noqa: E402
 from app.database_runtime_hardening import (  # noqa: E402
     install_database_runtime_hardening,
 )
+from app.oauth_session_recovery import install_oauth_session_recovery  # noqa: E402
 from app.personal_autotrade_start_fix import (  # noqa: E402
     install_personal_autotrade_start_fix,
 )
@@ -51,8 +52,13 @@ install_personal_autotrade_start_fix()
 # default; custom multiplier and flat-stake profiles are explicit user choices.
 install_custom_martingale_api()
 
-# Install the final OAuth/dashboard integration first, then add the final
-# database-aware health and exception boundary. No later wrapper may replace
-# these production routes or return raw SQLAlchemy connection tracebacks.
+# Install the production dashboard/OAuth boundary first, then replace only the
+# final OAuth start/callback routes with resilient PKCE session handling. The
+# recovery layer keeps one-time server-side validation and issues a host-only
+# browser session cookie so the personal dashboard survives www/domain mismatches.
 install_production_integration_hardening(app)
+install_oauth_session_recovery(app)
+
+# Database failures are converted into controlled 503 responses after every final
+# route has been installed.
 install_database_runtime_hardening(app)
