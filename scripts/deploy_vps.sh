@@ -215,12 +215,23 @@ python3 -m compileall -q app scripts || fail "Python syntax validation failed."
 if command -v node >/dev/null 2>&1; then
   node --check dashboard/realtime-mode-hardening.js \
     || fail "Realtime dashboard JavaScript syntax validation failed."
+  node --check dashboard/custom-martingale.js \
+    || fail "Custom Martingale JavaScript syntax validation failed."
 fi
 
 echo ""
 echo "2. Pull PostgreSQL and build exact API/worker images"
 compose pull database || fail "Failed to pull the PostgreSQL image."
 compose build api worker || fail "API/worker image build failed."
+
+# Run account-level stake tests inside the exact worker image before the live API
+# or worker is stopped. A failed System/Custom/Flat calculation leaves the current
+# production deployment untouched.
+echo ""
+echo "2a. Verify System and Custom Martingale stake calculations"
+compose run --rm --no-deps worker \
+  python -m unittest -q test_custom_martingale.py \
+  || fail "Custom Martingale unit tests failed."
 
 # Stop both request handling and execution only after replacement images have
 # passed every static/build validation. This prevents database-outage tracebacks
@@ -326,6 +337,7 @@ echo "Deriv public WS       : OK"
 echo "Demo dashboard        : OK"
 echo "Real dashboard        : OK"
 echo "Dashboard WebSocket   : OK"
+echo "Custom Martingale     : VERIFIED"
 echo "Telegram release note : $TELEGRAM_RELEASE_STATUS"
 echo "Account enrollment    : $ACCOUNT_REENROLLMENT_STATUS"
 echo "Worker                : RUNNING"
