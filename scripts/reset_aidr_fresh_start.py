@@ -6,14 +6,14 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from sqlalchemy import select, text
+
 # Running this file as `python scripts/reset_aidr_fresh_start.py` makes Python
 # place /app/scripts at sys.path[0]. Add the repository root explicitly so the
 # application package can always be imported both on the VPS and in Docker.
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-
-from sqlalchemy import delete, select
 
 from app.api import DATABASE
 from app.models import (
@@ -37,6 +37,50 @@ from app.models import (
 
 CONFIRMATION = "RESET_ALL_TRADING_HISTORY"
 
+TRUNCATE_MODELS = (
+    BulkExecutionMember,
+    BulkExecutionBatch,
+    Trade,
+    ProposalRecord,
+    ModelDecisionRecord,
+    SystemModelTrade,
+    DirectionalSignal,
+    CandidateSignalRecord,
+    VirtualTrade,
+    Streak,
+    SystemModelState,
+    VirtualGuardState,
+    DashboardSnapshot,
+)
+
+PRESERVED_MESSAGE = (
+    "managed_accounts,client_sessions,oauth_credentials,balances,settings,"
+    "enabled_account_rows"
+)
+
+
+def _table_name(model: object) -> str:
+    table = getattr(model, "__table__")
+    return f'public."{table.name}"'
+
+
+def _count_rows(session, model: object) -> int:
+    column = next(iter(getattr(model, "__table__").primary_key.columns), None)
+    if column is None:
+        return 0
+    return len(session.scalars(select(column)).all())
+
+
+def _truncate_statement() -> str:
+    table_names = []
+    seen: set[str] = set()
+    for model in TRUNCATE_MODELS:
+        name = _table_name(model)
+        if name not in seen:
+            seen.add(name)
+            table_names.append(name)
+    return "TRUNCATE TABLE " + ", ".join(table_names) + " RESTART IDENTITY CASCADE"
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(
@@ -46,6 +90,14 @@ def main() -> int:
         )
     )
     parser.add_argument("--confirm", required=True)
+    parser.add_argument(
+        "--force-open-trades",
+        action="store_true",
+        help=(
+            "Dangerous: also clears locally open provider-trade rows. Use only "
+            "after manually confirming no live Deriv contracts are still open."
+        ),
+    )
     args = parser.parse_args()
     if args.confirm != CONFIRMATION:
         raise SystemExit(f"Confirmation must be exactly {CONFIRMATION}")
@@ -54,34 +106,29 @@ def main() -> int:
         open_trades = session.scalars(
             select(Trade.id).where(Trade.settlement_time.is_(None))
         ).all()
-        if open_trades:
+        if open_trades and not args.force_open_trades:
             raise SystemExit(
-                f"Refusing reset: {len(open_trades)} provider trade(s) are still open."
+                "Refusing reset: "
+                f"{len(open_trades)} provider trade(s) are still locally open. "
+                "Wait for settlement or rerun only after manual Deriv verification "
+                "with --force-open-trades."
             )
 
         before = {
-            "trades": len(session.scalars(select(Trade.id)).all()),
-            "virtual_trades": len(session.scalars(select(VirtualTrade.virtual_trade_id)).all()),
-            "signals": len(session.scalars(select(CandidateSignalRecord.signal_id)).all()),
-            "system_model_trades": len(session.scalars(select(SystemModelTrade.id)).all()),
+            "trades": _count_rows(session, Trade),
+            "virtual_trades": _count_rows(session, VirtualTrade),
+            "signals": _count_rows(session, CandidateSignalRecord),
+            "directional_signals": _count_rows(session, DirectionalSignal),
+            "system_model_trades": _count_rows(session, SystemModelTrade),
+            "dashboard_snapshots": _count_rows(session, DashboardSnapshot),
         }
 
-        for model in (
-            BulkExecutionMember,
-            Trade,
-            BulkExecutionBatch,
-            ProposalRecord,
-            ModelDecisionRecord,
-            SystemModelTrade,
-            DirectionalSignal,
-            CandidateSignalRecord,
-            VirtualTrade,
-            Streak,
-            SystemModelState,
-            VirtualGuardState,
-            DashboardSnapshot,
-        ):
-            session.execute(delete(model))
+        # This reset is intentionally blunt. The old row-by-row delete failed
+        # because some virtual trades reference directional_signals through a
+        # foreign key. TRUNCATE ... CASCADE is the correct maintenance operation
+        # for a fresh strategy cutover: it removes only the volatile trading
+        # ledger and its dependent rows, never the managed account table.
+        session.execute(text(_truncate_statement()))
 
         for risk in session.scalars(select(AccountRiskState)).all():
             risk.trading_day = ""
@@ -116,6 +163,7 @@ def main() -> int:
             bot.last_heartbeat = datetime.now(timezone.utc)
 
         preferences = session.scalars(select(RuntimePreference)).all()
+        removed_preferences = 0
         for preference in preferences:
             key = str(preference.preference_key or "")
             if (
@@ -130,11 +178,15 @@ def main() -> int:
                 or key.startswith("aidr_split_remaining:")
             ):
                 session.delete(preference)
+                removed_preferences += 1
 
     print("AIDR_FRESH_START_COMPLETE")
+    print("reset_method=truncate_restart_identity_cascade")
+    print(f"force_open_trades={bool(args.force_open_trades)}")
     for key, value in before.items():
         print(f"cleared_{key}={value}")
-    print("preserved=managed_accounts,client_sessions,oauth_credentials,balances,settings")
+    print(f"cleared_runtime_preferences={removed_preferences}")
+    print(f"preserved={PRESERVED_MESSAGE}")
     return 0
 
 
