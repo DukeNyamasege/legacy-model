@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, HTMLResponse, Response
 import app.api as base_api
 
 _INSTALLED = False
-UI_VERSION = "20260801-4"
+UI_VERSION = "20260801-5"
 
 
 def _remove_route(app: Any, path: str, method: str) -> None:
