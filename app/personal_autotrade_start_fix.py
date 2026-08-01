@@ -5,7 +5,6 @@ from typing import Any
 from fastapi import HTTPException, Request
 
 import app.api as base_api
-from app.models import ManagedAccount, utc_now
 from app.services.telegram_api_alerts import queue_real_api_lifecycle_alert
 
 _INSTALLED = False
@@ -45,6 +44,18 @@ def _has_account_purchase_token(payload: dict[str, Any]) -> bool:
     return bool(_account_purchase_token_from_payload(payload))
 
 
+def _execution_requires_new_token(status: object) -> bool:
+    """Only a confirmed rejected credential blocks Start.
+
+    The old worker used `bulk_execution_pat_required` for OAuth accounts even
+    after they had a trade-capable OAuth token.  That stale status made Start Auto
+    Trade keep saying disabled.  Missing-token checks are now based on the actual
+    current decrypted credential, not an old status label.
+    """
+
+    return str(status or "").strip().lower() == "credential_error"
+
+
 def _install_api_token_semantics() -> None:
     # app.api.get_current_account resolves these globals at request time.  Rebinding
     # them fixes /me, /me/resume-trading, /me/auto-trade and the dashboard token
@@ -52,6 +63,7 @@ def _install_api_token_semantics() -> None:
     base_api.trading_api_token_from_payload = _account_purchase_token_from_payload
     base_api.has_trading_api_token = _has_account_purchase_token
     base_api.has_personal_trading_api_token = _has_account_purchase_token
+    base_api.execution_requires_new_token = _execution_requires_new_token
 
     def no_cross_mode_shared_token(_current_payload: dict[str, Any]) -> str:
         return ""
@@ -162,7 +174,7 @@ def _start_account(
             detail=f"Auto trading start failed: {type(exc).__name__}",
         ) from exc
 
-    event = "start" if reset_recovery or before_status in {"inactive", "disabled", "stopped", "real_disabled"} else "resume"
+    event = "start" if reset_recovery or before_status in {"inactive", "disabled", "stopped", "real_disabled", "bulk_execution_pat_required", "token_required"} else "resume"
     _safe_lifecycle_alert(account_id, event)
     _safe_audit(
         "PERSONAL_AUTOTRADE_STARTED",
