@@ -3,12 +3,12 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import Request
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse
 
 import app.api as base_api
 
 _INSTALLED = False
-UI_VERSION = "20260801-3"
+UI_VERSION = "20260801-4"
 
 
 def _remove_route(app: Any, path: str, method: str) -> None:
@@ -24,13 +24,10 @@ def _remove_route(app: Any, path: str, method: str) -> None:
 
 
 def _standalone_dashboard_html() -> str:
-    """Return a clean HTML shell for the simplified responsive dashboard.
+    """Return the standalone responsive dashboard shell.
 
-    Do not load the legacy dashboard document here. Its synchronization loader,
-    mutation observers, WebSocket handlers, intervals and DOM renderers conflict
-    with the simplified dashboard renderer and can make Chrome unresponsive.
-    The simplified UI talks directly to the existing API/OAuth routes, so it does
-    not require any of the legacy browser scripts.
+    The legacy dashboard document is intentionally not loaded. Its observers,
+    synchronization loader and timers previously competed with the new renderer.
     """
 
     return f"""<!doctype html>
@@ -42,122 +39,55 @@ def _standalone_dashboard_html() -> str:
   <meta name="theme-color" content="#071120">
   <meta name="robots" content="noindex,nofollow,noarchive,nosnippet">
   <title>Father of Automation</title>
+  <link rel="stylesheet" href="/ui/dashboard-v2.css?v={UI_VERSION}">
   <style>
-    html, body {{
-      margin: 0;
-      min-height: 100%;
-      background: #071120;
-      color: #f8fafc;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system,
-        BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }}
-    #foa-bootstrap {{
-      min-height: 100vh;
-      display: grid;
-      place-items: center;
-      background:
-        radial-gradient(circle at 25% 0%, rgba(47,115,255,.18), transparent 32rem),
-        linear-gradient(135deg,#030a14,#081322 48%,#0d1b2e);
-    }}
-    #foa-bootstrap > div {{ text-align:center; padding:24px; }}
-    #foa-bootstrap strong {{ display:block; font-size:20px; margin-bottom:8px; }}
-    #foa-bootstrap span {{ color:#aab6c8; font-size:14px; }}
-    #foa-bootstrap i {{
-      display:block;
-      width:36px;
-      height:36px;
-      margin:0 auto 16px;
-      border:3px solid rgba(255,255,255,.15);
-      border-top-color:#2f73ff;
-      border-radius:50%;
-      animation:foa-spin .8s linear infinite;
-    }}
-    @keyframes foa-spin {{ to {{ transform:rotate(360deg); }} }}
+    html,body{{margin:0;min-height:100%;background:#071120;color:#f8fafc;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}}
+    #foa-bootstrap{{min-height:100vh;display:grid;place-items:center;background:radial-gradient(circle at 25% 0%,rgba(47,115,255,.18),transparent 32rem),linear-gradient(135deg,#030a14,#081322 48%,#0d1b2e)}}
+    #foa-bootstrap>div{{text-align:center;padding:24px}}#foa-bootstrap strong{{display:block;font-size:20px;margin-bottom:8px}}#foa-bootstrap span{{color:#aab6c8;font-size:14px}}
+    #foa-bootstrap i{{display:block;width:36px;height:36px;margin:0 auto 16px;border:3px solid rgba(255,255,255,.15);border-top-color:#2f73ff;border-radius:50%;animation:foa-spin .8s linear infinite}}
+    @keyframes foa-spin{{to{{transform:rotate(360deg)}}}}
   </style>
 </head>
 <body>
-  <div id="foa-bootstrap">
-    <div>
-      <i aria-hidden="true"></i>
-      <strong>Father of Automation</strong>
-      <span>Opening dashboard…</span>
-    </div>
-  </div>
+  <div id="foa-bootstrap"><div><i aria-hidden="true"></i><strong>Father of Automation</strong><span>Opening dashboard…</span></div></div>
   <noscript>This dashboard requires JavaScript.</noscript>
-  <script src="/ui/simplified-dashboard.js?v={UI_VERSION}" defer></script>
+  <script src="/ui/dashboard-v2.js?v={UI_VERSION}" defer></script>
   <script>
-    window.setTimeout(function () {{
-      var bootstrap = document.getElementById("foa-bootstrap");
-      var app = document.getElementById("foa-simple-app");
-      if (bootstrap && app) bootstrap.remove();
-      if (bootstrap && !app) {{
-        bootstrap.innerHTML = '<div><strong>Dashboard could not start</strong><span>Refresh the page once. If the issue continues, check the browser console.</span></div>';
-      }}
-    }}, 8000);
+    window.setTimeout(function(){{
+      var bootstrap=document.getElementById("foa-bootstrap");
+      var app=document.getElementById("foa-simple-app");
+      if(bootstrap&&app)bootstrap.remove();
+      if(bootstrap&&!app)bootstrap.innerHTML='<div><strong>Dashboard could not start</strong><span>Refresh the page once. If the issue continues, check the browser console.</span></div>';
+    }},8000);
   </script>
 </body>
 </html>"""
 
 
-def _safe_simplified_dashboard_javascript() -> str:
-    """Return browser-parseable simplified UI JavaScript.
-
-    The original source mixed ``??`` and ``||`` without parentheses, which is a
-    JavaScript grammar error. Repair that exact expression at the serving boundary.
-    Also remove the small standalone bootstrap once the simplified UI starts.
-    """
-
-    path = base_api.ROOT / "dashboard" / "simplified-dashboard.js"
-    source = path.read_text(encoding="utf-8")
-
-    source = source.replace(
-        'const safe = (value, fallback = "—") => String(value ?? fallback || fallback);',
-        'const safe = (value, fallback = "—") => String(value ?? fallback);',
-    )
-
-    boot_marker = (
-        '  function boot() {\n'
-        '    if (document.getElementById("foa-simple-app")) return;\n'
-    )
-    boot_replacement = (
-        '  function boot() {\n'
-        '    const bootstrap = document.getElementById("foa-bootstrap");\n'
-        '    if (bootstrap) bootstrap.remove();\n'
-        '    const legacyLoader = document.getElementById("smart-loader");\n'
-        '    if (legacyLoader) legacyLoader.remove();\n'
-        '    document.documentElement.classList.add("foa-simplified-ready");\n'
-        '    if (document.getElementById("foa-simple-app")) return;\n'
-    )
-    source = source.replace(boot_marker, boot_replacement)
-
-    source = (
-        f'window.__FOA_SIMPLIFIED_UI_VERSION__ = "{UI_VERSION}";\n'
-        + source
-    )
-    return source
-
-
 def install_dashboard_readability(app: Any) -> None:
-    """Serve only the final simplified responsive UI at the public root."""
+    """Serve only the enhanced standalone desktop/mobile dashboard at root."""
 
     global _INSTALLED
     if _INSTALLED:
         return
 
-    _remove_route(app, "/", "GET")
-    _remove_route(app, "/ui/readability-boost.js", "GET")
-    _remove_route(app, "/ui/simplified-dashboard.js", "GET")
+    for path in (
+        "/",
+        "/ui/dashboard-v2.css",
+        "/ui/dashboard-v2.js",
+        "/ui/readability-boost.js",
+        "/ui/simplified-dashboard.js",
+    ):
+        _remove_route(app, path, "GET")
 
     @app.get("/", include_in_schema=False)
-    def simplified_dashboard_root(
+    def enhanced_dashboard_root(
         request: Request,
         code: str = "",
         state: str = "",
         error: str = "",
         error_description: str = "",
     ):
-        # Keep compatibility with legacy root callbacks. Production OAuth normally
-        # returns through the explicit /oauth/callback route.
         if code or error:
             return base_api.oauth_callback(
                 request,
@@ -175,20 +105,21 @@ def install_dashboard_readability(app: Any) -> None:
             },
         )
 
-    @app.get("/ui/readability-boost.js", include_in_schema=False)
-    def readability_boost_script() -> FileResponse:
-        # Retain the route for old cached pages, but the standalone dashboard does
-        # not load this compatibility script.
+    @app.get("/ui/dashboard-v2.css", include_in_schema=False)
+    def enhanced_dashboard_styles() -> FileResponse:
         return FileResponse(
-            base_api.ROOT / "dashboard" / "readability-boost.js",
-            media_type="application/javascript",
-            headers={"Cache-Control": "no-store, max-age=0"},
+            base_api.ROOT / "dashboard" / "dashboard-v2.css",
+            media_type="text/css",
+            headers={
+                "Cache-Control": "no-store, max-age=0",
+                "X-FOA-UI-Version": UI_VERSION,
+            },
         )
 
-    @app.get("/ui/simplified-dashboard.js", include_in_schema=False)
-    def simplified_dashboard_script() -> Response:
-        return Response(
-            _safe_simplified_dashboard_javascript(),
+    @app.get("/ui/dashboard-v2.js", include_in_schema=False)
+    def enhanced_dashboard_javascript() -> FileResponse:
+        return FileResponse(
+            base_api.ROOT / "dashboard" / "dashboard-v2.js",
             media_type="application/javascript",
             headers={
                 "Cache-Control": "no-store, max-age=0",
@@ -197,6 +128,26 @@ def install_dashboard_readability(app: Any) -> None:
             },
         )
 
+    @app.get("/ui/readability-boost.js", include_in_schema=False)
+    def readability_boost_compatibility() -> FileResponse:
+        return FileResponse(
+            base_api.ROOT / "dashboard" / "readability-boost.js",
+            media_type="application/javascript",
+            headers={"Cache-Control": "no-store, max-age=0"},
+        )
+
+    @app.get("/ui/simplified-dashboard.js", include_in_schema=False)
+    def simplified_dashboard_compatibility() -> FileResponse:
+        return FileResponse(
+            base_api.ROOT / "dashboard" / "dashboard-v2.js",
+            media_type="application/javascript",
+            headers={
+                "Cache-Control": "no-store, max-age=0",
+                "X-FOA-UI-Version": UI_VERSION,
+            },
+        )
+
     app.state.dashboard_readability_installed = True
     app.state.simplified_dashboard_standalone = True
+    app.state.dashboard_ui_version = UI_VERSION
     _INSTALLED = True
