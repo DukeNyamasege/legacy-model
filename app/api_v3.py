@@ -37,6 +37,7 @@ from app.oauth_session_recovery import install_oauth_session_recovery  # noqa: E
 from app.personal_autotrade_start_fix import (  # noqa: E402
     install_personal_autotrade_start_fix,
 )
+from app.personal_me_session_fix import install_personal_me_session_fix  # noqa: E402
 from app.production_integration_hardening import (  # noqa: E402
     install_production_integration_hardening,
 )
@@ -58,6 +59,11 @@ install_custom_martingale_api()
 # browser session cookie so the personal dashboard survives www/domain mismatches.
 install_production_integration_hardening(app)
 install_oauth_session_recovery(app)
+
+# The final personal `/me` route must be installed after every compatibility layer.
+# It preserves account-mode consistency and custom Martingale settings, while
+# avoiding the unresolved Request annotation that caused 422 responses.
+install_personal_me_session_fix(app)
 
 # Database failures are converted into controlled 503 responses after every final
 # route has been installed.
