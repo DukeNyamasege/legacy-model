@@ -45,6 +45,7 @@ from app.production_integration_hardening import (  # noqa: E402
     install_production_integration_hardening,
 )
 from app.profit_accuracy_guard import install_profit_accuracy_guard  # noqa: E402
+from app.settings_persistence_fix import install_settings_persistence_fix  # noqa: E402
 from app.simplified_dashboard_api import install_simplified_dashboard_api  # noqa: E402
 
 # The lifecycle routes and dashboard consistency wrappers are now loaded. Install
@@ -89,6 +90,11 @@ install_simplified_dashboard_api()
 # disabled/stopped state; Pause preserves recovery; Start from stopped resets risk.
 # The same layer adds account-scoped clear-trades and exit digit trade payloads.
 install_final_public_controls(app)
+
+# Install final settings after every older account-settings route. Users must be
+# allowed to save stake, TP/SL and Martingale settings before adding a trading
+# token; the token is required only before starting execution.
+install_settings_persistence_fix(app)
 
 # Readability is installed after the production dashboard route so the final HTML
 # always includes the high-contrast text boost and simplified desktop/mobile UI.
