@@ -30,6 +30,7 @@ def _inject_scripts(html: str) -> str:
         '<script src="/ui/realtime-mode-hardening.js?v=20260731"></script>',
         '<script src="/custom-martingale.js?v=20260801-1"></script>',
         '<script src="/ui/readability-boost.js?v=20260801-2"></script>',
+        '<script src="/ui/simplified-dashboard.js?v=20260801-1"></script>',
     )
     missing = [f"  {script}" for script in scripts if script not in html]
     if missing:
@@ -38,7 +39,7 @@ def _inject_scripts(html: str) -> str:
 
 
 def install_dashboard_readability(app: Any) -> None:
-    """Serve the dashboard with high-contrast readability CSS/JS installed last."""
+    """Serve the dashboard with the final simplified responsive UI installed last."""
 
     global _INSTALLED
     if _INSTALLED:
@@ -46,6 +47,7 @@ def install_dashboard_readability(app: Any) -> None:
 
     _remove_route(app, "/", "GET")
     _remove_route(app, "/ui/readability-boost.js", "GET")
+    _remove_route(app, "/ui/simplified-dashboard.js", "GET")
 
     @app.get("/", include_in_schema=False)
     def readable_dashboard(
@@ -75,6 +77,14 @@ def install_dashboard_readability(app: Any) -> None:
     def readability_boost_script() -> FileResponse:
         return FileResponse(
             base_api.ROOT / "dashboard" / "readability-boost.js",
+            media_type="application/javascript",
+            headers={"Cache-Control": "no-store, max-age=0"},
+        )
+
+    @app.get("/ui/simplified-dashboard.js", include_in_schema=False)
+    def simplified_dashboard_script() -> FileResponse:
+        return FileResponse(
+            base_api.ROOT / "dashboard" / "simplified-dashboard.js",
             media_type="application/javascript",
             headers={"Cache-Control": "no-store, max-age=0"},
         )
