@@ -2,7 +2,16 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
+
+# Running this file as `python scripts/reset_aidr_fresh_start.py` makes Python
+# place /app/scripts at sys.path[0]. Add the repository root explicitly so the
+# application package can always be imported both on the VPS and in Docker.
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from sqlalchemy import delete, select
 
