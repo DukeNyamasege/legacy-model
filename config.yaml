@@ -12,7 +12,7 @@ deriv:
   token_encryption_key: ''
 model:
   name: AI Digit Recovery V1
-  version: 11.0.1-aidr-over1-over3
+  version: 11.0.2-aidr-over1-over3
   brand: Father of Automation Series
   run_id: aidr_over1_over3_v1
 files:
@@ -45,15 +45,16 @@ strategy:
   currency: USD
   initial_stake: 0.50
 signal:
-  # Keep validator-compatible legacy config value. Runtime signal names come from
-  # app.ai_digit_recovery_v1 constants AIDR-O1-V1 and AIDR-O3-V1.
+  # Keep validator-compatible legacy config values. Runtime signal names and
+  # digit-entry rules come from app.ai_digit_recovery_v1 constants AIDR-O1-V1
+  # and AIDR-O3-V1, not from this legacy bootstrap pattern.
   trigger_name: BIN22001x5
   pattern_ranges:
-    - [0, 9]
-    - [0, 9]
-    - [0, 9]
-    - [0, 9]
-    - [0, 9]
+    - [6, 9]
+    - [6, 9]
+    - [0, 2]
+    - [0, 2]
+    - [3, 5]
   overlapping_signals_allowed: false
   require_pattern_reset: false
 execution:
