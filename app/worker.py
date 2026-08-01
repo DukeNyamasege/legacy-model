@@ -8,6 +8,7 @@ from app.account_execution_feedback import install_account_execution_feedback
 from app.account_lifecycle import install_worker_account_lifecycle
 from app.account_mode_execution_lock import install_account_mode_execution_lock
 from app.account_reenrollment import install_account_reenrollment
+from app.custom_martingale import install_custom_martingale_worker
 from app.dashboard_actual_trade_fallback import install_dashboard_actual_trade_fallback
 from app.deployment_announcement import install_dynamic_deployment_announcement
 from app.hybrid_data_integrity import install_hybrid_data_integrity
@@ -110,6 +111,10 @@ async def run_worker() -> None:
     # recovery-balance cap may pre-empt a provider buy request. Deriv returns the
     # actual insufficient-funds error when a later requested stake cannot be paid.
     install_stake_only_balance_policy()
+
+    # Install after every core stake wrapper. System keeps exact-debt recovery;
+    # Custom uses the account's trigger/multiplier; Flat keeps the base stake.
+    install_custom_martingale_worker()
 
     # Install last so committed settlement notifications retry and publish again
     # after the final account-balance reconciliation has reached PostgreSQL.
