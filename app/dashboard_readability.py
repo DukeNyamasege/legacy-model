@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, HTMLResponse, Response
 import app.api as base_api
 
 _INSTALLED = False
-UI_VERSION = "20260801-7"
+UI_VERSION = "20260801-8"
 
 
 def _remove_route(app: Any, path: str, method: str) -> None:
@@ -63,25 +63,16 @@ def _standalone_dashboard_html() -> str:
 
 
 def _patched_dashboard_v2_javascript() -> str:
-    """Serve the dashboard with final UX behavior without editing the bundled file.
-
-    The standalone dashboard is still the source of truth. These patches make
-    two user-facing rules strict:
-    1. The onboarding wizard is only visible before login.
-    2. Background refreshes update silently without a blocking loader or scroll
-       interruption. Manual navigation/actions still show loaders.
-    """
+    """Serve the dashboard with final UX behavior without editing the bundled file."""
 
     source = (base_api.ROOT / "dashboard" / "dashboard-v2.js").read_text(
         encoding="utf-8"
     )
-    source = source.replace(
-        'const VERSION = "20260801-5";',
-        f'const VERSION = "{UI_VERSION}";',
-    ).replace(
-        'const VERSION = "20260801-6";',
-        f'const VERSION = "{UI_VERSION}";',
-    )
+    for version in ("20260801-5", "20260801-6", "20260801-7"):
+        source = source.replace(
+            f'const VERSION = "{version}";',
+            f'const VERSION = "{UI_VERSION}";',
+        )
 
     source = source.replace(
         '  function wizard({ compact = false } = {}) {\n'
@@ -190,9 +181,10 @@ def _patched_dashboard_v2_javascript() -> str:
 
     source += f'''
 
-/* Final UX guard {UI_VERSION}: logged-in users never see wizard cards, and
-   accidental refresh loaders are hidden if a browser keeps an older script. */
+/* Final UX + settings guard {UI_VERSION}. */
 (() => {{
+  const VERSION = "{UI_VERSION}";
+  const DRAFT_KEY = "foa-settings-draft-v3";
   const style = document.createElement("style");
   style.id = "foa-final-ux-guard";
   style.textContent = `
@@ -200,6 +192,47 @@ def _patched_dashboard_v2_javascript() -> str:
     .foa-route-loader.foa-silent-refresh{{display:none!important;pointer-events:none!important;backdrop-filter:none!important;background:transparent!important}}
   `;
   document.head.appendChild(style);
+
+  function formValues(form) {{
+    const data = {{}};
+    if (!form) return data;
+    new FormData(form).forEach((value, key) => {{ data[key] = String(value); }});
+    return data;
+  }}
+
+  function saveDraft(form) {{
+    if (!form) return;
+    try {{
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({{ at: Date.now(), values: formValues(form) }}));
+    }} catch (_) {{}}
+  }}
+
+  function readDraft() {{
+    try {{
+      const parsed = JSON.parse(localStorage.getItem(DRAFT_KEY) || "{{}}");
+      if (!parsed.values || Date.now() - Number(parsed.at || 0) > 30 * 60 * 1000) return null;
+      return parsed.values;
+    }} catch (_) {{ return null; }}
+  }}
+
+  function applyDraft() {{
+    const form = document.querySelector("#settings-form");
+    if (!form) return;
+    const active = document.activeElement;
+    if (active && form.contains(active)) return;
+    const values = readDraft();
+    if (!values) return;
+    Object.entries(values).forEach(([name, value]) => {{
+      const field = form.elements[name];
+      if (!field) return;
+      if (field.type === "checkbox" || field.type === "radio") return;
+      field.value = value;
+    }});
+    const custom = document.querySelector("#custom");
+    const mode = form.elements.martingale_mode?.value || "system";
+    if (custom) custom.classList.toggle("show", mode === "custom");
+  }}
+
   function mark() {{
     const loggedIn = !!document.querySelector("#logout,.foa-logout,.foa-account-pill");
     document.body.classList.toggle("foa-authenticated", loggedIn);
@@ -208,10 +241,44 @@ def _patched_dashboard_v2_javascript() -> str:
       const text = (el.textContent || "").toLowerCase();
       if (text.includes("refreshing dashboard")) el.classList.add("foa-silent-refresh");
     }});
+    applyDraft();
   }}
+
+  document.addEventListener("input", event => {{
+    const form = event.target.closest?.("#settings-form");
+    if (form) saveDraft(form);
+  }}, true);
+
+  document.addEventListener("change", event => {{
+    const form = event.target.closest?.("#settings-form");
+    if (form) saveDraft(form);
+  }}, true);
+
+  document.addEventListener("submit", event => {{
+    const form = event.target.closest?.("#settings-form");
+    if (form) saveDraft(form);
+  }}, true);
+
+  const originalFetch = window.fetch.bind(window);
+  window.fetch = async function(input, init) {{
+    const url = typeof input === "string" ? input : String(input?.url || "");
+    const response = await originalFetch(input, init);
+    if (url.includes("/me/trading-settings") && response.ok) {{
+      try {{
+        const clone = response.clone();
+        const body = await clone.json();
+        if (body && body.settings) {{
+          localStorage.setItem(DRAFT_KEY, JSON.stringify({{ at: Date.now(), values: Object.fromEntries(Object.entries(body.settings).map(([k,v]) => [k, String(v)])) }}));
+        }}
+      }} catch (_) {{}}
+    }}
+    return response;
+  }};
+
   new MutationObserver(mark).observe(document.documentElement, {{ childList: true, subtree: true }});
   document.addEventListener("DOMContentLoaded", mark, {{ once: true }});
   window.setInterval(mark, 750);
+  window.__FOA_SETTINGS_PERSISTENCE_VERSION__ = VERSION;
 }})();
 '''
     return source
