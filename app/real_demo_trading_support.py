@@ -14,6 +14,35 @@ def _truthy(value: Any, default: bool = False) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on", "real"}
 
 
+def _token_scopes(payload: dict[str, Any]) -> set[str]:
+    raw = str(
+        payload.get("oauth_scope")
+        or payload.get("scope")
+        or payload.get("scopes")
+        or ""
+    ).replace(",", " ")
+    return {item.strip().lower() for item in raw.split() if item.strip()}
+
+
+def _account_purchase_token_from_payload(payload: dict[str, Any]) -> str:
+    """Return this row's own trade-capable credential.
+
+    Do not let a Demo PAT make a Real account executable.  If the row was stored
+    from OAuth and the OAuth credential has trade scope, the row's own OAuth
+    access token is valid for the account-specific OTP/purchase flow.
+    """
+
+    explicit_pat = str(payload.get("pat_token", "")).strip()
+    if explicit_pat:
+        return explicit_pat
+    auth_type = str(payload.get("auth_type", "pat")).strip().lower() or "pat"
+    access_token = str(payload.get("access_token", "")).strip()
+    if auth_type == "oauth":
+        oauth_token = access_token or str(payload.get("oauth_access_token", "")).strip()
+        return oauth_token if oauth_token and "trade" in _token_scopes(payload) else ""
+    return access_token
+
+
 def _production_acknowledged(config: Any) -> bool:
     configured = str(
         os.getenv(
@@ -72,6 +101,11 @@ def _dual_real_trading_allowed(self: TradingBot) -> bool:
     return allowed
 
 
+def _purchase_token_from_payload(self: TradingBot, payload: dict[str, Any]) -> str:
+    del self
+    return _account_purchase_token_from_payload(payload)
+
+
 def install_dual_demo_real_trading_support() -> None:
     """Allow Demo and Real accounts to run side by side on the VPS.
 
@@ -87,5 +121,7 @@ def install_dual_demo_real_trading_support() -> None:
         return
     TradingBot._account_environment_for_token = _dual_account_environment_for_token
     TradingBot._real_trading_allowed = _dual_real_trading_allowed
+    TradingBot._purchase_token_from_payload = _purchase_token_from_payload
     TradingBot._dual_demo_real_trading_support_installed = True
+    TradingBot._account_scoped_purchase_token_installed = True
     _INSTALLED = True
