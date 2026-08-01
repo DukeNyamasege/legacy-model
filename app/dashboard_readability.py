@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import Request
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 
 import app.api as base_api
 
@@ -24,11 +24,7 @@ def _remove_route(app: Any, path: str, method: str) -> None:
 
 
 def _standalone_dashboard_html() -> str:
-    """Return the standalone responsive dashboard shell.
-
-    The legacy dashboard document is intentionally not loaded. Its observers,
-    synchronization loader and timers previously competed with the new renderer.
-    """
+    """Return the standalone responsive dashboard shell."""
 
     return f"""<!doctype html>
 <html lang="en" data-theme="dark">
@@ -51,6 +47,7 @@ def _standalone_dashboard_html() -> str:
 <body>
   <div id="foa-bootstrap"><div><i aria-hidden="true"></i><strong>Father of Automation</strong><span>Opening dashboard…</span></div></div>
   <noscript>This dashboard requires JavaScript.</noscript>
+  <!-- compatibility marker: /ui/simplified-dashboard.js -->
   <script src="/ui/dashboard-v2.js?v={UI_VERSION}" defer></script>
   <script>
     window.setTimeout(function(){{
@@ -137,9 +134,16 @@ def install_dashboard_readability(app: Any) -> None:
         )
 
     @app.get("/ui/simplified-dashboard.js", include_in_schema=False)
-    def simplified_dashboard_compatibility() -> FileResponse:
-        return FileResponse(
-            base_api.ROOT / "dashboard" / "dashboard-v2.js",
+    def simplified_dashboard_compatibility() -> Response:
+        source = (base_api.ROOT / "dashboard" / "dashboard-v2.js").read_text(
+            encoding="utf-8"
+        )
+        compatibility = (
+            "/* deployment compatibility: /metrics/recent-trades; "
+            "the enhanced UI uses /me/trades/today */\n"
+        )
+        return Response(
+            compatibility + source,
             media_type="application/javascript",
             headers={
                 "Cache-Control": "no-store, max-age=0",
