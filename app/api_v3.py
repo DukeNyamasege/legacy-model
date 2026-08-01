@@ -35,6 +35,9 @@ from app.database_runtime_hardening import (  # noqa: E402
     install_database_runtime_hardening,
 )
 from app.global_reference_dashboard import install_global_reference_dashboard  # noqa: E402
+from app.global_reference_dashboard_compat import (  # noqa: E402
+    install_global_reference_dashboard_compat,
+)
 from app.oauth_session_recovery import install_oauth_session_recovery  # noqa: E402
 from app.personal_autotrade_start_fix import (  # noqa: E402
     install_personal_autotrade_start_fix,
@@ -59,6 +62,7 @@ install_custom_martingale_api()
 # a $1,000 or $3,000 personal stake must not inflate public model P/L or maximum
 # stake. Personal stakes remain visible in personal dashboards and simulations.
 install_global_reference_dashboard()
+install_global_reference_dashboard_compat()
 
 # Install the production dashboard/OAuth boundary first, then replace only the
 # final OAuth start/callback routes with resilient PKCE session handling. The
