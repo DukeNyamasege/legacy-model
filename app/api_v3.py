@@ -28,6 +28,7 @@ from app.aidr_api_metadata import install_aidr_api_metadata  # noqa: E402
 from app.aidr_execution_flow_fix import install_aidr_execution_flow_fix  # noqa: E402
 from app.custom_martingale import install_custom_martingale_api  # noqa: E402
 from app.dashboard_readability import install_dashboard_readability  # noqa: E402
+from app.dashboard_settings_guard import install_dashboard_settings_guard  # noqa: E402
 from app.dashboard_stability_fix import install_dashboard_stability_fix  # noqa: E402
 from app.database_runtime_hardening import (  # noqa: E402
     install_database_runtime_hardening,
@@ -106,6 +107,7 @@ install_dashboard_readability(app)
 # Stable mobile dashboard is installed last. It keeps Recent Trades from changing
 # structure during silent refreshes and reduces mobile typography.
 install_dashboard_stability_fix(app)
+install_dashboard_settings_guard(app)
 
 # Database failures are converted into controlled 503 responses after every final
 # route has been installed.
