@@ -38,6 +38,7 @@ from app.global_reference_dashboard import install_global_reference_dashboard  #
 from app.global_reference_dashboard_compat import (  # noqa: E402
     install_global_reference_dashboard_compat,
 )
+from app.model_pnl_display_aliases import install_model_pnl_display_aliases  # noqa: E402
 from app.oauth_session_recovery import install_oauth_session_recovery  # noqa: E402
 from app.personal_autotrade_start_fix import (  # noqa: E402
     install_personal_autotrade_start_fix,
@@ -63,6 +64,7 @@ install_custom_martingale_api()
 # stake. Personal stakes remain visible in personal dashboards and simulations.
 install_global_reference_dashboard()
 install_global_reference_dashboard_compat()
+install_model_pnl_display_aliases()
 
 # Install the production dashboard/OAuth boundary first, then replace only the
 # final OAuth start/callback routes with resilient PKCE session handling. The
