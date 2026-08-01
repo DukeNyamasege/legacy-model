@@ -29,6 +29,7 @@ install_one_put_recovery_policy()
 
 from app.api_account_lifecycle import app  # noqa: E402
 from app.account_mode_execution_lock import install_account_mode_execution_lock  # noqa: E402
+from app.custom_martingale import install_custom_martingale_api  # noqa: E402
 from app.database_runtime_hardening import (  # noqa: E402
     install_database_runtime_hardening,
 )
@@ -45,6 +46,10 @@ from app.profit_accuracy_guard import install_profit_accuracy_guard  # noqa: E40
 install_account_mode_execution_lock()
 install_profit_accuracy_guard()
 install_personal_autotrade_start_fix()
+
+# Advanced Martingale remains account-scoped. System exact-debt recovery is the
+# default; custom multiplier and flat-stake profiles are explicit user choices.
+install_custom_martingale_api()
 
 # Install the final OAuth/dashboard integration first, then add the final
 # database-aware health and exception boundary. No later wrapper may replace
