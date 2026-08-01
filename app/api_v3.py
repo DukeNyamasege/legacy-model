@@ -30,6 +30,7 @@ from app.dashboard_readability import install_dashboard_readability  # noqa: E40
 from app.database_runtime_hardening import (  # noqa: E402
     install_database_runtime_hardening,
 )
+from app.final_public_controls import install_final_public_controls  # noqa: E402
 from app.global_reference_dashboard import install_global_reference_dashboard  # noqa: E402
 from app.global_reference_dashboard_compat import (  # noqa: E402
     install_global_reference_dashboard_compat,
@@ -83,6 +84,11 @@ install_personal_me_session_fix(app)
 # Expose the authenticated account's complete current-day trade list to the new
 # standalone Trades page. This does not modify execution or account state.
 install_simplified_dashboard_api()
+
+# Install the final lifecycle authority after the older routes. Stop is now a hard
+# disabled/stopped state; Pause preserves recovery; Start from stopped resets risk.
+# The same layer adds account-scoped clear-trades and exit digit trade payloads.
+install_final_public_controls(app)
 
 # Readability is installed after the production dashboard route so the final HTML
 # always includes the high-contrast text boost and simplified desktop/mobile UI.
