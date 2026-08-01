@@ -44,6 +44,7 @@ from app.production_integration_hardening import (  # noqa: E402
     install_production_integration_hardening,
 )
 from app.profit_accuracy_guard import install_profit_accuracy_guard  # noqa: E402
+from app.simplified_dashboard_api import install_simplified_dashboard_api  # noqa: E402
 
 # The lifecycle routes and dashboard consistency wrappers are now loaded. Install
 # final guards afterwards so no older compatibility layer can override them.
@@ -78,6 +79,10 @@ install_oauth_session_recovery(app)
 # It preserves account-mode consistency and custom Martingale settings, while
 # avoiding the unresolved Request annotation that caused 422 responses.
 install_personal_me_session_fix(app)
+
+# Expose the authenticated account's complete current-day trade list to the new
+# standalone Trades page. This does not modify execution or account state.
+install_simplified_dashboard_api()
 
 # Readability is installed after the production dashboard route so the final HTML
 # always includes the high-contrast text boost and simplified desktop/mobile UI.
