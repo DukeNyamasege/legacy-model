@@ -24,6 +24,7 @@ install_dashboard_actual_trade_fallback()
 from app.api_account_lifecycle import app  # noqa: E402
 from app.account_mode_execution_lock import install_account_mode_execution_lock  # noqa: E402
 from app.ai_digit_recovery_v1 import install_ai_digit_recovery_v1_strategy  # noqa: E402
+from app.aidr_api_metadata import install_aidr_api_metadata  # noqa: E402
 from app.custom_martingale import install_custom_martingale_api  # noqa: E402
 from app.dashboard_readability import install_dashboard_readability  # noqa: E402
 from app.database_runtime_hardening import (  # noqa: E402
@@ -64,6 +65,7 @@ install_ai_digit_recovery_v1_strategy()
 install_global_reference_dashboard()
 install_global_reference_dashboard_compat()
 install_model_pnl_display_aliases()
+install_aidr_api_metadata()
 
 # Install the production dashboard/OAuth boundary first, then replace only the
 # final OAuth start/callback routes with resilient PKCE session handling. The
@@ -78,7 +80,7 @@ install_oauth_session_recovery(app)
 install_personal_me_session_fix(app)
 
 # Readability is installed after the production dashboard route so the final HTML
-# always includes the high-contrast text boost and Global $0.50 reference note.
+# always includes the high-contrast text boost and simplified desktop/mobile UI.
 install_dashboard_readability(app)
 
 # Database failures are converted into controlled 503 responses after every final
