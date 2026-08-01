@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, HTMLResponse, Response
 import app.api as base_api
 
 _INSTALLED = False
-UI_VERSION = "20260801-5"
+UI_VERSION = "20260801-6"
 
 
 def _remove_route(app: Any, path: str, method: str) -> None:
@@ -49,6 +49,7 @@ def _standalone_dashboard_html() -> str:
   <noscript>This dashboard requires JavaScript.</noscript>
   <!-- compatibility marker: /ui/simplified-dashboard.js -->
   <script src="/ui/dashboard-v2.js?v={UI_VERSION}" defer></script>
+  <script src="/ui/dashboard-actions-v2.js?v={UI_VERSION}" defer></script>
   <script>
     window.setTimeout(function(){{
       var bootstrap=document.getElementById("foa-bootstrap");
@@ -72,6 +73,7 @@ def install_dashboard_readability(app: Any) -> None:
         "/",
         "/ui/dashboard-v2.css",
         "/ui/dashboard-v2.js",
+        "/ui/dashboard-actions-v2.js",
         "/ui/readability-boost.js",
         "/ui/simplified-dashboard.js",
     ):
@@ -117,6 +119,18 @@ def install_dashboard_readability(app: Any) -> None:
     def enhanced_dashboard_javascript() -> FileResponse:
         return FileResponse(
             base_api.ROOT / "dashboard" / "dashboard-v2.js",
+            media_type="application/javascript",
+            headers={
+                "Cache-Control": "no-store, max-age=0",
+                "Pragma": "no-cache",
+                "X-FOA-UI-Version": UI_VERSION,
+            },
+        )
+
+    @app.get("/ui/dashboard-actions-v2.js", include_in_schema=False)
+    def enhanced_dashboard_actions() -> FileResponse:
+        return FileResponse(
+            base_api.ROOT / "dashboard" / "dashboard-actions-v2.js",
             media_type="application/javascript",
             headers={
                 "Cache-Control": "no-store, max-age=0",
