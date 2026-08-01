@@ -9,6 +9,7 @@ from app.custom_martingale import (
     custom_martingale_stake,
     normalize_martingale_settings,
 )
+from app.oauth_session_proof import validate_oauth_callback_proof
 
 
 class CustomMartingaleTests(unittest.TestCase):
@@ -85,6 +86,41 @@ class CustomMartingaleTests(unittest.TestCase):
         self.assertEqual(settings["multiplier"], 10.0)
         self.assertEqual(settings["max_levels"], 10)
         self.assertEqual(settings["max_stake"], 0.75)
+
+
+class OAuthSessionProofTests(unittest.TestCase):
+    def test_normal_browser_cookie_pkce_proof_is_accepted(self) -> None:
+        valid, source = validate_oauth_callback_proof(
+            returned_state="state-1",
+            cookie_state="state-1",
+            cookie_verifier="verifier-1",
+            stored_verifier="verifier-1",
+            state_verifier="",
+        )
+        self.assertTrue(valid)
+        self.assertEqual(source, "browser_cookie")
+
+    def test_server_state_pkce_recovers_missing_browser_cookies(self) -> None:
+        valid, source = validate_oauth_callback_proof(
+            returned_state="state-1",
+            cookie_state="",
+            cookie_verifier="",
+            stored_verifier="verifier-1",
+            state_verifier="verifier-1",
+        )
+        self.assertTrue(valid)
+        self.assertEqual(source, "server_state")
+
+    def test_invalid_cookie_and_state_proofs_are_rejected(self) -> None:
+        valid, source = validate_oauth_callback_proof(
+            returned_state="state-1",
+            cookie_state="wrong-state",
+            cookie_verifier="wrong-verifier",
+            stored_verifier="verifier-1",
+            state_verifier="wrong-verifier",
+        )
+        self.assertFalse(valid)
+        self.assertEqual(source, "invalid")
 
 
 if __name__ == "__main__":
