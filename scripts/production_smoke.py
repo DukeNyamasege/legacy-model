@@ -296,17 +296,54 @@ def main() -> int:
             "generated_at": payload.get("generated_at"),
         }
 
+    # The public root is now a clean standalone shell. It deliberately does not
+    # inject the old realtime/data-consistency/custom-Martingale DOM scripts,
+    # because those legacy observers conflict with the new renderer and can make
+    # Chrome unresponsive. Validate the UI that production actually serves.
     html_response = session.get(f"{base_url}/", timeout=20)
     require(html_response.status_code == 200, f"Dashboard HTML returned {html_response.status_code}")
+    html_text = html_response.text
     require(
-        "/ui/realtime-mode-hardening.js" in html_response.text,
-        "Realtime mode hardening script is not injected into dashboard HTML",
+        "/ui/simplified-dashboard.js" in html_text,
+        "Standalone simplified dashboard script is not present in dashboard HTML",
     )
     require(
-        "/custom-martingale.js" in html_response.text,
-        "Custom Martingale controls are not injected into dashboard HTML",
+        "Father of Automation" in html_text,
+        "Standalone dashboard brand marker is missing",
+    )
+    for legacy_marker in (
+        "/ui/realtime-mode-hardening.js",
+        "/ui/data-consistency.js",
+        "smart-loader",
+    ):
+        require(
+            legacy_marker not in html_text,
+            f"Legacy dashboard runtime is still present: {legacy_marker}",
+        )
+
+    simplified_script = session.get(f"{base_url}/ui/simplified-dashboard.js", timeout=20)
+    require(
+        simplified_script.status_code == 200,
+        f"Simplified dashboard JavaScript returned {simplified_script.status_code}",
+    )
+    simplified_text = simplified_script.text
+    for marker in (
+        "foa-simple-app",
+        "foa-simple-active",
+        "My Account",
+        "Recent Trades",
+        "/metrics/summary",
+        "/metrics/recent-trades",
+        "/me",
+    ):
+        require(marker in simplified_text, f"Simplified dashboard JavaScript is missing {marker!r}")
+    require(
+        "String(value ?? fallback || fallback)" not in simplified_text,
+        "Simplified dashboard still contains the invalid nullish-coalescing expression",
     )
 
+    # The advanced Martingale endpoint remains available for account settings and
+    # compatibility tests even though its old DOM injector is not loaded at root.
     martingale_script = session.get(f"{base_url}/custom-martingale.js", timeout=20)
     require(
         martingale_script.status_code == 200,
@@ -322,11 +359,20 @@ def main() -> int:
     ):
         require(marker in script_text, f"Custom Martingale JavaScript is missing {marker!r}")
 
-    report["checks"]["dashboard_html"] = {"bytes": len(html_response.content)}
+    report["checks"]["dashboard_html"] = {
+        "bytes": len(html_response.content),
+        "standalone_simplified_ui": True,
+        "legacy_runtime_absent": True,
+    }
+    report["checks"]["simplified_dashboard"] = {
+        "script_bytes": len(simplified_script.content),
+        "browser_parse_blocker_absent": True,
+    }
     report["checks"]["custom_martingale"] = {
         "script_bytes": len(martingale_script.content),
         "system_default": True,
         "custom_trigger_and_multiplier": True,
+        "legacy_dom_injector_not_loaded_at_root": True,
     }
 
     report["checks"]["oauth_start"] = validate_oauth_start(session, base_url, config)
