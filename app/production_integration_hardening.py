@@ -201,6 +201,7 @@ def install_production_integration_hardening(app: Any) -> None:
             '<script src="/ui/data-consistency.js?v=20260731"></script>',
             '<script src="/ui/security-hardening.js?v=20260731"></script>',
             '<script src="/ui/realtime-mode-hardening.js?v=20260731"></script>',
+            '<script src="/custom-martingale.js?v=20260801-1"></script>',
         )
         missing = [f"  {script}" for script in scripts if script not in html]
         if missing:
