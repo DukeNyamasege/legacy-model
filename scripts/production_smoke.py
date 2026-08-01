@@ -302,7 +302,32 @@ def main() -> int:
         "/ui/realtime-mode-hardening.js" in html_response.text,
         "Realtime mode hardening script is not injected into dashboard HTML",
     )
+    require(
+        "/custom-martingale.js" in html_response.text,
+        "Custom Martingale controls are not injected into dashboard HTML",
+    )
+
+    martingale_script = session.get(f"{base_url}/custom-martingale.js", timeout=20)
+    require(
+        martingale_script.status_code == 200,
+        f"Custom Martingale JavaScript returned {martingale_script.status_code}",
+    )
+    script_text = martingale_script.text
+    for marker in (
+        "personal-martingale-mode",
+        "martingale_trigger_losses",
+        "martingale_multiplier",
+        "System Martingale",
+        "Custom Martingale",
+    ):
+        require(marker in script_text, f"Custom Martingale JavaScript is missing {marker!r}")
+
     report["checks"]["dashboard_html"] = {"bytes": len(html_response.content)}
+    report["checks"]["custom_martingale"] = {
+        "script_bytes": len(martingale_script.content),
+        "system_default": True,
+        "custom_trigger_and_multiplier": True,
+    }
 
     report["checks"]["oauth_start"] = validate_oauth_start(session, base_url, config)
     report["checks"].update(
