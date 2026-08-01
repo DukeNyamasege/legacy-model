@@ -29,7 +29,7 @@ def _inject_scripts(html: str) -> str:
         '<script src="/ui/security-hardening.js?v=20260731"></script>',
         '<script src="/ui/realtime-mode-hardening.js?v=20260731"></script>',
         '<script src="/custom-martingale.js?v=20260801-1"></script>',
-        '<script src="/ui/readability-boost.js?v=20260801-1"></script>',
+        '<script src="/ui/readability-boost.js?v=20260801-2"></script>',
     )
     missing = [f"  {script}" for script in scripts if script not in html]
     if missing:
