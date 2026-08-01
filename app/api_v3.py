@@ -32,6 +32,9 @@ from app.account_mode_execution_lock import install_account_mode_execution_lock 
 from app.database_runtime_hardening import (  # noqa: E402
     install_database_runtime_hardening,
 )
+from app.personal_autotrade_start_fix import (  # noqa: E402
+    install_personal_autotrade_start_fix,
+)
 from app.production_integration_hardening import (  # noqa: E402
     install_production_integration_hardening,
 )
@@ -41,6 +44,7 @@ from app.profit_accuracy_guard import install_profit_accuracy_guard  # noqa: E40
 # final guards afterwards so no older compatibility layer can override them.
 install_account_mode_execution_lock()
 install_profit_accuracy_guard()
+install_personal_autotrade_start_fix()
 
 # Install the final OAuth/dashboard integration first, then add the final
 # database-aware health and exception boundary. No later wrapper may replace
