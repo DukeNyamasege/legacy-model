@@ -25,6 +25,21 @@ def _production_acknowledged(config: Any) -> bool:
     return configured == "I_ACKNOWLEDGE_REAL_MONEY_TRADING"
 
 
+def _hard_real_trading_disabled() -> bool:
+    """Return true only for an explicit emergency/off switch.
+
+    ALLOW_REAL_TRADING used to be treated as a hard runtime gate.  That made Real
+    account execution look permanently disabled when a stale VPS .env value
+    remained behind after the product moved to per-account Start/Stop controls.
+    The supported model is now: Demo and Real are both valid account modes, and
+    each trader chooses execution from their own personal panel.  Use
+    DISABLE_REAL_TRADING=true only when the VPS owner intentionally wants an
+    emergency global Real kill-switch.
+    """
+
+    return _truthy(os.getenv("DISABLE_REAL_TRADING"), default=False)
+
+
 def _dual_account_environment_for_token(self: TradingBot, token: str) -> str:
     profile = getattr(self, "user_profiles", {}).get(token, {}) or {}
     return normalize_account_type(
@@ -37,22 +52,19 @@ def _dual_real_trading_allowed(self: TradingBot) -> bool:
     config = getattr(self, "test2_config", None)
     execution = getattr(config, "execution", None)
     deriv = getattr(config, "deriv", None)
-    execution_allows_real = bool(getattr(execution, "real_enabled", False))
-    config_allows_real = bool(getattr(deriv, "allow_real_trading", False))
-    env_allows_real = _truthy(
-        os.getenv("ALLOW_REAL_TRADING"),
-        default=config_allows_real,
-    )
+    execution_allows_real = bool(getattr(execution, "real_enabled", True))
+    config_allows_real = bool(getattr(deriv, "allow_real_trading", True))
     acknowledged = _production_acknowledged(config)
-    allowed = bool(execution_allows_real and config_allows_real and env_allows_real and acknowledged)
+    hard_disabled = _hard_real_trading_disabled()
+    allowed = bool(execution_allows_real and config_allows_real and acknowledged and not hard_disabled)
     try:
         self.logger.info(
-            "REAL_TRADING_GATE execution_real_enabled=%s config_allow_real=%s "
-            "env_allow_real=%s production_ack=%s allowed=%s",
+            "REAL_TRADING_GATE mode=per_account_user_controlled execution_real_enabled=%s "
+            "config_allow_real=%s production_ack=%s hard_disabled=%s allowed=%s",
             str(execution_allows_real).lower(),
             str(config_allows_real).lower(),
-            str(env_allows_real).lower(),
             str(acknowledged).lower(),
+            str(hard_disabled).lower(),
             str(allowed).lower(),
         )
     except Exception:
@@ -65,7 +77,9 @@ def install_dual_demo_real_trading_support() -> None:
 
     Runtime mode remains useful for dashboard filtering, but account execution is
     decided from the account's own `account_type`. A real account is blocked only
-    when the explicit real-money switches are missing.
+    by the emergency global DISABLE_REAL_TRADING switch or missing production
+    acknowledgement, never because a Demo sibling is running or because a stale
+    ALLOW_REAL_TRADING value exists in .env.
     """
 
     global _INSTALLED
