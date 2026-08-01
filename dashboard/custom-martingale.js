@@ -92,7 +92,7 @@
         <select id="personal-martingale-mode">
           <option value="system">System Martingale — default exact recovery</option>
           <option value="custom">Custom Martingale — multiplier based</option>
-          <option value="flat">Flat stake — no stake increase</option>
+          <option value="flat">Flat stake — disable recovery escalation</option>
         </select>
       </label>
       <div id="custom-martingale-fields" class="custom-martingale-fields">
@@ -157,12 +157,12 @@
       return;
     }
     if (mode === "flat") {
-      status.innerHTML = "<strong>Flat stake:</strong> contract selection and virtual protection remain active, but every real purchase uses the saved base stake.";
+      status.innerHTML = "<strong>Flat stake:</strong> Martingale recovery escalation is disabled. Primary real trades continue at the saved base stake; no larger recovery stake is armed after a loss.";
       return;
     }
 
     const settings = currentSettingsPayload();
-    status.innerHTML = `<strong>Custom Martingale:</strong> starts at loss ${settings.martingale_trigger_losses}, uses ×${settings.martingale_multiplier.toFixed(2)} per active level, stops increasing after ${settings.martingale_max_levels} levels, and never exceeds $${settings.martingale_max_stake.toFixed(2)}.`;
+    status.innerHTML = `<strong>Custom Martingale:</strong> starts at loss ${settings.martingale_trigger_losses}, uses ×${settings.martingale_multiplier.toFixed(2)} per active level, stops increasing after ${settings.martingale_max_levels} levels, and never exceeds $${settings.martingale_max_stake.toFixed(2)}. Multiplier mode follows your chosen amounts and does not guarantee exact debt recovery; use System Martingale for exact recovery calculations.`;
   }
 
   function applyServerSettings(settings) {
