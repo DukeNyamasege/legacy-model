@@ -4,6 +4,8 @@ import json
 import math
 from typing import Any
 
+from pydantic import BaseModel, Field
+
 from app.models import AccountRiskState
 from app.recovery import ceil_cents
 from app.repositories.rf_dir5_repository import RFDir5Repository, StakePlan
@@ -20,6 +22,25 @@ DEFAULT_MAX_STAKE = 1000.0
 
 _API_INSTALLED = False
 _WORKER_INSTALLED = False
+
+
+class AdvancedTradingSettingsRequest(BaseModel):
+    stake_amount: float
+    take_profit: float = 0.0
+    stop_loss: float = 0.0
+    martingale_enabled: bool = True
+    martingale_mode: str | None = Field(
+        default=None,
+        pattern="^(system|custom|flat)$",
+    )
+    martingale_trigger_losses: int = Field(default=1, ge=1, le=10)
+    martingale_multiplier: float = Field(default=2.0, ge=1.10, le=10.0)
+    martingale_max_levels: int = Field(default=6, ge=1, le=10)
+    martingale_max_stake: float = Field(
+        default=1000.0,
+        ge=0.35,
+        le=1_000_000.0,
+    )
 
 
 def _preference_key(managed_account_id: int) -> str:
@@ -72,7 +93,9 @@ def normalize_martingale_settings(
         max_stake = DEFAULT_MAX_STAKE
     if not math.isfinite(max_stake):
         max_stake = DEFAULT_MAX_STAKE
-    max_stake = ceil_cents(max(minimum_cap, min(1_000_000.0, max_stake)))
+    max_stake = ceil_cents(
+        max(minimum_cap, min(1_000_000.0, max_stake))
+    )
 
     return {
         "mode": mode,
@@ -86,7 +109,7 @@ def normalize_martingale_settings(
             if mode == SYSTEM_MODE
             else "custom_multiplier"
             if mode == CUSTOM_MODE
-            else "flat_stake"
+            else "flat_primary_stake"
         ),
     }
 
@@ -98,9 +121,10 @@ def read_account_martingale_settings(
     account = repository.managed_account(int(managed_account_id)) or {}
     legacy_enabled = bool(account.get("martingale_enabled", True))
     base_stake = float(account.get("stake_amount", 0.50) or 0.50)
-    raw = ""
     try:
-        raw = repository.runtime_preference(_preference_key(managed_account_id))
+        raw = repository.runtime_preference(
+            _preference_key(managed_account_id)
+        )
     except Exception:
         raw = ""
     try:
@@ -141,11 +165,11 @@ def custom_martingale_stake(
     max_levels: int,
     max_stake: float,
 ) -> tuple[float, int, bool]:
-    """Return stake, active level and whether the user cap was reached.
+    """Return the account's custom stake, level and cap state.
 
     Level one starts when consecutive actual losses reach trigger_losses. Each
     additional actual loss advances one multiplier level. Virtual observations do
-    not change the level because they do not lose account money.
+    not change the level because they have no monetary loss.
     """
 
     base = ceil_cents(max(0.35, float(base_stake)))
@@ -154,10 +178,17 @@ def custom_martingale_stake(
     if losses < trigger:
         return base, 0, False
 
-    level = min(max(1, losses - trigger + 1), max(1, int(max_levels)))
+    level = min(
+        max(1, losses - trigger + 1),
+        max(1, int(max_levels)),
+    )
     calculated = base * (float(multiplier) ** level)
     capped = calculated > float(max_stake) + 1e-9
-    return ceil_cents(min(calculated, float(max_stake))), level, capped
+    return (
+        ceil_cents(min(calculated, float(max_stake))),
+        level,
+        capped,
+    )
 
 
 def install_custom_martingale_worker() -> None:
@@ -191,8 +222,9 @@ def install_custom_martingale_worker() -> None:
         mode = str(settings["mode"])
 
         # System mode is the unchanged built-in exact-debt recovery planner.
-        # Custom and flat modes deliberately ask the core planner for base stake;
-        # virtual protection and recovery-state admission remain fully intact.
+        # Custom asks the core planner for base stake while retaining its recovery
+        # and virtual-state gate, then replaces only the real recovery amount.
+        # Flat mode keeps the base stake and does not arm Martingale recovery.
         plan = original_plan_stake(
             self,
             managed_account_id=managed_account_id,
@@ -212,9 +244,16 @@ def install_custom_martingale_worker() -> None:
             return plan
 
         with self.database.session() as session:
-            state = session.get(AccountRiskState, int(managed_account_id))
-            consecutive_losses = int(state.consecutive_losses or 0) if state else 0
-            recovery_debt = float(state.recovery_loss_debt or 0.0) if state else 0.0
+            state = session.get(
+                AccountRiskState,
+                int(managed_account_id),
+            )
+            consecutive_losses = (
+                int(state.consecutive_losses or 0) if state else 0
+            )
+            recovery_debt = (
+                float(state.recovery_loss_debt or 0.0) if state else 0.0
+            )
 
         stake, level, capped = custom_martingale_stake(
             base_stake=max(float(minimum_stake), float(requested_stake)),
@@ -230,7 +269,8 @@ def install_custom_martingale_worker() -> None:
         return StakePlan(
             stake=stake,
             reason=(
-                f"custom Martingale level {level}; multiplier x{settings['multiplier']:.2f}"
+                f"custom Martingale level {level}; "
+                f"multiplier x{settings['multiplier']:.2f}"
                 + ("; user maximum stake reached" if capped else "")
             ),
             is_recovery=True,
@@ -243,6 +283,18 @@ def install_custom_martingale_worker() -> None:
     _WORKER_INSTALLED = True
 
 
+def _remove_route(base_api: Any, path: str, method: str) -> None:
+    expected = method.upper()
+    base_api.app.router.routes[:] = [
+        route
+        for route in base_api.app.router.routes
+        if not (
+            getattr(route, "path", None) == path
+            and expected in set(getattr(route, "methods", set()) or set())
+        )
+    ]
+
+
 def install_custom_martingale_api() -> None:
     """Expose per-account system/custom/flat controls without a schema migration."""
 
@@ -252,37 +304,12 @@ def install_custom_martingale_api() -> None:
 
     import app.api as base_api
     from fastapi import HTTPException, Request
-    from fastapi.responses import FileResponse, HTMLResponse
-    from pydantic import BaseModel, Field
-
-    class AdvancedTradingSettingsRequest(BaseModel):
-        stake_amount: float
-        take_profit: float = 0.0
-        stop_loss: float = 0.0
-        martingale_enabled: bool = True
-        martingale_mode: str | None = Field(default=None, pattern="^(system|custom|flat)$")
-        martingale_trigger_losses: int = Field(default=1, ge=1, le=10)
-        martingale_multiplier: float = Field(default=2.0, ge=1.10, le=10.0)
-        martingale_max_levels: int = Field(default=6, ge=1, le=10)
-        martingale_max_stake: float = Field(default=1000.0, ge=0.35, le=1_000_000.0)
-
-    def remove_route(path: str, method: str) -> None:
-        expected = method.upper()
-        base_api.app.router.routes[:] = [
-            route
-            for route in base_api.app.router.routes
-            if not (
-                getattr(route, "path", None) == path
-                and expected in set(getattr(route, "methods", set()) or set())
-            )
-        ]
+    from fastapi.responses import FileResponse
 
     original_get_me = base_api.get_me
-    original_dashboard = base_api.dashboard
 
-    remove_route("/me", "GET")
-    remove_route("/me/trading-settings", "POST")
-    remove_route("/", "GET")
+    _remove_route(base_api, "/me", "GET")
+    _remove_route(base_api, "/me/trading-settings", "POST")
 
     @base_api.app.get("/me")
     def get_me_with_martingale(request: Request) -> dict[str, Any]:
@@ -320,7 +347,10 @@ def install_custom_martingale_api() -> None:
         if not account.get("has_trading_api_token", False):
             raise HTTPException(
                 status_code=409,
-                detail="Save a Deriv trading credential before configuring trading controls.",
+                detail=(
+                    "Save a Deriv trading credential before configuring "
+                    "trading controls."
+                ),
             )
 
         numeric_values = (
@@ -330,16 +360,35 @@ def install_custom_martingale_api() -> None:
             body.martingale_multiplier,
             body.martingale_max_stake,
         )
-        if not all(math.isfinite(float(value)) for value in numeric_values):
-            raise HTTPException(status_code=400, detail="Trading settings must be finite numbers.")
+        if not all(
+            math.isfinite(float(value)) for value in numeric_values
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Trading settings must be finite numbers.",
+            )
 
         stake_amount = round(float(body.stake_amount), 2)
         take_profit = round(float(body.take_profit), 2)
         stop_loss = round(float(body.stop_loss), 2)
         if not 0.35 <= stake_amount <= 1_000_000:
-            raise HTTPException(status_code=400, detail="Stake amount must be between 0.35 and 1,000,000.")
-        if not 0 <= take_profit <= 1_000_000 or not 0 <= stop_loss <= 1_000_000:
-            raise HTTPException(status_code=400, detail="Take profit and stop loss must be between 0 and 1,000,000.")
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Stake amount must be between 0.35 and 1,000,000."
+                ),
+            )
+        if (
+            not 0 <= take_profit <= 1_000_000
+            or not 0 <= stop_loss <= 1_000_000
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Take profit and stop loss must be between 0 and "
+                    "1,000,000."
+                ),
+            )
 
         mode = normalize_martingale_mode(
             body.martingale_mode,
@@ -371,6 +420,7 @@ def install_custom_martingale_api() -> None:
         )
         settings = {
             **basic,
+            "martingale_enabled": bool(advanced["martingale_enabled"]),
             "martingale_mode": advanced["mode"],
             "martingale_trigger_losses": advanced["trigger_losses"],
             "martingale_multiplier": advanced["multiplier"],
@@ -401,32 +451,7 @@ def install_custom_martingale_api() -> None:
         return FileResponse(
             base_api.ROOT / "dashboard" / "custom-martingale.js",
             media_type="application/javascript",
-            headers={"Cache-Control": "no-store"},
-        )
-
-    @base_api.app.get("/")
-    def dashboard_with_custom_martingale(
-        request: Request,
-        code: str = "",
-        state: str = "",
-        error: str = "",
-        error_description: str = "",
-    ):
-        if code or error:
-            return original_dashboard(
-                request,
-                code=code,
-                state=state,
-                error=error,
-                error_description=error_description,
-            )
-        html = (base_api.ROOT / "dashboard" / "index.html").read_text(encoding="utf-8")
-        script = '<script src="/custom-martingale.js?v=20260801-1"></script>'
-        if script not in html:
-            html = html.replace("</body>", f"{script}\n</body>")
-        return HTMLResponse(
-            html,
-            headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+            headers={"Cache-Control": "no-store, max-age=0"},
         )
 
     base_api.app.state.custom_martingale_api_installed = True
