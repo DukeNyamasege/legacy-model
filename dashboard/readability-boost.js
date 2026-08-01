@@ -5,6 +5,8 @@
   window.__readabilityBoostInstalled = true;
 
   const byId = (id) => document.getElementById(id);
+  let standardToday = null;
+  let standardSystem = null;
 
   function injectStyles() {
     if (byId("readability-boost-styles")) return;
@@ -120,11 +122,107 @@
     if (card) card.remove();
   }
 
+  function number(value, digits = 2) {
+    const parsed = Number(value || 0);
+    return parsed.toLocaleString(undefined, {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    });
+  }
+
+  function signedMoney(value) {
+    const amount = Number(value || 0);
+    const sign = amount >= 0 ? "+" : "-";
+    return `${sign}$${number(Math.abs(amount), 2)}`;
+  }
+
+  function setMoney(id, value, positiveColor, negativeColor) {
+    const element = byId(id);
+    if (!element) return;
+    const amount = Number(value || 0);
+    element.textContent = signedMoney(amount);
+    element.classList.toggle("negative", amount < 0);
+    element.style.color = amount < 0 ? negativeColor : positiveColor;
+  }
+
+  function setPlainMoney(id, value) {
+    const element = byId(id);
+    if (element) element.textContent = `$${number(value || 0, 2)}`;
+  }
+
+  function todayFromSummary(summary) {
+    return summary?.system_performance?.today || null;
+  }
+
+  function applyStandardModelCards() {
+    const today = standardToday;
+    if (!today) return;
+
+    const withMartingale = today.with_martingale_pnl ?? today.martingale_pnl ?? today.simulated_martingale_pnl ?? 0;
+    const withoutMartingale = today.without_martingale_pnl ?? today.fixed_pnl ?? today.simulated_fixed_pnl ?? 0;
+    const maximumStake = today.maximum_martingale_stake ?? today.simulated_maximum_martingale_stake ?? 0.50;
+    const flatStake = today.flat_stake ?? today.simulated_base_stake ?? today.reference_base_stake ?? 0.50;
+
+    setMoney("model-pl-martingale", withMartingale, "var(--gbs-green)", "var(--gbs-red)");
+    setMoney("model-pl-fixed", withoutMartingale, "var(--gbs-blue)", "var(--gbs-blue)");
+    setPlainMoney("model-maximum-stake", maximumStake);
+    setPlainMoney("model-flat-stake", flatStake);
+  }
+
+  function captureStandardSummary(summary) {
+    const today = todayFromSummary(summary);
+    if (!today) return;
+    standardToday = today;
+    standardSystem = summary?.system_performance || standardSystem;
+    applyStandardModelCards();
+  }
+
+  async function fetchStandardSummary() {
+    try {
+      const response = await fetch("/metrics/summary?mode=demo", {
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      if (!response.ok) return;
+      captureStandardSummary(await response.json());
+    } catch (_) {}
+  }
+
+  function endpointUrl(input) {
+    if (typeof input === "string") return input;
+    if (input && typeof input.url === "string") return input.url;
+    return "";
+  }
+
+  function installFetchBridge() {
+    if (window.__standardModelPnlFetchBridgeInstalled) return;
+    window.__standardModelPnlFetchBridgeInstalled = true;
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = async (input, init = {}) => {
+      const response = await nativeFetch(input, init);
+      const url = endpointUrl(input);
+      if (response.ok && url.includes("/metrics/summary")) {
+        response.clone().json().then(captureStandardSummary).catch(() => {});
+      }
+      if (url.includes("/metrics/system-performance")) {
+        window.setTimeout(applyStandardModelCards, 80);
+        window.setTimeout(applyStandardModelCards, 260);
+      }
+      return response;
+    };
+  }
+
   function boot() {
     injectStyles();
     removeReferencePolicyCard();
-    const observer = new MutationObserver(removeReferencePolicyCard);
-    observer.observe(document.documentElement, { childList: true, subtree: true });
+    installFetchBridge();
+    fetchStandardSummary();
+    const observer = new MutationObserver(() => {
+      removeReferencePolicyCard();
+      applyStandardModelCards();
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+    window.setInterval(applyStandardModelCards, 2000);
   }
 
   if (document.readyState === "loading") {
