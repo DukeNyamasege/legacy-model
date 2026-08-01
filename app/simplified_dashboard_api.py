@@ -6,6 +6,7 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import HTTPException, Request
+from fastapi.responses import JSONResponse
 
 import app.api as base_api
 
@@ -99,6 +100,26 @@ def install_simplified_dashboard_api() -> None:
                 "win_rate": wins / (wins + losses) if wins + losses else 0.0,
             },
         }
+
+    @base_api.app.post("/me/logout")
+    def standalone_logout() -> JSONResponse:
+        response = JSONResponse({"success": True, "authenticated": False})
+        response.delete_cookie(
+            key=base_api.CLIENT_SESSION_COOKIE,
+            path="/",
+        )
+        try:
+            configured_domain = str(base_api.session_cookie_domain() or "").strip()
+        except Exception:
+            configured_domain = ""
+        if configured_domain:
+            response.delete_cookie(
+                key=base_api.CLIENT_SESSION_COOKIE,
+                path="/",
+                domain=configured_domain,
+            )
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        return response
 
     base_api.app.state.simplified_dashboard_api_installed = True
     _INSTALLED = True
