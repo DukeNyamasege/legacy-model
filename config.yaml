@@ -11,10 +11,10 @@ deriv:
   oauth_redirect_url: https://derivadmin.site/oauth/callback
   token_encryption_key: ''
 model:
-  name: OVER 2 + PUT Virtual Guard
-  version: 10.2.1-put-virtual-guard
+  name: AI Digit Recovery V1
+  version: 11.0.0-aidr-over1-over3
   brand: Father of Automation Series
-  run_id: hybrid_over2_put_v4
+  run_id: aidr_over1_over3_v1
 files:
   tokens: tokens.txt
   state: bot_state.json
@@ -36,20 +36,20 @@ strategy:
     - R_50
     - R_75
   contract_type: DIGITOVER
-  prediction: 2
+  prediction: 1
   duration: 1
   duration_unit: t
   pattern_length: 5
   currency: USD
   initial_stake: 0.50
 signal:
-  trigger_name: BIN22001x5
+  trigger_name: AIDR-O1-V1
   pattern_ranges:
-    - [6, 9]
-    - [6, 9]
-    - [0, 2]
-    - [0, 2]
-    - [3, 5]
+    - [0, 9]
+    - [0, 9]
+    - [0, 9]
+    - [0, 9]
+    - [0, 9]
   overlapping_signals_allowed: false
   require_pattern_reset: false
 execution:
@@ -79,11 +79,8 @@ cooldown:
   require_pattern_reset: false
 recovery:
   enabled: true
-  # Keep this value compatible with app.config RecoverySettings. The active
-  # policy is installed by app.one_put_recovery_policy and controlled by the
-  # virtual_protection block below.
   mode: single_step
-  recovery_runs: 1
+  recovery_runs: 2
   debt_threshold: 0.50
   deep_debt_threshold: 2.00
   ladder_stakes: [0.50]
@@ -96,7 +93,7 @@ recovery:
   shadow_consecutive_wins_required: 1
   pause_after_consecutive_losses: 3
 rf_strategy:
-  name: RF-PUT5-AI-V8
+  name: AIDR-LEGACY-RF-INFRASTRUCTURE-DISABLED
   allowed_direction: FALL
   markets:
     - 1HZ100V
