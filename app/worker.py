@@ -8,16 +8,13 @@ from app.account_execution_feedback import install_account_execution_feedback
 from app.account_lifecycle import install_worker_account_lifecycle
 from app.account_mode_execution_lock import install_account_mode_execution_lock
 from app.account_reenrollment import install_account_reenrollment
+from app.ai_digit_recovery_v1 import install_ai_digit_recovery_v1_strategy
 from app.custom_martingale import install_custom_martingale_worker
 from app.dashboard_actual_trade_fallback import install_dashboard_actual_trade_fallback
 from app.deployment_announcement import install_dynamic_deployment_announcement
 from app.hybrid_data_integrity import install_hybrid_data_integrity
 from app.hybrid_digit_put import install_hybrid_digit_put_strategy
-from app.hybrid_recent_digit_bias import install_recent_digit_bias_strategy
 from app.hybrid_runtime_config import install_hybrid_runtime_config
-from app.hybrid_safety import install_hybrid_worker_safety
-from app.one_put_recovery_policy import install_one_put_recovery_policy
-from app.primary_over2_recovery_gate import install_primary_over2_recovery_gate
 from app.private_buy_parameter_hardening import install_private_buy_parameter_hardening
 from app.private_websocket_rate_limit import install_private_websocket_rate_limit
 from app.production_worker_integration import install_production_worker_integration
@@ -32,95 +29,42 @@ from app.websocket_only_execution import install_websocket_only_execution
 
 
 async def run_worker() -> None:
-    # After an administrative enrollment reset, only newly linked accounts from
-    # the current generation are visible to the worker. Historical registrations
-    # and their trade records remain preserved but can never auto-start.
+    # Only the current enrollment generation is visible to the worker. Historical
+    # registrations remain preserved but cannot auto-start after a reset.
     install_account_reenrollment()
 
-    # Dashboard/Telegram model reports should not show false zero while the new
-    # private WebSocket OVER-2 path has already settled actual personal trades.
     install_dashboard_actual_trade_fallback()
-
-    # Account lifecycle remains account-scoped. Pause preserves recovery/session;
-    # Stop/Start Again resets that user's state without stopping other traders.
     install_worker_account_lifecycle()
-
-    # Demo and Real are separate manual lifecycles. Worker validation, OAuth/API
-    # refresh, and dashboard repair must never start Real because Demo is running.
     install_account_mode_execution_lock()
-
-    # Demo and Real accounts are both valid production targets. Real execution
-    # remains protected by ALLOW_REAL_TRADING plus the explicit acknowledgement.
     install_dual_demo_real_trading_support()
-
-    # All production purchases remain private Deriv WebSocket-only.
     install_websocket_only_execution()
-
-    # Keep authenticated direct buys on the same clean parameter schema that the
-    # proposal already accepted. Do not inject markup fields into contract params.
     install_private_buy_parameter_hardening()
-
-    # Coordinate OTP and private WebSocket startup across every account. This is
-    # installed before the bot creates ClientSession tasks, preventing a restart
-    # from opening all account handshakes simultaneously and triggering HTTP 429.
     install_private_websocket_rate_limit()
-
-    # Keep account-level execution explanations and error diagnostics.
     install_account_execution_feedback()
     install_account_execution_diagnostics()
-
-    # Telegram private admin/lifecycle features remain independent of strategy.
     install_telegram_admin_integration()
-
-    # Replace the historical hard-coded deployment message with a release note
-    # generated from the exact commit range installed by scripts/update_vps.sh.
     install_dynamic_deployment_announcement()
 
-    # Build the strict PUT recovery brain first. The hybrid controller is installed
-    # afterwards so PUT remains reachable only while the hybrid state is recovering.
+    # Build the old RF/hybrid envelope only for shared WebSocket, candidate,
+    # account and settlement infrastructure. The active strategy is installed
+    # afterwards and disables all PUT scheduling.
     install_strict_streak_guard()
     install_hybrid_runtime_config()
-
-    # Hybrid digit candidates must exist in both the generic candidate ledger and
-    # directional ledger before a canonical SystemModelTrade can reference them.
     install_hybrid_data_integrity()
     install_hybrid_digit_put_strategy()
 
-    # Keep PUT/FALL completely behind the account recovery gate. Before the user's
-    # account has one real OVER-2 loss/recovery state, queued PUT signals are discarded
-    # silently and primary execution remains OVER 2 only.
-    install_primary_over2_recovery_gate()
-
-    # Primary entry uses one recent 20-digit OVER-2 bias; the old 100/500/1000 +
-    # Wilson gate is not part of production entry decisions.
-    install_recent_digit_bias_strategy()
-
-    # Install hybrid safety before the final account-balance policy so the latter
-    # becomes the authoritative stake planner used by the completed worker.
-    install_hybrid_worker_safety()
-
-    # Production recovery policy: one OVER-2 loss arms PUT; a failed real PUT enters
-    # virtual PUT protection until two consecutive virtual wins confirm the next PUT.
-    install_one_put_recovery_policy()
-
-    # Dashboard P/L is audited from settled provider rows. Without Martingale is
-    # flat-stake simulation; With Martingale is observed actual P/L when available.
     install_profit_accuracy_guard()
-
-    # Admission requires only the selected stake. No safety/recovery reserve or
-    # recovery-balance cap may pre-empt a provider buy request. Deriv returns the
-    # actual insufficient-funds error when a later requested stake cannot be paid.
     install_stake_only_balance_policy()
-
-    # Install after every core stake wrapper. System keeps exact-debt recovery;
-    # Custom uses the account's trigger/multiplier; Flat keeps the base stake.
     install_custom_martingale_worker()
 
-    # Install last so committed settlement notifications retry and publish again
-    # after the final account-balance reconciliation has reached PostgreSQL.
-    install_production_worker_integration()
+    # Active public-release strategy:
+    # NORMAL   -> DIGITOVER 1
+    # RECOVERY -> DIGITOVER 3
+    # VIRTUAL  -> virtual DIGITOVER 3 until 2 consecutive wins
+    # SPLIT    -> real DIGITOVER 3 in two recovery-profit targets
+    install_ai_digit_recovery_v1_strategy()
 
-    # Optional high-volume diagnostics. Disabled unless EVERY_TICK_LOGS=true.
+    install_production_worker_integration()
     install_every_tick_debug_logging()
 
     bot = RFDir5TradingBot()
