@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, HTMLResponse, Response
 import app.api as base_api
 
 _INSTALLED = False
-UI_VERSION = "20260801-6"
+UI_VERSION = "20260801-7"
 
 
 def _remove_route(app: Any, path: str, method: str) -> None:
@@ -60,6 +60,161 @@ def _standalone_dashboard_html() -> str:
   </script>
 </body>
 </html>"""
+
+
+def _patched_dashboard_v2_javascript() -> str:
+    """Serve the dashboard with final UX behavior without editing the bundled file.
+
+    The standalone dashboard is still the source of truth. These patches make
+    two user-facing rules strict:
+    1. The onboarding wizard is only visible before login.
+    2. Background refreshes update silently without a blocking loader or scroll
+       interruption. Manual navigation/actions still show loaders.
+    """
+
+    source = (base_api.ROOT / "dashboard" / "dashboard-v2.js").read_text(
+        encoding="utf-8"
+    )
+    source = source.replace(
+        'const VERSION = "20260801-5";',
+        f'const VERSION = "{UI_VERSION}";',
+    ).replace(
+        'const VERSION = "20260801-6";',
+        f'const VERSION = "{UI_VERSION}";',
+    )
+
+    source = source.replace(
+        '  function wizard({ compact = false } = {}) {\n'
+        '    const steps = wizardSteps();',
+        '  function wizard({ compact = false } = {}) {\n'
+        '    if (authenticated()) return "";\n'
+        '    S.wizardOpen = true;\n'
+        '    const steps = wizardSteps();',
+    )
+
+    old_refresh = '''  async function refresh(force = false, loadingText = "Refreshing dashboard…") {
+    if (S.busy && !force) return;
+    S.busy = true;
+    S.loaderText = loadingText;
+    render(false);
+    try {
+      S.me = await getJSON("/me");
+      if (authenticated()) {
+        S.mode = S.me.account_type || S.mode;
+        localStorage.setItem(K.mode, S.mode);
+      }
+      S.summary = await getJSON(`/metrics/summary?mode=${encodeURIComponent(S.mode)}`);
+      if (authenticated()) {
+        const [life, today] = await Promise.all([
+          getJSON("/me/trading-lifecycle"),
+          getJSON("/me/trades/today"),
+        ]);
+        S.life = life;
+        S.trades = Array.isArray(today.trades) ? today.trades : [];
+        S.tradeSummary = { ...(today.summary || {}), date: today.date };
+      } else {
+        S.life = null;
+        S.trades = [];
+        S.tradeSummary = {};
+      }
+      S.error = "";
+    } catch (error) {
+      S.error = `Dashboard refresh failed: ${String(error?.message || error)}`;
+    } finally {
+      S.busy = false;
+      S.booting = false;
+      S.loaderText = "";
+      render();
+    }
+  }
+'''
+
+    new_refresh = '''  async function refresh(force = false, loadingText = "Refreshing dashboard…") {
+    if (S.busy && !force) return;
+    const silent = !force && String(loadingText || "").toLowerCase().includes("refreshing");
+    const scrollX = window.scrollX;
+    const scrollY = window.scrollY;
+    const activeElement = document.activeElement;
+    const activeTag = String(activeElement?.tagName || "").toLowerCase();
+    const editing = ["input", "select", "textarea"].includes(activeTag);
+
+    S.busy = !silent;
+    if (!silent) {
+      S.loaderText = loadingText;
+      render(false);
+    }
+    try {
+      S.me = await getJSON("/me");
+      if (authenticated()) {
+        S.mode = S.me.account_type || S.mode;
+        localStorage.setItem(K.mode, S.mode);
+      }
+      S.summary = await getJSON(`/metrics/summary?mode=${encodeURIComponent(S.mode)}`);
+      if (authenticated()) {
+        const [life, today] = await Promise.all([
+          getJSON("/me/trading-lifecycle"),
+          getJSON("/me/trades/today"),
+        ]);
+        S.life = life;
+        S.trades = Array.isArray(today.trades) ? today.trades : [];
+        S.tradeSummary = { ...(today.summary || {}), date: today.date };
+      } else {
+        S.life = null;
+        S.trades = [];
+        S.tradeSummary = {};
+      }
+      S.error = "";
+    } catch (error) {
+      if (!silent) S.error = `Dashboard refresh failed: ${String(error?.message || error)}`;
+    } finally {
+      S.busy = false;
+      S.booting = false;
+      S.loaderText = "";
+      if (!silent && !editing) {
+        render();
+      } else if (!editing) {
+        render();
+        requestAnimationFrame(() => window.scrollTo(scrollX, scrollY));
+      }
+    }
+  }
+'''
+
+    if old_refresh in source:
+        source = source.replace(old_refresh, new_refresh)
+    else:
+        source = (
+            'console.warn("FOA dashboard refresh patch did not find the expected block");\n'
+            + source
+        )
+
+    source += f'''
+
+/* Final UX guard {UI_VERSION}: logged-in users never see wizard cards, and
+   accidental refresh loaders are hidden if a browser keeps an older script. */
+(() => {{
+  const style = document.createElement("style");
+  style.id = "foa-final-ux-guard";
+  style.textContent = `
+    body.foa-authenticated .foa-wizard-card{{display:none!important}}
+    .foa-route-loader.foa-silent-refresh{{display:none!important;pointer-events:none!important;backdrop-filter:none!important;background:transparent!important}}
+  `;
+  document.head.appendChild(style);
+  function mark() {{
+    const loggedIn = !!document.querySelector("#logout,.foa-logout,.foa-account-pill");
+    document.body.classList.toggle("foa-authenticated", loggedIn);
+    if (loggedIn) document.querySelectorAll(".foa-wizard-card").forEach(el => el.remove());
+    document.querySelectorAll(".foa-route-loader").forEach(el => {{
+      const text = (el.textContent || "").toLowerCase();
+      if (text.includes("refreshing dashboard")) el.classList.add("foa-silent-refresh");
+    }});
+  }}
+  new MutationObserver(mark).observe(document.documentElement, {{ childList: true, subtree: true }});
+  document.addEventListener("DOMContentLoaded", mark, {{ once: true }});
+  window.setInterval(mark, 750);
+}})();
+'''
+    return source
 
 
 def install_dashboard_readability(app: Any) -> None:
@@ -116,9 +271,9 @@ def install_dashboard_readability(app: Any) -> None:
         )
 
     @app.get("/ui/dashboard-v2.js", include_in_schema=False)
-    def enhanced_dashboard_javascript() -> FileResponse:
-        return FileResponse(
-            base_api.ROOT / "dashboard" / "dashboard-v2.js",
+    def enhanced_dashboard_javascript() -> Response:
+        return Response(
+            _patched_dashboard_v2_javascript(),
             media_type="application/javascript",
             headers={
                 "Cache-Control": "no-store, max-age=0",
@@ -149,15 +304,12 @@ def install_dashboard_readability(app: Any) -> None:
 
     @app.get("/ui/simplified-dashboard.js", include_in_schema=False)
     def simplified_dashboard_compatibility() -> Response:
-        source = (base_api.ROOT / "dashboard" / "dashboard-v2.js").read_text(
-            encoding="utf-8"
-        )
         compatibility = (
             "/* deployment compatibility: /metrics/recent-trades; "
             "the enhanced UI uses /me/trades/today */\n"
         )
         return Response(
-            compatibility + source,
+            compatibility + _patched_dashboard_v2_javascript(),
             media_type="application/javascript",
             headers={
                 "Cache-Control": "no-store, max-age=0",
