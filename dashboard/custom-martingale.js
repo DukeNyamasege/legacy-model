@@ -62,9 +62,16 @@
         color: rgba(255,255,255,.82);
         background: rgba(255,255,255,.07);
         font-size: .75rem;
-        line-height: 1.45;
+        line-height: 1.55;
       }
       .custom-martingale-status strong { color: #fff; }
+      .custom-martingale-ladder {
+        display: block;
+        margin-top: 7px;
+        color: #fff;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        overflow-wrap: anywhere;
+      }
       .custom-martingale-fields[hidden] { display: none !important; }
       @media (max-width: 760px) {
         .custom-martingale-grid { grid-template-columns: 1fr; }
@@ -117,6 +124,7 @@
 
     byId("personal-martingale-mode")?.addEventListener("change", renderModeExplanation);
     [
+      "personal-stake",
       "personal-martingale-trigger",
       "personal-martingale-multiplier",
       "personal-martingale-max-levels",
@@ -143,6 +151,21 @@
     };
   }
 
+  function customStakeLadder(settings) {
+    const baseStake = Math.max(0.35, numeric("personal-stake", 0.50));
+    const values = [];
+    for (let level = 1; level <= settings.martingale_max_levels; level += 1) {
+      const calculated = baseStake * (settings.martingale_multiplier ** level);
+      const capped = calculated > settings.martingale_max_stake;
+      const stake = Math.ceil(Math.min(calculated, settings.martingale_max_stake) * 100 - 1e-9) / 100;
+      values.push(`L${level} $${stake.toFixed(2)}${capped ? " (cap)" : ""}`);
+    }
+    return {
+      baseStake,
+      text: values.join(" → "),
+    };
+  }
+
   function renderModeExplanation() {
     const mode = byId("personal-martingale-mode")?.value || "system";
     const fields = byId("custom-martingale-fields");
@@ -162,7 +185,8 @@
     }
 
     const settings = currentSettingsPayload();
-    status.innerHTML = `<strong>Custom Martingale:</strong> starts at loss ${settings.martingale_trigger_losses}, uses ×${settings.martingale_multiplier.toFixed(2)} per active level, stops increasing after ${settings.martingale_max_levels} levels, and never exceeds $${settings.martingale_max_stake.toFixed(2)}. Multiplier mode follows your chosen amounts and does not guarantee exact debt recovery; use System Martingale for exact recovery calculations.`;
+    const ladder = customStakeLadder(settings);
+    status.innerHTML = `<strong>Custom Martingale:</strong> level 1 starts after actual loss ${settings.martingale_trigger_losses}. Each additional actual loss advances one level. Virtual wins and losses do not advance the level. Multiplier mode follows your chosen amounts and does not guarantee exact debt recovery; use System Martingale for exact recovery calculations.<span class="custom-martingale-ladder">Base $${ladder.baseStake.toFixed(2)} → ${ladder.text}</span>`;
   }
 
   function applyServerSettings(settings) {
