@@ -38,6 +38,7 @@ AUTO_PROMOTION_STATUSES = {
     "reconnecting",
     "base_stake_protection",
     "recovery_pending",
+    "virtual_protection",
 }
 
 
@@ -67,20 +68,20 @@ def _manual_locking_set_status(original_set_status):
             current_lifecycle = account_lifecycle_from_row(row)
 
             # Worker validation, OAuth refresh, balance refresh, and dashboard
-            # repair jobs must never promote a mode/account that the user has not
-            # manually started.  The only allowed promotion path is the explicit
-            # Start/Resume endpoint, which calls set_managed_account_enabled(True)
-            # and bypasses this guard through the original status setter.
-            if (
-                current_lifecycle in {"stopped", "paused"}
-                and not bool(row.enabled)
-                and status in AUTO_PROMOTION_STATUSES
-            ):
+            # repair jobs must never promote a mode/account that the user stopped
+            # or paused. The previous guard required enabled=false, which allowed
+            # an impossible mixed row (status=stopped, enabled=true) to be promoted
+            # back to active. Stopped/paused status alone is now enough to block
+            # automatic promotion; only the explicit Start/Resume route can move
+            # the account forward.
+            if current_lifecycle in {"stopped", "paused"} and status in AUTO_PROMOTION_STATUSES:
+                if current_lifecycle == "stopped":
+                    row.enabled = False
                 row.execution_status = current_status[:30]
                 if not row.execution_status_reason:
                     if current_lifecycle == "stopped":
                         row.execution_status_reason = (
-                            "Auto trading has not been started for this account mode"
+                            "Auto trading has been stopped for this account mode"
                         )[:160]
                     else:
                         row.execution_status_reason = (
