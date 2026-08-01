@@ -11,6 +11,10 @@ STOPPED_LIKE_STATUSES = {
     "inactive",
     "disabled",
     "stopped",
+    # Real trading is no longer a permanent account pause.  If a stale VPS gate
+    # marked a real account this way, the trader must be able to press Start Auto
+    # Trade again after the fixed real gate is deployed.
+    "real_disabled",
 }
 
 PAUSED_LIKE_STATUSES = {
@@ -25,7 +29,6 @@ PAUSED_LIKE_STATUSES = {
     "bulk_execution_pat_required",
     "contract_unavailable",
     "purchase_registration_error",
-    "real_disabled",
 }
 
 AUTO_PROMOTION_STATUSES = {
