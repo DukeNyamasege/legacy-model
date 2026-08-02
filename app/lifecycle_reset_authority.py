@@ -32,6 +32,20 @@ def _write_reset_marker(session: Any, managed_account_id: int) -> None:
         session.add(RuntimePreference(preference_key=key, preference_value=value))
     else:
         row.preference_value = value
+        row.updated_at = utc_now()
+
+
+def _open_provider_trade_id(session: Any, managed_account_id: int) -> int | None:
+    value = session.scalar(
+        select(Trade.id)
+        .where(
+            Trade.managed_account_id == int(managed_account_id),
+            Trade.settlement_time.is_(None),
+        )
+        .order_by(Trade.purchase_time.desc())
+        .limit(1)
+    )
+    return int(value) if value is not None else None
 
 
 def _cancel_open_virtual_trades(session: Any, managed_account_id: int, reason: str) -> int:
@@ -80,6 +94,15 @@ def _pause(session: Any, row: ManagedAccount) -> None:
 
 def _start(session: Any, row: ManagedAccount, *, fresh: bool) -> None:
     if fresh:
+        open_trade_id = _open_provider_trade_id(session, int(row.id))
+        if open_trade_id is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "A previous provider contract is still settling. Auto Trade remains stopped; "
+                    "wait a few seconds and press Start again."
+                ),
+            )
         _cancel_open_virtual_trades(
             session,
             int(row.id),
@@ -282,14 +305,7 @@ def install_lifecycle_reset_authority(app: Any) -> None:
             row = session.get(ManagedAccount, managed_id, with_for_update=True)
             if row is None:
                 raise HTTPException(status_code=401, detail="Managed account was not found")
-            open_trade = session.scalar(
-                select(Trade.id)
-                .where(
-                    Trade.managed_account_id == managed_id,
-                    Trade.settlement_time.is_(None),
-                )
-                .limit(1)
-            )
+            open_trade = _open_provider_trade_id(session, managed_id)
             if open_trade is not None:
                 raise HTTPException(
                     status_code=409,
