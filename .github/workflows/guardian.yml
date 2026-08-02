@@ -9,7 +9,6 @@ on:
       - "scripts/guardian_discover_telegram_chat.py"
       - ".env.guardian.example"
       - "deploy/legacy-model-guardian.service"
-      - "requirements.txt"
       - ".github/workflows/guardian.yml"
   pull_request:
     paths:
@@ -18,7 +17,6 @@ on:
       - "scripts/guardian_discover_telegram_chat.py"
       - ".env.guardian.example"
       - "deploy/legacy-model-guardian.service"
-      - "requirements.txt"
       - ".github/workflows/guardian.yml"
 
 permissions:
@@ -34,8 +32,9 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-      - name: Install Guardian test dependencies
-        run: python -m pip install "openai>=1.100,<3" "requests>=2.28"
+          cache-dependency-path: guardian/requirements.txt
+      - name: Install Guardian dependencies
+        run: python -m pip install -r guardian/requirements.txt
       - name: Compile Guardian
         run: python -m compileall -q guardian scripts/guardian_discover_telegram_chat.py
       - name: Run Guardian tests
