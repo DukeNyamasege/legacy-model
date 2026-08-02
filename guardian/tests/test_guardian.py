@@ -66,6 +66,24 @@ class GuardianSecurityTests(unittest.TestCase):
             sanitize_test_command("docker compose config")
 
 
+class GuardianCommissioningDefaultsTests(unittest.TestCase):
+    def test_example_cannot_push_or_deploy_by_default(self) -> None:
+        repository = Path(__file__).resolve().parents[2]
+        values: dict[str, str] = {}
+        for raw_line in (repository / ".env.guardian.example").read_text(
+            encoding="utf-8"
+        ).splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            values[key.strip()] = value.strip()
+
+        self.assertEqual(values.get("GUARDIAN_DRY_RUN"), "true")
+        self.assertEqual(values.get("GUARDIAN_ALLOW_MAIN_PUSH"), "false")
+        self.assertEqual(values.get("GUARDIAN_AUTO_DEPLOY"), "false")
+
+
 class GuardianPatchScopeTests(unittest.TestCase):
     def test_patch_can_only_touch_diagnosed_existing_file_or_new_sibling(self) -> None:
         with tempfile.TemporaryDirectory() as repository_directory, tempfile.TemporaryDirectory() as worktree_directory:
