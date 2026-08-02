@@ -19,6 +19,7 @@ class GuardianStore:
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         self._lock = threading.RLock()
         self._initialize()
+        self.interrupted_remediations = self.close_interrupted_remediations()
 
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
