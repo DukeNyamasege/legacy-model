@@ -168,6 +168,36 @@ class GuardianStore:
             )
             return cursor.rowcount == 1
 
+    def close_interrupted_remediations(self) -> list[dict[str, Any]]:
+        """Fail closed after a service/VPS restart during an approved patch."""
+
+        now = _now()
+        result = {
+            "error": (
+                "Guardian restarted before this approved remediation completed. "
+                "It will not resume automatically; a new diagnosis and approval are required."
+            )
+        }
+        with self.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, proposal_message_id, status, title
+                FROM incidents
+                WHERE status IN ('approved', 'working')
+                ORDER BY id
+                """
+            ).fetchall()
+            if rows:
+                connection.execute(
+                    """
+                    UPDATE incidents
+                    SET status = 'interrupted', result_json = ?, updated_at = ?
+                    WHERE status IN ('approved', 'working')
+                    """,
+                    (json.dumps(result, separators=(",", ":")), now),
+                )
+        return [dict(row) for row in rows]
+
     def add_event(
         self,
         event_type: str,
