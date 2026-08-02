@@ -27,6 +27,7 @@ from app.rf_dir5_bot import RFDir5TradingBot
 from app.stake_only_balance_policy import install_stake_only_balance_policy
 from app.strict_streak_guard import install_strict_streak_guard
 from app.telegram_admin_integration import install_telegram_admin_integration
+from app.telegram_silence import install_telegram_silence
 from app.tick_debug_logging import install_every_tick_debug_logging
 from app.websocket_only_execution import install_websocket_only_execution
 
@@ -45,6 +46,11 @@ async def run_worker() -> None:
     install_private_websocket_rate_limit()
     install_account_execution_feedback()
     install_account_execution_diagnostics()
+
+    # Operator kill switch is installed before channel announcements, private
+    # admin polling and lifecycle alerts. While suspended, no Telegram request is
+    # sent by any worker notification path.
+    install_telegram_silence()
     install_telegram_admin_integration()
     install_dynamic_deployment_announcement()
 
@@ -68,6 +74,9 @@ async def run_worker() -> None:
     install_ai_digit_recovery_v1_strategy()
     install_aidr_execution_flow_fix()
     install_aidr_loss_continuation_fix()
+
+    # Final recovery authority. It also makes Stop/Reset win every race against a
+    # late actual or virtual settlement and never re-enables a disabled account.
     install_aidr_strict_recovery_guard()
 
     install_production_worker_integration()
