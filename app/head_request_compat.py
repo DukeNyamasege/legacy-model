@@ -5,9 +5,9 @@ from typing import Any
 from fastapi.responses import Response
 
 from app.dashboard_stability_fix import _remove_route
-from app.reset_trades_always_ui import UI_VERSION
 
 _INSTALLED = False
+UI_VERSION = "20260802-5"
 
 
 def _headers(media_type: str) -> dict[str, str]:
