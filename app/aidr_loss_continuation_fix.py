@@ -21,9 +21,9 @@ from app.models import DirectionalSignal
 
 _INSTALLED = False
 
-# AIDR runs continuously on ten markets. One global entry window keeps it from
-# firing several account cycles within a few seconds while still allowing 24/7
-# operation. Recovery/virtual work is prioritized over new normal entries.
+# One global entry window slows the 24/7 system without letting one account scope
+# buy repeatedly. Normal and recovery scopes use fair role arbitration so a trader
+# in virtual protection cannot stop every normal trader on the platform.
 MINIMUM_AIDR_TRADE_INTERVAL_SECONDS = 15.0
 AIDR_BASE_ALIGNMENT = 0.78
 AIDR_RECOVERY_ALIGNMENT = 0.60
@@ -41,24 +41,33 @@ def _is_recovery_candidate(candidate: Any) -> bool:
     )
 
 
-def _recovery_aware_candidate(bot: Any, symbol: str, tick: dict[str, Any]) -> Any | None:
-    """Generate only a correctly measured OVER 3 candidate during recovery.
+def _candidate_tick(candidate: Any) -> dict[str, Any]:
+    return {
+        "quote": getattr(candidate, "reference_entry_quote", 0.0),
+        "epoch": int(getattr(candidate, "signal_tick_epoch", 0) or 0),
+    }
 
-    The previous fallback returned an OVER 1 candidate when an OVER 3 recovery
-    filter was not ready. Arbitration could then clone that candidate to barrier
-    3 while retaining OVER 1 probability measurements. That was both unsafe and
-    a source of repeated recovery failures. When any account is in real recovery
-    or virtual protection, normal entries wait and only a native OVER 3 candidate
-    can continue the lifecycle.
+
+def _recovery_aware_candidate(bot: Any, symbol: str, tick: dict[str, Any]) -> Any | None:
+    """Create a native seed without globally suppressing another account role.
+
+    Arbitration reconstructs the missing role from the same tick using its own
+    barrier-specific probability measurements. Thus OVER-1 normal accounts and
+    OVER-3 recovery/virtual accounts can both remain eligible, while only one role
+    is selected per global cadence slot.
     """
 
     try:
-        _normal_ids, real_recovery_ids, virtual_ids = _account_groups(bot)
+        normal_ids, real_recovery_ids, virtual_ids = _account_groups(bot)
     except Exception as exc:  # pragma: no cover - defensive runtime guard
         bot.logger.warning("AIDR_ACCOUNT_GROUPS_UNAVAILABLE error=%s", exc)
         return None
 
-    if real_recovery_ids or virtual_ids:
+    recovery_ids = real_recovery_ids | virtual_ids
+    recovery_candidate = None
+    normal_candidate = None
+
+    if recovery_ids:
         recovery_candidate = _make_aidr_candidate(
             bot,
             symbol,
@@ -68,28 +77,34 @@ def _recovery_aware_candidate(bot: Any, symbol: str, tick: dict[str, Any]) -> An
         )
         if recovery_candidate is not None:
             bot.logger.warning(
-                "AIDR_RECOVERY_CANDIDATE_READY symbol=%s barrier=%s real_recovery_accounts=%s virtual_accounts=%s",
+                "AIDR_RECOVERY_CANDIDATE_READY symbol=%s barrier=%s real_recovery_accounts=%s virtual_accounts=%s normal_accounts=%s",
                 symbol,
                 RECOVERY_BARRIER,
                 len(real_recovery_ids),
                 len(virtual_ids),
+                len(normal_ids),
             )
-            return recovery_candidate
-        bot.logger.info(
-            "AIDR_RECOVERY_WAITING_FOR_NATIVE_OVER3 symbol=%s real_recovery_accounts=%s virtual_accounts=%s",
-            symbol,
-            len(real_recovery_ids),
-            len(virtual_ids),
-        )
-        return None
+        else:
+            bot.logger.info(
+                "AIDR_RECOVERY_WAITING_FOR_NATIVE_OVER3 symbol=%s real_recovery_accounts=%s virtual_accounts=%s normal_accounts=%s",
+                symbol,
+                len(real_recovery_ids),
+                len(virtual_ids),
+                len(normal_ids),
+            )
 
-    return _make_aidr_candidate(
-        bot,
-        symbol,
-        tick,
-        barrier=NORMAL_BARRIER,
-        recovery=False,
-    )
+    if normal_ids:
+        normal_candidate = _make_aidr_candidate(
+            bot,
+            symbol,
+            tick,
+            barrier=NORMAL_BARRIER,
+            recovery=False,
+        )
+
+    # Recovery receives first opportunity, but a missing recovery signal no longer
+    # prevents a valid normal signal from reaching arbitration.
+    return recovery_candidate or normal_candidate
 
 
 def _repository_run_id(bot: Any) -> int:
@@ -187,6 +202,38 @@ def _cadence_blocked(bot: Any, queued: list[Any]) -> bool:
     return True
 
 
+def _native_role_candidate(bot: Any, seed: Any, *, role: str) -> Any | None:
+    recovery = role == "RECOVERY"
+    expected_barrier = RECOVERY_BARRIER if recovery else NORMAL_BARRIER
+    if _is_recovery_candidate(seed) == recovery:
+        return seed
+    candidate = _make_aidr_candidate(
+        bot,
+        str(seed.symbol),
+        _candidate_tick(seed),
+        barrier=expected_barrier,
+        recovery=recovery,
+    )
+    if candidate is not None:
+        bot.repository.record_candidate(candidate)
+    return candidate
+
+
+def _selected_role(bot: Any, qualified: dict[str, list[tuple[float, Any, Any]]]) -> str:
+    normal_ready = bool(qualified.get("NORMAL"))
+    recovery_ready = bool(qualified.get("RECOVERY"))
+    if recovery_ready and normal_ready:
+        # Recovery is chosen first. Thereafter alternate roles so virtual/recovery
+        # makes progress without starving every trader still in NORMAL mode.
+        previous = str(getattr(bot, "_aidr_last_execution_role", "NORMAL") or "NORMAL")
+        return "NORMAL" if previous == "RECOVERY" else "RECOVERY"
+    if recovery_ready:
+        return "RECOVERY"
+    if normal_ready:
+        return "NORMAL"
+    return ""
+
+
 async def _recovery_aware_arbitrate(bot: Any) -> None:
     cfg = bot.test2_config.hybrid_strategy
     await asyncio.sleep(float(getattr(cfg, "candidate_window_ms", 75)) / 1000.0)
@@ -213,23 +260,41 @@ async def _recovery_aware_arbitrate(bot: Any) -> None:
 
     normal_ids, real_recovery_ids, virtual_ids = _account_groups(bot)
     recovery_ids = real_recovery_ids | virtual_ids
-    role = "RECOVERY" if recovery_ids else "NORMAL"
-    scope_ids = recovery_ids if recovery_ids else normal_ids
-    if not scope_ids:
+    if not normal_ids and not recovery_ids:
         for candidate in fresh:
             bot.repository.mark_signal(candidate.signal_id, status="SKIP_NO_ENABLED_ACCOUNTS")
         return
 
-    candidates = [candidate for candidate in fresh if _is_recovery_candidate(candidate)] if recovery_ids else [
-        candidate for candidate in fresh if not _is_recovery_candidate(candidate)
-    ]
-    if not candidates:
+    role_candidates: dict[str, list[Any]] = {"NORMAL": [], "RECOVERY": []}
+    seen: set[tuple[str, str]] = set()
+    for seed in fresh:
+        for role, scope_ids in (("RECOVERY", recovery_ids), ("NORMAL", normal_ids)):
+            if not scope_ids:
+                continue
+            candidate = _native_role_candidate(bot, seed, role=role)
+            if candidate is None:
+                continue
+            key = (role, str(candidate.symbol))
+            if key in seen:
+                continue
+            seen.add(key)
+            role_candidates[role].append(candidate)
+
+    task_entries: list[tuple[str, Any, Any]] = []
+    for role in ("RECOVERY", "NORMAL"):
+        for candidate in role_candidates[role]:
+            task_entries.append(
+                (role, candidate, _proposal_ok(bot, candidate, AIDR_MINIMUM_LIVE_EDGE))
+            )
+    if not task_entries:
         return
 
-    tasks = [_proposal_ok(bot, candidate, AIDR_MINIMUM_LIVE_EDGE) for candidate in candidates]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    qualified: list[tuple[float, Any, Any]] = []
-    for result in results:
+    results = await asyncio.gather(
+        *(entry[2] for entry in task_entries),
+        return_exceptions=True,
+    )
+    qualified: dict[str, list[tuple[float, Any, Any]]] = {"NORMAL": [], "RECOVERY": []}
+    for (role, _candidate, _task), result in zip(task_entries, results, strict=True):
         if isinstance(result, Exception):
             bot.logger.exception("AIDR_ARBITRATION_TASK_FAILED", exc_info=result)
             continue
@@ -240,18 +305,24 @@ async def _recovery_aware_arbitrate(bot: Any) -> None:
             bot.repository.mark_signal(signal.signal_id, status="SKIP_STALE_SIGNAL", stale=True)
             continue
         score = float(signal.validated_edge or 0.0) + 0.05 * float(signal.lower95 or 0.0)
-        qualified.append((score, signal, economics))
+        qualified[role].append((score, signal, economics))
 
-    if not qualified:
+    role = _selected_role(bot, qualified)
+    if not role:
         return
+    scope_ids = recovery_ids if role == "RECOVERY" else normal_ids
+    group = qualified[role]
+    group.sort(key=lambda item: (-item[0], -float(item[1].weighted_probability), item[1].symbol))
+    score, selected, economics = group[0]
 
-    qualified.sort(key=lambda item: (-item[0], -float(item[1].weighted_probability), item[1].symbol))
-    score, selected, economics = qualified[0]
-    for _score, other, _economics in qualified[1:]:
+    for _score, other, _economics in group[1:]:
         bot.repository.mark_signal(other.signal_id, status="SKIP_MARKET_ARBITRATION")
+    for other_role in ({"NORMAL", "RECOVERY"} - {role}):
+        for _score, other, _economics in qualified[other_role]:
+            bot.repository.mark_signal(other.signal_id, status="SKIP_AIDR_ROLE_FAIRNESS")
 
     bot.logger.warning(
-        "AIDR_DIGIT_SELECTED role=%s signal_id=%s symbol=%s type=%s barrier=%s accounts=%s weighted=%.5f break_even=%.5f edge=%.5f score=%.5f cadence_seconds=%.1f",
+        "AIDR_DIGIT_SELECTED role=%s signal_id=%s symbol=%s type=%s barrier=%s accounts=%s weighted=%.5f break_even=%.5f edge=%.5f score=%.5f cadence_seconds=%.1f normal_accounts=%s recovery_accounts=%s fairness=alternating",
         role,
         selected.signal_id,
         selected.symbol,
@@ -263,6 +334,8 @@ async def _recovery_aware_arbitrate(bot: Any) -> None:
         float(selected.validated_edge or 0.0),
         score,
         _minimum_interval(bot),
+        len(normal_ids),
+        len(recovery_ids),
     )
 
     try:
@@ -270,12 +343,13 @@ async def _recovery_aware_arbitrate(bot: Any) -> None:
         # Reserve the cadence slot before execution so simultaneous market ticks
         # cannot start a second cycle while this one is opening contracts.
         bot.rf_last_purchase_monotonic = time.monotonic()
+        bot._aidr_last_execution_role = role
         await _buy_for_scope(
             bot,
             selected,
             economics,
             scope_ids,
-            recovery_enabled=bool(recovery_ids),
+            recovery_enabled=(role == "RECOVERY"),
         )
     except Exception:
         bot.logger.exception(
@@ -290,13 +364,12 @@ async def _recovery_aware_arbitrate(bot: Any) -> None:
 
 
 def install_aidr_loss_continuation_fix() -> None:
-    """Install native recovery signals, stronger filters and controlled cadence."""
+    """Install native role signals, fair scopes, stronger filters and cadence."""
 
     global _INSTALLED
     if _INSTALLED:
         return
 
-    # Strengthen both entry families without changing the public strategy shape.
     aidr.MIN_BASE_HIT_RATE = AIDR_BASE_ALIGNMENT
     aidr.MIN_RECOVERY_HIT_RATE = AIDR_RECOVERY_ALIGNMENT
     aidr.MIN_LIVE_EDGE = AIDR_MINIMUM_LIVE_EDGE
