@@ -188,7 +188,11 @@ def main() -> None:
         raise SystemExit(
             f"Refusing to apply. Pass --confirm {CONFIRMATION}, or use --dry-run."
         )
-    print(json.dumps(run(apply=apply), indent=2, default=str))
+
+    result = run(apply=apply)
+    print(json.dumps(result, indent=2, default=str))
+    if not bool(result.get("ok")):
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":
