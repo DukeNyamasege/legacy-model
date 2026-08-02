@@ -10,6 +10,7 @@ from app.account_mode_execution_lock import install_account_mode_execution_lock
 from app.account_reenrollment import install_account_reenrollment
 from app.ai_digit_recovery_v1 import install_ai_digit_recovery_v1_strategy
 from app.aidr_execution_flow_fix import install_aidr_execution_flow_fix
+from app.aidr_loss_continuation_fix import install_aidr_loss_continuation_fix
 from app.custom_martingale import install_custom_martingale_worker
 from app.dashboard_actual_trade_fallback import install_dashboard_actual_trade_fallback
 from app.deployment_announcement import install_dynamic_deployment_announcement
@@ -65,6 +66,7 @@ async def run_worker() -> None:
     # SPLIT    -> real DIGITOVER 3 in two recovery-profit targets
     install_ai_digit_recovery_v1_strategy()
     install_aidr_execution_flow_fix()
+    install_aidr_loss_continuation_fix()
 
     install_production_worker_integration()
     install_every_tick_debug_logging()
