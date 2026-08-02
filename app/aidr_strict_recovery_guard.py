@@ -153,23 +153,21 @@ def _force_virtual_mode(repo: RFDir5Repository, state: AccountRiskState, *, reas
     )
 
 
-def _debt_requires_virtual(*, debt: float, base_stake: float, consecutive_losses: int, split_remaining: int) -> bool:
+def _debt_requires_virtual(*, debt: float, consecutive_losses: int, split_remaining: int) -> bool:
     if debt <= 0.009 or split_remaining > 0:
         return False
-    if consecutive_losses >= 2:
-        return True
-    return debt > max(base_stake * 2.10, base_stake + 0.05)
+    return consecutive_losses >= 2
 
 
 def install_aidr_strict_recovery_guard() -> None:
-    """Hard-enforce one exact recovery, virtual confirmation and two-way split.
+    """Hard-enforce one OVER-3 recovery and one post-virtual OVER-4 recovery.
 
     Lifecycle:
       normal OVER 1 loss
       -> one real OVER 3 exact-debt recovery
-      -> if it loses, virtual OVER 3 until 2 consecutive virtual wins
-      -> two real OVER 3 profit targets, each targeting half of current debt
-      -> any split-recovery loss returns immediately to virtual mode.
+      -> if it loses, virtual OVER 4 until 2 consecutive virtual wins
+      -> one real OVER 4 trade targeting the entire accumulated debt
+      -> an OVER-4 recovery loss returns immediately to virtual mode.
 
     Stop/Reset is authoritative. Late contract or virtual settlements can never
     restore debt, virtual mode, or ``enabled=True`` after a hard stop.
@@ -219,17 +217,16 @@ def install_aidr_strict_recovery_guard() -> None:
                         self,
                         managed_account_id,
                         "virtual_protection",
-                        f"Virtual OVER-3 confirmation active: {int(state.virtual_win_count or 0)}/2 consecutive wins.",
+                        f"Virtual OVER-4 confirmation active: {int(state.virtual_win_count or 0)}/2 consecutive wins.",
                     )
                     return StakePlan(
                         None,
-                        "AIDR virtual OVER-3 confirmation active; real money blocked",
+                        "AIDR virtual OVER-4 confirmation active; real money blocked",
                         is_recovery=True,
                         recovery_debt=debt,
                     )
                 if _debt_requires_virtual(
                     debt=debt,
-                    base_stake=base_stake,
                     consecutive_losses=consecutive_losses,
                     split_remaining=split_remaining,
                 ):
@@ -238,7 +235,7 @@ def install_aidr_strict_recovery_guard() -> None:
                         state,
                         reason=(
                             "Strict AIDR guard detected a failed recovery. Real contracts are blocked "
-                            "until 2 consecutive virtual OVER-3 wins."
+                            "until 2 consecutive virtual OVER-4 wins."
                         ),
                     )
                     return StakePlan(
@@ -283,7 +280,7 @@ def install_aidr_strict_recovery_guard() -> None:
                 managed_account_id,
                 "recovery_pending",
                 (
-                    f"AIDR split recovery active: {split_remaining} profit target(s) remaining."
+                    "AIDR one-shot OVER-4 full-debt recovery is armed."
                     if split_remaining > 0
                     else "AIDR exact OVER-3 recovery is armed after one real loss."
                 ),
@@ -362,8 +359,8 @@ def install_aidr_strict_recovery_guard() -> None:
                         self,
                         state,
                         reason=(
-                            "AIDR recovery loss recorded. Waiting for 2 consecutive virtual OVER-3 wins "
-                            "before two-part real recovery resumes."
+                            "AIDR recovery loss recorded. Waiting for 2 consecutive virtual OVER-4 wins "
+                            "before one full-debt OVER-4 recovery."
                         ),
                     )
                     result.update(
@@ -389,12 +386,11 @@ def install_aidr_strict_recovery_guard() -> None:
                         "One real loss recorded. Next qualifying trade is exact OVER-3 recovery.",
                     )
                 elif raw_mode == REAL_RECOVERY_PENDING:
-                    split_remaining = int(result.get("split_recovery_remaining") or 0)
                     _set_account_active(
                         self,
                         managed_account_id,
                         "recovery_pending",
-                        f"AIDR split recovery continues: {split_remaining} target(s) remaining.",
+                        "AIDR one-shot OVER-4 full-debt recovery is armed.",
                     )
                 elif raw_mode != VIRTUAL_WAITING_FOR_WIN:
                     _set_account_active(
@@ -475,21 +471,21 @@ def install_aidr_strict_recovery_guard() -> None:
             paused = not enabled or status in PAUSED_STATUSES
             if mode == REAL_RECOVERY_PENDING:
                 if _read_split_remaining(_runtime_base(self), managed_id) <= 0:
-                    _write_split_remaining(_runtime_base(self), managed_id, 2)
+                    _write_split_remaining(_runtime_base(self), managed_id, 1)
                 if not paused:
                     _set_account_active(
                         self,
                         managed_id,
                         "recovery_pending",
-                        "2 consecutive virtual OVER-3 wins confirmed. Two-part real recovery is armed.",
+                        "2 consecutive virtual OVER-4 wins confirmed. One full-debt OVER-4 recovery is armed.",
                     )
-                item.setdefault("protection", {})["split_recovery_remaining"] = 2
+                item.setdefault("protection", {})["split_recovery_remaining"] = 1
             elif mode == VIRTUAL_WAITING_FOR_WIN and not paused:
                 _set_account_active(
                     self,
                     managed_id,
                     "virtual_protection",
-                    f"Virtual OVER-3 confirmation active: {wins}/2 consecutive wins.",
+                    f"Virtual OVER-4 confirmation active: {wins}/2 consecutive wins.",
                 )
 
             if paused:

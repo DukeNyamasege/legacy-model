@@ -104,7 +104,7 @@ def _versioned(source: str) -> str:
 def _patch_aidr_lifecycle_labels(source: str) -> str:
     old = '''  function modeLabel(mode) {
     if (mode === "virtual") return "Virtual Protection";
-    if (mode === "split_recovery") return "Split Recovery";
+    if (mode === "full_recovery") return "Full Recovery";
     if (mode === "exact_recovery") return "Exact Recovery";
     return "Normal Trading";
   }
@@ -113,7 +113,7 @@ def _patch_aidr_lifecycle_labels(source: str) -> str:
     if (mode === "stopped") return "Stopped · Fresh Start Required";
     if (mode === "paused") return "Paused · State Preserved";
     if (mode === "virtual") return "Virtual Protection";
-    if (mode === "split_recovery") return "Split Recovery";
+    if (mode === "full_recovery") return "Full Recovery";
     if (mode === "exact_recovery") return "Exact Recovery";
     return "Normal Trading";
   }

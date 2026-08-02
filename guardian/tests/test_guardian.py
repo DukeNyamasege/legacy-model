@@ -43,6 +43,8 @@ class GuardianSecurityTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 safe_repo_path(root, "scripts/deploy_vps.sh")
             with self.assertRaises(ValueError):
+                safe_repo_path(root, "app/aidr_strategy_contract.json")
+            with self.assertRaises(ValueError):
                 safe_repo_path(root, "alembic/versions/001.py")
             allowed = safe_repo_path(root, "guardian/example.py")
             self.assertEqual(allowed, root / "guardian/example.py")

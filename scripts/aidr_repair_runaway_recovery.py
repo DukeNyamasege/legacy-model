@@ -83,7 +83,7 @@ def main() -> int:
                     """
                     UPDATE managed_accounts
                     SET execution_status = 'virtual_protection',
-                        execution_status_reason = 'Strict AIDR repair: failed recovery moved to virtual mode. Real contracts blocked until 2 consecutive virtual OVER-3 wins.',
+                        execution_status_reason = 'Strict AIDR repair: failed recovery moved to virtual mode. Real contracts blocked until 2 consecutive virtual OVER-4 wins.',
                         updated_at = NOW()
                     WHERE id = ANY(:ids)
                     """

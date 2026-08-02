@@ -267,7 +267,8 @@ class RiseFallContractTests(unittest.TestCase):
             config.rf_strategy.relaxed_hmm_minimum_fall_probability,
         )
         self.assertTrue(config.risk.recovery_enabled)
-        self.assertEqual(config.risk.recovery_trigger_losses, 2)
+        # AIDR arms its first exact OVER-3 recovery after one purchased loss.
+        self.assertEqual(config.risk.recovery_trigger_losses, 1)
         self.assertEqual(config.risk.maximum_recovery_balance_fraction, 0.10)
         self.assertEqual(config.virtual_protection.exit_after_wins, 2)
 

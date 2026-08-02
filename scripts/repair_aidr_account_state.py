@@ -113,7 +113,7 @@ def repair_account(*, suffix: str, apply: bool) -> dict[str, Any]:
                 )
                 if failed_recovery:
                     action = "virtual_protection"
-                    reason = "Existing failed recovery moved to virtual OVER-3 confirmation."
+                    reason = "Existing failed recovery moved to virtual OVER-4 confirmation."
                     if apply:
                         entering = state.protection_mode != VIRTUAL_WAITING_FOR_WIN
                         state.protection_mode = VIRTUAL_WAITING_FOR_WIN
@@ -131,7 +131,7 @@ def repair_account(*, suffix: str, apply: bool) -> dict[str, Any]:
                         row.martingale_enabled = True
                         row.execution_status = "virtual_protection"
                         row.execution_status_reason = (
-                            "AIDR state repaired: waiting for 2 consecutive virtual OVER-3 wins."
+                            "AIDR state repaired: waiting for 2 consecutive virtual OVER-4 wins."
                         )
                 else:
                     action = "recovery_pending"

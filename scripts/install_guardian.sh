@@ -91,10 +91,14 @@ esac
 echo "4. Validate repository and Guardian tests"
 cd "$REPO_DIR"
 sh -n scripts/install_guardian.sh
-"$VENV_DIR/bin/python" -m compileall -q guardian scripts/guardian_discover_telegram_chat.py
+"$VENV_DIR/bin/python" -m compileall -q guardian \
+  scripts/guardian_discover_telegram_chat.py scripts/guardian_validate_openai.py
 "$VENV_DIR/bin/python" -m unittest discover -s guardian/tests -p 'test_*.py' -q
 
-echo "5. Verify Git identity and origin write access"
+echo "5. Validate OpenAI key and configured model access"
+"$VENV_DIR/bin/python" scripts/guardian_validate_openai.py --env-file "$ENV_FILE"
+
+echo "6. Verify Git identity and origin write access"
 if ! git config user.name >/dev/null 2>&1; then
   git config user.name "Legacy Model Guardian"
 fi
@@ -110,14 +114,14 @@ REMOTE_COMMIT=$(git rev-parse origin/main)
   "The live checkout has uncommitted changes. Commit or safely remove them first."
 git push --dry-run origin HEAD:main >/dev/null
 
-echo "6. Install and start systemd service"
+echo "7. Install and start systemd service"
 install -m 0644 "$REPO_DIR/deploy/legacy-model-guardian.service" "$SERVICE_FILE"
 systemctl daemon-reload
 systemctl enable legacy-model-guardian.service >/dev/null
 systemctl restart legacy-model-guardian.service
 sleep 5
 
-echo "7. Verify service"
+echo "8. Verify service"
 systemctl --no-pager --full status legacy-model-guardian.service || {
   journalctl -u legacy-model-guardian.service --no-pager -n 120
   fail "Guardian service did not start"

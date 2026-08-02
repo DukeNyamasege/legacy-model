@@ -42,6 +42,9 @@ _MANUAL_ONLY_PATHS = {
     "guardian/security.py",
     "guardian/sandbox.py",
     "guardian/patcher.py",
+    "app/aidr_strategy_contract.json",
+    "app/aidr_strategy_contract.py",
+    "scripts/guardian_validate_openai.py",
 }
 
 _MANUAL_ONLY_PREFIXES = (

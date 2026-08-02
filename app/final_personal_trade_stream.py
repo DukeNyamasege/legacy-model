@@ -70,7 +70,7 @@ def _split_remaining(managed_account_id: int) -> int:
         value = base_api.REPOSITORY.runtime_preference(
             f"aidr_split_remaining:{int(managed_account_id)}"
         )
-        return max(0, min(2, int(str(value or "0"))))
+        return 1 if int(str(value or "0")) > 0 else 0
     except Exception:
         return 0
 
@@ -159,10 +159,10 @@ def _aidr_summary(state: AccountRiskState | None, managed_account_id: int) -> di
     split = _split_remaining(managed_account_id)
     if raw_mode == VIRTUAL_WAITING_FOR_WIN:
         mode = "virtual"
-        next_action = f"Virtual OVER-3 confirmation: {wins}/2 consecutive wins."
+        next_action = f"Virtual OVER-4 confirmation: {wins}/2 consecutive wins."
     elif raw_mode == REAL_RECOVERY_PENDING and split > 0:
-        mode = "split_recovery"
-        next_action = f"Real OVER-3 split recovery: {split} target(s) remaining."
+        mode = "full_recovery"
+        next_action = "One real OVER-4 trade will target the full recovery debt."
     elif raw_mode == REAL_RECOVERY_PENDING:
         mode = "exact_recovery"
         next_action = "Next qualifying trade is one real OVER-3 exact recovery."
@@ -179,6 +179,7 @@ def _aidr_summary(state: AccountRiskState | None, managed_account_id: int) -> di
         "virtual_losses": int(state.virtual_loss_count or 0) if state is not None else 0,
         "virtual_observations": int(state.virtual_observation_count or 0) if state is not None else 0,
         "split_recovery_remaining": split,
+        "full_recovery_remaining": split,
         "next_action": next_action,
     }
 

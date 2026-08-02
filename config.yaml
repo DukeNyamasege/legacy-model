@@ -11,8 +11,8 @@ deriv:
   oauth_redirect_url: https://derivadmin.site/oauth/callback
   token_encryption_key: ''
 model:
-  name: AI Digit Recovery V1
-  version: 11.0.2-aidr-over1-over3
+  name: AI Digit Recovery V2
+  version: 12.0.0-aidr-over1-over3-over4-full
   brand: Father of Automation Series
   run_id: aidr_over1_over3_v1
 files:
@@ -37,7 +37,8 @@ strategy:
     - R_75
   contract_type: DIGITOVER
   # Keep validator-compatible legacy config value. The active AIDR strategy is
-  # installed by app.ai_digit_recovery_v1 and uses DIGITOVER 1 / DIGITOVER 3.
+  # installed by app.ai_digit_recovery_v1 and uses DIGITOVER 1 normal,
+  # DIGITOVER 3 first recovery, and DIGITOVER 4 after virtual confirmation.
   prediction: 2
   duration: 1
   duration_unit: t
@@ -99,7 +100,7 @@ recovery:
   pause_after_consecutive_losses: 3
 rf_strategy:
   # Keep validator-compatible legacy name. Runtime entry selection is disabled
-  # for RF/PUT and replaced by AI Digit Recovery V1 in app.api_v3/app.worker.
+  # for RF/PUT and replaced by AI Digit Recovery V2 in app.api_v3/app.worker.
   name: RF-PUT5-AI-V8
   allowed_direction: FALL
   markets:

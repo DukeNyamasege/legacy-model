@@ -132,8 +132,8 @@ _AIDR_STATUS_JS = r'''
       .foa-aidr-status strong{display:block;color:var(--text,#0f172a);font-size:15px;line-height:1.25;font-weight:900;overflow-wrap:anywhere}
       .foa-aidr-status small{display:block;color:var(--muted,#64748b);font-size:11px;line-height:1.35;margin-top:4px}
       .foa-aidr-mode{display:inline-flex!important;width:max-content;max-width:100%;padding:5px 9px;border-radius:999px;background:rgba(47,115,255,.13);color:#1d4ed8!important}
-      .foa-aidr-mode.virtual{background:rgba(245,158,11,.16);color:#b45309!important}.foa-aidr-mode.split_recovery,.foa-aidr-mode.exact_recovery{background:rgba(139,92,246,.15);color:#6d28d9!important}
-      [data-theme="dark"] .foa-aidr-status strong{color:#f8fafc}[data-theme="dark"] .foa-aidr-mode{color:#93c5fd!important}[data-theme="dark"] .foa-aidr-mode.virtual{color:#fcd34d!important}[data-theme="dark"] .foa-aidr-mode.split_recovery,[data-theme="dark"] .foa-aidr-mode.exact_recovery{color:#c4b5fd!important}
+      .foa-aidr-mode.virtual{background:rgba(245,158,11,.16);color:#b45309!important}.foa-aidr-mode.full_recovery,.foa-aidr-mode.exact_recovery{background:rgba(139,92,246,.15);color:#6d28d9!important}
+      [data-theme="dark"] .foa-aidr-status strong{color:#f8fafc}[data-theme="dark"] .foa-aidr-mode{color:#93c5fd!important}[data-theme="dark"] .foa-aidr-mode.virtual{color:#fcd34d!important}[data-theme="dark"] .foa-aidr-mode.full_recovery,[data-theme="dark"] .foa-aidr-mode.exact_recovery{color:#c4b5fd!important}
       .foa-virtual-card{margin-top:16px}.foa-virtual-note{color:var(--muted,#64748b);font-size:12px;margin:4px 0 12px}
       .foa-virtual-head,.foa-virtual-row{display:grid;grid-template-columns:110px minmax(120px,1fr) 110px 110px 110px 120px;gap:10px;align-items:center;padding:9px 4px;border-bottom:1px solid var(--line,rgba(148,163,184,.18));font-size:12px}
       .foa-virtual-head{color:var(--muted,#64748b);font-size:10px;font-weight:850;text-transform:uppercase;letter-spacing:.05em}
@@ -147,7 +147,7 @@ _AIDR_STATUS_JS = r'''
 
   function modeLabel(mode) {
     if (mode === "virtual") return "Virtual Protection";
-    if (mode === "split_recovery") return "Split Recovery";
+    if (mode === "full_recovery") return "Full Recovery";
     if (mode === "exact_recovery") return "Exact Recovery";
     return "Normal Trading";
   }
@@ -159,7 +159,7 @@ _AIDR_STATUS_JS = r'''
       <div><span>AIDR Mode</span><strong class="foa-aidr-mode ${esc(payload.mode)}">${esc(modeLabel(payload.mode))}</strong><small>${esc(payload.account || "Current account")}</small></div>
       <div><span>Recovery Debt</span><strong>${money(payload.recovery_debt)}</strong><small>Actual monetary losses only</small></div>
       <div><span>Virtual Wins</span><strong>${wins} / ${required}</strong><small>Must be consecutive</small></div>
-      <div><span>Split Targets</span><strong>${Number(payload.split_recovery_remaining || 0)}</strong><small>Real targets remaining</small></div>
+      <div><span>Recovery Targets</span><strong>${Number(payload.split_recovery_remaining || 0)}</strong><small>One full-debt target</small></div>
       <div><span>Next Action</span><strong>${esc(payload.next_action || "Normal OVER-1 execution.")}</strong><small>Virtual observations charge $0.00</small></div>
     `;
   }
@@ -217,7 +217,7 @@ _AIDR_STATUS_JS = r'''
       allTrades.insertAdjacentElement("afterend", card);
     }
     const html = `
-      <div class="foa-card-head"><div><h2>Virtual Protection Trades ($0)</h2><p class="foa-virtual-note">Hypothetical OVER-3 observations used after a failed real recovery. They never deduct account balance or add debt.</p></div><span class="foa-period">${Number(payload.virtual_wins || 0)}/2 consecutive wins</span></div>
+      <div class="foa-card-head"><div><h2>Virtual Protection Trades ($0)</h2><p class="foa-virtual-note">Hypothetical OVER-4 observations used after a failed real recovery. They never deduct account balance or add debt.</p></div><span class="foa-period">${Number(payload.virtual_wins || 0)}/2 consecutive wins</span></div>
       <div class="foa-virtual-head"><span>Time</span><span>Market / Contract</span><span>Simulated Stake</span><span>Exit Digit</span><span>Result</span><span>Financial Impact</span></div>
       ${virtualRows(payload)}
     `;

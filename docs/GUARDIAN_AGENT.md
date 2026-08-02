@@ -12,6 +12,14 @@ the OpenAI Responses API with a committed project charter, selected repository
 files, redacted logs, health snapshots, and the exact incident being reviewed.
 Private ChatGPT history and production secrets are not transferred into it.
 
+OpenAI never logs in to the VPS. The host-level Guardian makes outbound HTTPS
+requests to the OpenAI API. It sends only redacted evidence, selected repository
+context, the project charter, and the authoritative
+`app/aidr_strategy_contract.json`. Responses are requested with `store=false`.
+The OpenAI model has no SSH password, shell, Docker socket, database connection,
+or direct filesystem access. Only the local Guardian performs constrained actions
+after private Telegram approval.
+
 ## Permanent operating boundary
 
 The Guardian is **Git-only**.
@@ -129,6 +137,11 @@ Before scheduled strategy analysis, account-, balance-, token-, credential-,
 session-, login-, email-, and user-level structures are removed. Only aggregate
 model-performance values are sent to OpenAI.
 
+The trading runtime and Guardian both consume
+`app/aidr_strategy_contract.json`. Strategy releases must update that protected
+contract; this keeps runtime behavior, API metadata, tests, and Guardian context
+aligned from one source of truth.
+
 ## Installation
 
 ### 1. Pull the repository release
@@ -175,6 +188,10 @@ Set:
 OPENAI_API_KEY=...
 GUARDIAN_TELEGRAM_BOT_TOKEN=...
 ```
+
+Use a project-scoped OpenAI API key, not an organization Admin API key. The
+installer verifies the key and access to every configured model before starting
+the service. The coding and reviewer model names must be different.
 
 Do not put these values in the main project `.env`, GitHub, screenshots, Telegram
 messages, or ChatGPT.

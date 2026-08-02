@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "product": {
+    "display_name": "AI Digit Recovery V2",
+    "version": "AIDR-OVER1-OVER3-OVER4-FULL-V2",
+    "run_id": "aidr_over1_over3_v1",
+    "phase": "AIDR_OVER1_OVER3_OVER4_FULL"
+  },
+  "execution": {
+    "contract_type": "DIGITOVER",
+    "duration_ticks": 1,
+    "normal_barrier": 1,
+    "first_recovery_barrier": 3,
+    "virtual_barrier": 4,
+    "post_virtual_recovery_barrier": 4,
+    "virtual_trigger_actual_losses": 2,
+    "virtual_confirmation_wins": 2,
+    "post_virtual_recovery_targets": 1,
+    "recovery_policy": "full_recorded_debt_once",
+    "virtual_provider_purchase": false
+  },
+  "quality": {
+    "recent_window": 20,
+    "mid_window": 50,
+    "long_window": 100,
+    "deep_window": 500,
+    "minimum_normal_hit_rate": 0.75,
+    "minimum_recovery_hit_rate": 0.56,
+    "minimum_live_edge": 0.0195,
+    "quality_tightening_factor": 1.3,
+    "recovery_profit_buffer": 0.01
+  }
+}

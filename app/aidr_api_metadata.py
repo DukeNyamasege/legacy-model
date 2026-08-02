@@ -5,10 +5,13 @@ from typing import Any
 from fastapi import Depends
 
 import app.api as base_api
+from app.aidr_strategy_contract import AIDR_STRATEGY_CONTRACT
 
-AIDR_DISPLAY_NAME = "AI Digit Recovery V1"
-AIDR_RUN_ID = "aidr_over1_over3_v1"
-AIDR_PHASE = "AIDR_OVER1_OVER3_SPLIT"
+_PRODUCT = AIDR_STRATEGY_CONTRACT["product"]
+_EXECUTION = AIDR_STRATEGY_CONTRACT["execution"]
+AIDR_DISPLAY_NAME = str(_PRODUCT["display_name"])
+AIDR_RUN_ID = str(_PRODUCT["run_id"])
+AIDR_PHASE = str(_PRODUCT["phase"])
 
 _INSTALLED = False
 
@@ -32,9 +35,12 @@ def _apply_aidr_metadata(payload: dict[str, Any]) -> dict[str, Any]:
             "execution_phase": AIDR_PHASE,
             "strategy_family": "DIGITOVER",
             "normal_contract_type": "DIGITOVER",
-            "normal_barrier": 1,
+            "normal_barrier": int(_EXECUTION["normal_barrier"]),
             "recovery_contract_type": "DIGITOVER",
-            "recovery_barrier": 3,
+            "recovery_barrier": int(_EXECUTION["first_recovery_barrier"]),
+            "virtual_contract_type": "DIGITOVER",
+            "virtual_barrier": int(_EXECUTION["virtual_barrier"]),
+            "post_virtual_recovery_barrier": int(_EXECUTION["post_virtual_recovery_barrier"]),
             "run_id": AIDR_RUN_ID,
         }
     )
@@ -45,8 +51,10 @@ def _apply_aidr_metadata(payload: dict[str, Any]) -> dict[str, Any]:
             "run_id": AIDR_RUN_ID,
             "normal": "DIGITOVER 1",
             "recovery": "DIGITOVER 3",
-            "virtual_confirmation_wins": 2,
-            "split_recovery_targets": 2,
+            "virtual": "DIGITOVER 4",
+            "post_virtual_recovery": "DIGITOVER 4 full debt once",
+            "virtual_confirmation_wins": int(_EXECUTION["virtual_confirmation_wins"]),
+            "post_virtual_recovery_targets": int(_EXECUTION["post_virtual_recovery_targets"]),
         }
     )
     payload["strategy"] = strategy
@@ -59,7 +67,8 @@ def install_aidr_api_metadata() -> None:
     The legacy Pydantic config still requires the old literal values for a few
     fields.  AIDR is installed by code, so config.yaml must remain compatible for
     API import health, while dashboard/API metadata should show the active public
-    strategy: OVER 1 normal and OVER 3 recovery.
+    strategy: OVER 1 normal, OVER 3 first recovery, then OVER 4 virtual
+    confirmation and one full-debt recovery.
     """
 
     global _INSTALLED
@@ -85,15 +94,18 @@ def install_aidr_api_metadata() -> None:
                 "run_id": AIDR_RUN_ID,
                 "phase": AIDR_PHASE,
                 "normal_contract_type": "DIGITOVER",
-                "normal_barrier": 1,
+                "normal_barrier": int(_EXECUTION["normal_barrier"]),
                 "recovery_contract_type": "DIGITOVER",
-                "recovery_barrier": 3,
+                "recovery_barrier": int(_EXECUTION["first_recovery_barrier"]),
+                "virtual_contract_type": "DIGITOVER",
+                "virtual_barrier": int(_EXECUTION["virtual_barrier"]),
+                "post_virtual_recovery_barrier": int(_EXECUTION["post_virtual_recovery_barrier"]),
                 "martingale_enabled": base_api.CONFIG.risk.recovery_enabled,
                 "recovery_trigger_losses": 1,
                 "virtual_protection_enabled": True,
-                "virtual_trigger_actual_losses": 2,
-                "virtual_confirmation_wins": 2,
-                "split_recovery_targets": 2,
+                "virtual_trigger_actual_losses": int(_EXECUTION["virtual_trigger_actual_losses"]),
+                "virtual_confirmation_wins": int(_EXECUTION["virtual_confirmation_wins"]),
+                "post_virtual_recovery_targets": int(_EXECUTION["post_virtual_recovery_targets"]),
             }
         }
 
@@ -104,8 +116,10 @@ def install_aidr_api_metadata() -> None:
             "run_id": AIDR_RUN_ID,
             "phase": AIDR_PHASE,
             "contract_type": "DIGITOVER",
-            "normal_barrier": 1,
-            "recovery_barrier": 3,
+            "normal_barrier": int(_EXECUTION["normal_barrier"]),
+            "recovery_barrier": int(_EXECUTION["first_recovery_barrier"]),
+            "virtual_barrier": int(_EXECUTION["virtual_barrier"]),
+            "post_virtual_recovery_barrier": int(_EXECUTION["post_virtual_recovery_barrier"]),
             "markets": list(base_api.CONFIG.strategy.symbols),
             "duration_ticks": 1,
             "legacy_rf_infrastructure": "disabled_for_entry_selection",

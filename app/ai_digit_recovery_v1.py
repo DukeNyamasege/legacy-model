@@ -25,25 +25,33 @@ from app.repositories.rf_dir5_repository import (
 )
 from app.rf_dir5_bot import RFDir5TradingBot
 from app.strategy.over2_strategy import TEST2_SYMBOLS
+from app.aidr_strategy_contract import AIDR_STRATEGY_CONTRACT
 
 
-AIDR_VERSION = "AIDR-OVER1-OVER3-SPLIT-V1"
+_PRODUCT = AIDR_STRATEGY_CONTRACT["product"]
+_EXECUTION = AIDR_STRATEGY_CONTRACT["execution"]
+_QUALITY = AIDR_STRATEGY_CONTRACT["quality"]
+
+AIDR_VERSION = str(_PRODUCT["version"])
 AIDR_TRIGGER_BASE = "AIDR-O1-V1"
 AIDR_TRIGGER_RECOVERY = "AIDR-O3-V1"
-AIDR_RUN_ID = "aidr_over1_over3_v1"
+AIDR_TRIGGER_POST_VIRTUAL = "AIDR-O4-V2"
+AIDR_RUN_ID = str(_PRODUCT["run_id"])
 AIDR_STATE_KEY = "aidr_over1_over3_v1:state"
 AIDR_ACCOUNT_EPOCH_PREFIX = "aidr_over1_over3_v1:account_epoch:"
 AIDR_SPLIT_PREFIX = "aidr_split_remaining:"
-NORMAL_BARRIER = 1
-RECOVERY_BARRIER = 3
-RECENT_WINDOW = 20
-MID_WINDOW = 50
-LONG_WINDOW = 100
-DEEP_WINDOW = 500
-MIN_BASE_HIT_RATE = 0.75
-MIN_RECOVERY_HIT_RATE = 0.56
-MIN_LIVE_EDGE = 0.015
-VIRTUAL_WINS_REQUIRED = 2
+NORMAL_BARRIER = int(_EXECUTION["normal_barrier"])
+RECOVERY_BARRIER = int(_EXECUTION["first_recovery_barrier"])
+POST_VIRTUAL_BARRIER = int(_EXECUTION["post_virtual_recovery_barrier"])
+RECENT_WINDOW = int(_QUALITY["recent_window"])
+MID_WINDOW = int(_QUALITY["mid_window"])
+LONG_WINDOW = int(_QUALITY["long_window"])
+DEEP_WINDOW = int(_QUALITY["deep_window"])
+MIN_BASE_HIT_RATE = float(_QUALITY["minimum_normal_hit_rate"])
+MIN_RECOVERY_HIT_RATE = float(_QUALITY["minimum_recovery_hit_rate"])
+MIN_LIVE_EDGE = float(_QUALITY["minimum_live_edge"])
+VIRTUAL_WINS_REQUIRED = int(_EXECUTION["virtual_confirmation_wins"])
+RECOVERY_PROFIT_BUFFER = float(_QUALITY["recovery_profit_buffer"])
 
 _INSTALLED = False
 
@@ -52,21 +60,42 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def calculate_full_recovery_stake(
+    *,
+    base_stake: float,
+    recovery_debt: float,
+    proposal_profit_ratio: float,
+) -> float:
+    """Size one contract to cover all debt plus a one-cent rounding buffer."""
+
+    base = ceil_cents(max(0.35, float(base_stake or 0.0)))
+    debt = max(0.0, float(recovery_debt or 0.0))
+    ratio = max(0.0001, float(proposal_profit_ratio or 0.0))
+    target_profit = ceil_cents(debt + RECOVERY_PROFIT_BUFFER)
+    return ceil_cents(max(base, target_profit / ratio))
+
+
 def _split_key(managed_account_id: int) -> str:
     return f"{AIDR_SPLIT_PREFIX}{int(managed_account_id)}"
 
 
 def _read_split_remaining(repo: Any, managed_account_id: int) -> int:
+    """Return the post-virtual full-recovery marker.
+
+    Older deployments stored ``2`` here for two split targets. Treat every
+    positive legacy value as one pending full-debt recovery so upgrades do not
+    discard an account's existing recovery debt.
+    """
     try:
         raw = str(repo.runtime_preference(_split_key(managed_account_id)) or "").strip()
-        return max(0, min(2, int(raw or "0")))
+        return 1 if int(raw or "0") > 0 else 0
     except Exception:
         return 0
 
 
 def _write_split_remaining(repo: Any, managed_account_id: int, value: int) -> None:
     try:
-        repo.set_runtime_preference(_split_key(managed_account_id), str(max(0, min(2, int(value)))))
+        repo.set_runtime_preference(_split_key(managed_account_id), "1" if int(value) > 0 else "0")
     except Exception:
         pass
 
@@ -101,11 +130,19 @@ def _risk_states(bot: RFDir5TradingBot, managed_ids: set[int]) -> dict[int, Acco
 
 
 def _account_groups(bot: RFDir5TradingBot) -> tuple[set[int], set[int], set[int]]:
+    normal, initial_recovery, post_virtual_recovery, virtual = _account_recovery_groups(bot)
+    return normal, initial_recovery | post_virtual_recovery, virtual
+
+
+def _account_recovery_groups(
+    bot: RFDir5TradingBot,
+) -> tuple[set[int], set[int], set[int], set[int]]:
     accounts = _enabled_accounts(bot)
     ids = {managed_id for _token, _account, managed_id in accounts}
     states = _risk_states(bot, ids)
     normal: set[int] = set()
-    real_recovery: set[int] = set()
+    initial_recovery: set[int] = set()
+    post_virtual_recovery: set[int] = set()
     virtual: set[int] = set()
     for _token, _account, managed_id in accounts:
         state = states.get(managed_id)
@@ -119,9 +156,11 @@ def _account_groups(bot: RFDir5TradingBot) -> tuple[set[int], set[int], set[int]
             continue
         if state.protection_mode == VIRTUAL_WAITING_FOR_WIN:
             virtual.add(managed_id)
+        elif _read_split_remaining(bot.repository, managed_id) > 0:
+            post_virtual_recovery.add(managed_id)
         else:
-            real_recovery.add(managed_id)
-    return normal, real_recovery, virtual
+            initial_recovery.add(managed_id)
+    return normal, initial_recovery, post_virtual_recovery, virtual
 
 
 def _probability(digits: list[int], *, window: int, barrier: int) -> float:
@@ -203,7 +242,13 @@ def _make_aidr_candidate(
     epoch = int(tick.get("epoch") or 0)
     tick_id = bot._tick_identity(symbol, epoch, quote)
     trigger_digits = tuple(digits[-RECENT_WINDOW:])
-    trigger_name = AIDR_TRIGGER_RECOVERY if recovery else AIDR_TRIGGER_BASE
+    trigger_name = (
+        AIDR_TRIGGER_POST_VIRTUAL
+        if barrier == POST_VIRTUAL_BARRIER
+        else AIDR_TRIGGER_RECOVERY
+        if recovery
+        else AIDR_TRIGGER_BASE
+    )
     return hybrid.DigitSignal(
         signal_id=str(uuid.uuid4()),
         run_id=AIDR_RUN_ID,
@@ -476,33 +521,15 @@ def _record_account_outcome_aidr(
                 _reset_virtual_counters(state)
                 _clear_split_remaining(self.base, int(managed_account_id))
         else:
-            recovered = round(max(0.0, float(profit)), 2)
-            split_remaining = _read_split_remaining(self.base, int(managed_account_id)) if was_recovery else 0
-            if was_recovery and split_remaining > 0:
-                remaining_debt = round(max(0.0, float(state.recovery_loss_debt or 0.0) - recovered), 2)
-                next_remaining = max(0, split_remaining - 1)
-                if remaining_debt <= 0.01 or next_remaining <= 0:
-                    state.recovery_loss_debt = 0.0
-                    state.recovery_pending = False
-                    state.recovery_pending_since = None
-                    state.consecutive_losses = 0
-                    _reset_virtual_counters(state)
-                    _clear_split_remaining(self.base, int(managed_account_id))
-                else:
-                    state.recovery_loss_debt = remaining_debt
-                    state.recovery_pending = True
-                    state.recovery_pending_since = state.recovery_pending_since or utc_now()
-                    state.protection_mode = REAL_RECOVERY_PENDING
-                    state.consecutive_losses = 0
-                    _write_split_remaining(self.base, int(managed_account_id), next_remaining)
-            else:
-                state.recovery_loss_debt = 0.0
-                state.recovery_pending = False
-                state.recovery_pending_since = None
-                state.consecutive_losses = 0
-                state.recovery_attempt_active = False
-                _reset_virtual_counters(state)
-                _clear_split_remaining(self.base, int(managed_account_id))
+            # Both the first OVER-3 recovery and the post-virtual OVER-4
+            # recovery target the entire recorded debt in one contract.
+            state.recovery_loss_debt = 0.0
+            state.recovery_pending = False
+            state.recovery_pending_since = None
+            state.consecutive_losses = 0
+            state.recovery_attempt_active = False
+            _reset_virtual_counters(state)
+            _clear_split_remaining(self.base, int(managed_account_id))
 
         state.equity_high_water = max(float(state.equity_high_water or 0.0), float(current_balance))
         state.updated_at = utc_now()
@@ -518,7 +545,7 @@ def _record_account_outcome_aidr(
             "protection_mode": _mode_label(state),
             "raw_protection_state": state.protection_mode,
             "protection_state_changed": previous_mode != state.protection_mode,
-            "recovery_policy": "aidr_over1_over3_split_v1",
+            "recovery_policy": "aidr_over1_over3_over4_full_v2",
             "split_recovery_remaining": _read_split_remaining(self.base, int(managed_account_id)),
         }
 
@@ -561,19 +588,22 @@ def _plan_stake_aidr(original_plan_stake):
             recovery_pending = bool(state is not None and state.recovery_pending and debt > 0.009)
             virtual = bool(state is not None and state.protection_mode == VIRTUAL_WAITING_FOR_WIN)
         if virtual:
-            return StakePlan(None, "virtual OVER-3 confirmation active", is_recovery=True, recovery_debt=debt)
+            return StakePlan(None, "virtual OVER-4 confirmation active", is_recovery=True, recovery_debt=debt)
         if not recovery_pending or not recovery_enabled:
             return plan
         split_remaining = _read_split_remaining(self.base, int(managed_account_id))
-        portions = max(1, split_remaining or 1)
-        ratio = max(0.0001, float(proposal_profit_ratio or 0.0))
         base = ceil_cents(max(float(minimum_stake), float(requested_stake)))
-        target_profit = debt / portions
-        stake = ceil_cents(max(base, target_profit / ratio))
+        stake = calculate_full_recovery_stake(
+            base_stake=base,
+            recovery_debt=debt,
+            proposal_profit_ratio=proposal_profit_ratio,
+        )
         return StakePlan(
             stake=stake,
             reason=(
-                "AIDR OVER-3 split recovery" if split_remaining > 0 else "AIDR OVER-3 exact recovery"
+                "AIDR OVER-4 full-debt recovery"
+                if split_remaining > 0
+                else "AIDR OVER-3 exact recovery"
             ),
             is_recovery=True,
             recovery_debt=debt,
@@ -600,17 +630,17 @@ def _settle_virtual_aidr(original_settle):
             if managed_id is None:
                 continue
             if mode == REAL_RECOVERY_PENDING or str(protection.get("mode") or "") == "RECOVERY_PENDING":
-                _write_split_remaining(self.base, managed_id, 2)
+                _write_split_remaining(self.base, managed_id, 1)
                 self.base.set_managed_account_execution_status(
                     managed_id,
                     "recovery_pending",
-                    "2 consecutive virtual OVER-3 wins confirmed. Next real OVER-3 recovery will recover the debt in 2 profit targets.",
+                    "2 consecutive virtual OVER-4 wins confirmed. Next real OVER-4 recovery targets the full debt once.",
                 )
             elif mode == VIRTUAL_WAITING_FOR_WIN:
                 self.base.set_managed_account_execution_status(
                     managed_id,
                     "virtual_protection",
-                    f"Virtual OVER-3 confirmation active: consecutive wins {wins}/{VIRTUAL_WINS_REQUIRED}.",
+                    f"Virtual OVER-4 confirmation active: consecutive wins {wins}/{VIRTUAL_WINS_REQUIRED}.",
                 )
         return settled
     return wrapped
@@ -632,7 +662,7 @@ def _scoped_eligible(original_eligible):
 
 
 def install_ai_digit_recovery_v1_strategy() -> None:
-    """Install pure digit OVER-1 -> OVER-3 recovery with virtual split recovery."""
+    """Install OVER-1 normal, OVER-3 first recovery and OVER-4 full recovery."""
     global _INSTALLED
     if _INSTALLED:
         return
@@ -640,7 +670,7 @@ def install_ai_digit_recovery_v1_strategy() -> None:
     hybrid.HYBRID_STATE_KEY = AIDR_STATE_KEY
     hybrid.ACCOUNT_EPOCH_PREFIX = AIDR_ACCOUNT_EPOCH_PREFIX
     hybrid.PRIMARY_DIGITS = "AIDR_NORMAL_OVER1"
-    hybrid.PUT_RECOVERY = "AIDR_RECOVERY_OVER3"
+    hybrid.PUT_RECOVERY = "AIDR_RECOVERY_OVER3_OVER4"
 
     runtime.HYBRID_RUNTIME_CONFIG = replace(
         runtime.HYBRID_RUNTIME_CONFIG,
@@ -677,11 +707,12 @@ def install_ai_digit_recovery_v1_strategy() -> None:
         self.contract_type = "DIGITOVER"
         self.contract_barrier = str(NORMAL_BARRIER)
         self.logger.warning(
-            "AIDR_OVER1_OVER3_ACTIVE version=%s normal=DIGITOVER_%s recovery=DIGITOVER_%s "
-            "virtual_wins_required=%s split_recovery_wins=2 put_removed=true",
+            "AIDR_OVER1_OVER3_OVER4_ACTIVE version=%s normal=DIGITOVER_%s first_recovery=DIGITOVER_%s "
+            "virtual_and_full_recovery=DIGITOVER_%s virtual_wins_required=%s full_debt_once=true put_removed=true",
             AIDR_VERSION,
             NORMAL_BARRIER,
             RECOVERY_BARRIER,
+            POST_VIRTUAL_BARRIER,
             VIRTUAL_WINS_REQUIRED,
         )
 

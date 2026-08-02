@@ -17,16 +17,16 @@ def _is_aidr_digit_signal(signal: Any) -> bool:
     direction = str(getattr(signal, "direction", "") or "").upper()
     return (
         contract_type == "DIGITOVER"
-        and barrier in {"1", "3"}
-        and (trigger.startswith("AIDR-") or direction in {"OVER_1", "OVER_3"})
+        and barrier in {"1", "3", "4"}
+        and (trigger.startswith("AIDR-") or direction in {"OVER_1", "OVER_3", "OVER_4"})
     )
 
 
-def _is_recovery_signal(signal: Any) -> bool:
+def _is_virtual_recovery_signal(signal: Any) -> bool:
     barrier = str(getattr(signal, "barrier", "") or "").strip()
     trigger = str(getattr(signal, "trigger_name", "") or "").upper()
     direction = str(getattr(signal, "direction", "") or "").upper()
-    return barrier == "3" or trigger == "AIDR-O3-V1" or direction == "OVER_3"
+    return barrier == "4" or trigger == "AIDR-O4-V2" or direction == "OVER_4"
 
 
 def _configured_stake(bot: RFDir5TradingBot, token: str, account_id: str, managed_id: int) -> float:
@@ -72,7 +72,7 @@ def _mark_virtual_signal(
         bot.rf_repository.set_signal_decision(
             signal.signal_id,
             "VIRTUAL_TRADE",
-            "AIDR_VIRTUAL_OVER3_NO_PURCHASE",
+            "AIDR_VIRTUAL_OVER4_NO_PURCHASE",
             selected=True,
             validated_edge=getattr(signal, "validated_edge", None),
         )
@@ -96,13 +96,14 @@ def install_aidr_execution_flow_fix() -> None:
     """Install direct AIDR real-recovery and virtual execution routing.
 
     The legacy RF purchase envelope was written for DIGITOVER primary entries and
-    PUT recovery. AIDR uses DIGITOVER 3 for both real recovery and $0 virtual
-    confirmation. Older code relied on the number of times a dict's ``mode`` key
+    PUT recovery. AIDR uses DIGITOVER 3 for the first real recovery and
+    DIGITOVER 4 for $0 virtual confirmation plus one post-virtual full-debt
+    recovery. Older code relied on the number of times a dict's ``mode`` key
     happened to be read. This implementation partitions the scoped accounts once:
 
-    * VIRTUAL_MODE accounts open a $0 DIGITOVER 3 observation directly.
+    * VIRTUAL_MODE accounts open a $0 DIGITOVER 4 observation directly.
     * RECOVERY_PENDING accounts enter the normal purchase envelope with the real
-      database recovery state preserved for exact/split stake planning.
+      database recovery state preserved for full-debt stake planning.
     * Normal accounts continue through the shared authenticated purchase path.
     """
 
@@ -131,7 +132,7 @@ def install_aidr_execution_flow_fix() -> None:
         real_managed_ids: set[int] = set()
         virtual_opened: list[dict[str, Any]] = []
         virtual_waiting: set[str] = set()
-        recovery_signal = _is_recovery_signal(signal)
+        virtual_recovery_signal = _is_virtual_recovery_signal(signal)
 
         for token, account_id in eligible:
             managed_id = self._managed_account_id_for_token(token)
@@ -148,10 +149,10 @@ def install_aidr_execution_flow_fix() -> None:
                 continue
 
             masked = mask_account_id(account_id)
-            if not recovery_signal:
+            if not virtual_recovery_signal:
                 virtual_waiting.add(masked)
                 self.logger.info(
-                    "AIDR_VIRTUAL_WAITING account=%s reason=requires_over3_signal",
+                    "AIDR_VIRTUAL_WAITING account=%s reason=requires_over4_signal",
                     masked,
                 )
                 continue
@@ -185,10 +186,10 @@ def install_aidr_execution_flow_fix() -> None:
             self._set_account_execution_status(
                 managed_id,
                 "virtual_protection",
-                "AIDR virtual OVER-3 confirmation is active; no real contract was purchased.",
+                "AIDR virtual OVER-4 confirmation is active; no real contract was purchased.",
             )
             self.logger.warning(
-                "VIRTUAL_TRADE_OPENED account=%s market=%s contract_type=DIGITOVER barrier=3 "
+                "VIRTUAL_TRADE_OPENED account=%s market=%s contract_type=DIGITOVER barrier=4 "
                 "simulated_stake=%.2f expected_payout=%s actual_buy=false actual_financial_impact=0 "
                 "recovery_debt=%.2f",
                 masked,
@@ -218,7 +219,7 @@ def install_aidr_execution_flow_fix() -> None:
             if str(payload.get("mode") or NORMAL_MODE) == RECOVERY_PENDING:
                 payload["aidr_mode"] = RECOVERY_PENDING
                 payload["mode"] = NORMAL_MODE
-                payload["next_action"] = "Next AIDR entry is real DIGITOVER 3 recovery"
+                payload["next_action"] = "Next AIDR entry is the account's configured full-debt recovery"
             return payload
 
         repository.virtual_protection_for_account = recovery_compatible_protection

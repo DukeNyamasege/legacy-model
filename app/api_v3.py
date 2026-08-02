@@ -89,7 +89,7 @@ install_custom_martingale_api()
 install_aidr_virtual_settlement_fix()
 
 # Active public-release strategy metadata: DIGITOVER 1 normal, DIGITOVER 3
-# recovery, virtual OVER-3 confirmation and split recovery after virtual mode.
+# first recovery, then virtual OVER-4 confirmation and one full-debt recovery.
 install_ai_digit_recovery_v1_strategy()
 install_aidr_execution_flow_fix()
 
@@ -166,7 +166,7 @@ install_dashboard_loader_unlock(app)
 
 # Final presentation authority: virtual observations appear inside the same
 # Today's Recent Trades / complete-history tables as actual trades, with an
-# explicit VIRTUAL OVER 3 badge and $0.00 impact. A permanent risk disclaimer is
+# explicit VIRTUAL OVER 4 badge and $0.00 impact. A permanent risk disclaimer is
 # also displayed on every dashboard page.
 install_final_virtual_history_ui(app)
 

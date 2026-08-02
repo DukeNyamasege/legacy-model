@@ -8,12 +8,16 @@
 - Public domain: `https://derivadmin.site`.
 - Stack: PostgreSQL, FastAPI API, one continuously running Python trading worker,
   Docker Compose, Caddy/public HTTPS outside this repository.
-- Current product identity: **AI Digit Recovery V1 (AIDR)**, Father of Automation
+- Current product identity: **AI Digit Recovery V2 (AIDR)**, Father of Automation
   Series.
 
 ## Active trading strategy contract
 
-The active strategy is digit OVER only. PUT is disabled.
+The authoritative machine-readable strategy contract is
+`app/aidr_strategy_contract.json`. The trading runtime and Guardian both load that
+same file. If this prose ever conflicts with the machine-readable contract, the
+machine-readable contract wins. The active strategy is digit OVER only. PUT is
+disabled.
 
 1. Normal real execution uses `DIGITOVER` barrier `1` at the account's configured
    base stake.
@@ -21,13 +25,13 @@ The active strategy is digit OVER only. PUT is disabled.
 3. The next qualifying real entry uses `DIGITOVER` barrier `3` as one exact
    recovery attempt.
 4. If that exact real recovery loses, the account enters virtual protection.
-5. Virtual protection performs hypothetical `DIGITOVER` barrier `3` observations
+5. Virtual protection performs hypothetical `DIGITOVER` barrier `4` observations
    with `$0.00` charged and no provider purchase.
 6. A virtual loss resets the consecutive virtual-win counter to `0/2`.
-7. Two consecutive virtual wins change the account to real split recovery.
-8. The following real OVER-3 recovery targets the debt through two winning profit
-   targets.
-9. A real split-recovery loss adds only that actual monetary loss to debt and sends
+7. Two consecutive virtual wins arm one real post-virtual recovery.
+8. The following real OVER-4 recovery targets all recorded debt in one winning
+   profit target.
+9. A real post-virtual recovery loss adds only that actual monetary loss to debt and sends
    the account back to virtual protection.
 10. When debt is cleared, return to normal OVER-1 execution.
 

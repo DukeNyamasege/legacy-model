@@ -161,6 +161,15 @@ class GuardianOpenAI:
             charter_path.read_text(encoding="utf-8", errors="replace"),
             maximum_chars=45_000,
         )
+        strategy_contract_path = config.repo_dir / "app" / "aidr_strategy_contract.json"
+        if not strategy_contract_path.is_file():
+            raise RuntimeError(
+                f"Guardian strategy contract is missing: {strategy_contract_path}"
+            )
+        self.strategy_contract = redact(
+            strategy_contract_path.read_text(encoding="utf-8", errors="strict"),
+            maximum_chars=20_000,
+        )
         self._budget_lock = threading.Lock()
         self.client = OpenAI(api_key=config.openai_api_key, timeout=180.0)
 
@@ -238,6 +247,8 @@ class GuardianOpenAI:
             instructions
             + "\n\nTRUSTED PROJECT CHARTER:\n"
             + self.project_charter
+            + "\n\nAUTHORITATIVE MACHINE-READABLE STRATEGY CONTRACT:\n"
+            + self.strategy_contract
             + "\n\nReturn only the requested structured object."
         )
         safe_input = redact(input_text, maximum_chars=180_000)
@@ -255,6 +266,7 @@ class GuardianOpenAI:
                         "strict": True,
                     }
                 },
+                store=False,
             )
         except BadRequestError as exc:
             # Only a schema/parameter rejection receives a second plain-JSON
@@ -274,6 +286,7 @@ class GuardianOpenAI:
                     + json.dumps(schema, separators=(",", ":"))
                 ),
                 input=safe_input,
+                store=False,
             )
         return self._json_object(response.output_text)
 

@@ -118,8 +118,8 @@ class GuardianConfig:
                 "GUARDIAN_METRICS_URL",
                 "http://127.0.0.1:8080/metrics/summary?mode=demo",
             ).strip(),
-            allow_main_push=_bool("GUARDIAN_ALLOW_MAIN_PUSH", True),
-            dry_run=_bool("GUARDIAN_DRY_RUN", False),
+            allow_main_push=_bool("GUARDIAN_ALLOW_MAIN_PUSH", False),
+            dry_run=_bool("GUARDIAN_DRY_RUN", True),
         )
 
     def validate(self) -> None:
@@ -134,6 +134,8 @@ class GuardianConfig:
             missing.append("GUARDIAN_CODING_MODEL")
         if not self.reviewer_model:
             missing.append("GUARDIAN_REVIEWER_MODEL")
+        elif self.reviewer_model == self.coding_model:
+            missing.append("a GUARDIAN_REVIEWER_MODEL distinct from the coding model")
         if not self.telegram_bot_token:
             missing.append("GUARDIAN_TELEGRAM_BOT_TOKEN")
         if not self.telegram_admin_chat_id:

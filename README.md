@@ -21,24 +21,28 @@ the public HTTPS application at the configured domain (currently
 
 ## Current strategy
 
-The worker entry point is `python -m app.worker`, which starts `RFDir5TradingBot`; it does **not** start the older digit-pattern bot directly.
+The worker entry point is `python -m app.worker`. It retains `RFDir5TradingBot` as
+the execution and account-isolation infrastructure, but installs **AI Digit
+Recovery V2 (AIDR)** as the active entry and recovery strategy. PUT entry
+selection is disabled.
 
-The checked-in RF strategy configuration is:
+The authoritative strategy definition is
+`app/aidr_strategy_contract.json`. Both the runtime and Guardian load it, so a
+strategy release updates one source of truth. The current contract is:
 
-- model: `RF-PUT5 AI`, version `8.0.0-rf-put5-ai-bayesian-hmm`;
-- strategy identifier: `RF-PUT5-AI-V8`;
-- direction: **FALL** using Deriv `PUT` contracts;
-- duration: **5 ticks**;
-- analysis: six quotes producing five completed movements;
-- configured RF markets: `R_10`, `R_100`, `R_75`, `1HZ10V`, and `1HZ75V`;
-- minimum history: 100 movements;
-- directional requirement: at least three of five moves, including at least two recent directional moves;
-- one open strategy contract globally and one open contract per account;
-- candidate arbitration window: 75 ms;
-- stale signal limit: 1,800 ms;
-- no artificial minimum interval between trades.
+- normal execution: one-tick `DIGITOVER 1`;
+- first real recovery: one-tick `DIGITOVER 3`, sized for the recorded debt once;
+- after that recovery loses: virtual `DIGITOVER 4` observations with no provider purchase;
+- after two consecutive virtual wins: one real `DIGITOVER 4` full-debt recovery;
+- ten configured volatility markets, with proposal arbitration selecting the strongest live edge;
+- multi-window digit evidence over 20, 50, 100, and 500 ticks plus entropy sanity;
+- provider break-even economics checked before every purchase; and
+- minimum live edge `0.0195`, a 30% increase from the previous `0.015` quality gate.
 
-The RF decision engine also evaluates efficiency, normalized impulse, move concentration, proposal economics, Bayesian evidence, and directional HMM state. The strict and cadence-relaxed thresholds are defined in `config.yaml`. The top-level legacy `strategy`/`signal` digit configuration remains in the shared configuration schema, but the deployed worker is the RF-DIR5 worker described above.
+The 30% change tightens the measurable entry edge requirement; it does not imply
+30% higher returns or guarantee profitability. The legacy RF/Bayesian/HMM modules
+remain in the repository for infrastructure compatibility but do not select AIDR
+entries.
 
 ## Demo and real execution
 
@@ -143,14 +147,16 @@ the managed account's current Martingale setting and require stable
 
 Virtual protection is per account and uses fixed safety invariants:
 
-1. A real win resets the consecutive-real-loss counter.
-2. Exactly **two consecutive purchased-contract losses** enter virtual mode.
-3. Virtual observations make no Deriv purchase and have zero monetary impact.
-4. A virtual loss resets the consecutive-virtual-win counter to zero.
-5. Exactly **two consecutive virtual wins** leave virtual mode.
-6. The next qualifying event is the real recovery trade.
+1. A normal `DIGITOVER 1` loss arms one real `DIGITOVER 3` recovery.
+2. That recovery stake targets the complete recorded loss in one contract.
+3. If the recovery also loses, the account enters virtual mode after two purchased losses.
+4. Virtual observations use `DIGITOVER 4`, make no Deriv purchase, and have zero monetary impact.
+5. A virtual loss resets the consecutive-virtual-win counter to zero.
+6. Exactly **two consecutive virtual wins** arm one real `DIGITOVER 4` recovery.
+7. The post-virtual recovery stake targets all accumulated debt in one contract; it is not split.
+8. A failed post-virtual recovery returns only that account to virtual mode.
 
-Virtual losses never add recovery debt. Only losses from purchased Demo/Real contracts add debt. The current recovery planner uses the recorded debt and the current proposal profit ratio, rounds the required stake to cents, respects the configured balance reserve, and skips an account when the full required trade is unaffordable.
+Virtual losses never add recovery debt. Only losses from purchased Demo/Real contracts add debt. The current recovery planner uses the recorded debt and current proposal profit ratio, adds a one-cent rounding buffer, and rounds the required stake upward to cents so the quoted profit target covers the complete debt in one successful recovery.
 
 ## Canonical system/model ledger
 

@@ -73,14 +73,14 @@ def _safe_settle_factory(original_settle: Callable[..., list[dict[str, Any]]]):
             # reject promotion of stopped/paused rows, and the final strict guard
             # performs a second race-safe lifecycle check.
             if mode == REAL_RECOVERY_PENDING:
-                _write_split_remaining(self.base, managed_id, 2)
+                _write_split_remaining(self.base, managed_id, 1)
                 if enabled and status not in {"stopped", "inactive", "disabled", "manual_pause"}:
                     self.base.set_managed_account_execution_status(
                         managed_id,
                         "recovery_pending",
                         (
-                            "2 consecutive virtual OVER-3 wins confirmed. Next real OVER-3 "
-                            "recovery will recover debt in 2 profit targets."
+                            "2 consecutive virtual OVER-4 wins confirmed. Next real OVER-4 "
+                            "recovery targets the full debt once."
                         ),
                     )
             elif mode == VIRTUAL_WAITING_FOR_WIN:
@@ -89,7 +89,7 @@ def _safe_settle_factory(original_settle: Callable[..., list[dict[str, Any]]]):
                         managed_id,
                         "virtual_protection",
                         (
-                            f"Virtual OVER-3 confirmation active: consecutive wins "
+                            f"Virtual OVER-4 confirmation active: consecutive wins "
                             f"{wins}/{VIRTUAL_WINS_REQUIRED}."
                         ),
                     )
