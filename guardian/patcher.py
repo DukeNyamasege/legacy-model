@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import shutil
 import subprocess
 from datetime import datetime, timezone
@@ -200,107 +199,6 @@ class GuardianPatcher:
                 )
         return "\n\n".join(outputs)
 
-    def _run_deploy(self, previous_commit: str) -> subprocess.CompletedProcess[str]:
-        environment = dict(os.environ)
-        environment["DEPLOY_PREVIOUS_COMMIT"] = previous_commit
-        return self._run(
-            ["sh", "./scripts/deploy_vps.sh"],
-            cwd=self.config.repo_dir,
-            timeout=self.config.deployment_timeout_seconds,
-            check=False,
-            env=environment,
-        )
-
-    def _rollback_failed_deployment(
-        self,
-        *,
-        previous_commit: str,
-        failed_commit: str,
-        failed_output: str,
-    ) -> str:
-        details = [
-            "Approved commit deployment failed.",
-            redact(failed_output[-18_000:]),
-        ]
-        try:
-            self._assert_live_checkout_clean()
-            self._run(
-                ["git", "fetch", "origin", "main"],
-                cwd=self.config.repo_dir,
-                timeout=120,
-            )
-            remote = self._run(
-                ["git", "rev-parse", "origin/main"],
-                cwd=self.config.repo_dir,
-                timeout=30,
-            ).stdout.strip()
-            if remote != failed_commit:
-                raise RuntimeError(
-                    "origin/main moved after the failed deployment; automatic revert was refused"
-                )
-            self._run(
-                ["git", "revert", "--no-edit", failed_commit],
-                cwd=self.config.repo_dir,
-                timeout=180,
-            )
-            revert_commit = self.runtime.current_commit()
-            self._run(
-                ["git", "push", "origin", "HEAD:main"],
-                cwd=self.config.repo_dir,
-                timeout=180,
-            )
-            rollback = self._run_deploy(failed_commit)
-            if rollback.returncode != 0:
-                raise RuntimeError(
-                    "revert commit was pushed, but rollback deployment failed:\n"
-                    + redact(rollback.stdout[-18_000:])
-                )
-            details.extend(
-                (
-                    "Automatic rollback succeeded.",
-                    f"Failed commit: {failed_commit}",
-                    f"Restored base: {previous_commit}",
-                    f"Revert commit: {revert_commit}",
-                )
-            )
-        except Exception as exc:
-            details.extend(
-                (
-                    "Automatic rollback did not complete.",
-                    redact(str(exc), maximum_chars=5000),
-                )
-            )
-        return "\n".join(details)
-
-    def _deploy(self, previous_commit: str, new_commit: str) -> str:
-        if not self.config.auto_deploy:
-            return "Automatic deployment is disabled."
-        self._assert_live_checkout_clean()
-        self._run(
-            ["git", "fetch", "origin", "main"],
-            cwd=self.config.repo_dir,
-            timeout=120,
-        )
-        self._run(
-            ["git", "merge", "--ff-only", "origin/main"],
-            cwd=self.config.repo_dir,
-            timeout=120,
-        )
-        current = self.runtime.current_commit()
-        if current != new_commit:
-            raise RuntimeError(
-                f"Live checkout did not reach approved commit {new_commit[:12]}"
-            )
-        result = self._run_deploy(previous_commit)
-        if result.returncode != 0:
-            rollback_report = self._rollback_failed_deployment(
-                previous_commit=previous_commit,
-                failed_commit=new_commit,
-                failed_output=result.stdout,
-            )
-            raise RuntimeError(rollback_report)
-        return redact(result.stdout[-30_000:])
-
     def apply(self, incident: dict[str, Any]) -> dict[str, Any]:
         analysis = incident.get("analysis") or {}
         category = str(
@@ -422,7 +320,6 @@ class GuardianPatcher:
                 cwd=worktree,
                 timeout=180,
             )
-            deployment = self._deploy(base_commit, new_commit)
             return {
                 "status": "completed",
                 "base_commit": base_commit,
@@ -431,9 +328,14 @@ class GuardianPatcher:
                 "changed_files": changed,
                 "tests": tests,
                 "review": review,
-                "deployment_tail": deployment[-12_000:],
+                "repository_update": "pushed_to_main",
+                "vps_update": "not_performed",
+                "next_action": (
+                    "Review the Git commit and update the VPS manually when the full "
+                    "release is ready."
+                ),
                 "summary": str(
-                    patch.get("summary") or "Approved fix applied."
+                    patch.get("summary") or "Approved fix pushed to Git main."
                 ),
             }
         finally:
