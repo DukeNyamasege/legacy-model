@@ -40,6 +40,7 @@ from app.global_reference_dashboard import install_global_reference_dashboard  #
 from app.global_reference_dashboard_compat import (  # noqa: E402
     install_global_reference_dashboard_compat,
 )
+from app.live_metrics_ui import install_live_metrics_ui  # noqa: E402
 from app.model_pnl_display_aliases import install_model_pnl_display_aliases  # noqa: E402
 from app.oauth_session_recovery import install_oauth_session_recovery  # noqa: E402
 from app.personal_account_identity_balance import (  # noqa: E402
@@ -123,6 +124,11 @@ install_dashboard_settings_guard(app)
 # marker while the real live dashboard uses the stable dashboard-v2 routes.
 install_dashboard_smoke_compat(app)
 install_account_identity_ui(app)
+
+# Final UI layer: keep overview and trades-page KPI numbers live without a full
+# route rebuild, so balance, P/L, win rate, totals, wins and losses move in real
+# time while the stable Recent Trades table remains untouched.
+install_live_metrics_ui(app)
 
 # Database failures are converted into controlled 503 responses after every final
 # route has been installed.
