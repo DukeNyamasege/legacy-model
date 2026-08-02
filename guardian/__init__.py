@@ -1,6 +1,7 @@
-"""Human-approved monitoring and remediation agent for the Legacy Model VPS."""
+"""Human-approved monitoring and remediation agent for the Legacy Model VPS.
 
-from .config import GuardianConfig
-from .service import GuardianService
+The package intentionally performs no eager service/OpenAI imports. This keeps
+security and storage tests runnable inside the no-network remediation sandbox.
+"""
 
-__all__ = ["GuardianConfig", "GuardianService"]
+__all__: list[str] = []
