@@ -38,6 +38,6 @@ jobs:
       - name: Compile Guardian
         run: python -m compileall -q guardian scripts/guardian_discover_telegram_chat.py
       - name: Run Guardian tests
-        run: python -m unittest -q guardian.tests.test_guardian
+        run: python -m unittest discover -s guardian/tests -p "test_*.py" -q
       - name: Validate installer shell
         run: sh -n scripts/install_guardian.sh
