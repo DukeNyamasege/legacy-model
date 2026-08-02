@@ -16,13 +16,16 @@ UI_VERSION = "20260802-4"
 
 _RESET_TRADES_ALWAYS_JS = r'''
 
-/* FOA_RESET_TRADES_ALWAYS: keep personal reset controls visible on trade cards. */
+/* FOA_RESET_TRADES_ALWAYS: stable personal reset controls with debounced DOM sync. */
 (() => {
   "use strict";
   const VERSION = "20260802-4";
   let authKnown = false;
   let authenticated = false;
+  let authInFlight = false;
   let busy = false;
+  let initialized = false;
+  let syncQueued = false;
 
   function ensureStyle() {
     if (document.getElementById("foa-reset-trades-always-css")) return;
@@ -40,15 +43,35 @@ _RESET_TRADES_ALWAYS_JS = r'''
     document.head.appendChild(style);
   }
 
+  function setText(node, value) {
+    if (!node) return;
+    const next = String(value ?? "");
+    if (node.textContent !== next) node.textContent = next;
+  }
+
+  function scheduleSync() {
+    if (syncQueued) return;
+    syncQueued = true;
+    window.requestAnimationFrame(() => {
+      syncQueued = false;
+      sync();
+    });
+  }
+
   async function refreshAuth() {
+    if (authInFlight) return;
+    authInFlight = true;
     try {
       const response = await fetch(`/me?reset_controls=${Date.now()}`, { credentials: "same-origin", cache: "no-store" });
       if (!response.ok) return;
       const payload = await response.json();
       authenticated = !!payload.authenticated;
       authKnown = true;
-      sync();
-    } catch (_) {}
+      scheduleSync();
+    } catch (_) {
+    } finally {
+      authInFlight = false;
+    }
   }
 
   function cardTargets() {
@@ -62,9 +85,14 @@ _RESET_TRADES_ALWAYS_JS = r'''
       line.className = "foa-reset-status";
       node.appendChild(line);
     }
-    line.style.color = error ? "#ffb4b4" : "var(--muted,#aab6c8)";
-    line.textContent = message || "";
-    if (message) setTimeout(() => { if (line.textContent === message) line.textContent = ""; }, 4500);
+    const color = error ? "#ffb4b4" : "var(--muted,#aab6c8)";
+    if (line.style.color !== color) line.style.color = color;
+    setText(line, message || "");
+    if (message) {
+      setTimeout(() => {
+        if (line.textContent === message) setText(line, "");
+      }, 4500);
+    }
   }
 
   async function clearTrades(scope, target) {
@@ -72,7 +100,7 @@ _RESET_TRADES_ALWAYS_JS = r'''
     const label = scope === "all" ? "ALL personal trade history" : "today's personal trade history";
     if (!window.confirm(`Clear ${label} for the currently logged-in account? This will also reset recovery state for that account.`)) return;
     busy = true;
-    sync();
+    scheduleSync();
     try {
       const response = await fetch("/me/clear-trades", {
         method: "POST",
@@ -81,9 +109,9 @@ _RESET_TRADES_ALWAYS_JS = r'''
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify({ scope }),
       });
-      const text = await response.text();
+      const raw = await response.text();
       let body = {};
-      try { body = text ? JSON.parse(text) : {}; } catch (_) { body = { detail: text }; }
+      try { body = raw ? JSON.parse(raw) : {}; } catch (_) { body = { detail: raw }; }
       if (!response.ok) throw new Error(body.detail || body.message || `${response.status} ${response.statusText}`);
       statusLine(target || document.body, body.message || `Cleared ${scope} trades.`);
       document.dispatchEvent(new CustomEvent("foa:trades-cleared", { detail: { scope, body } }));
@@ -94,7 +122,7 @@ _RESET_TRADES_ALWAYS_JS = r'''
       statusLine(target || document.body, String(error?.message || error), true);
     } finally {
       busy = false;
-      sync();
+      scheduleSync();
     }
   }
 
@@ -115,11 +143,13 @@ _RESET_TRADES_ALWAYS_JS = r'''
         clearTrades(button.dataset.resetTradesScope || "today", card);
       });
     }
+
     wrap.querySelectorAll("button").forEach(button => {
-      button.disabled = busy;
-      button.textContent = busy
+      if (button.disabled !== busy) button.disabled = busy;
+      const label = busy
         ? "Resetting…"
         : button.dataset.resetTradesScope === "all" ? "Reset All" : "Reset Today";
+      setText(button, label);
     });
     return wrap;
   }
@@ -128,10 +158,12 @@ _RESET_TRADES_ALWAYS_JS = r'''
     ensureStyle();
     if (!authKnown) refreshAuth();
     const targets = cardTargets();
+
     if (!authenticated) {
       document.querySelectorAll(".foa-reset-trades-always,.foa-reset-status").forEach(node => node.remove());
       return;
     }
+
     targets.forEach(card => {
       const head = card.querySelector(".foa-card-head") || card;
       const controls = controlsFor(card);
@@ -140,20 +172,40 @@ _RESET_TRADES_ALWAYS_JS = r'''
     document.body.dataset.foaResetTradesAlwaysVersion = VERSION;
   }
 
-  document.addEventListener("DOMContentLoaded", () => { refreshAuth(); sync(); setInterval(sync, 900); setInterval(refreshAuth, 5000); }, { once: true });
-  document.addEventListener("click", event => {
-    if (event.target.closest("[data-view], [data-mode], [data-control], .foa-save-button")) {
-      setTimeout(sync, 100);
-      setTimeout(sync, 700);
-    }
-  }, true);
-  document.addEventListener("foa:trades-cleared", () => {
-    setTimeout(sync, 100);
-    setTimeout(sync, 1000);
-  });
-  new MutationObserver(sync).observe(document.documentElement, { childList: true, subtree: true });
-  if (document.readyState !== "loading") { refreshAuth(); sync(); setInterval(sync, 900); setInterval(refreshAuth, 5000); }
+  function start() {
+    if (initialized) return;
+    initialized = true;
+    refreshAuth();
+    scheduleSync();
+
+    document.addEventListener("click", event => {
+      if (event.target.closest("[data-view], [data-mode], [data-control], .foa-save-button")) {
+        setTimeout(scheduleSync, 100);
+        setTimeout(scheduleSync, 700);
+      }
+    }, true);
+
+    document.addEventListener("foa:trades-cleared", () => {
+      setTimeout(scheduleSync, 100);
+      setTimeout(scheduleSync, 1000);
+    });
+
+    // Child-list changes are coalesced into one animation-frame sync. Text and
+    // disabled state are updated only when values actually change, preventing the
+    // previous observer -> textContent -> observer feedback loop.
+    new MutationObserver(scheduleSync).observe(document.documentElement, { childList: true, subtree: true });
+    setInterval(scheduleSync, 1500);
+    setInterval(refreshAuth, 5000);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start, { once: true });
+  } else {
+    start();
+  }
+
   window.FOA_RESET_TRADES_ALWAYS = VERSION;
+  window.FOA_RESET_TRADES_NO_MUTATION_LOOP = true;
 })();
 '''
 
