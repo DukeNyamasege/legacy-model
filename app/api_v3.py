@@ -40,6 +40,7 @@ from app.global_reference_dashboard import install_global_reference_dashboard  #
 from app.global_reference_dashboard_compat import (  # noqa: E402
     install_global_reference_dashboard_compat,
 )
+from app.head_request_compat import install_head_request_compat  # noqa: E402
 from app.live_metrics_ui import install_live_metrics_ui  # noqa: E402
 from app.model_pnl_display_aliases import install_model_pnl_display_aliases  # noqa: E402
 from app.oauth_session_recovery import install_oauth_session_recovery  # noqa: E402
@@ -140,6 +141,10 @@ install_public_trader_stats_ui(app)
 # Trades pages after every refresh/re-render. The backend endpoint remains
 # account-scoped and refuses clearing while an open contract exists.
 install_reset_trades_always_ui(app)
+
+# Verification commands use curl -I, which sends HEAD. Browsers use GET, but the
+# final dynamic dashboard routes must also answer HEAD with normal headers.
+install_head_request_compat(app)
 
 # Database failures are converted into controlled 503 responses after every final
 # route has been installed.
