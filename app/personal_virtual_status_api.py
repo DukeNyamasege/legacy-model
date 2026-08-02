@@ -6,8 +6,8 @@ from fastapi import Request
 from sqlalchemy import or_, select
 
 import app.api as base_api
-from app.final_public_controls import _reporting_timezone, _today_bounds_utc
-from app.models import AccountRiskState, VirtualTrade
+from app.final_public_controls import PAUSED_STATUSES, STOPPED_STATUSES, _reporting_timezone, _today_bounds_utc
+from app.models import AccountRiskState, ManagedAccount, VirtualTrade
 from app.repositories.rf_dir5_repository import REAL_RECOVERY_PENDING, VIRTUAL_WAITING_FOR_WIN
 
 _INSTALLED = False
@@ -36,7 +36,7 @@ def _split_remaining(managed_account_id: int) -> int:
 
 
 def install_personal_virtual_status_api(app: Any) -> None:
-    """Expose the logged-in account's AIDR protection state and $0 trades."""
+    """Expose the exact logged-in row's lifecycle and AIDR protection state."""
 
     global _INSTALLED
     if _INSTALLED:
@@ -57,6 +57,7 @@ def install_personal_virtual_status_api(app: Any) -> None:
         managed_id = int(account["id"])
         start, end = _today_bounds_utc()
         with base_api.DATABASE.session() as session:
+            managed = session.get(ManagedAccount, managed_id)
             state = session.get(AccountRiskState, managed_id)
             rows = session.scalars(
                 select(VirtualTrade)
@@ -71,21 +72,42 @@ def install_personal_virtual_status_api(app: Any) -> None:
                 .limit(250)
             ).all()
 
+        enabled = bool(managed.enabled) if managed is not None else False
+        status = (
+            str(managed.execution_status or "inactive").strip().lower()
+            if managed is not None
+            else "missing"
+        )
         debt = float(state.recovery_loss_debt or 0.0) if state is not None else 0.0
         raw_mode = str(state.protection_mode or "NORMAL_MODE") if state is not None else "NORMAL_MODE"
         virtual_wins = int(state.virtual_win_count or 0) if state is not None else 0
         split_remaining = _split_remaining(managed_id)
 
-        if raw_mode == VIRTUAL_WAITING_FOR_WIN:
+        if status in STOPPED_STATUSES:
+            lifecycle = "stopped"
+            mode = "stopped"
+            next_action = "Auto Trade is stopped. Press Start to begin fresh from base stake."
+        elif not enabled or status in PAUSED_STATUSES:
+            lifecycle = "paused"
+            mode = "paused"
+            next_action = "Auto Trade is paused. Resume continues the preserved state."
+        elif raw_mode == VIRTUAL_WAITING_FOR_WIN:
+            lifecycle = "running"
             mode = "virtual"
-            next_action = f"Waiting for {max(0, 2 - virtual_wins)} more consecutive virtual OVER-3 win(s)."
+            next_action = (
+                f"Virtual OVER-3 confirmation: {virtual_wins}/2 consecutive wins. "
+                f"Waiting for {max(0, 2 - virtual_wins)} more."
+            )
         elif raw_mode == REAL_RECOVERY_PENDING and split_remaining > 0:
+            lifecycle = "running"
             mode = "split_recovery"
             next_action = f"Real OVER-3 split recovery: {split_remaining} profit target(s) remaining."
         elif raw_mode == REAL_RECOVERY_PENDING:
+            lifecycle = "running"
             mode = "exact_recovery"
             next_action = "Next qualifying trade is one real OVER-3 exact recovery."
         else:
+            lifecycle = "running"
             mode = "normal"
             next_action = "Normal OVER-1 execution."
 
@@ -120,6 +142,9 @@ def install_personal_virtual_status_api(app: Any) -> None:
             ),
             "account_type": str(account.get("account_type") or "demo"),
             "timezone": str(_reporting_timezone()),
+            "lifecycle": lifecycle,
+            "enabled": enabled,
+            "execution_status": status,
             "mode": mode,
             "raw_mode": raw_mode,
             "recovery_debt": round(debt, 2),
