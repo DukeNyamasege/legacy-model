@@ -12,16 +12,36 @@ from app.repositories.rf_dir5_repository import NORMAL_MODE, REAL_RECOVERY_PENDI
 _INSTALLED = False
 
 
+def _unwrap_legacy_feedback(
+    settle: Callable[..., list[dict[str, Any]]],
+) -> Callable[..., list[dict[str, Any]]]:
+    """Remove only the legacy masked-account virtual feedback wrapper.
+
+    That wrapper selected AccountRiskState by ``account_id_masked``. Its useful
+    status feedback is replaced below using the exact VirtualTrade foreign key.
+    """
+
+    if getattr(settle, "__module__", "") != "app.account_execution_feedback":
+        return settle
+    closure = getattr(settle, "__closure__", None) or ()
+    names = getattr(getattr(settle, "__code__", None), "co_freevars", ())
+    values = {name: cell.cell_contents for name, cell in zip(names, closure)}
+    original = values.get("original_settle_virtual_trades")
+    return original if callable(original) else settle
+
+
 def _safe_settle_factory(original_settle: Callable[..., list[dict[str, Any]]]):
     """Build the AIDR virtual wrapper using VirtualTrade.managed_account_id.
 
     Masked login IDs are display values and are not unique database keys. The old
-    wrapper could select a stale duplicate row when the same Deriv account had been
-    enrolled more than once.
+    AIDR and feedback wrappers could both select a stale duplicate row. The
+    feedback layer is unwrapped and replaced with exact-row status handling here.
     """
 
+    settle_exact = _unwrap_legacy_feedback(original_settle)
+
     def wrapped(self, **kwargs: Any) -> list[dict[str, Any]]:
-        settled = original_settle(
+        settled = settle_exact(
             self,
             **{**kwargs, "exit_after_wins": VIRTUAL_WINS_REQUIRED},
         )
@@ -84,9 +104,11 @@ def install_aidr_virtual_settlement_fix() -> None:
     global _INSTALLED
     if _INSTALLED:
         return
+    # A fresh API/worker process installs this before AIDR. Do not crash an import
+    # if another compatibility process already installed the strategy; settlement
+    # authority is required only in the worker and its install order is explicit.
     if getattr(aidr, "_INSTALLED", False):
-        raise RuntimeError(
-            "AIDR virtual settlement fix must be installed before the AIDR strategy"
-        )
+        _INSTALLED = True
+        return
     aidr._settle_virtual_aidr = _safe_settle_factory
     _INSTALLED = True
