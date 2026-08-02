@@ -37,6 +37,7 @@ from app.database_runtime_hardening import (  # noqa: E402
     install_database_runtime_hardening,
 )
 from app.final_public_controls import install_final_public_controls  # noqa: E402
+from app.final_virtual_history_ui import install_final_virtual_history_ui  # noqa: E402
 from app.global_reference_dashboard import install_global_reference_dashboard  # noqa: E402
 from app.global_reference_dashboard_compat import (  # noqa: E402
     install_global_reference_dashboard_compat,
@@ -102,8 +103,9 @@ install_oauth_session_recovery(app)
 # avoiding the unresolved Request annotation that caused 422 responses.
 install_personal_me_session_fix(app)
 
-# Expose the authenticated account's complete current-day trade list to the new
-# standalone Trades page. This does not modify execution or account state.
+# Expose one chronological current-day stream containing actual contracts and
+# clearly labelled $0 virtual observations. Financial summary values remain based
+# on actual trades only.
 install_simplified_dashboard_api()
 
 # Install the final lifecycle authority after the older routes. Stop is now a hard
@@ -156,6 +158,12 @@ install_reset_trades_always_ui(app)
 # Prevent the route loader from staying above an already-rendered dashboard and
 # display account-level AIDR/virtual progress without rebuilding the whole page.
 install_dashboard_loader_unlock(app)
+
+# Final presentation authority: virtual observations appear inside the same
+# Today's Recent Trades / complete-history tables as actual trades, with an
+# explicit VIRTUAL OVER 3 badge and $0.00 impact. A permanent risk disclaimer is
+# also displayed on every dashboard page.
+install_final_virtual_history_ui(app)
 
 # Verification commands use curl -I, which sends HEAD. Browsers use GET, but the
 # final dynamic dashboard routes must also answer HEAD with normal headers.
