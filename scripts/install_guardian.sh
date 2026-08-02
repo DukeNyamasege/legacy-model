@@ -92,7 +92,7 @@ echo "4. Validate repository and Guardian tests"
 cd "$REPO_DIR"
 sh -n scripts/install_guardian.sh
 "$VENV_DIR/bin/python" -m compileall -q guardian scripts/guardian_discover_telegram_chat.py
-"$VENV_DIR/bin/python" -m unittest -q guardian.tests.test_guardian
+"$VENV_DIR/bin/python" -m unittest discover -s guardian/tests -p 'test_*.py' -q
 
 echo "5. Verify Git identity and origin write access"
 if ! git config user.name >/dev/null 2>&1; then
@@ -105,7 +105,7 @@ git fetch origin main
 LOCAL_COMMIT=$(git rev-parse HEAD)
 REMOTE_COMMIT=$(git rev-parse origin/main)
 [ "$LOCAL_COMMIT" = "$REMOTE_COMMIT" ] || fail \
-  "The live checkout is not equal to origin/main. Pull/deploy main before installing Guardian."
+  "The live checkout is not equal to origin/main. Pull main before installing Guardian."
 [ -z "$(git status --porcelain)" ] || fail \
   "The live checkout has uncommitted changes. Commit or safely remove them first."
 git push --dry-run origin HEAD:main >/dev/null
@@ -130,5 +130,6 @@ echo "============================================================"
 echo "Service : legacy-model-guardian.service"
 echo "State   : $STATE_DIR"
 echo "Secrets : $ENV_FILE"
+echo "Mode    : Git-only remediation; VPS deployment remains manual"
 echo "Logs    : journalctl -u legacy-model-guardian -f"
 echo "Status  : send /status to the private Guardian Telegram bot"
