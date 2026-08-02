@@ -27,6 +27,10 @@ class GuardianService:
         self.runtime = GuardianRuntime(config)
         self.ai = GuardianOpenAI(config)
         self.telegram = GuardianTelegram(config)
+        try:
+            self.telegram.offset = int(self.store.get("telegram_offset", "0") or 0)
+        except ValueError:
+            self.telegram.offset = 0
         self.patcher = GuardianPatcher(config, self.runtime, self.ai)
         self.running = threading.Event()
         self.running.set()
@@ -40,6 +44,7 @@ class GuardianService:
         while self.running.is_set():
             try:
                 self.telegram.poll(self._handle_telegram_action)
+                self.store.set("telegram_offset", str(self.telegram.offset))
             except Exception as exc:
                 LOGGER.warning(
                     "GUARDIAN_TELEGRAM_POLL_FAILED error=%s",
@@ -225,9 +230,14 @@ class GuardianService:
                 (
                     f"✅ GUARDIAN FIX COMPLETED — INCIDENT #{incident_id}",
                     "",
-                    str(result.get("summary") or result.get("message") or "Approved action completed."),
+                    str(
+                        result.get("summary")
+                        or result.get("message")
+                        or "Approved action completed."
+                    ),
                     f"Commit: {commit[:12] if commit else 'No code commit required'}",
-                    "Changed files: " + ", ".join(result.get("changed_files") or [])[:1200],
+                    "Changed files: "
+                    + ", ".join(result.get("changed_files") or [])[:1200],
                     "Tests: " + "; ".join(result.get("tests") or [])[:1200],
                     f"Deployment: {'completed' if result.get('deployment_tail') else 'not requested'}",
                 )
@@ -261,18 +271,16 @@ class GuardianService:
         finally:
             self.patch_lock.release()
 
-    def _incident_cooldown_active(self, fingerprint: str) -> bool:
-        key = f"incident_seen:{fingerprint}"
+    def _cooldown_active(self, key: str, seconds: int) -> bool:
         raw = self.store.get(key)
         try:
             last = float(raw)
         except ValueError:
             last = 0.0
-        now = time.time()
-        if now - last < 1800:
-            return True
-        self.store.set(key, str(now))
-        return False
+        return time.time() - last < seconds
+
+    def _mark_seen(self, key: str) -> None:
+        self.store.set(key, str(time.time()))
 
     def _scan(self) -> None:
         health = self.runtime.health_snapshot()
@@ -285,7 +293,8 @@ class GuardianService:
             evidence = "Health check reported an unhealthy or missing service."
 
         fingerprint = self.runtime.incident_fingerprint(evidence, health)
-        if self._incident_cooldown_active(fingerprint):
+        cooldown_key = f"incident_seen:{fingerprint}"
+        if self._cooldown_active(cooldown_key, 1800):
             return
         repository_context = self.runtime.repository_context(evidence)
         analysis = self.ai.diagnose(
@@ -304,14 +313,25 @@ class GuardianService:
             base_commit=str((health.get("git") or {}).get("commit") or ""),
         )
         if incident_id is None:
+            self._mark_seen(cooldown_key)
             return
-        message_id = self.telegram.send_incident(incident_id, analysis, evidence)
+        try:
+            message_id = self.telegram.send_incident(incident_id, analysis, evidence)
+        except Exception:
+            self.store.transition(
+                incident_id,
+                expected=("proposed",),
+                target="notification_failed",
+                result={"error": "Telegram proposal delivery failed"},
+            )
+            raise
         self.store.set_message_id(incident_id, message_id)
         self.store.add_event(
             "incident_proposed",
             {"fingerprint": fingerprint, "message_id": message_id},
             incident_id=incident_id,
         )
+        self._mark_seen(cooldown_key)
 
     def _strategy_review(self) -> None:
         metrics = self.runtime.metrics_snapshot()
@@ -329,6 +349,9 @@ class GuardianService:
             json.dumps(metrics, sort_keys=True, default=str)[:25_000],
             {"http": {"ok": not metrics.get("unavailable")}, "services": []},
         )
+        cooldown_key = f"strategy_seen:{fingerprint}"
+        if self._cooldown_active(cooldown_key, self.config.strategy_review_interval_seconds):
+            return
         incident_id = self.store.create_incident(
             fingerprint=f"strategy-{fingerprint}",
             category="strategy",
@@ -340,9 +363,20 @@ class GuardianService:
             base_commit=self.runtime.current_commit(),
         )
         if incident_id is None:
+            self._mark_seen(cooldown_key)
             return
-        message_id = self.telegram.send_incident(incident_id, analysis, evidence)
+        try:
+            message_id = self.telegram.send_incident(incident_id, analysis, evidence)
+        except Exception:
+            self.store.transition(
+                incident_id,
+                expected=("proposed",),
+                target="notification_failed",
+                result={"error": "Telegram strategy review delivery failed"},
+            )
+            raise
         self.store.set_message_id(incident_id, message_id)
+        self._mark_seen(cooldown_key)
 
     def run(self) -> None:
         for signum in (signal.SIGINT, signal.SIGTERM):
@@ -354,18 +388,21 @@ class GuardianService:
             name="guardian-telegram-poll",
         )
         telegram_thread.start()
-        self.telegram.send_text(
-            "\n".join(
-                (
-                    "🛡 LEGACY MODEL GUARDIAN STARTED",
-                    "",
-                    "Monitoring: Docker services, API readiness, worker/API/database error logs and scheduled strategy metrics.",
-                    "Code changes require approval from this private chat and must pass isolated tests and review.",
-                    "Telegram channel publishing is not used.",
-                    "Send /status at any time.",
+        try:
+            self.telegram.send_text(
+                "\n".join(
+                    (
+                        "🛡 LEGACY MODEL GUARDIAN STARTED",
+                        "",
+                        "Monitoring: Docker services, API readiness, worker/API/database error logs and scheduled strategy metrics.",
+                        "Code changes require approval from this private chat and must pass isolated tests and review.",
+                        "Telegram channel publishing is not used.",
+                        "Send /status at any time.",
+                    )
                 )
             )
-        )
+        except Exception:
+            LOGGER.exception("GUARDIAN_STARTUP_TELEGRAM_FAILED")
 
         while self.running.is_set():
             started = time.monotonic()
@@ -374,11 +411,17 @@ class GuardianService:
             except Exception:
                 LOGGER.exception("GUARDIAN_SCAN_FAILED")
             now = time.monotonic()
-            if now - self.last_strategy_review >= self.config.strategy_review_interval_seconds:
+            if (
+                now - self.last_strategy_review
+                >= self.config.strategy_review_interval_seconds
+            ):
                 try:
                     self._strategy_review()
                 except Exception:
                     LOGGER.exception("GUARDIAN_STRATEGY_REVIEW_FAILED")
                 self.last_strategy_review = now
             elapsed = time.monotonic() - started
-            self.running.wait(max(1.0, self.config.scan_interval_seconds - elapsed))
+            delay = max(1.0, self.config.scan_interval_seconds - elapsed)
+            deadline = time.monotonic() + delay
+            while self.running.is_set() and time.monotonic() < deadline:
+                time.sleep(min(1.0, deadline - time.monotonic()))
