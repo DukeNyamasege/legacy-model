@@ -18,14 +18,12 @@ from app.models import (
     AccountRiskState,
     CandidateSignalRecord,
     DirectionalSignal,
-    RuntimePreference,
     Trade,
     VirtualTrade,
 )
 from app.repositories.rf_dir5_repository import REAL_RECOVERY_PENDING, VIRTUAL_WAITING_FOR_WIN
 
 _INSTALLED = False
-_RESET_MARKER_PREFIX = "aidr_hard_reset_at:"
 
 
 def _timestamp(value: Any) -> datetime | None:
@@ -77,28 +75,13 @@ def _split_remaining(managed_account_id: int) -> int:
         return 0
 
 
-def _reset_marker(session: Any, managed_account_id: int) -> datetime | None:
-    row = session.get(RuntimePreference, f"{_RESET_MARKER_PREFIX}{int(managed_account_id)}")
-    return _timestamp(row.preference_value) if row is not None else None
+def _virtual_rows_with_progress(rows: list[VirtualTrade]) -> list[dict[str, Any]]:
+    """Return today's retained virtual history labelled as 0/2, 1/2 and 2/2.
 
-
-def _trade_belongs_to_session(trade: Trade, reset_at: datetime | None) -> bool:
-    if reset_at is None:
-        return True
-    purchased_at = _timestamp(trade.provider_purchase_time or trade.purchase_time)
-    return bool(purchased_at and purchased_at > reset_at)
-
-
-def _virtual_rows_with_progress(
-    rows: list[VirtualTrade],
-    *,
-    reset_at: datetime | None,
-) -> list[dict[str, Any]]:
-    """Return current-session rows labelled as 0/2, 1/2 and 2/2.
-
-    A hard Stop/Reset/Start creates a new session marker. Older rows remain in
-    PostgreSQL for audit but disappear from the new session's counters and Recent
-    Trades. Pause/Resume creates no marker, so the streak continues unchanged.
+    Stop and fresh Start reset the live recovery state but never remove older rows
+    from the dashboard. Only the explicit Clear Today / Clear All action deletes
+    history. The account's current AIDR status is reported separately by
+    `_aidr_summary`; the sequence shown here describes each historical row.
     """
 
     ordered = sorted(
@@ -109,10 +92,6 @@ def _virtual_rows_with_progress(
     streak = 0
     payloads: list[dict[str, Any]] = []
     for row in ordered:
-        created = _timestamp(row.created_at)
-        if reset_at is not None and (created is None or created <= reset_at):
-            continue
-
         outcome = _virtual_outcome(row.result)
         barrier = str(row.barrier or "3").strip() or "3"
         if outcome == "WIN":
@@ -158,7 +137,7 @@ def _virtual_rows_with_progress(
                 "display_result": f"VIRTUAL {progress_text}",
                 "virtual_win_sequence": sequence,
                 "virtual_wins_required": 2,
-                "current_session": True,
+                "history_retained": True,
                 "exit_digit": row.actual_last_digit,
                 "actual_last_digit": row.actual_last_digit,
                 "exit_spot": row.exit_spot,
@@ -205,7 +184,11 @@ def _aidr_summary(state: AccountRiskState | None, managed_account_id: int) -> di
 
 
 def install_final_personal_trade_stream(app: Any) -> None:
-    """Install one final actual + virtual current-session stream."""
+    """Install one final actual + virtual daily history stream.
+
+    Execution lifecycle changes never filter this stream. Stop, Pause and Start
+    affect future execution and recovery state only; Clear Today/All owns deletion.
+    """
 
     global _INSTALLED
     if _INSTALLED:
@@ -220,8 +203,7 @@ def install_final_personal_trade_stream(app: Any) -> None:
         start, end = _today_bounds_utc()
 
         with base_api.DATABASE.session() as session:
-            reset_at = _reset_marker(session, managed_id)
-            queried_actual_rows = session.execute(
+            actual_rows = session.execute(
                 select(Trade, CandidateSignalRecord, DirectionalSignal)
                 .outerjoin(
                     CandidateSignalRecord,
@@ -242,9 +224,6 @@ def install_final_personal_trade_stream(app: Any) -> None:
                 .order_by(Trade.purchase_time.desc())
                 .limit(5000)
             ).all()
-            actual_rows = [
-                row for row in queried_actual_rows if _trade_belongs_to_session(row[0], reset_at)
-            ]
             virtual_rows = session.scalars(
                 select(VirtualTrade)
                 .where(VirtualTrade.managed_account_id == managed_id)
@@ -264,13 +243,11 @@ def install_final_personal_trade_stream(app: Any) -> None:
                 **_trade_to_payload(trade, candidate, directional),
                 "is_virtual": False,
                 "trade_kind": "actual",
+                "history_retained": True,
             }
             for trade, candidate, directional in actual_rows
         ]
-        virtual_trades = _virtual_rows_with_progress(
-            list(virtual_rows),
-            reset_at=reset_at,
-        )
+        virtual_trades = _virtual_rows_with_progress(list(virtual_rows))
         trades = sorted(
             [*actual_trades, *virtual_trades],
             key=_sort_time,
@@ -292,7 +269,8 @@ def install_final_personal_trade_stream(app: Any) -> None:
             "account_type": str(account.get("account_type") or "demo"),
             "timezone": str(_reporting_timezone()),
             "date": start.astimezone(_reporting_timezone()).date().isoformat(),
-            "session_started_at": reset_at.isoformat() if reset_at else None,
+            "session_started_at": None,
+            "history_preserved_across_stop": True,
             "trades": trades,
             "aidr": aidr,
             "summary": {
