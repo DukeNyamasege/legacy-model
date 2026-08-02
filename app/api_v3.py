@@ -28,6 +28,7 @@ from app.ai_digit_recovery_v1 import install_ai_digit_recovery_v1_strategy  # no
 from app.aidr_api_metadata import install_aidr_api_metadata  # noqa: E402
 from app.aidr_execution_flow_fix import install_aidr_execution_flow_fix  # noqa: E402
 from app.custom_martingale import install_custom_martingale_api  # noqa: E402
+from app.dashboard_loader_unlock import install_dashboard_loader_unlock  # noqa: E402
 from app.dashboard_readability import install_dashboard_readability  # noqa: E402
 from app.dashboard_settings_guard import install_dashboard_settings_guard  # noqa: E402
 from app.dashboard_smoke_compat import install_dashboard_smoke_compat  # noqa: E402
@@ -141,6 +142,9 @@ install_public_trader_stats_ui(app)
 # Trades pages after every refresh/re-render. The backend endpoint remains
 # account-scoped and refuses clearing while an open contract exists.
 install_reset_trades_always_ui(app)
+
+# Prevent the route loader from staying above an already-rendered dashboard.
+install_dashboard_loader_unlock(app)
 
 # Verification commands use curl -I, which sends HEAD. Browsers use GET, but the
 # final dynamic dashboard routes must also answer HEAD with normal headers.
