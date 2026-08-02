@@ -12,6 +12,7 @@ from app.ai_digit_recovery_v1 import install_ai_digit_recovery_v1_strategy
 from app.aidr_execution_flow_fix import install_aidr_execution_flow_fix
 from app.aidr_loss_continuation_fix import install_aidr_loss_continuation_fix
 from app.aidr_strict_recovery_guard import install_aidr_strict_recovery_guard
+from app.aidr_virtual_settlement_fix import install_aidr_virtual_settlement_fix
 from app.custom_martingale import install_custom_martingale_worker
 from app.dashboard_actual_trade_fallback import install_dashboard_actual_trade_fallback
 from app.deployment_announcement import install_dynamic_deployment_announcement
@@ -65,6 +66,11 @@ async def run_worker() -> None:
     install_profit_accuracy_guard()
     install_stake_only_balance_policy()
     install_custom_martingale_worker()
+
+    # Patch the AIDR virtual-settlement factory before the strategy wraps the
+    # repository. Virtual results then resolve by immutable managed_account_id,
+    # never by a duplicate masked account ID.
+    install_aidr_virtual_settlement_fix()
 
     # Active public-release strategy:
     # NORMAL   -> DIGITOVER 1
