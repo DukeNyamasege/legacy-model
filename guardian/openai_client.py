@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
+from datetime import datetime, timezone
 from typing import Any
 
 from openai import OpenAI
@@ -159,7 +161,44 @@ class GuardianOpenAI:
             charter_path.read_text(encoding="utf-8", errors="replace"),
             maximum_chars=45_000,
         )
+        self._budget_lock = threading.Lock()
         self.client = OpenAI(api_key=config.openai_api_key, timeout=180.0)
+
+    def _consume_ai_call(self, *, model: str, purpose: str) -> None:
+        """Reserve one daily API call before sending any model request."""
+
+        day = datetime.now(timezone.utc).date().isoformat()
+        path = self.config.ai_budget_path
+        with self._budget_lock:
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(payload, dict):
+                    payload = {}
+            except (OSError, ValueError, TypeError):
+                payload = {}
+            count = int(payload.get("count") or 0) if payload.get("day") == day else 0
+            if count >= self.config.maximum_ai_calls_per_day:
+                raise RuntimeError(
+                    "Guardian daily OpenAI call budget is exhausted "
+                    f"({count}/{self.config.maximum_ai_calls_per_day}). "
+                    "Monitoring continues, but new AI diagnoses and patches wait for the next UTC day."
+                )
+            next_payload = {
+                "day": day,
+                "count": count + 1,
+                "limit": self.config.maximum_ai_calls_per_day,
+                "last_model": str(model)[:120],
+                "last_purpose": str(purpose)[:120],
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            temporary = path.with_suffix(".tmp")
+            temporary.write_text(
+                json.dumps(next_payload, separators=(",", ":")),
+                encoding="utf-8",
+            )
+            temporary.chmod(0o600)
+            temporary.replace(path)
+            path.chmod(0o600)
 
     @staticmethod
     def _json_object(text: str) -> dict[str, Any]:
@@ -195,6 +234,7 @@ class GuardianOpenAI:
             + "\n\nReturn only the requested structured object."
         )
         safe_input = redact(input_text, maximum_chars=180_000)
+        self._consume_ai_call(model=model, purpose=schema_name)
         try:
             response = self.client.responses.create(
                 model=model,
@@ -212,12 +252,14 @@ class GuardianOpenAI:
         except Exception as exc:
             # Some API projects/models may temporarily reject strict structured
             # output. Fall back to JSON-only instructions, never to tool or shell
-            # access, and log only the exception class.
+            # access, and log only the exception class. The fallback is a second
+            # budgeted API request.
             LOGGER.warning(
                 "GUARDIAN_STRUCTURED_OUTPUT_FALLBACK model=%s error=%s",
                 model,
                 type(exc).__name__,
             )
+            self._consume_ai_call(model=model, purpose=f"{schema_name}_fallback")
             response = self.client.responses.create(
                 model=model,
                 instructions=(
