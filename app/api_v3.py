@@ -27,6 +27,7 @@ from app.account_mode_execution_lock import install_account_mode_execution_lock 
 from app.ai_digit_recovery_v1 import install_ai_digit_recovery_v1_strategy  # noqa: E402
 from app.aidr_api_metadata import install_aidr_api_metadata  # noqa: E402
 from app.aidr_execution_flow_fix import install_aidr_execution_flow_fix  # noqa: E402
+from app.aidr_virtual_settlement_fix import install_aidr_virtual_settlement_fix  # noqa: E402
 from app.custom_martingale import install_custom_martingale_api  # noqa: E402
 from app.dashboard_loader_unlock import install_dashboard_loader_unlock  # noqa: E402
 from app.dashboard_readability import install_dashboard_readability  # noqa: E402
@@ -81,6 +82,11 @@ install_personal_autotrade_start_fix()
 # Advanced Martingale remains account-scoped. System exact-debt recovery is the
 # default; custom multiplier and flat-stake profiles are explicit user choices.
 install_custom_martingale_api()
+
+# Patch the AIDR settlement factory before the strategy wraps repository methods.
+# This keeps duplicate masked account IDs from receiving another account's virtual
+# progress in either process.
+install_aidr_virtual_settlement_fix()
 
 # Active public-release strategy metadata: DIGITOVER 1 normal, DIGITOVER 3
 # recovery, virtual OVER-3 confirmation and split recovery after virtual mode.
