@@ -925,6 +925,7 @@ class RFDir5TradingBot(TradingBot):
                 predicted_probability=0.5,
                 requested_monotonic=requested,
                 received_monotonic=received,
+                app_markup_percentage=self.app_markup_percentage,
                 commission_in_ask=True,
             )
         except (TypeError, ValueError):

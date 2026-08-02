@@ -356,6 +356,7 @@ async def _digit_proposal(bot: RFDir5TradingBot, signal: DigitSignal):
             predicted_probability=signal.weighted_probability,
             requested_monotonic=requested,
             received_monotonic=received,
+            app_markup_percentage=bot.app_markup_percentage,
             commission_in_ask=True,
         )
     except (TypeError, ValueError):

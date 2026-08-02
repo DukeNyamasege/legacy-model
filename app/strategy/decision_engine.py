@@ -75,15 +75,19 @@ def parse_proposal_economics(
     if abs(ask_price - stake) > 0.011:
         raise ValueError(f"Proposal ask price {ask_price} does not match stake {stake}")
     try:
-        reported_commission = float(proposal.get("commission") or 0.0)
+        reported_commission = max(0.0, float(proposal.get("commission") or 0.0))
     except (TypeError, ValueError):
         reported_commission = 0.0
-    # The proposal returned by the registered application is the source of truth.
-    # Application markup is normally already reflected in ask_price/payout; only add
-    # commission when the provider explicitly reports it as a separate charge.
-    separate_commission = 0.0 if commission_in_ask else max(0.0, reported_commission)
-    actual_cost = ask_price + separate_commission
-    payout = gross_payout
+
+    # Deriv application markup is calculated from potential payout and reduces
+    # the user's winning economics. Public proposals do not consistently include
+    # that amount, while the registered-app purchase does. Prefer a provider
+    # commission when supplied; otherwise reserve the configured payout markup so
+    # decisions and recovery stakes never use the unmarked gross return.
+    configured_markup = gross_payout * max(0.0, float(app_markup_percentage)) / 100.0
+    payout_markup = reported_commission if reported_commission > 0 else configured_markup
+    payout = gross_payout - payout_markup
+    actual_cost = ask_price
     potential_profit = payout - actual_cost
     potential_loss = actual_cost
     if payout <= actual_cost or potential_profit <= 0:

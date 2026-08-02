@@ -1030,7 +1030,7 @@ class ContractTests(unittest.TestCase):
         )
         self.assertAlmostEqual(economics.break_even_probability, 0.50 / 0.95)
 
-    def test_public_proposal_economics_use_provider_quote_as_source_of_truth(self) -> None:
+    def test_public_proposal_economics_reserve_configured_payout_markup(self) -> None:
         economics = parse_proposal_economics(
             {
                 "proposal": {
@@ -1045,13 +1045,33 @@ class ContractTests(unittest.TestCase):
             received_monotonic=time.monotonic(),
             app_markup_percentage=3.0,
         )
-        self.assertAlmostEqual(economics.payout, 0.69)
-        self.assertAlmostEqual(economics.potential_profit, 0.69 - 0.50)
+        net_payout = 0.69 - (0.69 * 0.03)
+        self.assertAlmostEqual(economics.payout, net_payout)
+        self.assertAlmostEqual(economics.potential_profit, net_payout - 0.50)
         self.assertAlmostEqual(economics.potential_loss, 0.50)
         self.assertAlmostEqual(
             economics.break_even_probability,
-            0.50 / 0.69,
+            0.50 / net_payout,
         )
+
+    def test_provider_commission_overrides_estimated_markup(self) -> None:
+        economics = parse_proposal_economics(
+            {
+                "proposal": {
+                    "id": "p-commission",
+                    "ask_price": "0.60",
+                    "payout": "0.96",
+                    "commission": "0.03",
+                }
+            },
+            stake=0.60,
+            predicted_probability=0.70,
+            requested_monotonic=time.monotonic(),
+            received_monotonic=time.monotonic(),
+            app_markup_percentage=3.0,
+        )
+        self.assertAlmostEqual(economics.payout, 0.93)
+        self.assertAlmostEqual(economics.potential_profit, 0.33)
 
     def test_direct_buy_places_markup_only_in_authenticated_buy_parameters(self) -> None:
         signal = Over2SignalDetector(run_id="test2").observe(

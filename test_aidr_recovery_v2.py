@@ -10,6 +10,7 @@ from app.ai_digit_recovery_v1 import (
     RECOVERY_BARRIER,
     _read_split_remaining,
     calculate_full_recovery_stake,
+    remaining_recovery_debt,
 )
 from app.aidr_loss_continuation_fix import (
     FIRST_RECOVERY_ROLE,
@@ -19,6 +20,7 @@ from app.aidr_loss_continuation_fix import (
     _selected_role,
 )
 from app.aidr_strict_recovery_guard import _debt_requires_virtual
+from app.strategy.decision_engine import parse_proposal_economics
 
 
 class AIDRRecoveryV2Tests(unittest.TestCase):
@@ -59,6 +61,48 @@ class AIDRRecoveryV2Tests(unittest.TestCase):
                 proposal_profit_ratio=1.0,
             ),
             0.50,
+        )
+
+    def test_recovery_covers_debt_after_market_payout_markup(self) -> None:
+        economics = parse_proposal_economics(
+            {
+                "proposal": {
+                    "id": "market-specific-recovery",
+                    "ask_price": "0.60",
+                    "payout": "0.96",
+                }
+            },
+            stake=0.60,
+            predicted_probability=0.80,
+            requested_monotonic=1.0,
+            received_monotonic=1.1,
+            app_markup_percentage=3.0,
+        )
+        profit_ratio = economics.potential_profit / economics.stake
+        stake = calculate_full_recovery_stake(
+            base_stake=0.35,
+            recovery_debt=0.35,
+            proposal_profit_ratio=profit_ratio,
+        )
+
+        self.assertAlmostEqual(profit_ratio, 0.552)
+        self.assertEqual(stake, 0.66)
+        self.assertGreaterEqual(stake * profit_ratio, 0.36)
+
+    def test_settlement_never_erases_an_unrecovered_remainder(self) -> None:
+        self.assertEqual(
+            remaining_recovery_debt(
+                recovery_debt=0.35,
+                recovered_profit=0.33,
+            ),
+            0.02,
+        )
+        self.assertEqual(
+            remaining_recovery_debt(
+                recovery_debt=0.35,
+                recovered_profit=0.36,
+            ),
+            0.0,
         )
 
     def test_legacy_two_target_marker_migrates_to_one_full_recovery(self) -> None:

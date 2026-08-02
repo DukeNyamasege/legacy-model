@@ -75,6 +75,19 @@ def calculate_full_recovery_stake(
     return ceil_cents(max(base, target_profit / ratio))
 
 
+def remaining_recovery_debt(*, recovery_debt: float, recovered_profit: float) -> float:
+    """Keep any amount that the settled recovery profit did not actually repay."""
+
+    return max(
+        0.0,
+        round(
+            max(0.0, float(recovery_debt or 0.0))
+            - max(0.0, float(recovered_profit or 0.0)),
+            2,
+        ),
+    )
+
+
 def _split_key(managed_account_id: int) -> str:
     return f"{AIDR_SPLIT_PREFIX}{int(managed_account_id)}"
 
@@ -521,15 +534,28 @@ def _record_account_outcome_aidr(
                 _reset_virtual_counters(state)
                 _clear_split_remaining(self.base, int(managed_account_id))
         else:
-            # Both the first OVER-3 recovery and the post-virtual OVER-4
-            # recovery target the entire recorded debt in one contract.
-            state.recovery_loss_debt = 0.0
-            state.recovery_pending = False
-            state.recovery_pending_since = None
+            # Both recovery contracts target all recorded debt in one win. Only
+            # clear what the settled provider profit actually repaid; retaining
+            # a rounding or repricing residual prevents false recovery reports.
+            residual_debt = (
+                remaining_recovery_debt(
+                    recovery_debt=float(state.recovery_loss_debt or 0.0),
+                    recovered_profit=float(profit),
+                )
+                if was_recovery
+                else 0.0
+            )
+            state.recovery_loss_debt = residual_debt
+            state.recovery_pending = bool(recovery_enabled and residual_debt > 0.009)
             state.consecutive_losses = 0
             state.recovery_attempt_active = False
-            _reset_virtual_counters(state)
-            _clear_split_remaining(self.base, int(managed_account_id))
+            if state.recovery_pending:
+                _clear_split_remaining(self.base, int(managed_account_id))
+                _enter_virtual_mode(state)
+            else:
+                state.recovery_pending_since = None
+                _reset_virtual_counters(state)
+                _clear_split_remaining(self.base, int(managed_account_id))
 
         state.equity_high_water = max(float(state.equity_high_water or 0.0), float(current_balance))
         state.updated_at = utc_now()
