@@ -14,60 +14,151 @@ LOGGER = logging.getLogger("legacy_model.guardian.openai")
 
 _DIAGNOSIS_INSTRUCTIONS = """
 You are the production guardian for the Father of Automation Legacy Model repository.
-Diagnose only from the supplied redacted evidence and repository context.
-Never request or reveal credentials, Deriv tokens, Telegram tokens, OpenAI keys,
-account IDs, balances, or private user data. Never propose deleting Docker volumes,
-PostgreSQL data, users, credentials, settings, or trade history. Never propose
-force-pushing Git or bypassing tests. Distinguish an operational incident from a
-code defect and from a strategy-performance observation. Strategy changes are
-advisory only and must never be presented as guaranteed profit improvements.
-Return exactly one JSON object with these keys:
-category, severity, title, summary, root_cause, needs_code_change,
-candidate_paths, proposed_fix, verification, strategy_advice, confidence.
-category must be one of error, unhealthy, performance, strategy, security.
-severity must be one of info, warning, critical.
-candidate_paths must be an array of repository-relative paths.
-verification must be an array of non-destructive checks.
-confidence must be a number from 0 to 1.
+Diagnose only from the supplied project charter, redacted evidence and repository
+context. Never request or reveal credentials, Deriv tokens, Telegram tokens,
+OpenAI keys, account IDs, balances, or private user data. Never propose deleting
+Docker volumes, PostgreSQL data, users, credentials, settings, or trade history.
+Never propose force-pushing Git or bypassing tests. Distinguish an operational
+incident from a code defect and from a strategy-performance observation. Strategy
+changes are advisory only and must never be presented as guaranteed profit
+improvements.
 """.strip()
 
 _CODING_INSTRUCTIONS = """
 You are creating a narrowly scoped, human-approved fix for a production Python,
-FastAPI, PostgreSQL and Docker trading platform. Modify only files supplied in the
-repository context or create a new non-secret source/test/documentation file when
-strictly necessary. Do not modify .env files, credentials, tokens, user data,
-Docker volumes, database contents, deployment state, model_artifacts, or backups.
-Do not weaken authentication, OAuth, real-money gates, account isolation, Stop vs
-Pause semantics, virtual-trade $0 invariants, or provider purchase safeguards.
-Do not change strategy thresholds unless the approved incident explicitly asks for
-a strategy change. Never claim profitability. Return exactly one JSON object:
-{
-  "summary": "...",
-  "commit_message": "...",
-  "files": [{"path": "relative/path", "content": "complete UTF-8 file"}],
-  "tests": ["allow-listed non-destructive command"],
-  "notes": ["..."]
-}
-Use complete file contents, not a diff. Keep the change minimal. Tests may use only
-python/python3 compileall, unittest, pytest, docker compose config, sh -n, or
-node --check. Do not include shell redirection, pipes, sudo, curl, wget, network
-calls, git commands, Docker mutation commands, or database mutation commands.
+FastAPI, PostgreSQL and Docker trading platform. Follow the supplied project
+charter exactly. Modify only files supplied in the repository context or create a
+new non-secret source/test/documentation file when strictly necessary. Do not
+modify .env files, credentials, tokens, user data, Docker volumes, database
+contents, deployment state, model_artifacts, or backups. Do not weaken
+authentication, OAuth, real-money gates, account isolation, Stop vs Pause
+semantics, virtual-trade $0 invariants, or provider purchase safeguards. Do not
+change strategy thresholds, stakes, TP/SL or recovery rules in this incident
+pipeline. Never claim profitability. Use complete UTF-8 file contents, not a diff,
+and keep the change minimal. Tests may use only python/python3 compileall,
+unittest, pytest, docker compose config, sh -n, or node --check. Do not include
+shell redirection, pipes, sudo, curl, wget, network calls, git commands, Docker
+mutation commands, or database mutation commands.
 """.strip()
 
 _REVIEW_INSTRUCTIONS = """
-Review a proposed production patch for the Legacy Model trading platform. Reject
-it if it can expose secrets, delete or corrupt data, bypass authentication,
-confuse Demo and Real accounts, purchase real contracts from virtual mode, alter
-Stop/Pause semantics, send Telegram channel messages, introduce unrestricted
-shell execution, force-push Git, skip tests, or make an unsupported profitability
-claim. Return exactly one JSON object with keys approved, summary, risks,
-required_changes. approved must be boolean; risks and required_changes arrays.
+Review a proposed production patch for the Legacy Model trading platform against
+the supplied project charter. Reject it if it can expose secrets, delete or
+corrupt data, bypass authentication, confuse Demo and Real accounts, purchase
+real contracts from virtual mode, alter Stop/Pause semantics, send Telegram
+channel messages, introduce unrestricted shell execution, force-push Git, skip
+tests, change strategy/stake/recovery rules through an incident fix, or make an
+unsupported profitability claim.
 """.strip()
+
+_DIAGNOSIS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "category": {
+            "type": "string",
+            "enum": ["error", "unhealthy", "performance", "strategy", "security"],
+        },
+        "severity": {
+            "type": "string",
+            "enum": ["info", "warning", "critical"],
+        },
+        "title": {"type": "string"},
+        "summary": {"type": "string"},
+        "root_cause": {"type": "string"},
+        "needs_code_change": {"type": "boolean"},
+        "candidate_paths": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+        "proposed_fix": {"type": "string"},
+        "verification": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+        "strategy_advice": {"type": "string"},
+        "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+        },
+    },
+    "required": [
+        "category",
+        "severity",
+        "title",
+        "summary",
+        "root_cause",
+        "needs_code_change",
+        "candidate_paths",
+        "proposed_fix",
+        "verification",
+        "strategy_advice",
+        "confidence",
+    ],
+}
+
+_PATCH_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "summary": {"type": "string"},
+        "commit_message": {"type": "string"},
+        "files": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 10,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "path": {"type": "string"},
+                    "content": {"type": "string"},
+                },
+                "required": ["path", "content"],
+            },
+        },
+        "tests": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+        "notes": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+    },
+    "required": ["summary", "commit_message", "files", "tests", "notes"],
+}
+
+_REVIEW_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "approved": {"type": "boolean"},
+        "summary": {"type": "string"},
+        "risks": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+        "required_changes": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+    },
+    "required": ["approved", "summary", "risks", "required_changes"],
+}
 
 
 class GuardianOpenAI:
     def __init__(self, config: GuardianConfig) -> None:
         self.config = config
+        charter_path = config.repo_dir / "guardian" / "PROJECT_CHARTER.md"
+        if not charter_path.is_file():
+            raise RuntimeError(f"Guardian project charter is missing: {charter_path}")
+        self.project_charter = redact(
+            charter_path.read_text(encoding="utf-8", errors="replace"),
+            maximum_chars=45_000,
+        )
         self.client = OpenAI(api_key=config.openai_api_key, timeout=180.0)
 
     @staticmethod
@@ -88,13 +179,100 @@ class GuardianOpenAI:
             raise ValueError("OpenAI response JSON was not an object")
         return value
 
-    def _request(self, *, model: str, instructions: str, input_text: str) -> dict[str, Any]:
-        response = self.client.responses.create(
-            model=model,
-            instructions=instructions,
-            input=redact(input_text, maximum_chars=180_000),
+    def _request(
+        self,
+        *,
+        model: str,
+        instructions: str,
+        input_text: str,
+        schema_name: str,
+        schema: dict[str, Any],
+    ) -> dict[str, Any]:
+        trusted_instructions = (
+            instructions
+            + "\n\nTRUSTED PROJECT CHARTER:\n"
+            + self.project_charter
+            + "\n\nReturn only the requested structured object."
         )
+        safe_input = redact(input_text, maximum_chars=180_000)
+        try:
+            response = self.client.responses.create(
+                model=model,
+                instructions=trusted_instructions,
+                input=safe_input,
+                text={
+                    "format": {
+                        "type": "json_schema",
+                        "name": schema_name,
+                        "schema": schema,
+                        "strict": True,
+                    }
+                },
+            )
+        except Exception as exc:
+            # Some API projects/models may temporarily reject strict structured
+            # output. Fall back to JSON-only instructions, never to tool or shell
+            # access, and log only the exception class.
+            LOGGER.warning(
+                "GUARDIAN_STRUCTURED_OUTPUT_FALLBACK model=%s error=%s",
+                model,
+                type(exc).__name__,
+            )
+            response = self.client.responses.create(
+                model=model,
+                instructions=(
+                    trusted_instructions
+                    + "\nReturn one valid JSON object matching this JSON Schema exactly:\n"
+                    + json.dumps(schema, separators=(",", ":"))
+                ),
+                input=safe_input,
+            )
         return self._json_object(response.output_text)
+
+    @staticmethod
+    def _normalise_diagnosis(payload: dict[str, Any]) -> dict[str, Any]:
+        categories = {"error", "unhealthy", "performance", "strategy", "security"}
+        severities = {"info", "warning", "critical"}
+        category = str(payload.get("category") or "error").lower()
+        severity = str(payload.get("severity") or "warning").lower()
+        payload["category"] = category if category in categories else "error"
+        payload["severity"] = severity if severity in severities else "warning"
+        payload["title"] = str(payload.get("title") or "Guardian incident")[:300]
+        payload["summary"] = str(
+            payload.get("summary") or "An incident requires review."
+        )[:5000]
+        payload["root_cause"] = str(
+            payload.get("root_cause") or "Not yet confirmed"
+        )[:5000]
+        payload["proposed_fix"] = str(
+            payload.get("proposed_fix") or "Review the evidence manually."
+        )[:5000]
+        payload["strategy_advice"] = str(
+            payload.get("strategy_advice") or ""
+        )[:5000]
+        paths = payload.get("candidate_paths")
+        payload["candidate_paths"] = [
+            str(path).strip().replace("\\", "/")
+            for path in (paths if isinstance(paths, list) else [])
+            if str(path).strip()
+        ][:10]
+        checks = payload.get("verification")
+        payload["verification"] = [
+            str(item).strip()
+            for item in (checks if isinstance(checks, list) else [])
+            if str(item).strip()
+        ][:10]
+        payload["needs_code_change"] = bool(payload.get("needs_code_change"))
+        if payload["category"] in {"strategy", "performance"}:
+            payload["needs_code_change"] = False
+        try:
+            payload["confidence"] = min(
+                1.0,
+                max(0.0, float(payload.get("confidence", 0.0))),
+            )
+        except (TypeError, ValueError):
+            payload["confidence"] = 0.0
+        return payload
 
     def diagnose(
         self,
@@ -114,22 +292,10 @@ class GuardianOpenAI:
                 + "\n\nREPOSITORY CONTEXT:\n"
                 + repository_context
             ),
+            schema_name="guardian_diagnosis",
+            schema=_DIAGNOSIS_SCHEMA,
         )
-        payload.setdefault("category", "error")
-        payload.setdefault("severity", "warning")
-        payload.setdefault("title", "Guardian incident")
-        payload.setdefault("summary", "An incident requires review.")
-        payload.setdefault("root_cause", "Not yet confirmed")
-        payload.setdefault("needs_code_change", False)
-        payload.setdefault("candidate_paths", [])
-        payload.setdefault("proposed_fix", "Review the evidence manually.")
-        payload.setdefault("verification", [])
-        payload.setdefault("strategy_advice", "")
-        try:
-            payload["confidence"] = min(1.0, max(0.0, float(payload.get("confidence", 0.0))))
-        except (TypeError, ValueError):
-            payload["confidence"] = 0.0
-        return payload
+        return self._normalise_diagnosis(payload)
 
     def create_patch(
         self,
@@ -137,7 +303,7 @@ class GuardianOpenAI:
         incident: dict[str, Any],
         repository_context: str,
     ) -> dict[str, Any]:
-        return self._request(
+        payload = self._request(
             model=self.config.coding_model,
             instructions=_CODING_INSTRUCTIONS,
             input_text=(
@@ -156,7 +322,27 @@ class GuardianOpenAI:
                 + "\n\nREPOSITORY FILES AVAILABLE FOR EDITING:\n"
                 + repository_context
             ),
+            schema_name="guardian_patch",
+            schema=_PATCH_SCHEMA,
         )
+        files = payload.get("files")
+        if not isinstance(files, list) or not files:
+            raise ValueError("Coding model returned no replacement files")
+        payload["summary"] = str(payload.get("summary") or "Approved fix")[:5000]
+        payload["commit_message"] = str(
+            payload.get("commit_message") or "Guardian approved production fix"
+        )[:120]
+        payload["tests"] = [
+            str(item).strip()
+            for item in (payload.get("tests") or [])
+            if str(item).strip()
+        ][:8]
+        payload["notes"] = [
+            str(item).strip()
+            for item in (payload.get("notes") or [])
+            if str(item).strip()
+        ][:20]
+        return payload
 
     def review_patch(
         self,
@@ -165,7 +351,7 @@ class GuardianOpenAI:
         diff_text: str,
         test_output: str,
     ) -> dict[str, Any]:
-        return self._request(
+        payload = self._request(
             model=self.config.reviewer_model,
             instructions=_REVIEW_INSTRUCTIONS,
             input_text=(
@@ -184,16 +370,38 @@ class GuardianOpenAI:
                 + "\n\nTEST OUTPUT:\n"
                 + test_output
             ),
+            schema_name="guardian_patch_review",
+            schema=_REVIEW_SCHEMA,
         )
+        return {
+            "approved": bool(payload.get("approved")),
+            "summary": str(payload.get("summary") or "Review incomplete")[:5000],
+            "risks": [
+                str(item).strip()
+                for item in (payload.get("risks") or [])
+                if str(item).strip()
+            ][:20],
+            "required_changes": [
+                str(item).strip()
+                for item in (payload.get("required_changes") or [])
+                if str(item).strip()
+            ][:20],
+        }
 
-    def strategy_review(self, *, metrics: dict[str, Any], recent_events: str) -> dict[str, Any]:
-        return self._request(
+    def strategy_review(
+        self,
+        *,
+        metrics: dict[str, Any],
+        recent_events: str,
+    ) -> dict[str, Any]:
+        payload = self._request(
             model=self.config.diagnosis_model,
             instructions=(
                 _DIAGNOSIS_INSTRUCTIONS
-                + "\nThis is a scheduled strategy review. Do not propose an automatic code change. "
-                "Set needs_code_change=false. Focus on observed evidence, expectancy, drawdown, "
-                "sample size, execution health, and what should be measured next."
+                + "\nThis is a scheduled strategy review. Do not propose an automatic "
+                "code change. Set needs_code_change=false. Focus on observed "
+                "expectancy, payout/break-even economics, drawdown, sample size, "
+                "execution health and what should be measured next."
             ),
             input_text=(
                 "CURRENT METRICS:\n"
@@ -201,4 +409,10 @@ class GuardianOpenAI:
                 + "\n\nRECENT REDACTED EVENTS:\n"
                 + recent_events
             ),
+            schema_name="guardian_strategy_review",
+            schema=_DIAGNOSIS_SCHEMA,
         )
+        payload = self._normalise_diagnosis(payload)
+        payload["category"] = "strategy"
+        payload["needs_code_change"] = False
+        return payload
