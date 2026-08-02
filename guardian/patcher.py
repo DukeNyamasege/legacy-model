@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import logging
 import os
-import shlex
 import shutil
 import subprocess
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -13,6 +11,7 @@ from typing import Any
 from .config import GuardianConfig
 from .openai_client import GuardianOpenAI
 from .runtime import GuardianRuntime
+from .sandbox import GuardianSandbox
 from .security import redact, safe_repo_path, sanitize_test_command, validate_diff
 
 LOGGER = logging.getLogger("legacy_model.guardian.patcher")
@@ -28,6 +27,7 @@ class GuardianPatcher:
         self.config = config
         self.runtime = runtime
         self.ai = ai
+        self.sandbox = GuardianSandbox(config, runtime)
 
     def _run(
         self,
@@ -139,26 +139,16 @@ class GuardianPatcher:
 
     def _run_tests(self, worktree: Path, commands: list[str]) -> str:
         outputs: list[str] = []
-        environment = dict(os.environ)
-        environment["PYTHONDONTWRITEBYTECODE"] = "1"
-        venv_bin = str(Path(sys.executable).resolve().parent)
-        environment["PATH"] = venv_bin + os.pathsep + environment.get("PATH", "")
         for command in commands:
-            arguments = shlex.split(command)
-            result = self._run(
-                arguments,
-                cwd=worktree,
+            returncode, output = self.sandbox.run(
+                worktree=worktree,
+                command=command,
                 timeout=600,
-                check=False,
-                env=environment,
             )
-            outputs.append(
-                f"$ {command}\nexit={result.returncode}\n"
-                f"{redact(result.stdout[-20_000:])}"
-            )
-            if result.returncode != 0:
+            outputs.append(f"$ {command}\nexit={returncode}\n{output}")
+            if returncode != 0:
                 raise RuntimeError(
-                    "Guardian validation failed:\n" + "\n\n".join(outputs)
+                    "Guardian sandbox validation failed:\n" + "\n\n".join(outputs)
                 )
         return "\n\n".join(outputs)
 
