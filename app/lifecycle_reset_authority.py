@@ -25,6 +25,7 @@ _RESET_MARKER_PREFIX = "aidr_hard_reset_at:"
 
 
 def _write_reset_marker(session: Any, managed_account_id: int) -> None:
+    """Record an explicit history reset, never an ordinary Stop or Start."""
     key = f"{_RESET_MARKER_PREFIX}{int(managed_account_id)}"
     value = datetime.now(timezone.utc).isoformat()
     row = session.get(RuntimePreference, key)
@@ -69,11 +70,20 @@ def _cancel_open_virtual_trades(session: Any, managed_account_id: int, reason: s
     return len(rows)
 
 
-def _hard_stop(session: Any, row: ManagedAccount, *, reason: str) -> int:
+def _hard_stop(
+    session: Any,
+    row: ManagedAccount,
+    *,
+    reason: str,
+    mark_history_reset: bool = False,
+) -> int:
+    """Stop execution and reset active AIDR state without hiding trade history."""
     cancelled = _cancel_open_virtual_trades(session, int(row.id), reason)
     _reset_risk_state(session, int(row.id))
     _clear_account_runtime_preferences(session, int(row.id))
-    _write_reset_marker(session, int(row.id))
+    if mark_history_reset:
+        # Only the explicit Clear Today / Clear All action owns history resets.
+        _write_reset_marker(session, int(row.id))
     row.enabled = False
     row.execution_status = "stopped"
     row.execution_status_reason = str(reason or "Auto trading stopped; next Start is fresh")[:160]
@@ -110,11 +120,12 @@ def _start(session: Any, row: ManagedAccount, *, fresh: bool) -> None:
         )
         _reset_risk_state(session, int(row.id))
         _clear_account_runtime_preferences(session, int(row.id))
-        _write_reset_marker(session, int(row.id))
+        # A fresh Start resets recovery state only. It must not hide or delete
+        # contracts already executed on this account.
     row.enabled = True
     row.execution_status = "connecting"
     row.execution_status_reason = (
-        "Fresh Auto Trade start from base stake."
+        "Fresh Auto Trade start from base stake; previous trade history is retained."
         if fresh
         else "Auto trading resumed with preserved recovery and virtual-win state."
     )[:160]
@@ -125,10 +136,10 @@ def _start(session: Any, row: ManagedAccount, *, fresh: bool) -> None:
 def install_lifecycle_reset_authority(app: Any) -> None:
     """Install the final Pause/Stop/Reset contract for every personal account.
 
-    Pause -> Resume preserves state.
-    Stop -> Start is a fresh session.
-    Reset Today/All deletes the selected history, clears all recovery state and
-    leaves the account stopped so the worker cannot repopulate state immediately.
+    Pause -> Resume preserves active recovery state.
+    Stop -> Start resets active recovery state but retains all trade history.
+    Reset Today/All is the only operation that deletes the selected history and
+    leaves the account stopped so the worker cannot immediately repopulate it.
     """
 
     global _INSTALLED
@@ -154,9 +165,11 @@ def install_lifecycle_reset_authority(app: Any) -> None:
                 session,
                 row,
                 reason=(
-                    "Auto trading stopped completely. Recovery debt, pending recovery and "
-                    "virtual-win progress were cleared. Next Start begins at base stake."
+                    "Auto trading stopped. Recovery debt, pending recovery and virtual-win "
+                    "progress were cleared. Trade history remains visible, and the next Start "
+                    "begins at base stake."
                 ),
+                mark_history_reset=False,
             )
         base_api.REPOSITORY.audit(
             "AUTHORITATIVE_PERSONAL_STOP",
@@ -166,6 +179,7 @@ def install_lifecycle_reset_authority(app: Any) -> None:
                 "managed_account_id": managed_id,
                 "fresh_next_start": True,
                 "cancelled_open_virtual": cancelled,
+                "history_preserved": True,
             },
         )
         return {
@@ -175,8 +189,12 @@ def install_lifecycle_reset_authority(app: Any) -> None:
             "enabled": False,
             "recovery_reset": True,
             "virtual_progress_reset": True,
+            "history_preserved": True,
             "cancelled_open_virtual": cancelled,
-            "message": "Stopped completely. Next Start begins fresh from base stake.",
+            "message": (
+                "Auto trading stopped. Trade history is retained; the next Start begins "
+                "fresh from base stake."
+            ),
         }
 
     @app.post("/me/pause-trading")
@@ -193,6 +211,7 @@ def install_lifecycle_reset_authority(app: Any) -> None:
                 "managed_account_id": managed_id,
                 "recovery_state_preserved": True,
                 "virtual_progress_preserved": True,
+                "history_preserved": True,
             },
         )
         return {
@@ -202,6 +221,7 @@ def install_lifecycle_reset_authority(app: Any) -> None:
             "enabled": False,
             "recovery_preserved": True,
             "virtual_progress_preserved": True,
+            "history_preserved": True,
             "message": "Paused. Resume continues from the preserved state.",
         }
 
@@ -234,6 +254,7 @@ def install_lifecycle_reset_authority(app: Any) -> None:
                 "managed_account_id": managed_id,
                 "requested_mode": requested_mode,
                 "fresh_start": fresh,
+                "history_preserved": True,
             },
         )
         return {
@@ -244,6 +265,7 @@ def install_lifecycle_reset_authority(app: Any) -> None:
             "mode": "start_again" if fresh else "continue",
             "fresh_start": fresh,
             "recovery_reset": fresh,
+            "history_preserved": True,
         }
 
     @app.post("/me/auto-trade")
@@ -287,6 +309,7 @@ def install_lifecycle_reset_authority(app: Any) -> None:
                 "virtual_wins": int(state.virtual_win_count or 0) if state else 0,
                 "virtual_wins_required": 2,
                 "consecutive_losses": int(state.consecutive_losses or 0) if state else 0,
+                "history_preserved_on_stop": True,
             }
 
     @app.post("/me/clear-trades")
@@ -338,6 +361,7 @@ def install_lifecycle_reset_authority(app: Any) -> None:
                     f"Reset {scope} completed. Selected actual and virtual history was cleared; "
                     "all recovery state was forgotten. Press Start for a fresh base-stake session."
                 ),
+                mark_history_reset=True,
             )
 
         base_api.REPOSITORY.audit(
