@@ -71,7 +71,9 @@ class GuardianConfig:
             diagnosis_model=os.getenv(
                 "GUARDIAN_DIAGNOSIS_MODEL", "gpt-5.4-mini"
             ).strip(),
-            coding_model=os.getenv("GUARDIAN_CODING_MODEL", "gpt-5.3-codex").strip(),
+            coding_model=os.getenv(
+                "GUARDIAN_CODING_MODEL", "gpt-5.3-codex"
+            ).strip(),
             reviewer_model=os.getenv(
                 "GUARDIAN_REVIEWER_MODEL", "gpt-5.4-mini"
             ).strip(),
@@ -83,16 +85,21 @@ class GuardianConfig:
             ).strip(),
             scan_interval_seconds=_int("GUARDIAN_SCAN_INTERVAL_SECONDS", 20),
             strategy_review_interval_seconds=_int(
-                "GUARDIAN_STRATEGY_REVIEW_INTERVAL_SECONDS", 21600, minimum=300
+                "GUARDIAN_STRATEGY_REVIEW_INTERVAL_SECONDS",
+                21600,
+                minimum=300,
             ),
             log_lookback_seconds=_int("GUARDIAN_LOG_LOOKBACK_SECONDS", 90),
             maximum_log_lines=_int("GUARDIAN_MAXIMUM_LOG_LINES", 240),
             auto_deploy=_bool("GUARDIAN_AUTO_DEPLOY", True),
             deployment_timeout_seconds=_int(
-                "GUARDIAN_DEPLOYMENT_TIMEOUT_SECONDS", 1200, minimum=60
+                "GUARDIAN_DEPLOYMENT_TIMEOUT_SECONDS",
+                1200,
+                minimum=60,
             ),
             health_url=os.getenv(
-                "GUARDIAN_HEALTH_URL", "http://127.0.0.1:8080/health/ready"
+                "GUARDIAN_HEALTH_URL",
+                "http://127.0.0.1:8080/health/ready",
             ).strip(),
             metrics_url=os.getenv(
                 "GUARDIAN_METRICS_URL",
@@ -104,18 +111,41 @@ class GuardianConfig:
 
     def validate(self) -> None:
         missing: list[str] = []
-        if not self.repo_dir.is_dir():
-            missing.append(f"repository directory {self.repo_dir}")
+        if not self.repo_dir.is_dir() or not (self.repo_dir / ".git").exists():
+            missing.append(f"Git repository directory {self.repo_dir}")
         if not self.openai_api_key:
             missing.append("OPENAI_API_KEY")
+        if not self.diagnosis_model:
+            missing.append("GUARDIAN_DIAGNOSIS_MODEL")
+        if not self.coding_model:
+            missing.append("GUARDIAN_CODING_MODEL")
+        if not self.reviewer_model:
+            missing.append("GUARDIAN_REVIEWER_MODEL")
         if not self.telegram_bot_token:
             missing.append("GUARDIAN_TELEGRAM_BOT_TOKEN")
         if not self.telegram_admin_chat_id:
             missing.append("GUARDIAN_TELEGRAM_ADMIN_CHAT_ID")
+        else:
+            try:
+                chat_id = int(self.telegram_admin_chat_id)
+            except ValueError:
+                chat_id = 0
+            if chat_id <= 0:
+                missing.append(
+                    "a positive private GUARDIAN_TELEGRAM_ADMIN_CHAT_ID"
+                )
         if not self.compose_files:
             missing.append("GUARDIAN_COMPOSE_FILES")
+        else:
+            for filename in self.compose_files:
+                if not (self.repo_dir / filename).is_file():
+                    missing.append(f"compose file {filename}")
         if missing:
-            raise RuntimeError("Guardian configuration is incomplete: " + ", ".join(missing))
+            raise RuntimeError(
+                "Guardian configuration is incomplete: " + ", ".join(missing)
+            )
 
         self.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.worktree_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.state_dir.chmod(0o700)
+        self.worktree_root.chmod(0o700)
