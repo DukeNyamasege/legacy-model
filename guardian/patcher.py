@@ -96,7 +96,33 @@ class GuardianPatcher:
         )
         return path, branch
 
-    def _write_files(self, worktree: Path, patch: dict[str, Any]) -> list[str]:
+    def _patch_scope(
+        self,
+        candidate_paths: list[str],
+    ) -> tuple[set[str], set[str]]:
+        exact: set[str] = set()
+        new_file_parents: set[str] = set()
+        for raw in candidate_paths[:10]:
+            try:
+                path = safe_repo_path(self.config.repo_dir, raw)
+            except ValueError:
+                continue
+            relative = path.relative_to(self.config.repo_dir).as_posix()
+            exact.add(relative)
+            if path.is_file():
+                parent = Path(relative).parent.as_posix()
+                if parent not in {"", "."}:
+                    new_file_parents.add(parent)
+        return exact, new_file_parents
+
+    def _write_files(
+        self,
+        worktree: Path,
+        patch: dict[str, Any],
+        *,
+        exact_scope: set[str],
+        new_file_parents: set[str],
+    ) -> list[str]:
         files = patch.get("files") or []
         if not isinstance(files, list) or not files:
             raise ValueError("Coding model returned no files")
@@ -110,17 +136,39 @@ class GuardianPatcher:
                 raise ValueError("Invalid file replacement object")
             relative = str(item.get("path") or "").strip().replace("\\", "/")
             content = item.get("content")
-            if relative in seen:
-                raise ValueError(f"Coding model returned the same file twice: {relative}")
-            seen.add(relative)
-            if not isinstance(content, str):
-                raise ValueError(f"File content is not text: {relative}")
-            if len(content) > 250_000:
-                raise ValueError(f"File replacement is too large: {relative}")
             destination = safe_repo_path(worktree, relative)
+            normalized = destination.relative_to(worktree).as_posix()
+            if normalized in seen:
+                raise ValueError(
+                    f"Coding model returned the same file twice: {normalized}"
+                )
+            seen.add(normalized)
+            if not isinstance(content, str):
+                raise ValueError(f"File content is not text: {normalized}")
+            if len(content) > 250_000:
+                raise ValueError(f"File replacement is too large: {normalized}")
+
+            live_path = self.config.repo_dir / normalized
+            is_new = not live_path.exists()
+            parent = Path(normalized).parent.as_posix()
+            new_test = is_new and (
+                normalized.startswith("tests/")
+                or normalized.startswith("guardian/tests/")
+            )
+            allowed_new_helper = (
+                is_new
+                and parent not in {"", "."}
+                and parent in new_file_parents
+            )
+            if normalized not in exact_scope and not new_test and not allowed_new_helper:
+                raise ValueError(
+                    "Coding model attempted to modify a file outside the diagnosed scope: "
+                    + normalized
+                )
+
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_text(content, encoding="utf-8")
-            changed.append(relative)
+            changed.append(normalized)
         return changed
 
     def _test_commands(self, patch: dict[str, Any]) -> list[str]:
@@ -281,8 +329,9 @@ class GuardianPatcher:
             candidate_paths = [
                 str(path) for path in analysis.get("candidate_paths") or []
             ]
+            exact_scope, new_file_parents = self._patch_scope(candidate_paths)
             context = self.runtime.load_patch_context(candidate_paths)
-            if not context.strip():
+            if not context.strip() or not exact_scope:
                 raise RuntimeError(
                     "No safe repository files were resolved from the diagnosis. "
                     "The incident requires manual review."
@@ -291,7 +340,12 @@ class GuardianPatcher:
                 incident=incident,
                 repository_context=context,
             )
-            changed = self._write_files(worktree, patch)
+            changed = self._write_files(
+                worktree,
+                patch,
+                exact_scope=exact_scope,
+                new_file_parents=new_file_parents,
+            )
 
             # Intent-to-add makes new files visible to git diff without staging
             # their actual content before policy validation and review.
