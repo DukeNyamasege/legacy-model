@@ -34,6 +34,10 @@ _RISK_DISCLAIMER_JS = r'''
       [data-theme="dark"] .foa-risk-disclaimer{background:rgba(245,158,11,.07);color:#aab6c8}
       [data-theme="dark"] .foa-risk-disclaimer strong{color:#f8fafc}
       .foa-stable-trade em{white-space:normal!important;line-height:1.2!important;display:inline-block!important;vertical-align:middle!important;max-width:100%!important}
+      .foa-aidr-mode.stopped{background:rgba(239,68,68,.14)!important;color:#dc2626!important}
+      .foa-aidr-mode.paused{background:rgba(245,158,11,.15)!important;color:#b45309!important}
+      [data-theme="dark"] .foa-aidr-mode.stopped{color:#fca5a5!important}
+      [data-theme="dark"] .foa-aidr-mode.paused{color:#fcd34d!important}
       @media(max-width:760px){.foa-risk-disclaimer{margin:14px 0 2px;padding:11px 12px;font-size:10px;border-radius:11px}.foa-stable-trade em{font-size:8px!important;padding:3px 5px!important}}
     `;
     document.head.appendChild(style);
@@ -97,12 +101,32 @@ def _versioned(source: str) -> str:
     return value
 
 
+def _patch_aidr_lifecycle_labels(source: str) -> str:
+    old = '''  function modeLabel(mode) {
+    if (mode === "virtual") return "Virtual Protection";
+    if (mode === "split_recovery") return "Split Recovery";
+    if (mode === "exact_recovery") return "Exact Recovery";
+    return "Normal Trading";
+  }
+'''
+    new = '''  function modeLabel(mode) {
+    if (mode === "stopped") return "Stopped · Fresh Start Required";
+    if (mode === "paused") return "Paused · State Preserved";
+    if (mode === "virtual") return "Virtual Protection";
+    if (mode === "split_recovery") return "Split Recovery";
+    if (mode === "exact_recovery") return "Exact Recovery";
+    return "Normal Trading";
+  }
+'''
+    return source.replace(old, new)
+
+
 def _html() -> str:
     return _versioned(loader_html())
 
 
 def _dashboard_script() -> str:
-    source = _versioned(loader_dashboard_script())
+    source = _patch_aidr_lifecycle_labels(_versioned(loader_dashboard_script()))
     # Virtual observations are returned directly by the final /me/trades/today
     # authority. Keep the AIDR status strip, but remove the obsolete duplicate
     # standalone virtual-history card.
@@ -116,7 +140,7 @@ def _dashboard_script() -> str:
 
 
 def _compat_script() -> str:
-    source = _versioned(loader_compat_script())
+    source = _patch_aidr_lifecycle_labels(_versioned(loader_compat_script()))
     source = source.replace(
         "    ensureVirtualCard(payload);",
         '    document.getElementById("foa-personal-virtual-trades")?.remove();',
