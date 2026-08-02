@@ -29,7 +29,8 @@ install -d -m 0700 "$INSTALL_DIR" "$STATE_DIR"
 
 echo "2. Create isolated Python environment"
 if [ ! -x "$VENV_DIR/bin/python" ]; then
-  python3 -m venv "$VENV_DIR"
+  python3 -m venv "$VENV_DIR" || fail \
+    "Could not create a venv. Install the python3-venv package, then rerun."
 fi
 "$VENV_DIR/bin/python" -m pip install --upgrade pip setuptools wheel
 "$VENV_DIR/bin/python" -m pip install -r "$REPO_DIR/requirements.txt"
@@ -43,37 +44,56 @@ else
   echo "Preserved existing $ENV_FILE"
 fi
 
-has_value() {
+value_for() {
   key=$1
-  value=$(sed -n "s/^${key}=//p" "$ENV_FILE" | tail -n 1 | tr -d '\r')
-  [ -n "$value" ]
+  sed -n "s/^${key}=//p" "$ENV_FILE" | tail -n 1 | tr -d '\r'
+}
+
+has_value() {
+  [ -n "$(value_for "$1")" ]
 }
 
 if ! has_value OPENAI_API_KEY \
   || ! has_value GUARDIAN_TELEGRAM_BOT_TOKEN \
   || ! has_value GUARDIAN_TELEGRAM_ADMIN_CHAT_ID; then
+  systemctl stop legacy-model-guardian.service >/dev/null 2>&1 || true
   echo ""
   echo "Guardian files are prepared but the service was not started."
-  echo "Edit this protected file and add the three required private values:"
+  echo "Edit this protected file:"
   echo "  nano $ENV_FILE"
   echo ""
-  echo "Required:"
+  echo "Required private values:"
   echo "  OPENAI_API_KEY"
   echo "  GUARDIAN_TELEGRAM_BOT_TOKEN"
   echo "  GUARDIAN_TELEGRAM_ADMIN_CHAT_ID"
   echo ""
-  echo "Do not paste those values into ChatGPT, GitHub, logs or screenshots."
-  echo "After saving them, rerun:"
+  if has_value GUARDIAN_TELEGRAM_BOT_TOKEN \
+    && ! has_value GUARDIAN_TELEGRAM_ADMIN_CHAT_ID; then
+    echo "You already added the bot token. Open the bot in Telegram, press Start,"
+    echo "send /status, then discover your private numeric chat ID with:"
+    echo ""
+    echo "  $VENV_DIR/bin/python $REPO_DIR/scripts/guardian_discover_telegram_chat.py"
+    echo ""
+  fi
+  echo "Do not paste these secrets into ChatGPT, GitHub, logs or screenshots."
+  echo "After saving all three values, rerun:"
   echo "  sh $REPO_DIR/scripts/install_guardian.sh"
   exit 2
 fi
 
+CHAT_ID=$(value_for GUARDIAN_TELEGRAM_ADMIN_CHAT_ID)
+case "$CHAT_ID" in
+  *[!0-9]*|'') fail "GUARDIAN_TELEGRAM_ADMIN_CHAT_ID must be your positive numeric private chat ID" ;;
+esac
+[ "$CHAT_ID" -gt 0 ] || fail "GUARDIAN_TELEGRAM_ADMIN_CHAT_ID must be positive"
+
 echo "4. Validate repository and Guardian tests"
 cd "$REPO_DIR"
-"$VENV_DIR/bin/python" -m compileall -q guardian
+sh -n scripts/install_guardian.sh
+"$VENV_DIR/bin/python" -m compileall -q guardian scripts/guardian_discover_telegram_chat.py
 "$VENV_DIR/bin/python" -m unittest -q guardian.tests.test_guardian
 
-echo "5. Verify Git identity and origin access"
+echo "5. Verify Git identity and origin write access"
 if ! git config user.name >/dev/null 2>&1; then
   git config user.name "Legacy Model Guardian"
 fi
@@ -81,6 +101,12 @@ if ! git config user.email >/dev/null 2>&1; then
   git config user.email "guardian@derivadmin.site"
 fi
 git fetch origin main
+LOCAL_COMMIT=$(git rev-parse HEAD)
+REMOTE_COMMIT=$(git rev-parse origin/main)
+[ "$LOCAL_COMMIT" = "$REMOTE_COMMIT" ] || fail \
+  "The live checkout is not equal to origin/main. Pull/deploy main before installing Guardian."
+[ -z "$(git status --porcelain)" ] || fail \
+  "The live checkout has uncommitted changes. Commit or safely remove them first."
 git push --dry-run origin HEAD:main >/dev/null
 
 echo "6. Install and start systemd service"
