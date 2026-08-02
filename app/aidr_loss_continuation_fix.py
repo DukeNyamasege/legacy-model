@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from sqlalchemy import select
+
 import app.hybrid_digit_put as hybrid
 from app.ai_digit_recovery_v1 import (
     AIDR_TRIGGER_RECOVERY,
@@ -15,6 +17,7 @@ from app.ai_digit_recovery_v1 import (
     _make_aidr_candidate,
     _proposal_ok,
 )
+from app.models import DirectionalSignal
 
 _INSTALLED = False
 
@@ -80,6 +83,84 @@ def _recovery_aware_candidate(bot: Any, symbol: str, tick: dict[str, Any]) -> An
         barrier=NORMAL_BARRIER,
         recovery=False,
     )
+
+
+def _repository_run_id(bot: Any) -> int:
+    for owner_name in ("rf_repository", "repository"):
+        owner = getattr(bot, owner_name, None)
+        value = getattr(owner, "run_id", None)
+        try:
+            if value is not None:
+                return int(value)
+        except (TypeError, ValueError):
+            continue
+    return 1
+
+
+def _ensure_directional_signal(bot: Any, signal: Any, *, role: str) -> None:
+    """Create the directional_signals parent row required by virtual_trades.
+
+    AIDR digit candidates are stored in candidate_signals by the hybrid digit
+    repository. VirtualTrade.signal_id, however, has a foreign key to
+    directional_signals because that table was originally built for RF recovery.
+    Without this parent row, virtual OVER-3 observations fail at INSERT time and
+    the worker looks as if it stopped after a loss.
+    """
+
+    database = getattr(getattr(bot, "repository", None), "database", None)
+    if database is None:
+        return
+    signal_id = str(getattr(signal, "signal_id", "") or "").strip()
+    if not signal_id:
+        return
+    trigger_digits = [
+        int(value)
+        for value in tuple(getattr(signal, "trigger_digits", ()) or ())[-20:]
+        if str(value).lstrip("-").isdigit()
+    ]
+    feature_values = {
+        "aidr_role": str(role),
+        "trigger_name": str(getattr(signal, "trigger_name", "") or ""),
+        "barrier": str(getattr(signal, "barrier", "") or ""),
+        "weighted_probability": float(getattr(signal, "weighted_probability", 0.0) or 0.0),
+        "break_even_probability": float(getattr(signal, "break_even_probability", 0.0) or 0.0),
+        "validated_edge": float(getattr(signal, "validated_edge", 0.0) or 0.0),
+        "lower95": float(getattr(signal, "lower95", 0.0) or 0.0),
+        "p100": float(getattr(signal, "p100", 0.0) or 0.0),
+        "p500": float(getattr(signal, "p500", 0.0) or 0.0),
+        "p1000": float(getattr(signal, "p1000", 0.0) or 0.0),
+    }
+    with database.session() as session:
+        exists = session.scalar(
+            select(DirectionalSignal.signal_id).where(
+                DirectionalSignal.signal_id == signal_id
+            )
+        )
+        if exists:
+            return
+        session.add(
+            DirectionalSignal(
+                signal_id=signal_id,
+                run_id=_repository_run_id(bot),
+                strategy_version=str(getattr(signal, "strategy_version", "AIDR") or "AIDR"),
+                symbol=str(getattr(signal, "symbol", "") or ""),
+                direction=str(getattr(signal, "direction", "") or ""),
+                contract_type=str(getattr(signal, "contract_type", "DIGITOVER") or "DIGITOVER"),
+                duration_ticks=int(getattr(signal, "duration_ticks", 1) or 1),
+                signal_epoch=int(getattr(signal, "signal_tick_epoch", 0) or 0),
+                signal_tick_id=str(getattr(signal, "signal_tick_id", "") or ""),
+                tick_sequence=int(getattr(signal, "tick_sequence", 0) or 0),
+                reference_entry_quote=float(getattr(signal, "reference_entry_quote", 0.0) or 0.0),
+                analysis_quotes=[str(value) for value in trigger_digits],
+                movements=[],
+                feature_values=feature_values,
+                quality_score=int(getattr(signal, "quality_score", 1) or 1),
+                validated_edge=float(getattr(signal, "validated_edge", 0.0) or 0.0),
+                selected_for_execution=True,
+                execution_decision=f"AIDR_{str(role).upper()}_SELECTED",
+                execution_reason="AIDR DIGITOVER recovery/virtual parent signal registered",
+            )
+        )
 
 
 async def _recovery_aware_arbitrate(bot: Any) -> None:
@@ -166,7 +247,20 @@ async def _recovery_aware_arbitrate(bot: Any) -> None:
             float(selected.validated_edge or 0.0),
             score,
         )
-        await _buy_for_scope(bot, selected, economics, scope_ids, recovery_enabled=recovery_enabled)
+        try:
+            _ensure_directional_signal(bot, selected, role=role)
+            await _buy_for_scope(bot, selected, economics, scope_ids, recovery_enabled=recovery_enabled)
+        except Exception:
+            bot.logger.exception(
+                "AIDR_BUY_FOR_SCOPE_FAILED role=%s signal_id=%s symbol=%s barrier=%s accounts=%s",
+                role,
+                selected.signal_id,
+                selected.symbol,
+                selected.barrier,
+                len(scope_ids),
+            )
+            bot.repository.mark_signal(selected.signal_id, status="AIDR_BUY_FOR_SCOPE_FAILED")
+            continue
 
 
 def install_aidr_loss_continuation_fix() -> None:
