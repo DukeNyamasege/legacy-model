@@ -11,18 +11,18 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from sqlalchemy import delete, select
+from sqlalchemy import select
 
 from app.api import DATABASE
 from app.models import AccountRiskState, ManagedAccount, RuntimePreference, Trade, VirtualTrade, utc_now
 
 CONFIRMATION = "STOP_ALL_AND_RESET_AIDR"
+RESET_MARKER_PREFIX = "aidr_hard_reset_at:"
 AIDR_PREFIXES = (
     "aidr_split_remaining:",
     "aidr_over1_over3_v1:account_epoch:",
     "hybrid_over2_put_v4:account_epoch:",
     "hybrid_o2u7_put_v1:account_epoch:",
-    "aidr_hard_reset_at:",
 )
 
 
@@ -43,6 +43,22 @@ def _reset_state(state: AccountRiskState) -> None:
     state.recovery_pending_since = None
     state.equity_high_water = 0.0
     state.updated_at = utc_now()
+
+
+def _write_reset_marker(session: Any, managed_account_id: int, value: str) -> None:
+    key = f"{RESET_MARKER_PREFIX}{int(managed_account_id)}"
+    row = session.get(RuntimePreference, key)
+    if row is None:
+        session.add(
+            RuntimePreference(
+                preference_key=key,
+                preference_value=value,
+                updated_at=utc_now(),
+            )
+        )
+    else:
+        row.preference_value = value
+        row.updated_at = utc_now()
 
 
 def run(*, apply: bool) -> dict[str, Any]:
@@ -93,6 +109,7 @@ def run(*, apply: bool) -> dict[str, Any]:
             "risk_states_to_reset": len(states),
             "open_virtual_to_cancel": len(open_virtual),
             "runtime_preferences_to_clear": len(matching_preferences),
+            "session_markers_to_write": len(accounts),
             "actual_trade_history_deleted": 0,
             "virtual_trade_history_deleted": 0,
             "credentials_deleted": 0,
@@ -107,6 +124,7 @@ def run(*, apply: bool) -> dict[str, Any]:
             }
 
         now = utc_now()
+        marker_value = datetime.now(timezone.utc).isoformat()
         for row in accounts:
             row.enabled = False
             row.execution_status = "stopped"
@@ -115,6 +133,7 @@ def run(*, apply: bool) -> dict[str, Any]:
             )[:160]
             row.execution_status_updated_at = now
             row.updated_at = now
+            _write_reset_marker(session, int(row.id), marker_value)
 
         for state in states:
             _reset_state(state)
@@ -135,11 +154,12 @@ def run(*, apply: bool) -> dict[str, Any]:
             "ok": True,
             "applied": True,
             "mode": "apply",
-            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "completed_at": marker_value,
             "result": preview,
             "message": (
                 "All account executions were stopped and all AIDR recovery/virtual progress was reset. "
-                "Accounts, credentials, balances, settings and trade history were preserved."
+                "Accounts, credentials, balances, settings and trade history were preserved. "
+                "Historical virtual rows are separated from every new Start session."
             ),
         }
 
