@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
 
 from guardian.runtime import GuardianRuntime
-from guardian.security import redact, safe_repo_path, sanitize_test_command, validate_diff
+from guardian.security import (
+    redact,
+    safe_repo_path,
+    sanitize_test_command,
+    validate_diff,
+)
 from guardian.store import GuardianStore
 
 
@@ -64,6 +70,18 @@ class GuardianStoreTests(unittest.TestCase):
                 base_commit="a" * 40,
             )
             self.assertIsNotNone(incident_id)
+            self.assertIsNone(
+                store.create_incident(
+                    fingerprint="abc",
+                    category="error",
+                    severity="warning",
+                    title="Duplicate",
+                    summary="Duplicate active incident",
+                    evidence="traceback",
+                    analysis={"needs_code_change": True},
+                    base_commit="a" * 40,
+                )
+            )
             self.assertTrue(
                 store.transition(
                     int(incident_id),
@@ -94,6 +112,34 @@ class GuardianRuntimeTests(unittest.TestCase):
             "worker error contract 98765 at line 99", health
         )
         self.assertEqual(first, second)
+
+    def test_compose_ps_accepts_json_array(self) -> None:
+        payload = json.dumps(
+            [
+                {
+                    "Service": "api",
+                    "State": "running",
+                    "Health": "healthy",
+                },
+                {
+                    "Service": "worker",
+                    "State": "running",
+                    "Health": "",
+                },
+            ]
+        )
+        services = GuardianRuntime._parse_compose_ps(payload)
+        self.assertEqual([item["service"] for item in services], ["api", "worker"])
+
+    def test_compose_ps_accepts_json_lines(self) -> None:
+        payload = "\n".join(
+            (
+                json.dumps({"Service": "database", "State": "running"}),
+                json.dumps({"Service": "api", "State": "running"}),
+            )
+        )
+        services = GuardianRuntime._parse_compose_ps(payload)
+        self.assertEqual(len(services), 2)
 
 
 if __name__ == "__main__":
