@@ -22,12 +22,7 @@ def rows(sql: str, **params: Any) -> list[dict[str, Any]]:
         return [dict(row._mapping) for row in result]
 
 
-def scalar(sql: str, **params: Any) -> Any:
-    with DATABASE.session() as session:
-        return session.execute(text(sql), params).scalar()
-
-
-def safe_rows(label: str, sql: str, **params: Any) -> dict[str, Any]:
+def safe_rows(sql: str, **params: Any) -> dict[str, Any]:
     try:
         return {"ok": True, "rows": rows(sql, **params)}
     except Exception as exc:
@@ -42,7 +37,6 @@ def main() -> int:
     }
 
     report["enabled_accounts"] = safe_rows(
-        "enabled_accounts",
         """
         SELECT
           ma.id AS managed_account_id,
@@ -75,86 +69,86 @@ def main() -> int:
         """,
     )
 
-    report["latest_actual_trades"] = safe_rows(
-        "latest_actual_trades",
-        """
+    trade_select = """
         SELECT
           t.id,
+          t.trade_id,
+          t.contract_id,
           t.managed_account_id,
           t.account_id_masked,
-          t.market,
-          t.contract_type,
-          t.barrier,
+          cs.symbol,
+          cs.contract_type,
+          cs.barrier,
+          cs.trigger_name,
           t.buy_price,
           t.payout,
           t.profit,
           t.outcome,
-          t.exit_spot,
+          t.entry_tick,
+          t.exit_tick,
           t.exit_digit,
           t.purchase_time,
           t.settlement_time,
           t.signal_id
         FROM trades t
-        ORDER BY COALESCE(t.settlement_time, t.purchase_time, t.created_at) DESC
+        LEFT JOIN candidate_signals cs ON cs.signal_id = t.signal_id
+    """
+
+    report["latest_actual_trades"] = safe_rows(
+        trade_select
+        + """
+        ORDER BY COALESCE(t.settlement_time, t.purchase_time) DESC
         LIMIT 80
         """,
     )
 
     report["recent_losses"] = safe_rows(
-        "recent_losses",
-        """
-        SELECT
-          t.id,
-          t.managed_account_id,
-          t.account_id_masked,
-          t.market,
-          t.contract_type,
-          t.barrier,
-          t.buy_price,
-          t.profit,
-          t.outcome,
-          t.settlement_time,
-          t.signal_id
-        FROM trades t
+        trade_select
+        + """
         WHERE upper(coalesce(t.outcome, '')) = 'LOSS'
-        ORDER BY COALESCE(t.settlement_time, t.purchase_time, t.created_at) DESC
+        ORDER BY COALESCE(t.settlement_time, t.purchase_time) DESC
         LIMIT 40
         """,
     )
 
     report["recent_candidate_decisions"] = safe_rows(
-        "recent_candidate_decisions",
         """
         SELECT
-          signal_id,
-          symbol,
-          contract_type,
-          barrier,
-          trigger_name,
-          status,
-          purchase_requested,
-          purchase_confirmed,
-          stale,
-          created_at,
-          updated_at
-        FROM candidate_signals
-        WHERE created_at >= :since
+          cs.signal_id,
+          cs.symbol,
+          cs.contract_type,
+          cs.barrier,
+          cs.trigger_name,
+          cs.final_status,
+          cs.consumed,
+          cs.stale,
+          cs.purchase_request_timestamp,
+          cs.purchase_confirmation_timestamp,
+          ds.execution_decision,
+          ds.execution_reason,
+          ds.selected_for_execution,
+          cs.generated_timestamp
+        FROM candidate_signals cs
+        LEFT JOIN directional_signals ds ON ds.signal_id = cs.signal_id
+        WHERE cs.generated_timestamp >= :since
           AND (
-            trigger_name ILIKE 'AIDR%%'
-            OR contract_type = 'DIGITOVER'
-            OR status ILIKE '%%RECOVERY%%'
-            OR status ILIKE '%%VIRTUAL%%'
-            OR status ILIKE '%%RISK%%'
-            OR status ILIKE '%%SKIP%%'
+            cs.trigger_name ILIKE 'AIDR%%'
+            OR cs.contract_type = 'DIGITOVER'
+            OR cs.final_status ILIKE '%%RECOVERY%%'
+            OR cs.final_status ILIKE '%%VIRTUAL%%'
+            OR cs.final_status ILIKE '%%RISK%%'
+            OR cs.final_status ILIKE '%%SKIP%%'
+            OR ds.execution_decision ILIKE '%%RECOVERY%%'
+            OR ds.execution_decision ILIKE '%%VIRTUAL%%'
+            OR ds.execution_decision ILIKE '%%SKIP%%'
           )
-        ORDER BY created_at DESC
+        ORDER BY cs.generated_timestamp DESC
         LIMIT 120
         """,
         since=since,
     )
 
     report["recent_virtual_trades"] = safe_rows(
-        "recent_virtual_trades",
         """
         SELECT
           id,
@@ -178,23 +172,11 @@ def main() -> int:
     )
 
     report["open_contracts"] = safe_rows(
-        "open_contracts",
-        """
-        SELECT
-          id,
-          managed_account_id,
-          account_id_masked,
-          market,
-          contract_type,
-          barrier,
-          buy_price,
-          outcome,
-          purchase_time,
-          signal_id
-        FROM trades
-        WHERE settlement_time IS NULL
-           OR upper(coalesce(outcome, 'OPEN')) = 'OPEN'
-        ORDER BY purchase_time DESC
+        trade_select
+        + """
+        WHERE t.settlement_time IS NULL
+           OR upper(coalesce(t.outcome, 'OPEN')) = 'OPEN'
+        ORDER BY t.purchase_time DESC
         LIMIT 50
         """,
     )
