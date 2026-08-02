@@ -10,7 +10,7 @@ _SECRET_PATTERNS = (
     re.compile(r"(?i)(token\s*[=:]\s*)[^\s,;]+"),
     re.compile(r"(?i)(password\s*[=:]\s*)[^\s,;]+"),
     re.compile(r"\bsk-[A-Za-z0-9_-]{12,}\b"),
-    re.compile(r"\b\d{8,10}:[A-Za-z0-9_-]{20,}\b"),
+    re.compile(r"\b\d{6,12}:[A-Za-z0-9_-]{20,}\b"),
     re.compile(r"(?i)\b(?:CR|VRTC|VR|DOT|MF)[A-Z0-9]{5,}\b"),
 )
 
@@ -26,6 +26,29 @@ _FORBIDDEN_PATH_PARTS = {
     ".deployment_state",
     ".git",
 }
+
+_MANUAL_ONLY_PATHS = {
+    "Dockerfile",
+    "docker-compose.yml",
+    "docker-compose.vps.yml",
+    "alembic.ini",
+    "config.yaml",
+    "scripts/deploy_vps.sh",
+    "scripts/update_vps.sh",
+    "scripts/install_guardian.sh",
+    "deploy/legacy-model-guardian.service",
+    ".env.guardian.example",
+    "guardian/PROJECT_CHARTER.md",
+    "guardian/security.py",
+    "guardian/sandbox.py",
+    "guardian/patcher.py",
+}
+
+_MANUAL_ONLY_PREFIXES = (
+    "alembic/",
+    ".github/workflows/",
+    "deploy/",
+)
 
 _FORBIDDEN_COMMAND_FRAGMENTS = (
     "docker volume rm",
@@ -44,11 +67,15 @@ _FORBIDDEN_COMMAND_FRAGMENTS = (
 def redact(text: str, *, maximum_chars: int = 80_000) -> str:
     value = str(text or "")[:maximum_chars]
     for pattern in _SECRET_PATTERNS:
-        value = pattern.sub(lambda match: (match.group(1) if match.lastindex else "") + "[REDACTED]", value)
+        value = pattern.sub(
+            lambda match: (match.group(1) if match.lastindex else "")
+            + "[REDACTED]",
+            value,
+        )
     return value
 
 
-def safe_repo_path(repo_dir: Path, relative_path: str) -> Path:
+def _normalise_relative_path(relative_path: str) -> str:
     raw = str(relative_path or "").strip().replace("\\", "/")
     if not raw or raw.startswith("/") or ".." in Path(raw).parts:
         raise ValueError(f"Unsafe repository path: {relative_path!r}")
@@ -57,6 +84,17 @@ def safe_repo_path(repo_dir: Path, relative_path: str) -> Path:
         part.startswith(".env") for part in Path(raw).parts
     ):
         raise ValueError(f"Guardian cannot modify protected path: {relative_path}")
+    if raw in _MANUAL_ONLY_PATHS or any(
+        raw.startswith(prefix) for prefix in _MANUAL_ONLY_PREFIXES
+    ):
+        raise ValueError(
+            f"Guardian cannot automatically modify manual-review path: {relative_path}"
+        )
+    return raw
+
+
+def safe_repo_path(repo_dir: Path, relative_path: str) -> Path:
+    raw = _normalise_relative_path(relative_path)
     resolved = (repo_dir / raw).resolve()
     if repo_dir.resolve() not in resolved.parents and resolved != repo_dir.resolve():
         raise ValueError(f"Path escapes repository: {relative_path}")
@@ -75,11 +113,7 @@ def validate_diff(diff_text: str) -> None:
         path = line[6:].strip()
         if path == "/dev/null":
             continue
-        parts = set(Path(path).parts)
-        if parts & _FORBIDDEN_PATH_PARTS or any(
-            part.startswith(".env") for part in Path(path).parts
-        ):
-            raise ValueError(f"Patch touches protected path: {path}")
+        _normalise_relative_path(path)
 
 
 def sanitize_test_command(command: str) -> str:
@@ -90,9 +124,7 @@ def sanitize_test_command(command: str) -> str:
         "python -m unittest",
         "python3 -m unittest",
         "pytest",
-        "docker compose config",
         "sh -n ",
-        "node --check ",
     )
     if not value.startswith(allowed_prefixes):
         raise ValueError(f"Test command is not allow-listed: {value}")
