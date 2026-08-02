@@ -1,0 +1,34 @@
+[Unit]
+Description=Legacy Model Guardian Agent
+Documentation=file:///root/legacy-model/docs/GUARDIAN_AGENT.md
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/root/legacy-model
+EnvironmentFile=/etc/legacy-model-guardian.env
+ExecStart=/opt/legacy-model-guardian/venv/bin/python -m guardian
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=120
+TimeoutStopSec=45
+KillSignal=SIGTERM
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths=/root/legacy-model /var/lib/legacy-model-guardian /opt/legacy-model-guardian
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=legacy-model-guardian
+
+[Install]
+WantedBy=multi-user.target
