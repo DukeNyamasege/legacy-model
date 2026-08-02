@@ -54,6 +54,7 @@ from app.production_integration_hardening import (  # noqa: E402
     install_production_integration_hardening,
 )
 from app.profit_accuracy_guard import install_profit_accuracy_guard  # noqa: E402
+from app.public_trader_stats_ui import install_public_trader_stats_ui  # noqa: E402
 from app.settings_persistence_fix import install_settings_persistence_fix  # noqa: E402
 from app.simplified_dashboard_api import install_simplified_dashboard_api  # noqa: E402
 
@@ -129,6 +130,10 @@ install_account_identity_ui(app)
 # route rebuild, so balance, P/L, win rate, totals, wins and losses move in real
 # time while the stable Recent Trades table remains untouched.
 install_live_metrics_ui(app)
+
+# Show public platform stats for everyone, logged in or not: only total registered
+# traders and trading now.
+install_public_trader_stats_ui(app)
 
 # Database failures are converted into controlled 503 responses after every final
 # route has been installed.
