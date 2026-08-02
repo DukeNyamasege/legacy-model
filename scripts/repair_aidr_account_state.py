@@ -7,7 +7,7 @@ from typing import Any
 
 from sqlalchemy import select
 
-from app.api import DATABASE, REPOSITORY
+from app.api import DATABASE
 from app.models import AccountRiskState, ManagedAccount, RuntimePreference, utc_now
 from app.repositories.rf_dir5_repository import REAL_RECOVERY_PENDING, VIRTUAL_WAITING_FOR_WIN
 
@@ -74,6 +74,7 @@ def repair_account(*, suffix: str, apply: bool) -> dict[str, Any]:
             before = {
                 "enabled": bool(row.enabled),
                 "execution_status": status,
+                "system_recovery_enabled": bool(getattr(row, "martingale_enabled", True)),
                 "protection_mode": str(state.protection_mode or "NORMAL_MODE"),
                 "consecutive_losses": int(state.consecutive_losses or 0),
                 "recovery_loss_debt": debt,
@@ -119,6 +120,7 @@ def repair_account(*, suffix: str, apply: bool) -> dict[str, Any]:
                             state.current_virtual_loss_streak = 0
                         _set_split(session, int(row.id), 0)
                         row.enabled = True
+                        row.martingale_enabled = True
                         row.execution_status = "virtual_protection"
                         row.execution_status_reason = (
                             "AIDR state repaired: waiting for 2 consecutive virtual OVER-3 wins."
@@ -132,6 +134,7 @@ def repair_account(*, suffix: str, apply: bool) -> dict[str, Any]:
                         state.recovery_attempt_active = False
                         state.recovery_pending_since = state.recovery_pending_since or utc_now()
                         row.enabled = True
+                        row.martingale_enabled = True
                         row.execution_status = "recovery_pending"
                         row.execution_status_reason = (
                             "AIDR state repaired: next qualifying entry is OVER-3 recovery."
