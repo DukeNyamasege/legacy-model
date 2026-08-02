@@ -7,9 +7,10 @@ import threading
 from datetime import datetime, timezone
 from typing import Any
 
-from openai import OpenAI
+from openai import BadRequestError, OpenAI
 
 from .config import GuardianConfig
+from .privacy import sanitize_strategy_metrics
 from .security import redact
 
 LOGGER = logging.getLogger("legacy_model.guardian.openai")
@@ -37,10 +38,9 @@ authentication, OAuth, real-money gates, account isolation, Stop vs Pause
 semantics, virtual-trade $0 invariants, or provider purchase safeguards. Do not
 change strategy thresholds, stakes, TP/SL or recovery rules in this incident
 pipeline. Never claim profitability. Use complete UTF-8 file contents, not a diff,
-and keep the change minimal. Tests may use only python/python3 compileall,
-unittest, pytest, docker compose config, sh -n, or node --check. Do not include
-shell redirection, pipes, sudo, curl, wget, network calls, git commands, Docker
-mutation commands, or database mutation commands.
+and keep the change minimal. Tests may use only Python compileall, unittest,
+pytest, or `sh -n`. Do not include shell redirection, pipes, sudo, curl, wget,
+network calls, git commands, Docker commands, or database mutation commands.
 """.strip()
 
 _REVIEW_INSTRUCTIONS = """
@@ -176,7 +176,14 @@ class GuardianOpenAI:
                     payload = {}
             except (OSError, ValueError, TypeError):
                 payload = {}
-            count = int(payload.get("count") or 0) if payload.get("day") == day else 0
+            try:
+                count = (
+                    int(payload.get("count") or 0)
+                    if payload.get("day") == day
+                    else 0
+                )
+            except (TypeError, ValueError):
+                count = 0
             if count >= self.config.maximum_ai_calls_per_day:
                 raise RuntimeError(
                     "Guardian daily OpenAI call budget is exhausted "
@@ -249,11 +256,10 @@ class GuardianOpenAI:
                     }
                 },
             )
-        except Exception as exc:
-            # Some API projects/models may temporarily reject strict structured
-            # output. Fall back to JSON-only instructions, never to tool or shell
-            # access, and log only the exception class. The fallback is a second
-            # budgeted API request.
+        except BadRequestError as exc:
+            # Only a schema/parameter rejection receives a second plain-JSON
+            # attempt. Authentication, rate-limit, timeout and network failures
+            # fail immediately instead of doubling cost or hiding the cause.
             LOGGER.warning(
                 "GUARDIAN_STRUCTURED_OUTPUT_FALLBACK model=%s error=%s",
                 model,
@@ -436,6 +442,7 @@ class GuardianOpenAI:
         metrics: dict[str, Any],
         recent_events: str,
     ) -> dict[str, Any]:
+        safe_metrics = sanitize_strategy_metrics(metrics)
         payload = self._request(
             model=self.config.diagnosis_model,
             instructions=(
@@ -446,8 +453,8 @@ class GuardianOpenAI:
                 "execution health and what should be measured next."
             ),
             input_text=(
-                "CURRENT METRICS:\n"
-                + json.dumps(metrics, indent=2, default=str)
+                "AGGREGATE SANITIZED METRICS:\n"
+                + json.dumps(safe_metrics, indent=2, default=str)
                 + "\n\nRECENT REDACTED EVENTS:\n"
                 + recent_events
             ),
