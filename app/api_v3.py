@@ -22,6 +22,7 @@ from app.dashboard_actual_trade_fallback import install_dashboard_actual_trade_f
 install_dashboard_actual_trade_fallback()
 
 from app.api_account_lifecycle import app  # noqa: E402
+from app.account_identity_ui import install_account_identity_ui  # noqa: E402
 from app.account_mode_execution_lock import install_account_mode_execution_lock  # noqa: E402
 from app.ai_digit_recovery_v1 import install_ai_digit_recovery_v1_strategy  # noqa: E402
 from app.aidr_api_metadata import install_aidr_api_metadata  # noqa: E402
@@ -41,6 +42,9 @@ from app.global_reference_dashboard_compat import (  # noqa: E402
 )
 from app.model_pnl_display_aliases import install_model_pnl_display_aliases  # noqa: E402
 from app.oauth_session_recovery import install_oauth_session_recovery  # noqa: E402
+from app.personal_account_identity_balance import (  # noqa: E402
+    install_personal_account_identity_balance,
+)
 from app.personal_autotrade_start_fix import (  # noqa: E402
     install_personal_autotrade_start_fix,
 )
@@ -101,6 +105,11 @@ install_final_public_controls(app)
 # token; the token is required only before starting execution.
 install_settings_persistence_fix(app)
 
+# Show the exact logged-in account ID and refresh personal balances with a short
+# throttle so users can identify BOT/ROT accounts and see deductions/settlements
+# promptly after trades.
+install_personal_account_identity_balance(app)
+
 # Readability is installed after the production dashboard route so the final HTML
 # always includes the high-contrast text boost and simplified desktop/mobile UI.
 install_dashboard_readability(app)
@@ -113,6 +122,7 @@ install_dashboard_settings_guard(app)
 # Keep the deployment smoke tests compatible with the old simplified-dashboard
 # marker while the real live dashboard uses the stable dashboard-v2 routes.
 install_dashboard_smoke_compat(app)
+install_account_identity_ui(app)
 
 # Database failures are converted into controlled 503 responses after every final
 # route has been installed.
