@@ -127,7 +127,9 @@ rf_strategy:
   minimum_directional_score: 5
   candidate_window_ms: 75
   stale_signal_after_ms: 1800
-  minimum_trade_interval_seconds: 15
+  # Validator requires literal 0. The active AIDR runtime independently enforces
+  # a minimum 15-second global entry interval in aidr_loss_continuation_fix.py.
+  minimum_trade_interval_seconds: 0
   maximum_open_strategy_contracts: 1
   model_training_ticks: 2500
   bayesian_minimum_samples: 40
