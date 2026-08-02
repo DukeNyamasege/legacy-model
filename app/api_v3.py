@@ -36,6 +36,7 @@ from app.dashboard_stability_fix import install_dashboard_stability_fix  # noqa:
 from app.database_runtime_hardening import (  # noqa: E402
     install_database_runtime_hardening,
 )
+from app.final_personal_trade_stream import install_final_personal_trade_stream  # noqa: E402
 from app.final_public_controls import install_final_public_controls  # noqa: E402
 from app.final_virtual_history_ui import install_final_virtual_history_ui  # noqa: E402
 from app.global_reference_dashboard import install_global_reference_dashboard  # noqa: E402
@@ -43,6 +44,7 @@ from app.global_reference_dashboard_compat import (  # noqa: E402
     install_global_reference_dashboard_compat,
 )
 from app.head_request_compat import install_head_request_compat  # noqa: E402
+from app.lifecycle_reset_authority import install_lifecycle_reset_authority  # noqa: E402
 from app.live_metrics_ui import install_live_metrics_ui  # noqa: E402
 from app.model_pnl_display_aliases import install_model_pnl_display_aliases  # noqa: E402
 from app.oauth_session_recovery import install_oauth_session_recovery  # noqa: E402
@@ -63,6 +65,12 @@ from app.public_trader_stats_ui import install_public_trader_stats_ui  # noqa: E
 from app.reset_trades_always_ui import install_reset_trades_always_ui  # noqa: E402
 from app.settings_persistence_fix import install_settings_persistence_fix  # noqa: E402
 from app.simplified_dashboard_api import install_simplified_dashboard_api  # noqa: E402
+from app.telegram_silence import install_telegram_silence  # noqa: E402
+
+# Disable channel announcements, private alerts and Telegram polling before any
+# later API integration can queue a message. The switch is reversible by env +
+# process restart, but it defaults to normal behaviour unless explicitly enabled.
+install_telegram_silence()
 
 # The lifecycle routes and dashboard consistency wrappers are now loaded. Install
 # final guards afterwards so no older compatibility layer can override them.
@@ -103,18 +111,10 @@ install_oauth_session_recovery(app)
 # avoiding the unresolved Request annotation that caused 422 responses.
 install_personal_me_session_fix(app)
 
-# Expose one chronological current-day stream containing actual contracts and
-# clearly labelled $0 virtual observations. Financial summary values remain based
-# on actual trades only.
+# Older lightweight API is retained for compatibility during import, then the
+# final authorities at the bottom replace its lifecycle and trade-stream routes.
 install_simplified_dashboard_api()
-
-# Install the final lifecycle authority after the older routes. Stop is now a hard
-# disabled/stopped state; Pause preserves recovery; Start from stopped resets risk.
-# The same layer adds account-scoped clear-trades and exit digit trade payloads.
 install_final_public_controls(app)
-
-# Expose personal AIDR mode, recovery debt, virtual progress and $0 virtual trade
-# history for the exact logged-in Demo or Real account.
 install_personal_virtual_status_api(app)
 
 # Install final settings after every older account-settings route. Users must be
@@ -151,8 +151,7 @@ install_live_metrics_ui(app)
 install_public_trader_stats_ui(app)
 
 # Keep personal Reset Today / Reset All trade controls visible on Overview and
-# Trades pages after every refresh/re-render. The backend endpoint remains
-# account-scoped and refuses clearing while an open contract exists.
+# Trades pages after every refresh/re-render.
 install_reset_trades_always_ui(app)
 
 # Prevent the route loader from staying above an already-rendered dashboard and
@@ -168,6 +167,13 @@ install_final_virtual_history_ui(app)
 # Verification commands use curl -I, which sends HEAD. Browsers use GET, but the
 # final dynamic dashboard routes must also answer HEAD with normal headers.
 install_head_request_compat(app)
+
+# FINAL API AUTHORITIES. Nothing installed below these may replace their routes:
+# Pause preserves state; Stop/Reset clears all AIDR state and leaves execution
+# stopped; the trade stream combines actual contracts and visible virtual 1/2,
+# 2/2 progress for the exact managed-account row.
+install_lifecycle_reset_authority(app)
+install_final_personal_trade_stream(app)
 
 # Database failures are converted into controlled 503 responses after every final
 # route has been installed.
