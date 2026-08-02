@@ -101,7 +101,10 @@ class GuardianConfig:
             ),
             log_lookback_seconds=_int("GUARDIAN_LOG_LOOKBACK_SECONDS", 90),
             maximum_log_lines=_int("GUARDIAN_MAXIMUM_LOG_LINES", 240),
-            auto_deploy=_bool("GUARDIAN_AUTO_DEPLOY", True),
+            # Guardian remediation is intentionally Git-only. Keep this field for
+            # compatibility with the existing patcher, but never allow an
+            # environment variable to grant VPS deployment authority.
+            auto_deploy=False,
             deployment_timeout_seconds=_int(
                 "GUARDIAN_DEPLOYMENT_TIMEOUT_SECONDS",
                 1200,
