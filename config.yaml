@@ -127,7 +127,7 @@ rf_strategy:
   minimum_directional_score: 5
   candidate_window_ms: 75
   stale_signal_after_ms: 1800
-  minimum_trade_interval_seconds: 0
+  minimum_trade_interval_seconds: 15
   maximum_open_strategy_contracts: 1
   model_training_ticks: 2500
   bayesian_minimum_samples: 40
