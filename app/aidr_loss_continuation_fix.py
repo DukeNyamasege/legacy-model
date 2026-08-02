@@ -219,10 +219,28 @@ def _native_role_candidate(bot: Any, seed: Any, *, role: str) -> Any | None:
     return candidate
 
 
-def _selected_role(bot: Any, qualified: dict[str, list[tuple[float, Any, Any]]]) -> str:
+def _selected_role(
+    bot: Any,
+    qualified: dict[str, list[tuple[float, Any, Any]]],
+    *,
+    normal_accounts: int,
+    real_recovery_accounts: int,
+    virtual_accounts: int,
+) -> str:
     normal_ready = bool(qualified.get("NORMAL"))
     recovery_ready = bool(qualified.get("RECOVERY"))
     if recovery_ready and normal_ready:
+        # A virtual-only recovery signal creates simulated trades only. Do not let
+        # it starve a real normal entry when both roles are ready in the same
+        # cadence window. Real recovery accounts still keep the normal alternating
+        # fairness rule below.
+        if real_recovery_accounts <= 0 and virtual_accounts > 0 and normal_accounts > 0:
+            bot.logger.info(
+                "AIDR_ROLE_FAIRNESS_PREFERS_REAL_NORMAL normal_accounts=%s virtual_accounts=%s reason=virtual_only_recovery_has_no_actual_buy",
+                normal_accounts,
+                virtual_accounts,
+            )
+            return "NORMAL"
         # Recovery is chosen first. Thereafter alternate roles so virtual/recovery
         # makes progress without starving every trader still in NORMAL mode.
         previous = str(getattr(bot, "_aidr_last_execution_role", "NORMAL") or "NORMAL")
@@ -307,7 +325,13 @@ async def _recovery_aware_arbitrate(bot: Any) -> None:
         score = float(signal.validated_edge or 0.0) + 0.05 * float(signal.lower95 or 0.0)
         qualified[role].append((score, signal, economics))
 
-    role = _selected_role(bot, qualified)
+    role = _selected_role(
+        bot,
+        qualified,
+        normal_accounts=len(normal_ids),
+        real_recovery_accounts=len(real_recovery_ids),
+        virtual_accounts=len(virtual_ids),
+    )
     if not role:
         return
     scope_ids = recovery_ids if role == "RECOVERY" else normal_ids
@@ -322,7 +346,7 @@ async def _recovery_aware_arbitrate(bot: Any) -> None:
             bot.repository.mark_signal(other.signal_id, status="SKIP_AIDR_ROLE_FAIRNESS")
 
     bot.logger.warning(
-        "AIDR_DIGIT_SELECTED role=%s signal_id=%s symbol=%s type=%s barrier=%s accounts=%s weighted=%.5f break_even=%.5f edge=%.5f score=%.5f cadence_seconds=%.1f normal_accounts=%s recovery_accounts=%s fairness=alternating",
+        "AIDR_DIGIT_SELECTED role=%s signal_id=%s symbol=%s type=%s barrier=%s accounts=%s weighted=%.5f break_even=%.5f edge=%.5f score=%.5f cadence_seconds=%.1f normal_accounts=%s recovery_accounts=%s virtual_accounts=%s fairness=real_normal_over_virtual_only",
         role,
         selected.signal_id,
         selected.symbol,
@@ -335,7 +359,8 @@ async def _recovery_aware_arbitrate(bot: Any) -> None:
         score,
         _minimum_interval(bot),
         len(normal_ids),
-        len(recovery_ids),
+        len(real_recovery_ids),
+        len(virtual_ids),
     )
 
     try:
