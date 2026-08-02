@@ -8,6 +8,7 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import requests
 
@@ -58,7 +59,12 @@ class GuardianRuntime:
             )
         return result
 
-    def compose(self, *arguments: str, timeout: int = 120, check: bool = True) -> subprocess.CompletedProcess[str]:
+    def compose(
+        self,
+        *arguments: str,
+        timeout: int = 120,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[str]:
         command = ["docker", "compose"]
         for filename in self.config.compose_files:
             command.extend(("-f", filename))
@@ -69,6 +75,46 @@ class GuardianRuntime:
         return self.run(
             ["git", "rev-parse", "HEAD"], cwd=cwd, timeout=30
         ).stdout.strip()
+
+    @staticmethod
+    def _service_record(item: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "service": item.get("Service") or item.get("Name"),
+            "state": item.get("State"),
+            "health": item.get("Health"),
+            "status": item.get("Status"),
+        }
+
+    @classmethod
+    def _parse_compose_ps(cls, raw: str) -> list[dict[str, Any]]:
+        text = str(raw or "").strip()
+        if not text:
+            return []
+        try:
+            value = json.loads(text)
+            if isinstance(value, list):
+                return [
+                    cls._service_record(item)
+                    for item in value
+                    if isinstance(item, dict)
+                ]
+            if isinstance(value, dict):
+                return [cls._service_record(value)]
+        except ValueError:
+            pass
+
+        services: list[dict[str, Any]] = []
+        for line in text.splitlines():
+            line = line.strip().rstrip(",")
+            if not line:
+                continue
+            try:
+                item = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(item, dict):
+                services.append(cls._service_record(item))
+        return services
 
     def health_snapshot(self) -> dict[str, Any]:
         snapshot: dict[str, Any] = {
@@ -98,25 +144,7 @@ class GuardianRuntime:
             }
 
         result = self.compose("ps", "--format", "json", timeout=30, check=False)
-        services: list[dict[str, Any]] = []
-        for line in result.stdout.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                item = json.loads(line)
-                if isinstance(item, dict):
-                    services.append(
-                        {
-                            "service": item.get("Service") or item.get("Name"),
-                            "state": item.get("State"),
-                            "health": item.get("Health"),
-                            "status": item.get("Status"),
-                        }
-                    )
-            except ValueError:
-                continue
-        snapshot["services"] = services
+        snapshot["services"] = self._parse_compose_ps(result.stdout)
 
         git_status = self.run(
             ["git", "status", "--short"], timeout=30, check=False
@@ -188,13 +216,20 @@ class GuardianRuntime:
         return False
 
     def repository_context(self, evidence: str) -> str:
-        terms = []
+        terms: list[str] = []
         seen: set[str] = set()
         for token in _TOKEN_RE.findall(evidence):
             lowered = token.lower()
             if lowered in seen or len(lowered) < 5:
                 continue
-            if lowered in {"error", "failed", "exception", "traceback", "worker", "database"}:
+            if lowered in {
+                "error",
+                "failed",
+                "exception",
+                "traceback",
+                "worker",
+                "database",
+            }:
                 continue
             seen.add(lowered)
             terms.append(token)
@@ -211,7 +246,18 @@ class GuardianRuntime:
         if terms:
             pattern = "|".join(re.escape(term) for term in terms)
             grep = self.run(
-                ["git", "grep", "-n", "-I", "-E", pattern, "--", "app", "scripts", "guardian"],
+                [
+                    "git",
+                    "grep",
+                    "-n",
+                    "-I",
+                    "-E",
+                    pattern,
+                    "--",
+                    "app",
+                    "scripts",
+                    "guardian",
+                ],
                 timeout=45,
                 check=False,
             ).stdout
@@ -230,19 +276,55 @@ class GuardianRuntime:
                 continue
             content = path.read_text(encoding="utf-8", errors="replace")
             if len(content) > 70_000:
-                content = content[:35_000] + "\n... [TRUNCATED] ...\n" + content[-20_000:]
-            block = f"===== FILE: {path.relative_to(self.config.repo_dir)} =====\n{content}"
+                content = (
+                    content[:35_000]
+                    + "\n... [TRUNCATED] ...\n"
+                    + content[-20_000:]
+                )
+            block = (
+                f"===== FILE: {path.relative_to(self.config.repo_dir)} =====\n"
+                + content
+            )
             if total + len(block) > 180_000:
                 break
             blocks.append(block)
             total += len(block)
         return redact("\n\n".join(blocks), maximum_chars=180_000)
 
+    @staticmethod
+    def _with_mode(url: str, mode: str) -> str:
+        parts = urlsplit(url)
+        query = dict(parse_qsl(parts.query, keep_blank_values=True))
+        query["mode"] = mode
+        return urlunsplit(
+            (parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment)
+        )
+
+    @staticmethod
+    def _json_get(url: str) -> dict[str, Any]:
+        response = requests.get(url, timeout=20)
+        response.raise_for_status()
+        payload = response.json()
+        return payload if isinstance(payload, dict) else {"value": payload}
+
     def metrics_snapshot(self) -> dict[str, Any]:
-        try:
-            response = requests.get(self.config.metrics_url, timeout=20)
-            response.raise_for_status()
-            payload = response.json()
-            return payload if isinstance(payload, dict) else {"value": payload}
-        except (requests.RequestException, ValueError) as exc:
-            return {"unavailable": True, "error": type(exc).__name__}
+        result: dict[str, Any] = {
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+            "demo": {},
+            "real": {},
+        }
+        errors: list[dict[str, str]] = []
+        for mode in ("demo", "real"):
+            url = self._with_mode(self.config.metrics_url, mode)
+            try:
+                result[mode] = self._json_get(url)
+            except (requests.RequestException, ValueError) as exc:
+                result[mode] = {"unavailable": True, "error": type(exc).__name__}
+                errors.append({"mode": mode, "error": type(exc).__name__})
+        if errors:
+            result["errors"] = errors
+        result["unavailable"] = all(
+            bool((result.get(mode) or {}).get("unavailable"))
+            for mode in ("demo", "real")
+        )
+        return result
