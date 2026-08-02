@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from guardian.privacy import sanitize_strategy_metrics
 from guardian.runtime import GuardianRuntime
 from guardian.security import (
     redact,
@@ -37,6 +38,10 @@ class GuardianSecurityTests(unittest.TestCase):
                 safe_repo_path(root, ".env")
             with self.assertRaises(ValueError):
                 safe_repo_path(root, "../outside.txt")
+            with self.assertRaises(ValueError):
+                safe_repo_path(root, "scripts/deploy_vps.sh")
+            with self.assertRaises(ValueError):
+                safe_repo_path(root, "alembic/versions/001.py")
             allowed = safe_repo_path(root, "guardian/example.py")
             self.assertEqual(allowed, root / "guardian/example.py")
 
@@ -45,6 +50,8 @@ class GuardianSecurityTests(unittest.TestCase):
             validate_diff("+ docker compose down -v")
         with self.assertRaises(ValueError):
             validate_diff("+++ b/.env\n+OPENAI_API_KEY=secret")
+        with self.assertRaises(ValueError):
+            validate_diff("--- a/config.yaml\n+++ b/config.yaml")
 
     def test_test_command_allowlist(self) -> None:
         self.assertEqual(
@@ -53,6 +60,35 @@ class GuardianSecurityTests(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             sanitize_test_command("curl https://example.com")
+        with self.assertRaises(ValueError):
+            sanitize_test_command("docker compose config")
+
+
+class GuardianPrivacyTests(unittest.TestCase):
+    def test_strategy_metrics_remove_private_rows(self) -> None:
+        payload = {
+            "total_registered_traders": 10,
+            "trading_now": 3,
+            "system_performance": {
+                "today": {
+                    "total_trades": 20,
+                    "wins": 12,
+                    "losses": 8,
+                    "profit": -1.25,
+                }
+            },
+            "accounts": [
+                {"account_id": "CR1234567", "balance": 500.0, "profit": 20.0}
+            ],
+            "oauth_token": "secret",
+            "user_email": "private@example.com",
+        }
+        result = sanitize_strategy_metrics(payload)
+        self.assertEqual(result["total_registered_traders"], 10)
+        self.assertEqual(result["system_performance"]["today"]["wins"], 12)
+        self.assertNotIn("accounts", result)
+        self.assertNotIn("oauth_token", result)
+        self.assertNotIn("user_email", result)
 
 
 class GuardianStoreTests(unittest.TestCase):
@@ -100,6 +136,31 @@ class GuardianStoreTests(unittest.TestCase):
             incident = store.incident(int(incident_id))
             self.assertEqual(incident["status"], "approved")
             self.assertTrue(incident["analysis"]["needs_code_change"])
+
+    def test_restart_fails_closed_for_working_incident(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "guardian.sqlite3"
+            store = GuardianStore(path)
+            incident_id = store.create_incident(
+                fingerprint="restart",
+                category="error",
+                severity="critical",
+                title="Interrupted",
+                summary="Work was interrupted",
+                evidence="traceback",
+                analysis={"needs_code_change": True},
+                base_commit="b" * 40,
+            )
+            self.assertTrue(
+                store.transition(
+                    int(incident_id),
+                    expected=("proposed",),
+                    target="working",
+                )
+            )
+            reopened = GuardianStore(path)
+            self.assertEqual(len(reopened.interrupted_remediations), 1)
+            self.assertEqual(reopened.incident(int(incident_id))["status"], "interrupted")
 
 
 class GuardianRuntimeTests(unittest.TestCase):
