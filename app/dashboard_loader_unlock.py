@@ -12,14 +12,16 @@ from app.reset_trades_always_ui import _dashboard_script as reset_dashboard_scri
 from app.reset_trades_always_ui import _html as reset_html
 
 _INSTALLED = False
-UI_VERSION = "20260802-5"
+UI_VERSION = "20260802-6"
 
 _LOADER_UNLOCK_JS = r'''
 
-/* FOA_DASHBOARD_LOADER_UNLOCK: prevent the opening overlay from blocking rendered content. */
+/* FOA_DASHBOARD_LOADER_UNLOCK: one-shot release with no mutation feedback loop. */
 (() => {
   "use strict";
-  const VERSION = "20260802-5";
+  const VERSION = "20260802-6";
+  let observer = null;
+  let released = false;
 
   function readyContent() {
     const app = document.getElementById("foa-simple-app");
@@ -27,56 +29,59 @@ _LOADER_UNLOCK_JS = r'''
     return !!app.querySelector(".foa-shell,.foa-main,.foa-card,.foa-topbar,.foa-bottom-nav");
   }
 
-  function ensureStyle() {
-    if (document.getElementById("foa-loader-unlock-css")) return;
-    const style = document.createElement("style");
-    style.id = "foa-loader-unlock-css";
-    style.textContent = `
-      body.foa-dashboard-ready #foa-bootstrap{display:none!important;opacity:0!important;pointer-events:none!important}
-      body.foa-dashboard-ready .foa-route-loader.foa-loader-unlocked{display:none!important;opacity:0!important;visibility:hidden!important;pointer-events:none!important;backdrop-filter:none!important}
-      body.foa-dashboard-ready .foa-route-loader.foa-loader-unlocked.show{display:none!important;opacity:0!important;visibility:hidden!important;pointer-events:none!important;backdrop-filter:none!important}
-    `;
-    document.head.appendChild(style);
-  }
+  function releaseOpeningLoader(reason = "content-ready") {
+    if (released || !readyContent()) return false;
+    released = true;
 
-  function unlock(reason = "content-ready") {
-    ensureStyle();
-    if (!readyContent()) return false;
-    document.body.classList.add("foa-dashboard-ready");
-    document.body.dataset.foaDashboardLoaderUnlock = VERSION;
-    document.body.dataset.foaDashboardLoaderUnlockReason = reason;
+    // Disconnect before changing the DOM so our own cleanup cannot trigger us.
+    if (observer) {
+      observer.disconnect();
+      observer = null;
+    }
 
     const bootstrap = document.getElementById("foa-bootstrap");
     if (bootstrap) bootstrap.remove();
 
     document.querySelectorAll(".foa-route-loader").forEach(loader => {
-      loader.classList.remove("show");
-      loader.classList.add("foa-loader-unlocked");
-      loader.setAttribute("aria-hidden", "true");
-      loader.style.setProperty("display", "none", "important");
-      loader.style.setProperty("opacity", "0", "important");
-      loader.style.setProperty("visibility", "hidden", "important");
-      loader.style.setProperty("pointer-events", "none", "important");
-      loader.style.setProperty("backdrop-filter", "none", "important");
+      const message = String(loader.textContent || "").toLowerCase();
+      if (message.includes("opening dashboard") || loader.classList.contains("show")) {
+        loader.remove();
+      }
     });
+
+    document.body.dataset.foaDashboardLoaderUnlock = VERSION;
+    document.body.dataset.foaDashboardLoaderUnlockReason = reason;
+    document.body.classList.remove("foa-dashboard-ready");
     return true;
   }
 
-  function sweep() {
-    ensureStyle();
-    if (readyContent()) unlock("sweep");
+  function attempt(reason) {
+    if (released) return;
+    releaseOpeningLoader(reason);
   }
 
   function boot() {
-    ensureStyle();
-    sweep();
-    [250, 600, 1000, 1800, 3000, 5000, 8000].forEach(delay => {
-      setTimeout(sweep, delay);
+    attempt("boot");
+    if (released) return;
+
+    // Watch only for new child nodes while the dashboard is initially rendering.
+    // Do not watch class/style attributes: changing those from this callback caused
+    // the previous infinite MutationObserver feedback loop and Chrome freeze.
+    observer = new MutationObserver(() => attempt("content-added"));
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+
+    [100, 250, 500, 1000, 1800, 3000, 5000, 8000].forEach(delay => {
+      window.setTimeout(() => attempt(`timer-${delay}`), delay);
     });
-    setInterval(sweep, 1200);
-    new MutationObserver(sweep).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "style"] });
-    window.addEventListener("pageshow", sweep);
-    window.addEventListener("focus", sweep);
+
+    // Safety stop: never leave a permanent observer running on the dashboard.
+    window.setTimeout(() => {
+      if (observer) {
+        observer.disconnect();
+        observer = null;
+      }
+      attempt("final-timeout");
+    }, 12000);
   }
 
   if (document.readyState === "loading") {
@@ -84,14 +89,18 @@ _LOADER_UNLOCK_JS = r'''
   } else {
     boot();
   }
+
+  window.addEventListener("pageshow", () => attempt("pageshow"), { once: true });
   window.FOA_DASHBOARD_LOADER_UNLOCK = VERSION;
+  window.FOA_DASHBOARD_LOADER_NO_MUTATION_LOOP = true;
 })();
 '''
 
 
 def _versioned(source: str) -> str:
     return (
-        source.replace("20260802-4", UI_VERSION)
+        source.replace("20260802-5", UI_VERSION)
+        .replace("20260802-4", UI_VERSION)
         .replace("20260802-3", UI_VERSION)
         .replace("20260802-2", UI_VERSION)
         .replace("20260802-1", UI_VERSION)
@@ -117,12 +126,7 @@ def _compat_script() -> str:
 
 
 def install_dashboard_loader_unlock(app: Any) -> None:
-    """Install a final dashboard loader guard.
-
-    When the dashboard content exists, the opening route-loader must never stay
-    above the page forever. This does not hide a real blank-page failure; it only
-    removes the overlay after rendered content is already present.
-    """
+    """Install a one-shot dashboard loader guard without DOM observer loops."""
 
     global _INSTALLED
     if _INSTALLED:
