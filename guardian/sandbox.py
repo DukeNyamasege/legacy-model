@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import shlex
+import stat
 import subprocess
 import uuid
 from pathlib import Path
@@ -36,11 +38,30 @@ class GuardianSandbox:
             )
         return images[0]
 
+    @staticmethod
+    def _make_source_readable(worktree: Path) -> None:
+        """Permit the non-root container user to read only this temporary checkout."""
+
+        for root, directories, files in os.walk(worktree, followlinks=False):
+            root_path = Path(root)
+            root_path.chmod(0o755)
+            for directory in directories:
+                path = root_path / directory
+                if not path.is_symlink():
+                    path.chmod(0o755)
+            for filename in files:
+                path = root_path / filename
+                if path.is_symlink():
+                    continue
+                mode = path.stat().st_mode
+                path.chmod(0o755 if mode & stat.S_IXUSR else 0o644)
+
     def run(self, *, worktree: Path, command: str, timeout: int = 600) -> tuple[int, str]:
         arguments = shlex.split(str(command or ""))
         if not arguments:
             raise ValueError("Sandbox test command is empty")
 
+        self._make_source_readable(worktree)
         name = f"legacy-guardian-test-{uuid.uuid4().hex[:12]}"
         image = self._worker_image()
         docker_command = [
@@ -68,10 +89,10 @@ class GuardianSandbox:
             "10001:10001",
             "--tmpfs",
             "/tmp:rw,noexec,nosuid,nodev,size=128m,mode=1777",
+            "--tmpfs",
+            "/workspace:rw,nosuid,nodev,size=512m,mode=0755,uid=10001,gid=10001",
             "--mount",
-            f"type=bind,src={worktree.resolve()},dst=/workspace,readonly",
-            "--workdir",
-            "/workspace",
+            f"type=bind,src={worktree.resolve()},dst=/source,readonly",
             "--env",
             "HOME=/tmp",
             "--env",
@@ -79,6 +100,10 @@ class GuardianSandbox:
             "--env",
             "PYTEST_ADDOPTS=-p no:cacheprovider",
             image,
+            "sh",
+            "-ec",
+            'cp -R /source/. /workspace/ && cd /workspace && exec "$@"',
+            "guardian-sandbox",
             *arguments,
         ]
         try:
@@ -100,7 +125,11 @@ class GuardianSandbox:
                 timeout=30,
                 check=False,
             )
-            output = exc.stdout.decode() if isinstance(exc.stdout, bytes) else str(exc.stdout or "")
+            output = (
+                exc.stdout.decode()
+                if isinstance(exc.stdout, bytes)
+                else str(exc.stdout or "")
+            )
             raise RuntimeError(
                 f"Sandbox test timed out after {timeout} seconds:\n"
                 + redact(output[-10_000:])
