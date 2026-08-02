@@ -55,6 +55,7 @@ from app.production_integration_hardening import (  # noqa: E402
 )
 from app.profit_accuracy_guard import install_profit_accuracy_guard  # noqa: E402
 from app.public_trader_stats_ui import install_public_trader_stats_ui  # noqa: E402
+from app.reset_trades_always_ui import install_reset_trades_always_ui  # noqa: E402
 from app.settings_persistence_fix import install_settings_persistence_fix  # noqa: E402
 from app.simplified_dashboard_api import install_simplified_dashboard_api  # noqa: E402
 
@@ -134,6 +135,11 @@ install_live_metrics_ui(app)
 # Show public platform stats for everyone, logged in or not: only total registered
 # traders and trading now.
 install_public_trader_stats_ui(app)
+
+# Keep personal Reset Today / Reset All trade controls visible on Overview and
+# Trades pages after every refresh/re-render. The backend endpoint remains
+# account-scoped and refuses clearing while an open contract exists.
+install_reset_trades_always_ui(app)
 
 # Database failures are converted into controlled 503 responses after every final
 # route has been installed.
