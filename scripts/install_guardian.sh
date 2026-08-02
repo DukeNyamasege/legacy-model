@@ -19,6 +19,7 @@ fail() {
 for command in git docker python3 systemctl; do
   command -v "$command" >/dev/null 2>&1 || fail "$command is required"
 done
+docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required"
 
 echo "============================================================"
 echo "LEGACY MODEL GUARDIAN INSTALLER"
@@ -33,7 +34,7 @@ if [ ! -x "$VENV_DIR/bin/python" ]; then
     "Could not create a venv. Install the python3-venv package, then rerun."
 fi
 "$VENV_DIR/bin/python" -m pip install --upgrade pip setuptools wheel
-"$VENV_DIR/bin/python" -m pip install -r "$REPO_DIR/requirements.txt"
+"$VENV_DIR/bin/python" -m pip install -r "$REPO_DIR/guardian/requirements.txt"
 
 echo "3. Prepare private environment file"
 if [ ! -f "$ENV_FILE" ]; then
