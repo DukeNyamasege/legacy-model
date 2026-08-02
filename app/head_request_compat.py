@@ -7,7 +7,7 @@ from fastapi.responses import Response
 from app.dashboard_stability_fix import _remove_route
 
 _INSTALLED = False
-UI_VERSION = "20260802-6"
+UI_VERSION = "20260802-7"
 
 
 def _headers(media_type: str) -> dict[str, str]:
