@@ -17,13 +17,17 @@ class GuardianTelegram:
 
     def __init__(self, config: GuardianConfig) -> None:
         self.config = config
-        self.base_url = (
-            f"https://api.telegram.org/bot{config.telegram_bot_token}"
-        )
+        self.base_url = f"https://api.telegram.org/bot{config.telegram_bot_token}"
         self.admin_chat_id = str(config.telegram_admin_chat_id)
         self.offset = 0
 
-    def _post(self, method: str, data: dict[str, Any], *, timeout: float = 30.0) -> dict[str, Any]:
+    def _post(
+        self,
+        method: str,
+        data: dict[str, Any],
+        *,
+        timeout: float = 30.0,
+    ) -> dict[str, Any]:
         response = requests.post(
             f"{self.base_url}/{method}",
             data=data,
@@ -32,7 +36,9 @@ class GuardianTelegram:
         response.raise_for_status()
         payload = response.json()
         if not payload.get("ok"):
-            raise RuntimeError(str(payload.get("description") or "Telegram request failed"))
+            raise RuntimeError(
+                str(payload.get("description") or "Telegram request failed")
+            )
         return payload
 
     def send_text(
@@ -47,16 +53,26 @@ class GuardianTelegram:
             "disable_web_page_preview": "true",
         }
         if reply_markup is not None:
-            data["reply_markup"] = json.dumps(reply_markup, separators=(",", ":"))
+            data["reply_markup"] = json.dumps(
+                reply_markup,
+                separators=(",", ":"),
+            )
         payload = self._post("sendMessage", data)
         return int(payload["result"]["message_id"])
 
-    def send_incident(self, incident_id: int, analysis: dict[str, Any], evidence: str) -> int:
+    def send_incident(
+        self,
+        incident_id: int,
+        analysis: dict[str, Any],
+        evidence: str,
+    ) -> int:
         severity = str(analysis.get("severity") or "warning").upper()
         confidence = float(analysis.get("confidence") or 0.0)
         needs_code = bool(analysis.get("needs_code_change"))
         paths = [str(path) for path in analysis.get("candidate_paths") or []][:8]
-        verification = [str(item) for item in analysis.get("verification") or []][:6]
+        verification = [
+            str(item) for item in analysis.get("verification") or []
+        ][:6]
         lines = [
             f"🛡 LEGACY MODEL GUARDIAN — {severity}",
             "",
@@ -76,7 +92,9 @@ class GuardianTelegram:
         if paths:
             lines.extend(("", "Likely files:", *[f"• {path}" for path in paths]))
         if verification:
-            lines.extend(("", "Verification:", *[f"• {item}" for item in verification]))
+            lines.extend(
+                ("", "Verification:", *[f"• {item}" for item in verification])
+            )
         strategy = str(analysis.get("strategy_advice") or "").strip()
         if strategy:
             lines.extend(("", "Strategy observation:", strategy))
@@ -118,9 +136,14 @@ class GuardianTelegram:
                 },
             )
         except Exception:
-            LOGGER.exception("GUARDIAN_TELEGRAM_EDIT_FAILED message_id=%s", message_id)
+            LOGGER.exception(
+                "GUARDIAN_TELEGRAM_EDIT_FAILED message_id=%s",
+                message_id,
+            )
 
     def answer_callback(self, callback_id: str, text: str) -> None:
+        if not callback_id:
+            return
         try:
             self._post(
                 "answerCallbackQuery",
@@ -148,7 +171,9 @@ class GuardianTelegram:
         response.raise_for_status()
         payload = response.json()
         if not payload.get("ok"):
-            raise RuntimeError(str(payload.get("description") or "Telegram polling failed"))
+            raise RuntimeError(
+                str(payload.get("description") or "Telegram polling failed")
+            )
 
         for update in payload.get("result") or []:
             update_id = int(update.get("update_id") or 0)
@@ -160,7 +185,7 @@ class GuardianTelegram:
                 chat = message.get("chat") or {}
                 chat_id = str(chat.get("id") or "")
                 if chat_id != self.admin_chat_id:
-                    LOGGER.warning("GUARDIAN_UNAUTHORIZED_CALLBACK chat_id=%s", chat_id)
+                    LOGGER.warning("GUARDIAN_UNAUTHORIZED_CALLBACK rejected=true")
                     continue
                 handler(
                     str(callback.get("data") or ""),
@@ -176,8 +201,13 @@ class GuardianTelegram:
             chat = message.get("chat") or {}
             chat_id = str(chat.get("id") or "")
             if chat_id != self.admin_chat_id:
-                LOGGER.warning("GUARDIAN_UNAUTHORIZED_MESSAGE chat_id=%s", chat_id)
+                LOGGER.warning("GUARDIAN_UNAUTHORIZED_MESSAGE rejected=true")
                 continue
             text = str(message.get("text") or "").strip().lower()
             if text in {"/status", "status"}:
-                handler("guardian:status:0", int(message.get("message_id") or 0), update_id, "")
+                handler(
+                    "guardian:status:0",
+                    int(message.get("message_id") or 0),
+                    update_id,
+                    "",
+                )
