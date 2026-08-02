@@ -7,7 +7,7 @@ from fastapi.responses import Response
 from app.dashboard_stability_fix import _remove_route
 
 _INSTALLED = False
-UI_VERSION = "20260802-5"
+UI_VERSION = "20260802-6"
 
 
 def _headers(media_type: str) -> dict[str, str]:
@@ -20,13 +20,7 @@ def _headers(media_type: str) -> dict[str, str]:
 
 
 def install_head_request_compat(app: Any) -> None:
-    """Allow curl -I / browser HEAD checks for the final dashboard routes.
-
-    The final dashboard routes are dynamically replaced by late UI layers. Some
-    of those wrappers expose GET only, which is enough for browsers, but our VPS
-    verification command uses `curl -I` and therefore sends HEAD. Without this
-    compatibility layer the dashboard works, while the check prints 405.
-    """
+    """Allow curl -I / browser HEAD checks for the final dashboard routes."""
 
     global _INSTALLED
     if _INSTALLED:
