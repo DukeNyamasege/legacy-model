@@ -14,14 +14,14 @@ from app.dashboard_loader_unlock import (
 from app.dashboard_stability_fix import _remove_route, _stable_actions_js
 
 _INSTALLED = False
-UI_VERSION = "20260802-8"
+UI_VERSION = "20260802-9"
 
 _RISK_DISCLAIMER_JS = r'''
 
-/* FOA_RISK_DISCLAIMER: visible on every dashboard page without DOM observer loops. */
+/* FOA_RISK_DISCLAIMER + FOA_VIRTUAL_WIN_PROGRESS: final non-observer UI layer. */
 (() => {
   "use strict";
-  const VERSION = "20260802-8";
+  const VERSION = "20260802-9";
   let started = false;
 
   function ensureStyle() {
@@ -33,7 +33,8 @@ _RISK_DISCLAIMER_JS = r'''
       .foa-risk-disclaimer strong{color:var(--text,#0f172a);font-weight:900;margin-right:4px}
       [data-theme="dark"] .foa-risk-disclaimer{background:rgba(245,158,11,.07);color:#aab6c8}
       [data-theme="dark"] .foa-risk-disclaimer strong{color:#f8fafc}
-      @media(max-width:760px){.foa-risk-disclaimer{margin:14px 0 2px;padding:11px 12px;font-size:10px;border-radius:11px}}
+      .foa-stable-trade em{white-space:normal!important;line-height:1.2!important;display:inline-block!important;vertical-align:middle!important;max-width:100%!important}
+      @media(max-width:760px){.foa-risk-disclaimer{margin:14px 0 2px;padding:11px 12px;font-size:10px;border-radius:11px}.foa-stable-trade em{font-size:8px!important;padding:3px 5px!important}}
     `;
     document.head.appendChild(style);
   }
@@ -51,6 +52,7 @@ _RISK_DISCLAIMER_JS = r'''
     }
     if (box.parentElement !== main || main.lastElementChild !== box) main.appendChild(box);
     document.body.dataset.foaRiskDisclaimerVersion = VERSION;
+    document.body.dataset.foaVirtualWinProgressVersion = VERSION;
   }
 
   function start() {
@@ -70,6 +72,7 @@ _RISK_DISCLAIMER_JS = r'''
   if (document.readyState !== "loading") start();
   window.FOA_RISK_DISCLAIMER = VERSION;
   window.FOA_VIRTUAL_TRADES_IN_RECENT_HISTORY = VERSION;
+  window.FOA_VIRTUAL_WIN_PROGRESS = VERSION;
 })();
 '''
 
@@ -77,6 +80,7 @@ _RISK_DISCLAIMER_JS = r'''
 def _versioned(source: str) -> str:
     value = source
     for old in (
+        "20260802-8",
         "20260802-7",
         "20260802-6",
         "20260802-5",
@@ -99,15 +103,14 @@ def _html() -> str:
 
 def _dashboard_script() -> str:
     source = _versioned(loader_dashboard_script())
-    # Virtual observations are now returned directly by /me/trades/today and are
-    # labelled VIRTUAL OVER 3 inside the same Recent Trades / complete history
-    # table. Remove the older duplicate standalone virtual-history card while
-    # preserving the live AIDR status strip.
+    # Virtual observations are returned directly by the final /me/trades/today
+    # authority. Keep the AIDR status strip, but remove the obsolete duplicate
+    # standalone virtual-history card.
     source = source.replace(
         "    ensureVirtualCard(payload);",
         '    document.getElementById("foa-personal-virtual-trades")?.remove();',
     )
-    if "FOA_RISK_DISCLAIMER" not in source:
+    if "FOA_VIRTUAL_WIN_PROGRESS" not in source:
         source += _RISK_DISCLAIMER_JS
     return source
 
@@ -118,7 +121,7 @@ def _compat_script() -> str:
         "    ensureVirtualCard(payload);",
         '    document.getElementById("foa-personal-virtual-trades")?.remove();',
     )
-    if "FOA_RISK_DISCLAIMER" not in source:
+    if "FOA_VIRTUAL_WIN_PROGRESS" not in source:
         source += _RISK_DISCLAIMER_JS
     return source
 
