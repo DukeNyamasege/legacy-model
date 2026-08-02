@@ -82,34 +82,40 @@ def _reset_marker(session: Any, managed_account_id: int) -> datetime | None:
     return _timestamp(row.preference_value) if row is not None else None
 
 
+def _trade_belongs_to_session(trade: Trade, reset_at: datetime | None) -> bool:
+    if reset_at is None:
+        return True
+    purchased_at = _timestamp(trade.provider_purchase_time or trade.purchase_time)
+    return bool(purchased_at and purchased_at > reset_at)
+
+
 def _virtual_rows_with_progress(
     rows: list[VirtualTrade],
     *,
     reset_at: datetime | None,
 ) -> list[dict[str, Any]]:
-    """Label every current-session virtual win as 1/2 or 2/2.
+    """Return current-session rows labelled as 0/2, 1/2 and 2/2.
 
-    A loss resets the visible consecutive-win counter to zero. Rows from a prior
-    Stop/Start generation remain historical but cannot contribute to the current
-    progress counter.
+    A hard Stop/Reset/Start creates a new session marker. Older rows remain in
+    PostgreSQL for audit but disappear from the new session's counters and Recent
+    Trades. Pause/Resume creates no marker, so the streak continues unchanged.
     """
 
     ordered = sorted(
         rows,
-        key=lambda row: row.created_at or datetime.min.replace(tzinfo=timezone.utc),
+        key=lambda row: _timestamp(row.created_at)
+        or datetime.min.replace(tzinfo=timezone.utc),
     )
     streak = 0
     payloads: list[dict[str, Any]] = []
     for row in ordered:
         created = _timestamp(row.created_at)
-        current_session = not reset_at or not created or created > reset_at
+        if reset_at is not None and (created is None or created <= reset_at):
+            continue
+
         outcome = _virtual_outcome(row.result)
         barrier = str(row.barrier or "3").strip() or "3"
-
-        if not current_session:
-            progress_text = "PRIOR SESSION"
-            sequence = None
-        elif outcome == "WIN":
+        if outcome == "WIN":
             streak = min(2, streak + 1)
             sequence = streak
             progress_text = f"WIN {streak}/2"
@@ -152,7 +158,7 @@ def _virtual_rows_with_progress(
                 "display_result": f"VIRTUAL {progress_text}",
                 "virtual_win_sequence": sequence,
                 "virtual_wins_required": 2,
-                "current_session": current_session,
+                "current_session": True,
                 "exit_digit": row.actual_last_digit,
                 "actual_last_digit": row.actual_last_digit,
                 "exit_spot": row.exit_spot,
@@ -199,7 +205,7 @@ def _aidr_summary(state: AccountRiskState | None, managed_account_id: int) -> di
 
 
 def install_final_personal_trade_stream(app: Any) -> None:
-    """Install one final actual + virtual current-day stream for the logged-in row."""
+    """Install one final actual + virtual current-session stream."""
 
     global _INSTALLED
     if _INSTALLED:
@@ -214,7 +220,8 @@ def install_final_personal_trade_stream(app: Any) -> None:
         start, end = _today_bounds_utc()
 
         with base_api.DATABASE.session() as session:
-            actual_rows = session.execute(
+            reset_at = _reset_marker(session, managed_id)
+            queried_actual_rows = session.execute(
                 select(Trade, CandidateSignalRecord, DirectionalSignal)
                 .outerjoin(
                     CandidateSignalRecord,
@@ -235,6 +242,9 @@ def install_final_personal_trade_stream(app: Any) -> None:
                 .order_by(Trade.purchase_time.desc())
                 .limit(5000)
             ).all()
+            actual_rows = [
+                row for row in queried_actual_rows if _trade_belongs_to_session(row[0], reset_at)
+            ]
             virtual_rows = session.scalars(
                 select(VirtualTrade)
                 .where(VirtualTrade.managed_account_id == managed_id)
@@ -248,7 +258,6 @@ def install_final_personal_trade_stream(app: Any) -> None:
                 .limit(5000)
             ).all()
             state = session.get(AccountRiskState, managed_id)
-            reset_at = _reset_marker(session, managed_id)
 
         actual_trades = [
             {
@@ -275,7 +284,6 @@ def install_final_personal_trade_stream(app: Any) -> None:
             for row in actual_trades
         )
         profit = sum(float(row.get("profit") or 0.0) for row in actual_trades)
-        current_virtual = [row for row in virtual_trades if row.get("current_session")]
         aidr = _aidr_summary(state, managed_id)
 
         return {
@@ -284,6 +292,7 @@ def install_final_personal_trade_stream(app: Any) -> None:
             "account_type": str(account.get("account_type") or "demo"),
             "timezone": str(_reporting_timezone()),
             "date": start.astimezone(_reporting_timezone()).date().isoformat(),
+            "session_started_at": reset_at.isoformat() if reset_at else None,
             "trades": trades,
             "aidr": aidr,
             "summary": {
@@ -294,11 +303,11 @@ def install_final_personal_trade_stream(app: Any) -> None:
                 "open": open_trades,
                 "profit": round(profit, 8),
                 "win_rate": wins / (wins + losses) if wins + losses else 0.0,
-                "virtual_observations": len(current_virtual),
+                "virtual_observations": len(virtual_trades),
                 "virtual_wins": int(aidr["virtual_wins"]),
                 "virtual_wins_required": 2,
                 "virtual_losses": int(aidr["virtual_losses"]),
-                "virtual_open": sum(row.get("outcome") == "OPEN" for row in current_virtual),
+                "virtual_open": sum(row.get("outcome") == "OPEN" for row in virtual_trades),
                 "history_rows": len(trades),
             },
         }
