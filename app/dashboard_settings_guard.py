@@ -5,6 +5,7 @@ from typing import Any
 from fastapi.responses import Response
 
 from app.dashboard_stability_fix import UI_VERSION, _patched_dashboard_js, _remove_route
+from app.mobile_compact_ui import install_mobile_compact_ui
 
 _INSTALLED = False
 
@@ -103,6 +104,11 @@ def install_dashboard_settings_guard(app: Any) -> None:
     if _INSTALLED:
         return
 
+    # This installer already runs immediately after the stable dashboard layer.
+    # Install the final compact CSS route here so the mobile authority is active
+    # without changing the desktop dashboard or relying on browser zoom.
+    install_mobile_compact_ui(app)
+
     for path in ("/ui/dashboard-v2.js", "/ui/simplified-dashboard.js"):
         _remove_route(app, path, "GET")
 
@@ -130,4 +136,5 @@ def install_dashboard_settings_guard(app: Any) -> None:
         )
 
     app.state.dashboard_settings_guard_installed = True
+    app.state.mobile_compact_ui_installed = True
     _INSTALLED = True
