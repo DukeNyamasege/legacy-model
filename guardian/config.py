@@ -28,6 +28,7 @@ class GuardianConfig:
     diagnosis_model: str
     coding_model: str
     reviewer_model: str
+    maximum_ai_calls_per_day: int
     telegram_bot_token: str
     telegram_admin_chat_id: str
     scan_interval_seconds: int
@@ -48,6 +49,10 @@ class GuardianConfig:
     @property
     def worktree_root(self) -> Path:
         return self.state_dir / "worktrees"
+
+    @property
+    def ai_budget_path(self) -> Path:
+        return self.state_dir / "openai-call-budget.json"
 
     @classmethod
     def from_env(cls) -> "GuardianConfig":
@@ -77,6 +82,11 @@ class GuardianConfig:
             reviewer_model=os.getenv(
                 "GUARDIAN_REVIEWER_MODEL", "gpt-5.4-mini"
             ).strip(),
+            maximum_ai_calls_per_day=_int(
+                "GUARDIAN_MAX_AI_CALLS_PER_DAY",
+                30,
+                minimum=3,
+            ),
             telegram_bot_token=os.getenv(
                 "GUARDIAN_TELEGRAM_BOT_TOKEN", ""
             ).strip(),
