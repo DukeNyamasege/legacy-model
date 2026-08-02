@@ -52,10 +52,12 @@ from app.personal_autotrade_start_fix import (  # noqa: E402
     install_personal_autotrade_start_fix,
 )
 from app.personal_me_session_fix import install_personal_me_session_fix  # noqa: E402
+from app.personal_virtual_status_api import install_personal_virtual_status_api  # noqa: E402
 from app.production_integration_hardening import (  # noqa: E402
     install_production_integration_hardening,
 )
 from app.profit_accuracy_guard import install_profit_accuracy_guard  # noqa: E402
+from app.public_trader_stats_api import install_public_trader_stats_api  # noqa: E402
 from app.public_trader_stats_ui import install_public_trader_stats_ui  # noqa: E402
 from app.reset_trades_always_ui import install_reset_trades_always_ui  # noqa: E402
 from app.settings_persistence_fix import install_settings_persistence_fix  # noqa: E402
@@ -84,6 +86,10 @@ install_global_reference_dashboard_compat()
 install_model_pnl_display_aliases()
 install_aidr_api_metadata()
 
+# Public platform totals are available whether the browser is logged in or out.
+# Unique linked traders are counted separately from currently enabled traders.
+install_public_trader_stats_api(app)
+
 # Install the production dashboard/OAuth boundary first, then replace only the
 # final OAuth start/callback routes with resilient PKCE session handling. The
 # recovery layer keeps one-time server-side validation and issues a host-only
@@ -104,6 +110,10 @@ install_simplified_dashboard_api()
 # disabled/stopped state; Pause preserves recovery; Start from stopped resets risk.
 # The same layer adds account-scoped clear-trades and exit digit trade payloads.
 install_final_public_controls(app)
+
+# Expose personal AIDR mode, recovery debt, virtual progress and $0 virtual trade
+# history for the exact logged-in Demo or Real account.
+install_personal_virtual_status_api(app)
 
 # Install final settings after every older account-settings route. Users must be
 # allowed to save stake, TP/SL and Martingale settings before adding a trading
@@ -143,7 +153,8 @@ install_public_trader_stats_ui(app)
 # account-scoped and refuses clearing while an open contract exists.
 install_reset_trades_always_ui(app)
 
-# Prevent the route loader from staying above an already-rendered dashboard.
+# Prevent the route loader from staying above an already-rendered dashboard and
+# display account-level AIDR/virtual progress without rebuilding the whole page.
 install_dashboard_loader_unlock(app)
 
 # Verification commands use curl -I, which sends HEAD. Browsers use GET, but the
