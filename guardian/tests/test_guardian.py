@@ -4,7 +4,9 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
+from guardian.patcher import GuardianPatcher
 from guardian.privacy import sanitize_strategy_metrics
 from guardian.runtime import GuardianRuntime
 from guardian.security import (
@@ -62,6 +64,52 @@ class GuardianSecurityTests(unittest.TestCase):
             sanitize_test_command("curl https://example.com")
         with self.assertRaises(ValueError):
             sanitize_test_command("docker compose config")
+
+
+class GuardianPatchScopeTests(unittest.TestCase):
+    def test_patch_can_only_touch_diagnosed_existing_file_or_new_sibling(self) -> None:
+        with tempfile.TemporaryDirectory() as repository_directory, tempfile.TemporaryDirectory() as worktree_directory:
+            repository = Path(repository_directory)
+            worktree = Path(worktree_directory)
+            (repository / "app").mkdir()
+            (worktree / "app").mkdir()
+            (repository / "app" / "diagnosed.py").write_text("OLD = True\n")
+            (repository / "app" / "unrelated.py").write_text("SAFE = True\n")
+            (worktree / "app" / "diagnosed.py").write_text("OLD = True\n")
+            (worktree / "app" / "unrelated.py").write_text("SAFE = True\n")
+
+            patcher = object.__new__(GuardianPatcher)
+            patcher.config = SimpleNamespace(repo_dir=repository)
+            exact, parents = patcher._patch_scope(["app/diagnosed.py"])
+
+            changed = patcher._write_files(
+                worktree,
+                {
+                    "files": [
+                        {"path": "app/diagnosed.py", "content": "OLD = False\n"},
+                        {"path": "app/new_helper.py", "content": "HELPER = True\n"},
+                        {"path": "tests/test_fix.py", "content": "def test_fix():\n    assert True\n"},
+                    ]
+                },
+                exact_scope=exact,
+                new_file_parents=parents,
+            )
+            self.assertEqual(
+                changed,
+                ["app/diagnosed.py", "app/new_helper.py", "tests/test_fix.py"],
+            )
+
+            with self.assertRaises(ValueError):
+                patcher._write_files(
+                    worktree,
+                    {
+                        "files": [
+                            {"path": "app/unrelated.py", "content": "SAFE = False\n"}
+                        ]
+                    },
+                    exact_scope=exact,
+                    new_file_parents=parents,
+                )
 
 
 class GuardianPrivacyTests(unittest.TestCase):
@@ -160,7 +208,10 @@ class GuardianStoreTests(unittest.TestCase):
             )
             reopened = GuardianStore(path)
             self.assertEqual(len(reopened.interrupted_remediations), 1)
-            self.assertEqual(reopened.incident(int(incident_id))["status"], "interrupted")
+            self.assertEqual(
+                reopened.incident(int(incident_id))["status"],
+                "interrupted",
+            )
 
 
 class GuardianRuntimeTests(unittest.TestCase):
