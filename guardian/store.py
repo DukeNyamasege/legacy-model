@@ -54,8 +54,9 @@ class GuardianStore:
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
-                CREATE UNIQUE INDEX IF NOT EXISTS uq_incident_active_fingerprint
-                ON incidents(fingerprint, status)
+                DROP INDEX IF EXISTS uq_incident_active_fingerprint;
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_incident_active_fingerprint_v2
+                ON incidents(fingerprint)
                 WHERE status IN ('proposed', 'approved', 'working');
 
                 CREATE TABLE IF NOT EXISTS events (
@@ -144,9 +145,9 @@ class GuardianStore:
         approved_by: str = "",
         result: dict[str, Any] | None = None,
     ) -> bool:
+        if not expected:
+            raise ValueError("At least one expected incident state is required")
         placeholders = ",".join("?" for _ in expected)
-        parameters: list[Any] = [target, approved_by, json.dumps(result or {}, default=str), _now(), int(incident_id)]
-        parameters.extend(expected)
         with self.connection() as connection:
             cursor = connection.execute(
                 f"""
