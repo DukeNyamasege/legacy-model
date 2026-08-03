@@ -331,7 +331,7 @@ def install_account_execution_feedback() -> None:
                 "virtual_protection",
                 (
                     "2 actual losses triggered protection. Real contracts are being skipped "
-                    "until one virtual win confirms recovery."
+                    "until adaptive virtual confirmation passes."
                 ),
             )
         return opened

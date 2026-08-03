@@ -6,6 +6,7 @@ from fastapi import Request
 from sqlalchemy import or_, select
 
 import app.api as base_api
+from app.aidr_adaptive_virtual import adaptive_virtual_wins_required
 from app.ai_digit_recovery_v1 import VIRTUAL_WINS_REQUIRED
 from app.final_public_controls import PAUSED_STATUSES, STOPPED_STATUSES, _reporting_timezone, _today_bounds_utc
 from app.models import AccountRiskState, ManagedAccount, VirtualTrade
@@ -82,6 +83,12 @@ def install_personal_virtual_status_api(app: Any) -> None:
         debt = float(state.recovery_loss_debt or 0.0) if state is not None else 0.0
         raw_mode = str(state.protection_mode or "NORMAL_MODE") if state is not None else "NORMAL_MODE"
         virtual_wins = int(state.virtual_win_count or 0) if state is not None else 0
+        virtual_wins_required = adaptive_virtual_wins_required(
+            base_api.REPOSITORY,
+            managed_id,
+            default_wins=VIRTUAL_WINS_REQUIRED,
+            recovery_debt=debt,
+        )
         split_remaining = _split_remaining(managed_id)
 
         if status in STOPPED_STATUSES:
@@ -96,8 +103,8 @@ def install_personal_virtual_status_api(app: Any) -> None:
             lifecycle = "running"
             mode = "virtual"
             next_action = (
-                f"Virtual OVER-4 confirmation: {virtual_wins}/{VIRTUAL_WINS_REQUIRED} wins. "
-                f"Waiting for {max(0, VIRTUAL_WINS_REQUIRED - virtual_wins)} more."
+                f"Virtual OVER-4 confirmation: {virtual_wins}/{virtual_wins_required} wins. "
+                f"Waiting for {max(0, virtual_wins_required - virtual_wins)} more."
             )
         elif raw_mode == REAL_RECOVERY_PENDING and split_remaining > 0:
             lifecycle = "running"
@@ -151,7 +158,7 @@ def install_personal_virtual_status_api(app: Any) -> None:
             "recovery_debt": round(debt, 2),
             "consecutive_losses": int(state.consecutive_losses or 0) if state is not None else 0,
             "virtual_wins": virtual_wins,
-            "virtual_wins_required": VIRTUAL_WINS_REQUIRED,
+            "virtual_wins_required": virtual_wins_required,
             "virtual_losses": int(state.virtual_loss_count or 0) if state is not None else 0,
             "virtual_observations": int(state.virtual_observation_count or 0) if state is not None else 0,
             "split_recovery_remaining": split_remaining,

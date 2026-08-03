@@ -11,6 +11,13 @@ from app.ai_digit_recovery_v1 import (
     _read_split_remaining,
     _write_split_remaining,
 )
+from app.aidr_adaptive_virtual import (
+    adaptive_trap_state,
+    adaptive_virtual_wins_required,
+    adaptive_virtual_wins_required_for_state,
+    record_post_virtual_recovery_loss_in_session,
+    reset_adaptive_trap,
+)
 from app.models import AccountRiskState, ManagedAccount, VirtualTrade, utc_now
 from app.repositories.rf_dir5_repository import RFDir5Repository, StakePlan
 
@@ -105,6 +112,40 @@ def _clear_split(repo: RFDir5Repository, managed_account_id: int) -> None:
         pass
 
 
+def _required_virtual_wins(
+    repo: RFDir5Repository,
+    managed_account_id: int,
+    *,
+    recovery_debt: float,
+) -> int:
+    return adaptive_virtual_wins_required(
+        _runtime_base(repo),
+        int(managed_account_id),
+        default_wins=VIRTUAL_WINS_REQUIRED,
+        recovery_debt=float(recovery_debt or 0.0),
+    )
+
+
+def _virtual_confirmation_reason(
+    repo: RFDir5Repository,
+    managed_account_id: int,
+    *,
+    wins: int,
+    recovery_debt: float,
+) -> str:
+    required = _required_virtual_wins(
+        repo,
+        int(managed_account_id),
+        recovery_debt=float(recovery_debt or 0.0),
+    )
+    suffix = (
+        " Alternating-trap protection is active."
+        if required > VIRTUAL_WINS_REQUIRED
+        else ""
+    )
+    return f"Virtual OVER-4 confirmation active: {int(wins)}/{required} wins.{suffix}"
+
+
 def _reset_state_after_stop(repo: RFDir5Repository, managed_account_id: int) -> None:
     """Make a completed Stop/Reset win every race with a late settlement."""
 
@@ -128,6 +169,7 @@ def _reset_state_after_stop(repo: RFDir5Repository, managed_account_id: int) -> 
             state.equity_high_water = 0.0
             state.updated_at = utc_now()
     _clear_split(repo, int(managed_account_id))
+    reset_adaptive_trap(_runtime_base(repo), int(managed_account_id))
 
 
 def _force_virtual_mode(repo: RFDir5Repository, state: AccountRiskState, *, reason: str) -> None:
@@ -161,18 +203,27 @@ def _debt_requires_virtual(*, debt: float, consecutive_losses: int, split_remain
 
 
 def reconcile_existing_virtual_confirmations(repo: RFDir5Repository) -> int:
-    """Promote pre-deployment 1/2 states to the new one-win recovery rule."""
+    """Promote virtual confirmations only when the adaptive threshold is met."""
 
     with repo.database.session() as session:
-        managed_ids = list(
+        states = list(
             session.scalars(
-                select(AccountRiskState.managed_account_id).where(
+                select(AccountRiskState).where(
                     AccountRiskState.protection_mode == VIRTUAL_WAITING_FOR_WIN,
-                    AccountRiskState.virtual_win_count >= VIRTUAL_WINS_REQUIRED,
                     AccountRiskState.recovery_loss_debt >= 0.01,
                 )
             ).all()
         )
+    managed_ids = [
+        int(state.managed_account_id)
+        for state in states
+        if int(state.virtual_win_count or 0)
+        >= _required_virtual_wins(
+            repo,
+            int(state.managed_account_id),
+            recovery_debt=float(state.recovery_loss_debt or 0.0),
+        )
+    ]
     for managed_id in managed_ids:
         # Writing the marker first is crash-safe: virtual mode still takes
         # precedence until the state transition below commits.
@@ -185,9 +236,15 @@ def reconcile_existing_virtual_confirmations(repo: RFDir5Repository) -> int:
             if (
                 state is None
                 or state.protection_mode != VIRTUAL_WAITING_FOR_WIN
-                or int(state.virtual_win_count or 0) < VIRTUAL_WINS_REQUIRED
                 or float(state.recovery_loss_debt or 0.0) < 0.01
             ):
+                continue
+            required = _required_virtual_wins(
+                repo,
+                int(managed_id),
+                recovery_debt=float(state.recovery_loss_debt or 0.0),
+            )
+            if int(state.virtual_win_count or 0) < required:
                 continue
             state.protection_mode = REAL_RECOVERY_PENDING
             state.recovery_pending = True
@@ -213,7 +270,7 @@ def install_aidr_strict_recovery_guard() -> None:
     Lifecycle:
       normal OVER 1 loss
       -> one real OVER 3 exact-debt recovery
-      -> if it loses, virtual OVER 4 until 1 virtual win
+      -> if it loses, virtual OVER 4 until adaptive virtual confirmation
       -> one real OVER 4 trade targeting the entire accumulated debt
       -> an OVER-4 recovery loss returns immediately to virtual mode.
 
@@ -261,16 +318,21 @@ def install_aidr_strict_recovery_guard() -> None:
                 split_remaining = _read_split_remaining(_runtime_base(self), int(managed_account_id))
                 consecutive_losses = int(state.consecutive_losses or 0)
                 if state.protection_mode == VIRTUAL_WAITING_FOR_WIN:
+                    reason = _virtual_confirmation_reason(
+                        self,
+                        int(managed_account_id),
+                        wins=int(state.virtual_win_count or 0),
+                        recovery_debt=debt,
+                    )
                     _set_account_active(
                         self,
                         managed_account_id,
                         "virtual_protection",
-                        f"Virtual OVER-4 confirmation active: {int(state.virtual_win_count or 0)}/"
-                        f"{VIRTUAL_WINS_REQUIRED} wins.",
+                        reason,
                     )
                     return StakePlan(
                         None,
-                        "AIDR virtual OVER-4 confirmation active; real money blocked",
+                        reason,
                         is_recovery=True,
                         recovery_debt=debt,
                     )
@@ -284,7 +346,7 @@ def install_aidr_strict_recovery_guard() -> None:
                         state,
                         reason=(
                             "Strict AIDR guard detected a failed recovery. Real contracts are blocked "
-                            "until one virtual OVER-4 win."
+                            "until adaptive virtual OVER-4 confirmation passes."
                         ),
                     )
                     return StakePlan(
@@ -426,6 +488,7 @@ def install_aidr_strict_recovery_guard() -> None:
                         state.current_virtual_loss_streak = 0
                         state.updated_at = utc_now()
                         _clear_split(self, managed_account_id)
+                        reset_adaptive_trap(_runtime_base(self), managed_account_id)
                         result.update(
                             {
                                 "recovery_pending": False,
@@ -436,15 +499,34 @@ def install_aidr_strict_recovery_guard() -> None:
                                 "strict_recovery_guard": "recovery_win_reset_to_over1",
                                 "recovery_loss_debt": 0.0,
                                 "split_recovery_remaining": 0,
+                                "adaptive_trap_score": 0,
+                                "virtual_wins_required": VIRTUAL_WINS_REQUIRED,
                             }
                         )
                     else:
+                        if int(previous.get("split_remaining") or 0) > 0:
+                            trap = record_post_virtual_recovery_loss_in_session(
+                                session,
+                                managed_account_id,
+                                debt=debt,
+                            )
+                        else:
+                            trap = adaptive_trap_state(
+                                _runtime_base(self),
+                                managed_account_id,
+                            )
+                        required = adaptive_virtual_wins_required_for_state(
+                            trap,
+                            default_wins=VIRTUAL_WINS_REQUIRED,
+                            recovery_debt=debt,
+                        )
                         _force_virtual_mode(
                             self,
                             state,
                             reason=(
-                                f"AIDR recovery win left {debt:.2f} debt. Waiting for one "
-                                "virtual OVER-4 win before the next full-debt recovery."
+                                f"AIDR recovery win left {debt:.2f} debt. Waiting for "
+                                f"{required} virtual OVER-4 win"
+                                f"{'' if required == 1 else 's'} before the next full-debt recovery."
                             ),
                         )
                         result.update(
@@ -457,6 +539,8 @@ def install_aidr_strict_recovery_guard() -> None:
                                 "strict_recovery_guard": "recovery_win_residual_to_virtual",
                                 "recovery_loss_debt": debt,
                                 "split_recovery_remaining": 0,
+                                "adaptive_trap_score": int(trap["trap_score"]),
+                                "virtual_wins_required": required,
                             }
                         )
 
@@ -464,12 +548,29 @@ def install_aidr_strict_recovery_guard() -> None:
             with self.database.session() as session:
                 state = session.get(AccountRiskState, managed_account_id, with_for_update=True)
                 if state is not None:
+                    trap: dict[str, Any] | None = None
+                    if int(previous.get("split_remaining") or 0) > 0:
+                        trap = record_post_virtual_recovery_loss_in_session(
+                            session,
+                            managed_account_id,
+                            debt=float(state.recovery_loss_debt or 0.0),
+                        )
+                    trap = trap or adaptive_trap_state(
+                        _runtime_base(self),
+                        managed_account_id,
+                    )
+                    required = adaptive_virtual_wins_required_for_state(
+                        trap,
+                        default_wins=VIRTUAL_WINS_REQUIRED,
+                        recovery_debt=float(state.recovery_loss_debt or 0.0),
+                    )
                     _force_virtual_mode(
                         self,
                         state,
                         reason=(
-                            "AIDR recovery loss recorded. Waiting for one virtual OVER-4 win "
-                            "before one full-debt OVER-4 recovery."
+                            "AIDR recovery loss recorded. Waiting for "
+                            f"{required} virtual OVER-4 win"
+                            f"{'' if required == 1 else 's'} before one full-debt OVER-4 recovery."
                         ),
                     )
                     result.update(
@@ -482,6 +583,12 @@ def install_aidr_strict_recovery_guard() -> None:
                             "strict_recovery_guard": "failed_recovery_to_virtual",
                             "recovery_loss_debt": float(state.recovery_loss_debt or 0.0),
                             "split_recovery_remaining": 0,
+                            "adaptive_trap_score": int(
+                                (trap or adaptive_trap_state(_runtime_base(self), managed_account_id))[
+                                    "trap_score"
+                                ]
+                            ),
+                            "virtual_wins_required": required,
                         }
                     )
         elif not won_recovery:
@@ -568,6 +675,7 @@ def install_aidr_strict_recovery_guard() -> None:
                     continue
                 mode = state.protection_mode
                 wins = int(state.virtual_win_count or 0)
+                debt = float(state.recovery_loss_debt or 0.0)
                 enabled = bool(row.enabled)
                 status = str(row.execution_status or "inactive").strip().lower()
                 reason = str(row.execution_status_reason or "")
@@ -594,7 +702,12 @@ def install_aidr_strict_recovery_guard() -> None:
                     self,
                     managed_id,
                     "virtual_protection",
-                    f"Virtual OVER-4 confirmation active: {wins}/{VIRTUAL_WINS_REQUIRED} wins.",
+                    _virtual_confirmation_reason(
+                        self,
+                        managed_id,
+                        wins=wins,
+                        recovery_debt=debt,
+                    ),
                 )
 
             if paused:

@@ -19,6 +19,10 @@ from app.models import (
     VirtualGuardState,
     utc_now,
 )
+from app.aidr_adaptive_virtual import (
+    adaptive_trap_state,
+    adaptive_virtual_wins_required,
+)
 from app.recovery import calculate_recovery_stake, ceil_cents
 from app.strategy.rise_fall_strategy import SignalEvent, shadow_outcome
 
@@ -144,6 +148,10 @@ class RFDir5Repository:
             "virtual_wins": 0,
             "virtual_losses": 0,
             "current_virtual_loss_streak": 0,
+            "adaptive_trap_score": 0,
+            "post_virtual_recovery_losses": 0,
+            "virtual_wins_required": 1,
+            "anti_trap_mode": False,
             "entered_virtual_mode_at": None,
             "recovery_pending_since": None,
             "next_action": "Trading normally",
@@ -152,9 +160,21 @@ class RFDir5Repository:
     def _protection_payload(self, state: AccountRiskState | None) -> dict[str, Any]:
         if state is None:
             return self._default_virtual_state()
+        trap = adaptive_trap_state(self.base, int(state.managed_account_id))
+        virtual_wins_required = adaptive_virtual_wins_required(
+            self.base,
+            int(state.managed_account_id),
+            default_wins=1,
+            recovery_debt=float(state.recovery_loss_debt or 0.0),
+        )
         mode = self._mode_label(state)
         if mode == VIRTUAL_MODE:
-            next_action = "Waiting for a virtual win"
+            next_action = (
+                f"Waiting for {virtual_wins_required} virtual OVER-4 win"
+                f"{'' if virtual_wins_required == 1 else 's'}"
+            )
+            if virtual_wins_required > 1:
+                next_action += " because alternating-trap protection is active"
         elif mode == RECOVERY_PENDING:
             next_action = "Next qualifying entry will be a real recovery trade"
         else:
@@ -171,6 +191,12 @@ class RFDir5Repository:
             "current_virtual_loss_streak": int(
                 state.current_virtual_loss_streak or 0
             ),
+            "adaptive_trap_score": int(trap["trap_score"]),
+            "post_virtual_recovery_losses": int(
+                trap["post_virtual_recovery_losses"]
+            ),
+            "virtual_wins_required": int(virtual_wins_required),
+            "anti_trap_mode": bool(virtual_wins_required > 1),
             "entered_virtual_mode_at": (
                 state.entered_virtual_mode_at.isoformat()
                 if state.entered_virtual_mode_at
@@ -916,7 +942,7 @@ class RFDir5Repository:
     ) -> list[dict[str, Any]]:
         settled: list[dict[str, Any]] = []
         now = utc_now()
-        required_virtual_wins = max(1, int(exit_after_wins or 1))
+        base_required_virtual_wins = max(1, int(exit_after_wins or 1))
         with self.database.session() as session:
             rows = session.scalars(
                 select(VirtualTrade)
@@ -973,6 +999,12 @@ class RFDir5Repository:
                 trade.recovery_debt_change = 0.0
                 trade.settled_at = now
                 state.virtual_observation_count += 1
+                required_virtual_wins = adaptive_virtual_wins_required(
+                    self.base,
+                    int(trade.managed_account_id),
+                    default_wins=base_required_virtual_wins,
+                    recovery_debt=float(state.recovery_loss_debt or 0.0),
+                )
                 consecutive_virtual_wins = (
                     int(state.virtual_win_count or 0) + 1
                     if result == VIRTUAL_WIN

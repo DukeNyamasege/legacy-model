@@ -210,13 +210,13 @@ class RFDir5TradingBot(TradingBot):
                 await asyncio.sleep(60)
 
     async def _send_virtual_protection_announcement_once(self) -> None:
-        key = "telegram_announcement_virtual_loss_protection_v1"
+        key = "telegram_announcement_virtual_loss_protection_v2"
         if self.repository.runtime_preference(key) == "sent":
             return
         text = "\n".join(
             (
                 "Model update: Virtual loss protection is live.",
-                "After 2 actual losses, affected accounts switch to $0 virtual checks until one virtual win.",
+                "After 2 actual losses, affected accounts switch to $0 virtual checks until adaptive confirmation passes.",
                 "Then the next qualifying entry resumes real/demo recovery trading.",
                 "Test our model: https://derivadmin.site/",
                 "Join other traders and let's train the future.",
@@ -239,7 +239,7 @@ class RFDir5TradingBot(TradingBot):
                 "What's new in this update:",
                 "• Custom stake amount — set any stake (min $0.35)",
                 "• Recovery (Martingale) toggle — turn off for flat staking",
-                "• Virtual protection now requires one virtual win",
+                "• Virtual protection now adapts against alternating loss traps",
                 "• Continue / Start Again buttons when resuming after a stop",
                 "• Deep-blue dashboard redesign with mobile-friendly layout",
                 "",

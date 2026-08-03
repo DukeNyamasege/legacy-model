@@ -8,6 +8,7 @@ from fastapi import Request
 from sqlalchemy import or_, select
 
 import app.api as base_api
+from app.aidr_adaptive_virtual import adaptive_virtual_wins_required
 from app.ai_digit_recovery_v1 import VIRTUAL_WINS_REQUIRED
 from app.final_public_controls import (
     _current_account_payload,
@@ -175,9 +176,15 @@ def _aidr_summary(state: AccountRiskState | None, managed_account_id: int) -> di
     wins = int(state.virtual_win_count or 0) if state is not None else 0
     debt = round(float(state.recovery_loss_debt or 0.0), 2) if state is not None else 0.0
     split = _split_remaining(managed_account_id)
+    required = adaptive_virtual_wins_required(
+        base_api.REPOSITORY,
+        int(managed_account_id),
+        default_wins=VIRTUAL_WINS_REQUIRED,
+        recovery_debt=debt,
+    )
     if raw_mode == VIRTUAL_WAITING_FOR_WIN:
         mode = "virtual"
-        next_action = f"Virtual OVER-4 confirmation: {wins}/{VIRTUAL_WINS_REQUIRED} wins."
+        next_action = f"Virtual OVER-4 confirmation: {wins}/{required} wins."
     elif raw_mode == REAL_RECOVERY_PENDING and split > 0:
         mode = "full_recovery"
         next_action = "One real OVER-4 trade will target the full recovery debt."
@@ -193,7 +200,7 @@ def _aidr_summary(state: AccountRiskState | None, managed_account_id: int) -> di
         "recovery_debt": debt,
         "consecutive_losses": int(state.consecutive_losses or 0) if state is not None else 0,
         "virtual_wins": wins,
-        "virtual_wins_required": VIRTUAL_WINS_REQUIRED,
+        "virtual_wins_required": required,
         "virtual_losses": int(state.virtual_loss_count or 0) if state is not None else 0,
         "virtual_observations": int(state.virtual_observation_count or 0) if state is not None else 0,
         "split_recovery_remaining": split,
@@ -302,7 +309,7 @@ def install_final_personal_trade_stream(app: Any) -> None:
                 "win_rate": wins / (wins + losses) if wins + losses else 0.0,
                 "virtual_observations": len(virtual_trades),
                 "virtual_wins": int(aidr["virtual_wins"]),
-                "virtual_wins_required": VIRTUAL_WINS_REQUIRED,
+                "virtual_wins_required": int(aidr["virtual_wins_required"]),
                 "virtual_losses": int(aidr["virtual_losses"]),
                 "virtual_open": sum(row.get("outcome") == "OPEN" for row in virtual_trades),
                 "history_rows": len(trades),

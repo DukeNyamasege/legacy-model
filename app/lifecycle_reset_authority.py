@@ -7,6 +7,7 @@ from fastapi import HTTPException, Request
 from sqlalchemy import delete, or_, select
 
 import app.api as base_api
+from app.aidr_adaptive_virtual import adaptive_virtual_wins_required
 from app.ai_digit_recovery_v1 import VIRTUAL_WINS_REQUIRED
 from app.final_public_controls import (
     PAUSED_STATUSES,
@@ -308,7 +309,12 @@ def install_lifecycle_reset_authority(app: Any) -> None:
                 "recovery_debt": round(float(state.recovery_loss_debt or 0.0), 2) if state else 0.0,
                 "protection_mode": str(state.protection_mode or "NORMAL_MODE") if state else "NORMAL_MODE",
                 "virtual_wins": int(state.virtual_win_count or 0) if state else 0,
-                "virtual_wins_required": VIRTUAL_WINS_REQUIRED,
+                "virtual_wins_required": adaptive_virtual_wins_required(
+                    base_api.REPOSITORY,
+                    managed_id,
+                    default_wins=VIRTUAL_WINS_REQUIRED,
+                    recovery_debt=float(state.recovery_loss_debt or 0.0) if state else 0.0,
+                ),
                 "consecutive_losses": int(state.consecutive_losses or 0) if state else 0,
                 "history_preserved_on_stop": True,
             }

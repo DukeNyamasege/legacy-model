@@ -14,6 +14,12 @@ from app.ai_digit_recovery_v1 import (
     calculate_full_recovery_stake,
     remaining_recovery_debt,
 )
+from app.aidr_adaptive_virtual import (
+    adaptive_trap_state,
+    adaptive_virtual_wins_required,
+    record_post_virtual_recovery_loss,
+    reset_adaptive_trap,
+)
 from app.aidr_loss_continuation_fix import (
     FIRST_RECOVERY_ROLE,
     NORMAL_ROLE,
@@ -29,6 +35,52 @@ from app.strategy.decision_engine import parse_proposal_economics
 
 
 class AIDRRecoveryV2Tests(unittest.TestCase):
+    def test_adaptive_virtual_confirmation_starts_at_one_win(self) -> None:
+        repo = SimpleNamespace(values={})
+        repo.runtime_preference = lambda key: repo.values.get(key, "")
+        repo.set_runtime_preference = lambda key, value: repo.values.__setitem__(key, value)
+
+        self.assertEqual(
+            adaptive_virtual_wins_required(repo, 42, default_wins=1, recovery_debt=4.0),
+            1,
+        )
+        self.assertEqual(adaptive_trap_state(repo, 42)["trap_score"], 0)
+
+    def test_adaptive_virtual_confirmation_tightens_on_alternating_trap(self) -> None:
+        repo = SimpleNamespace(values={})
+        repo.runtime_preference = lambda key: repo.values.get(key, "")
+        repo.set_runtime_preference = lambda key, value: repo.values.__setitem__(key, value)
+
+        record_post_virtual_recovery_loss(repo, 42, debt=4.0)
+        self.assertEqual(
+            adaptive_virtual_wins_required(repo, 42, default_wins=1, recovery_debt=4.0),
+            2,
+        )
+        record_post_virtual_recovery_loss(repo, 42, debt=8.0)
+        self.assertEqual(
+            adaptive_virtual_wins_required(repo, 42, default_wins=1, recovery_debt=8.0),
+            3,
+        )
+        reset_adaptive_trap(repo, 42)
+        self.assertEqual(
+            adaptive_virtual_wins_required(repo, 42, default_wins=1, recovery_debt=4.0),
+            1,
+        )
+
+    def test_adaptive_virtual_confirmation_tightens_on_large_debt(self) -> None:
+        repo = SimpleNamespace(values={})
+        repo.runtime_preference = lambda key: repo.values.get(key, "")
+        repo.set_runtime_preference = lambda key, value: repo.values.__setitem__(key, value)
+
+        self.assertEqual(
+            adaptive_virtual_wins_required(repo, 42, default_wins=1, recovery_debt=8.0),
+            2,
+        )
+        self.assertEqual(
+            adaptive_virtual_wins_required(repo, 42, default_wins=1, recovery_debt=25.0),
+            3,
+        )
+
     def test_runtime_uses_canonical_strategy_contract(self) -> None:
         execution = AIDR_STRATEGY_CONTRACT["execution"]
         quality = AIDR_STRATEGY_CONTRACT["quality"]

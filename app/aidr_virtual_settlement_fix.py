@@ -6,6 +6,7 @@ from sqlalchemy import select
 
 import app.ai_digit_recovery_v1 as aidr
 from app.ai_digit_recovery_v1 import VIRTUAL_WINS_REQUIRED, _write_split_remaining
+from app.aidr_adaptive_virtual import adaptive_virtual_wins_required
 from app.models import AccountRiskState, ManagedAccount, VirtualTrade
 from app.repositories.rf_dir5_repository import NORMAL_MODE, REAL_RECOVERY_PENDING, VIRTUAL_WAITING_FOR_WIN
 
@@ -62,6 +63,7 @@ def _safe_settle_factory(original_settle: Callable[..., list[dict[str, Any]]]):
                 account = session.get(ManagedAccount, managed_id)
                 mode = state.protection_mode if state is not None else NORMAL_MODE
                 wins = int(state.virtual_win_count or 0) if state is not None else 0
+                debt = float(state.recovery_loss_debt or 0.0) if state is not None else 0.0
                 enabled = bool(account.enabled) if account is not None else False
                 status = (
                     str(account.execution_status or "inactive").strip().lower()
@@ -84,13 +86,19 @@ def _safe_settle_factory(original_settle: Callable[..., list[dict[str, Any]]]):
                         ),
                     )
             elif mode == VIRTUAL_WAITING_FOR_WIN:
+                required = adaptive_virtual_wins_required(
+                    self.base,
+                    managed_id,
+                    default_wins=VIRTUAL_WINS_REQUIRED,
+                    recovery_debt=debt,
+                )
                 if enabled and status not in {"stopped", "inactive", "disabled", "manual_pause"}:
                     self.base.set_managed_account_execution_status(
                         managed_id,
                         "virtual_protection",
                         (
                             f"Virtual OVER-4 confirmation active: consecutive wins "
-                            f"{wins}/{VIRTUAL_WINS_REQUIRED}."
+                            f"{wins}/{required}."
                         ),
                     )
         return settled

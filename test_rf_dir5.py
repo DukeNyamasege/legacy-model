@@ -18,6 +18,7 @@ from cryptography.fernet import Fernet
 from sqlalchemy import func, select
 
 from app.config import TelegramSettings, load_test2_config
+from app.aidr_adaptive_virtual import record_post_virtual_recovery_loss
 from app.aidr_strict_recovery_guard import reconcile_existing_virtual_confirmations
 from app.database import Database
 from app.deriv.http import deriv_headers
@@ -1675,6 +1676,72 @@ class RFRepositoryTests(unittest.TestCase):
         self.assertEqual(protection["mode"], "RECOVERY_PENDING")
         self.assertEqual(protection["virtual_wins"], 2)
 
+    def test_adaptive_trap_requires_extra_virtual_win_before_recovery(self) -> None:
+        account_id = self.create_managed_account("Alternating Trap")
+        for balance in (98.0, 96.0):
+            self.repository.record_account_outcome(
+                managed_account_id=account_id,
+                account_id_masked="DOT***422",
+                profit=-2.0,
+                current_balance=balance,
+                recovery_enabled=True,
+                recovery_trigger_losses=1,
+                virtual_protection_enabled=True,
+                virtual_trigger_actual_losses=2,
+            )
+        record_post_virtual_recovery_loss(self.base, account_id, debt=4.0)
+
+        first = signal("RISE", tick_sequence=760)
+        second = signal("RISE", tick_sequence=770)
+        self.repository.record_signal(first)
+        self.repository.record_signal(second)
+
+        self.repository.start_virtual_trade(
+            managed_account_id=account_id,
+            account_id_masked="DOT***422",
+            signal=first,
+            configured_stake=0.50,
+            simulated_stake=0.50,
+            expected_payout=0.90,
+        )
+        first_settled = self.repository.settle_due_virtual_trades(
+            symbol=first.symbol,
+            tick_sequence=first.tick_sequence + first.duration_ticks,
+            exit_quote=Decimal("101.00"),
+            exit_after_wins=1,
+        )
+        protection = self.repository.virtual_protection_for_account(
+            managed_account_id=account_id
+        )
+
+        self.assertEqual(first_settled[0]["result"], "VIRTUAL_WIN")
+        self.assertEqual(protection["mode"], "VIRTUAL_MODE")
+        self.assertEqual(protection["virtual_wins"], 1)
+        self.assertEqual(protection["virtual_wins_required"], 2)
+        self.assertTrue(protection["anti_trap_mode"])
+
+        self.repository.start_virtual_trade(
+            managed_account_id=account_id,
+            account_id_masked="DOT***422",
+            signal=second,
+            configured_stake=0.50,
+            simulated_stake=0.50,
+            expected_payout=0.90,
+        )
+        second_settled = self.repository.settle_due_virtual_trades(
+            symbol=second.symbol,
+            tick_sequence=second.tick_sequence + second.duration_ticks,
+            exit_quote=Decimal("101.00"),
+            exit_after_wins=1,
+        )
+        protection = self.repository.virtual_protection_for_account(
+            managed_account_id=account_id
+        )
+
+        self.assertEqual(second_settled[0]["result"], "VIRTUAL_WIN")
+        self.assertEqual(protection["mode"], "RECOVERY_PENDING")
+        self.assertEqual(protection["virtual_wins"], 2)
+
     def test_virtual_loss_resets_two_win_confirmation_sequence(self) -> None:
         account_id = self.create_managed_account("Consecutive confirmations")
         for balance in (98.0, 96.0):
@@ -1873,6 +1940,31 @@ class RFRepositoryTests(unittest.TestCase):
         self.repository.settle_due_virtual_trades(
             symbol=next_virtual.symbol,
             tick_sequence=next_virtual.tick_sequence + next_virtual.duration_ticks,
+            exit_quote=Decimal("101.00"),
+            exit_after_wins=1,
+        )
+        protection = self.repository.virtual_protection_for_account(
+            managed_account_id=account_id
+        )
+        self.assertEqual(
+            protection["mode"],
+            "VIRTUAL_MODE",
+        )
+        self.assertEqual(protection["virtual_wins_required"], 2)
+
+        second_virtual = signal("RISE", tick_sequence=880)
+        self.repository.record_signal(second_virtual)
+        self.repository.start_virtual_trade(
+            managed_account_id=account_id,
+            account_id_masked="DOT***422",
+            signal=second_virtual,
+            configured_stake=2.0,
+            simulated_stake=2.0,
+            expected_payout=3.6,
+        )
+        self.repository.settle_due_virtual_trades(
+            symbol=second_virtual.symbol,
+            tick_sequence=second_virtual.tick_sequence + second_virtual.duration_ticks,
             exit_quote=Decimal("101.00"),
             exit_after_wins=1,
         )

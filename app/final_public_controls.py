@@ -116,6 +116,7 @@ def _reset_risk_state(session, managed_account_id: int) -> None:
 def _clear_account_runtime_preferences(session, managed_account_id: int) -> int:
     prefixes = (
         f"aidr_split_remaining:{managed_account_id}",
+        f"aidr_adaptive_trap:{managed_account_id}",
         f"aidr_over1_over3_v1:account_epoch:{managed_account_id}",
         f"hybrid_over2_put_v4:account_epoch:{managed_account_id}",
         f"hybrid_o2u7_put_v1:account_epoch:{managed_account_id}",

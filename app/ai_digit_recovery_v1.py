@@ -13,6 +13,10 @@ from sqlalchemy import select
 
 import app.hybrid_digit_put as hybrid
 import app.hybrid_runtime_config as runtime
+from app.aidr_adaptive_virtual import (
+    adaptive_virtual_wins_required,
+    reset_adaptive_trap,
+)
 from app.models import AccountRiskState, utc_now
 from app.recovery import ceil_cents
 from app.repositories.rf_dir5_repository import (
@@ -515,6 +519,7 @@ def _record_account_outcome_aidr(
             state.recovery_pending_since = None
             _reset_virtual_counters(state)
             _clear_split_remaining(self.base, int(managed_account_id))
+            reset_adaptive_trap(self.base, int(managed_account_id))
 
         previous_mode = state.protection_mode
         was_recovery = bool(state.recovery_attempt_active or state.protection_mode == REAL_RECOVERY_PENDING)
@@ -560,6 +565,7 @@ def _record_account_outcome_aidr(
                 state.recovery_pending_since = None
                 _reset_virtual_counters(state)
                 _clear_split_remaining(self.base, int(managed_account_id))
+                reset_adaptive_trap(self.base, int(managed_account_id))
 
         state.equity_high_water = max(float(state.equity_high_water or 0.0), float(current_balance))
         state.updated_at = utc_now()
@@ -657,8 +663,15 @@ def _settle_virtual_aidr(original_settle):
                 managed_id = int(state.managed_account_id) if state is not None else None
                 mode = state.protection_mode if state is not None else NORMAL_MODE
                 wins = int(state.virtual_win_count or 0) if state is not None else 0
+                debt = float(state.recovery_loss_debt or 0.0) if state is not None else 0.0
             if managed_id is None:
                 continue
+            required = adaptive_virtual_wins_required(
+                self.base,
+                managed_id,
+                default_wins=VIRTUAL_WINS_REQUIRED,
+                recovery_debt=debt,
+            )
             if mode == REAL_RECOVERY_PENDING or str(protection.get("mode") or "") == "RECOVERY_PENDING":
                 _write_split_remaining(self.base, managed_id, 1)
                 self.base.set_managed_account_execution_status(
@@ -670,7 +683,7 @@ def _settle_virtual_aidr(original_settle):
                 self.base.set_managed_account_execution_status(
                     managed_id,
                     "virtual_protection",
-                    f"Virtual OVER-4 confirmation active: consecutive wins {wins}/{VIRTUAL_WINS_REQUIRED}.",
+                    f"Virtual OVER-4 confirmation active: consecutive wins {wins}/{required}.",
                 )
         return settled
     return wrapped
