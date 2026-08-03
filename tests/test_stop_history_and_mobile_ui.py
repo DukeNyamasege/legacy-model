@@ -98,6 +98,32 @@ class DashboardSessionAndReachabilityTests(unittest.TestCase):
         )
         self.assertIn('@app.head("/health/database"', database)
 
+    def test_health_readiness_uses_lightweight_worker_heartbeat(self) -> None:
+        repository = (ROOT / "app" / "repositories" / "test2_repository.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("def worker_heartbeat", repository)
+        self.assertIn("select(BotState.last_heartbeat)", repository)
+
+        api = (ROOT / "app" / "api.py").read_text(encoding="utf-8")
+        ready_block = api.split('def health_ready() -> dict:', 1)[1].split(
+            '@app.get("/status")', 1
+        )[0]
+        self.assertIn("REPOSITORY.worker_heartbeat()", ready_block)
+        self.assertNotIn("REPOSITORY.summary()", ready_block)
+
+    def test_vps_smoke_tracks_current_dashboard_and_keeps_healthy_api_available(self) -> None:
+        smoke = (ROOT / "scripts" / "production_smoke.py").read_text(encoding="utf-8")
+        self.assertIn("READINESS_PROBE_TIMEOUT_SECONDS = 30.0", smoke)
+        self.assertIn("/ui/dashboard-v2.js", smoke)
+        self.assertIn("foa-session-v2", smoke)
+        self.assertIn("window.FOA_BOOT_SESSION", smoke)
+        self.assertIn("mobile_input_zoom_guard", smoke)
+
+        deploy = (ROOT / "scripts" / "deploy_vps.sh").read_text(encoding="utf-8")
+        self.assertIn("API_DATABASE_HEALTHY=true", deploy)
+        self.assertIn("leaving it running to avoid a public 502", deploy)
+
 
 if __name__ == "__main__":
     unittest.main()

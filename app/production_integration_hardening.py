@@ -283,8 +283,7 @@ def install_production_integration_hardening(app: Any) -> None:
         )
         record("oauth", True, copy.deepcopy(oauth_configuration))
 
-        summary = base_api.REPOSITORY.summary()
-        heartbeat_text = str(summary.get("last_heartbeat") or "")
+        heartbeat_text = str(base_api.REPOSITORY.worker_heartbeat() or "")
         heartbeat_age: float | None = None
         if heartbeat_text:
             try:

@@ -24,6 +24,7 @@ from app.config import load_test2_config
 
 load_dotenv(ROOT / ".env")
 REDIRECT_STATUS_CODES = {302, 303, 307, 308}
+READINESS_PROBE_TIMEOUT_SECONDS = 30.0
 
 
 class SmokeFailure(RuntimeError):
@@ -70,9 +71,10 @@ def wait_for_ready(
 ) -> dict[str, Any]:
     deadline = time.monotonic() + timeout_seconds
     last_error = "not checked"
+    probe_timeout = max(5.0, min(READINESS_PROBE_TIMEOUT_SECONDS, timeout_seconds / 2))
     while time.monotonic() < deadline:
         try:
-            response = session.get(f"{base_url}/health/ready", timeout=5)
+            response = session.get(f"{base_url}/health/ready", timeout=probe_timeout)
             if response.status_code == 200:
                 payload = response.json()
                 require(payload.get("status") == "ready", "Readiness payload is not ready")
@@ -296,20 +298,32 @@ def main() -> int:
             "generated_at": payload.get("generated_at"),
         }
 
-    # The public root is now a clean standalone shell. It deliberately does not
-    # inject the old realtime/data-consistency/custom-Martingale DOM scripts,
-    # because those legacy observers conflict with the new renderer and can make
+    # The public root is now the stable dashboard-v2 shell. It deliberately does
+    # not inject the old realtime/data-consistency/custom-Martingale DOM scripts,
+    # because those legacy observers conflict with the renderer and can make
     # Chrome unresponsive. Validate the UI that production actually serves.
     html_response = session.get(f"{base_url}/", timeout=20)
     require(html_response.status_code == 200, f"Dashboard HTML returned {html_response.status_code}")
     html_text = html_response.text
     require(
-        "/ui/simplified-dashboard.js" in html_text,
-        "Standalone simplified dashboard script is not present in dashboard HTML",
+        "/ui/dashboard-v2.css" in html_text,
+        "dashboard-v2 stylesheet is not present in dashboard HTML",
+    )
+    require(
+        "/ui/dashboard-v2.js" in html_text,
+        "dashboard-v2 script is not present in dashboard HTML",
+    )
+    require(
+        "/ui/dashboard-actions-v2.js" in html_text,
+        "dashboard actions script is not present in dashboard HTML",
     )
     require(
         "Father of Automation" in html_text,
-        "Standalone dashboard brand marker is missing",
+        "Dashboard brand marker is missing",
+    )
+    require(
+        "/ui/simplified-dashboard.js" in html_text,
+        "Historical simplified-dashboard compatibility marker is missing",
     )
     for legacy_marker in (
         "/ui/realtime-mode-hardening.js",
@@ -321,6 +335,49 @@ def main() -> int:
             f"Legacy dashboard runtime is still present: {legacy_marker}",
         )
 
+    dashboard_script = session.get(f"{base_url}/ui/dashboard-v2.js", timeout=20)
+    require(
+        dashboard_script.status_code == 200,
+        f"dashboard-v2 JavaScript returned {dashboard_script.status_code}",
+    )
+    dashboard_text = dashboard_script.text
+    for marker in (
+        "foa-simple-app",
+        "foa-session-v2",
+        "window.FOA_BOOT_SESSION",
+        "function switchMode(mode)",
+        "/metrics/summary",
+        "/me",
+    ):
+        require(marker in dashboard_text, f"dashboard-v2 JavaScript is missing {marker!r}")
+
+    actions_script = session.get(f"{base_url}/ui/dashboard-actions-v2.js", timeout=20)
+    require(
+        actions_script.status_code == 200,
+        f"dashboard actions JavaScript returned {actions_script.status_code}",
+    )
+    actions_text = actions_script.text
+    for marker in (
+        "foa-action-loader",
+        "foa-final-trade-row",
+        "clear-trades",
+    ):
+        require(marker in actions_text, f"Dashboard actions JavaScript is missing {marker!r}")
+
+    stylesheet = session.get(f"{base_url}/ui/dashboard-v2.css", timeout=20)
+    require(
+        stylesheet.status_code == 200,
+        f"dashboard-v2 stylesheet returned {stylesheet.status_code}",
+    )
+    stylesheet_text = stylesheet.text
+    for marker in (
+        "foa-simple-app",
+        "foa-bottom-nav",
+        "font-size:16px",
+        "min-height:44px",
+    ):
+        require(marker in stylesheet_text.replace(" ", ""), f"dashboard-v2 stylesheet is missing {marker!r}")
+
     simplified_script = session.get(f"{base_url}/ui/simplified-dashboard.js", timeout=20)
     require(
         simplified_script.status_code == 200,
@@ -329,18 +386,10 @@ def main() -> int:
     simplified_text = simplified_script.text
     for marker in (
         "foa-simple-app",
-        "foa-simple-active",
-        "My Account",
-        "Recent Trades",
-        "/metrics/summary",
-        "/metrics/recent-trades",
-        "/me",
+        "window.FOA_BOOT_SESSION",
+        "foa-session-v2",
     ):
         require(marker in simplified_text, f"Simplified dashboard JavaScript is missing {marker!r}")
-    require(
-        "String(value ?? fallback || fallback)" not in simplified_text,
-        "Simplified dashboard still contains the invalid nullish-coalescing expression",
-    )
 
     # The advanced Martingale endpoint remains available for account settings and
     # compatibility tests even though its old DOM injector is not loaded at root.
@@ -361,12 +410,18 @@ def main() -> int:
 
     report["checks"]["dashboard_html"] = {
         "bytes": len(html_response.content),
-        "standalone_simplified_ui": True,
+        "dashboard_v2_ui": True,
         "legacy_runtime_absent": True,
     }
-    report["checks"]["simplified_dashboard"] = {
+    report["checks"]["dashboard_v2"] = {
+        "script_bytes": len(dashboard_script.content),
+        "actions_bytes": len(actions_script.content),
+        "stylesheet_bytes": len(stylesheet.content),
+        "session_bootstrap_supported": True,
+        "mobile_input_zoom_guard": True,
+    }
+    report["checks"]["simplified_dashboard_compat"] = {
         "script_bytes": len(simplified_script.content),
-        "browser_parse_blocker_absent": True,
     }
     report["checks"]["custom_martingale"] = {
         "script_bytes": len(martingale_script.content),

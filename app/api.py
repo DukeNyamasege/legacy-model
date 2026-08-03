@@ -1393,8 +1393,7 @@ def health() -> dict:
 def health_ready() -> dict:
     if not DATABASE.ping():
         raise HTTPException(status_code=503, detail="Database unavailable")
-    summary = REPOSITORY.summary()
-    heartbeat = summary.get("last_heartbeat")
+    heartbeat = REPOSITORY.worker_heartbeat()
     if not heartbeat:
         raise HTTPException(status_code=503, detail="Worker heartbeat unavailable")
     heartbeat_time = datetime.fromisoformat(heartbeat)

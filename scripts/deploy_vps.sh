@@ -9,6 +9,8 @@ PENDING_FROM_COMMIT_FILE="$STATE_DIR/pending_from_commit"
 BACKUP_DIR="$PROJECT_DIR/deploy-backups"
 DEPLOY_STARTED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 STACK_STOPPED=false
+API_DATABASE_HEALTHY=false
+WORKER_STABLY_RUNNING=false
 ACCOUNT_REENROLLMENT_STATUS="NOT REQUESTED"
 cd "$PROJECT_DIR"
 
@@ -24,10 +26,20 @@ fail() {
   echo "============================================================"
   echo "$reason"
 
-  # Never leave an API process claiming to be healthy while PostgreSQL or the
-  # worker is unavailable. The database volume is deliberately left untouched.
+  # Never leave an API process claiming to be healthy while PostgreSQL is
+  # unavailable. Once the replacement API has passed database health, keep it up
+  # on late smoke-test failures so Caddy does not publish a 502 outage.
   if [ "$STACK_STOPPED" = "true" ]; then
-    compose stop worker api >/dev/null 2>&1 || true
+    if [ "$API_DATABASE_HEALTHY" = "true" ]; then
+      echo "API passed database health before this failure; leaving it running to avoid a public 502."
+      if [ "$WORKER_STABLY_RUNNING" = "true" ]; then
+        echo "Worker passed startup checks before this failure; leaving it running."
+      else
+        compose stop worker >/dev/null 2>&1 || true
+      fi
+    else
+      compose stop worker api >/dev/null 2>&1 || true
+    fi
   fi
 
   compose ps || true
@@ -266,6 +278,7 @@ compose up -d --wait --wait-timeout 180 database api || fail "API/database did n
 if ! curl -fsS http://127.0.0.1:8080/health/database >/dev/null 2>&1; then
   fail "API database-health endpoint is unavailable."
 fi
+API_DATABASE_HEALTHY=true
 
 maybe_reset_account_enrollment || fail "Account re-enrollment reset failed."
 
@@ -283,6 +296,7 @@ WORKER_RESTARTING=$(docker inspect -f '{{.State.Restarting}}' "$WORKER_ID" 2>/de
 if [ "$WORKER_STATE" != "running" ] || [ "$WORKER_RESTARTING" != "false" ]; then
   fail "Worker is not stably running (state=$WORKER_STATE restarting=$WORKER_RESTARTING)."
 fi
+WORKER_STABLY_RUNNING=true
 
 echo ""
 echo "9. Run full backend, OAuth, provider, dashboard and WebSocket smoke tests"

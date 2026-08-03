@@ -1401,6 +1401,13 @@ class Test2Repository:
                 if connection_id:
                     state.current_connection_id = connection_id
 
+    def worker_heartbeat(self) -> str | None:
+        with self.database.session() as session:
+            heartbeat = session.scalar(
+                select(BotState.last_heartbeat).where(BotState.run_id == self.run_id)
+            )
+        return heartbeat.isoformat() if heartbeat else None
+
     def update_account_balance(
         self,
         *,
