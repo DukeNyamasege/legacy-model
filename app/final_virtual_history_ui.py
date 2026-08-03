@@ -11,7 +11,7 @@ from app.dashboard_loader_unlock import (
     _dashboard_script as loader_dashboard_script,
     _html as loader_html,
 )
-from app.dashboard_stability_fix import _remove_route, _stable_actions_js
+from app.dashboard_stability_fix import _remove_route
 
 _INSTALLED = False
 UI_VERSION = "20260803-1"
@@ -152,7 +152,16 @@ def _compat_script() -> str:
 
 
 def _actions_script() -> str:
-    return _versioned(_stable_actions_js())
+    """Serve the maintained dashboard-actions file from the final route.
+
+    The final dashboard authority used to serve an older generated fallback.
+    That made the release gate inspect the real route but receive a script
+    missing the current loader and mobile action handling.
+    """
+    source = (base_api.ROOT / "dashboard" / "dashboard-actions-v2.js").read_text(
+        encoding="utf-8"
+    )
+    return _versioned(source)
 
 
 def _headers() -> dict[str, str]:

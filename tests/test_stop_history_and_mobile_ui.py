@@ -124,6 +124,18 @@ class DashboardSessionAndReachabilityTests(unittest.TestCase):
         self.assertIn("API_DATABASE_HEALTHY=true", deploy)
         self.assertIn("leaving it running to avoid a public 502", deploy)
 
+    def test_final_dashboard_actions_route_uses_current_actions_source(self) -> None:
+        final_ui = (ROOT / "app" / "final_virtual_history_ui.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('base_api.ROOT / "dashboard" / "dashboard-actions-v2.js"', final_ui)
+
+        actions = (ROOT / "dashboard" / "dashboard-actions-v2.js").read_text(
+            encoding="utf-8"
+        )
+        for marker in ("foa-action-loader", "foa-final-trade-row", "clear-trades"):
+            self.assertIn(marker, actions)
+
     def test_vps_deploy_gates_release_before_live_cutover(self) -> None:
         deploy = (ROOT / "scripts" / "deploy_vps.sh").read_text(encoding="utf-8")
         main_flow = deploy.split('echo "2a. Verify System and Custom Martingale stake calculations"', 1)[1]
