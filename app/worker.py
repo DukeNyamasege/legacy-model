@@ -17,6 +17,7 @@ from app.aidr_strict_recovery_guard import (
     reconcile_existing_virtual_confirmations,
 )
 from app.aidr_virtual_settlement_fix import install_aidr_virtual_settlement_fix
+from app.aidr_virtual_soft_gate import install_aidr_virtual_soft_gate
 from app.custom_martingale import install_custom_martingale_worker
 from app.dashboard_actual_trade_fallback import install_dashboard_actual_trade_fallback
 from app.deployment_announcement import install_dynamic_deployment_announcement
@@ -85,6 +86,11 @@ async def run_worker() -> None:
     install_ai_digit_recovery_v1_strategy()
     install_aidr_execution_flow_fix()
     install_aidr_loss_continuation_fix()
+
+    # Virtual OVER-4 and its single post-virtual recovery use the ordinary 50%
+    # OVER-4 baseline tightened by only 5% (52.5%) with a small positive edge.
+    # Normal OVER-1 and first recovery OVER-3 keep their existing filters.
+    install_aidr_virtual_soft_gate()
 
     # Final recovery authority. It also makes Stop/Reset win every race against a
     # late actual or virtual settlement and never re-enables a disabled account.
