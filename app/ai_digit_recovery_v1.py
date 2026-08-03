@@ -71,7 +71,11 @@ def calculate_full_recovery_stake(
     base = ceil_cents(max(0.35, float(base_stake or 0.0)))
     debt = max(0.0, float(recovery_debt or 0.0))
     ratio = max(0.0001, float(proposal_profit_ratio or 0.0))
-    target_profit = ceil_cents(debt + RECOVERY_PROFIT_BUFFER)
+    # Match the shared recovery calculator: AIDR recovery wins must reset only
+    # after covering provider/markup payout variation, not just the ideal quote.
+    target_profit = ceil_cents(
+        debt + max(float(RECOVERY_PROFIT_BUFFER), 0.05, debt * 0.06)
+    )
     return ceil_cents(max(base, target_profit / ratio))
 
 

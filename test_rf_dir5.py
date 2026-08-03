@@ -1584,7 +1584,7 @@ class RFRepositoryTests(unittest.TestCase):
         self.assertEqual(protection["virtual_wins"], 1)
         self.assertAlmostEqual(protection["actual_recovery_debt"], 4.0)
         self.assertTrue(plan.is_recovery)
-        self.assertAlmostEqual(plan.required_recovery_stake, 8.0)
+        self.assertAlmostEqual(plan.required_recovery_stake, 8.48)
 
     def test_startup_promotes_existing_one_win_virtual_state(self) -> None:
         account_id = self.create_managed_account("Existing Virtual Win")
@@ -2057,7 +2057,7 @@ class RFRepositoryTests(unittest.TestCase):
             minimum_stake=0.50,
         )
         self.assertTrue(plan.is_recovery)
-        self.assertEqual(plan.stake, 2.50)
+        self.assertEqual(plan.stake, 2.65)
         self.assertTrue(self.repository.mark_recovery_attempt_started(account_id))
 
         settled = self.repository.record_account_outcome(
@@ -2098,7 +2098,7 @@ class RFRepositoryTests(unittest.TestCase):
         )
 
         self.assertTrue(plan.is_recovery)
-        self.assertEqual(plan.stake, 1.32)
+        self.assertEqual(plan.stake, 1.45)
         self.assertGreaterEqual(plan.stake * 0.38, settled["recovery_loss_debt"])
 
         self.assertTrue(self.repository.mark_recovery_attempt_started(account_id))
@@ -2148,7 +2148,7 @@ class RFRepositoryTests(unittest.TestCase):
             minimum_stake=0.50,
         )
         self.assertTrue(next_plan.is_recovery)
-        self.assertEqual(next_plan.stake, 8.75)
+        self.assertEqual(next_plan.stake, 9.28)
 
     def test_unaffordable_recovery_is_quarantined_without_erasing_debt(self) -> None:
         account_id = self.create_managed_account("Recovery fallback")
@@ -2213,7 +2213,7 @@ class RFRepositoryTests(unittest.TestCase):
             minimum_stake=0.50,
         )
         self.assertTrue(plan.is_recovery)
-        self.assertEqual(plan.stake, 79.38)
+        self.assertEqual(plan.stake, 84.14)
 
     def test_three_losses_never_disable_the_account(self) -> None:
         bot = object.__new__(RFDir5TradingBot)
@@ -3023,8 +3023,8 @@ class SharedRecoveryStakeTests(unittest.TestCase):
             pre_trade_profit_ratio=0.82,
             minimum_stake=0.50,
         )
-        self.assertEqual(calculation.requested_stake, 0.61)
-        self.assertEqual(calculation.required_recovery_stake, 0.61)
+        self.assertEqual(calculation.requested_stake, 0.68)
+        self.assertEqual(calculation.required_recovery_stake, 0.68)
 
     def test_recovery_safety_cap_preserves_pending_debt(self) -> None:
         calculation = calculate_recovery_stake(

@@ -24,6 +24,7 @@ from app.aidr_loss_continuation_fix import (
 from app.aidr_execution_flow_fix import _required_aidr_action
 from app.aidr_strict_recovery_guard import _debt_requires_virtual
 from app.final_personal_trade_stream import _virtual_rows_with_progress
+from app.recovery import calculate_recovery_stake
 from app.strategy.decision_engine import parse_proposal_economics
 
 
@@ -163,8 +164,8 @@ class AIDRRecoveryV2Tests(unittest.TestCase):
             recovery_debt=1.00,
             proposal_profit_ratio=0.50,
         )
-        self.assertEqual(stake, 2.02)
-        self.assertGreaterEqual(round(stake * 0.50, 2), 1.01)
+        self.assertEqual(stake, 2.12)
+        self.assertGreaterEqual(round(stake * 0.50, 2), 1.06)
 
     def test_full_recovery_stake_never_drops_below_base(self) -> None:
         self.assertEqual(
@@ -199,8 +200,20 @@ class AIDRRecoveryV2Tests(unittest.TestCase):
         )
 
         self.assertAlmostEqual(profit_ratio, 0.552)
-        self.assertEqual(stake, 0.66)
-        self.assertGreaterEqual(stake * profit_ratio, 0.36)
+        self.assertEqual(stake, 0.73)
+        self.assertGreaterEqual(stake * profit_ratio, 0.40)
+
+    def test_shared_recovery_stake_absorbs_market_payout_variation(self) -> None:
+        calculation = calculate_recovery_stake(
+            base_stake=2.00,
+            recovery_debt=5.65,
+            pre_trade_profit_ratio=0.862,
+            minimum_stake=2.00,
+        )
+
+        self.assertTrue(calculation.allowed)
+        self.assertEqual(calculation.requested_stake, 6.95)
+        self.assertGreaterEqual(round(calculation.requested_stake * 0.819, 2), 5.65)
 
     def test_settlement_never_erases_an_unrecovered_remainder(self) -> None:
         self.assertEqual(

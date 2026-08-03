@@ -26,6 +26,7 @@ def calculate_recovery_stake(
     spendable_balance: float | None = None,
     current_balance: float | None = None,
     maximum_recovery_balance_fraction: float = 0.10,
+    recovery_profit_buffer: float | None = None,
 ) -> RecoveryStakeCalculation:
     """Choose a cent-rounded stake using only information known before purchase."""
     base = ceil_cents(max(float(base_stake), float(minimum_stake)))
@@ -42,7 +43,16 @@ def calculate_recovery_stake(
         )
     if ratio <= 0:
         return RecoveryStakeCalculation(base, 0.0, None, False, "recovery economics unavailable; debt retained")
-    required = ceil_cents(debt / ratio)
+    # Real Deriv digit payouts vary by market and can be lower than the public
+    # proposal ratio after app markup/commission. Recovery targets must therefore
+    # include a small cushion; otherwise a "winning recovery" can leave a few
+    # cents of debt and correctly keep the account in virtual protection.
+    buffer = (
+        max(0.05, debt * 0.06)
+        if recovery_profit_buffer is None
+        else max(0.0, float(recovery_profit_buffer))
+    )
+    required = ceil_cents((debt + buffer) / ratio)
     requested = max(base, required)
     cap = None
     if spendable_balance is not None and current_balance is not None:

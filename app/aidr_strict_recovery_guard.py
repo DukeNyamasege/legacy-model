@@ -400,6 +400,66 @@ def install_aidr_strict_recovery_guard() -> None:
             or float(previous.get("debt") or 0.0) > 0.009
             or previous.get("mode") == REAL_RECOVERY_PENDING
         )
+        won_recovery = profit > 0 and previous.get("mode") != VIRTUAL_WAITING_FOR_WIN and (
+            previous.get("attempt_active")
+            or previous.get("pending")
+            or float(previous.get("debt") or 0.0) > 0.009
+            or previous.get("mode") == REAL_RECOVERY_PENDING
+            or int(previous.get("split_remaining") or 0) > 0
+        )
+        if won_recovery:
+            with self.database.session() as session:
+                state = session.get(AccountRiskState, managed_account_id, with_for_update=True)
+                if state is not None:
+                    debt = round(float(state.recovery_loss_debt or 0.0), 2)
+                    if debt <= 0.009:
+                        state.recovery_loss_debt = 0.0
+                        state.recovery_pending = False
+                        state.recovery_attempt_active = False
+                        state.consecutive_losses = 0
+                        state.protection_mode = "NORMAL_MODE"
+                        state.entered_virtual_mode_at = None
+                        state.recovery_pending_since = None
+                        state.virtual_observation_count = 0
+                        state.virtual_win_count = 0
+                        state.virtual_loss_count = 0
+                        state.current_virtual_loss_streak = 0
+                        state.updated_at = utc_now()
+                        _clear_split(self, managed_account_id)
+                        result.update(
+                            {
+                                "recovery_pending": False,
+                                "recovery_attempt_active": False,
+                                "protection_mode": "NORMAL_MODE",
+                                "raw_protection_state": "NORMAL_MODE",
+                                "protection_state_changed": previous.get("mode") != "NORMAL_MODE",
+                                "strict_recovery_guard": "recovery_win_reset_to_over1",
+                                "recovery_loss_debt": 0.0,
+                                "split_recovery_remaining": 0,
+                            }
+                        )
+                    else:
+                        _force_virtual_mode(
+                            self,
+                            state,
+                            reason=(
+                                f"AIDR recovery win left {debt:.2f} debt. Waiting for one "
+                                "virtual OVER-4 win before the next full-debt recovery."
+                            ),
+                        )
+                        result.update(
+                            {
+                                "recovery_pending": True,
+                                "recovery_attempt_active": False,
+                                "protection_mode": "VIRTUAL_MODE",
+                                "raw_protection_state": VIRTUAL_WAITING_FOR_WIN,
+                                "protection_state_changed": True,
+                                "strict_recovery_guard": "recovery_win_residual_to_virtual",
+                                "recovery_loss_debt": debt,
+                                "split_recovery_remaining": 0,
+                            }
+                        )
+
         if failed_recovery:
             with self.database.session() as session:
                 state = session.get(AccountRiskState, managed_account_id, with_for_update=True)
@@ -424,7 +484,7 @@ def install_aidr_strict_recovery_guard() -> None:
                             "split_recovery_remaining": 0,
                         }
                     )
-        else:
+        elif not won_recovery:
             raw_mode = str(result.get("raw_protection_state") or "")
             if lifecycle_after == "running":
                 if profit <= 0 and raw_mode == REAL_RECOVERY_PENDING:
