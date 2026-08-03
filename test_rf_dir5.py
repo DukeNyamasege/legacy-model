@@ -18,6 +18,7 @@ from cryptography.fernet import Fernet
 from sqlalchemy import func, select
 
 from app.config import TelegramSettings, load_test2_config
+from app.aidr_strict_recovery_guard import reconcile_existing_virtual_confirmations
 from app.database import Database
 from app.deriv.http import deriv_headers
 from app.model.bayesian_probability import BayesianGroupKey, KeyedBayesianProbability
@@ -1584,6 +1585,33 @@ class RFRepositoryTests(unittest.TestCase):
         self.assertAlmostEqual(protection["actual_recovery_debt"], 4.0)
         self.assertTrue(plan.is_recovery)
         self.assertAlmostEqual(plan.required_recovery_stake, 8.0)
+
+    def test_startup_promotes_existing_one_win_virtual_state(self) -> None:
+        account_id = self.create_managed_account("Existing Virtual Win")
+        for balance in (98.0, 96.0):
+            self.repository.record_account_outcome(
+                managed_account_id=account_id,
+                account_id_masked="DOT***422",
+                profit=-2.0,
+                current_balance=balance,
+                recovery_enabled=True,
+                recovery_trigger_losses=1,
+                virtual_protection_enabled=True,
+                virtual_trigger_actual_losses=2,
+            )
+        with self.database.session() as session:
+            state = session.get(AccountRiskState, account_id, with_for_update=True)
+            self.assertIsNotNone(state)
+            state.virtual_win_count = 1
+
+        promoted = reconcile_existing_virtual_confirmations(self.repository)
+        protection = self.repository.virtual_protection_for_account(
+            managed_account_id=account_id
+        )
+
+        self.assertEqual(promoted, 1)
+        self.assertEqual(protection["mode"], "RECOVERY_PENDING")
+        self.assertAlmostEqual(protection["actual_recovery_debt"], 4.0)
 
     def test_exit_after_wins_can_require_multiple_virtual_wins(self) -> None:
         account_id = self.create_managed_account("Virtual Confirmations")

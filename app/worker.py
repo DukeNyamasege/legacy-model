@@ -11,7 +11,10 @@ from app.account_reenrollment import install_account_reenrollment
 from app.ai_digit_recovery_v1 import install_ai_digit_recovery_v1_strategy
 from app.aidr_execution_flow_fix import install_aidr_execution_flow_fix
 from app.aidr_loss_continuation_fix import install_aidr_loss_continuation_fix
-from app.aidr_strict_recovery_guard import install_aidr_strict_recovery_guard
+from app.aidr_strict_recovery_guard import (
+    install_aidr_strict_recovery_guard,
+    reconcile_existing_virtual_confirmations,
+)
 from app.aidr_virtual_settlement_fix import install_aidr_virtual_settlement_fix
 from app.custom_martingale import install_custom_martingale_worker
 from app.dashboard_actual_trade_fallback import install_dashboard_actual_trade_fallback
@@ -89,6 +92,12 @@ async def run_worker() -> None:
     install_every_tick_debug_logging()
 
     bot = RFDir5TradingBot()
+    promoted = reconcile_existing_virtual_confirmations(bot.rf_repository)
+    if promoted:
+        bot.logger.warning(
+            "AIDR_EXISTING_VIRTUAL_WINS_PROMOTED accounts=%s required_wins=1",
+            promoted,
+        )
     loop = asyncio.get_running_loop()
 
     def stop() -> None:

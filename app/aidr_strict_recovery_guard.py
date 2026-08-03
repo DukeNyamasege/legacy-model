@@ -160,6 +160,53 @@ def _debt_requires_virtual(*, debt: float, consecutive_losses: int, split_remain
     return consecutive_losses >= 2
 
 
+def reconcile_existing_virtual_confirmations(repo: RFDir5Repository) -> int:
+    """Promote pre-deployment 1/2 states to the new one-win recovery rule."""
+
+    with repo.database.session() as session:
+        managed_ids = list(
+            session.scalars(
+                select(AccountRiskState.managed_account_id).where(
+                    AccountRiskState.protection_mode == VIRTUAL_WAITING_FOR_WIN,
+                    AccountRiskState.virtual_win_count >= VIRTUAL_WINS_REQUIRED,
+                    AccountRiskState.recovery_loss_debt >= 0.01,
+                )
+            ).all()
+        )
+    for managed_id in managed_ids:
+        # Writing the marker first is crash-safe: virtual mode still takes
+        # precedence until the state transition below commits.
+        _write_split_remaining(_runtime_base(repo), int(managed_id), 1)
+
+    promoted: list[int] = []
+    with repo.database.session() as session:
+        for managed_id in managed_ids:
+            state = session.get(AccountRiskState, int(managed_id), with_for_update=True)
+            if (
+                state is None
+                or state.protection_mode != VIRTUAL_WAITING_FOR_WIN
+                or int(state.virtual_win_count or 0) < VIRTUAL_WINS_REQUIRED
+                or float(state.recovery_loss_debt or 0.0) < 0.01
+            ):
+                continue
+            state.protection_mode = REAL_RECOVERY_PENDING
+            state.recovery_pending = True
+            state.recovery_pending_since = state.recovery_pending_since or utc_now()
+            state.updated_at = utc_now()
+            promoted.append(int(managed_id))
+
+    for managed_id in promoted:
+        lifecycle, _enabled, _status, _reason = _account_lifecycle(repo, managed_id)
+        if lifecycle == "running":
+            _set_account_active(
+                repo,
+                managed_id,
+                "recovery_pending",
+                "Existing virtual win accepted. One full-debt OVER-4 recovery is armed.",
+            )
+    return len(promoted)
+
+
 def install_aidr_strict_recovery_guard() -> None:
     """Hard-enforce one OVER-3 recovery and one post-virtual OVER-4 recovery.
 
