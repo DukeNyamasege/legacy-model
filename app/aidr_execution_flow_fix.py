@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from app.ai_digit_recovery_v1 import _read_split_remaining
 from app.repositories.rf_dir5_repository import NORMAL_MODE, RECOVERY_PENDING, VIRTUAL_MODE
 from app.rf_dir5_bot import RFDir5TradingBot
 from enhanced_bot import mask_account_id
@@ -22,11 +23,22 @@ def _is_aidr_digit_signal(signal: Any) -> bool:
     )
 
 
-def _is_virtual_recovery_signal(signal: Any) -> bool:
-    barrier = str(getattr(signal, "barrier", "") or "").strip()
-    trigger = str(getattr(signal, "trigger_name", "") or "").upper()
-    direction = str(getattr(signal, "direction", "") or "").upper()
-    return barrier == "4" or trigger == "AIDR-O4-V2" or direction == "OVER_4"
+def _required_aidr_action(
+    *,
+    mode: str,
+    split_remaining: int,
+    recovery_debt: float,
+) -> tuple[str, bool, str]:
+    """Return the only barrier and execution kind allowed by account state."""
+
+    normalized = str(mode or NORMAL_MODE)
+    if normalized == VIRTUAL_MODE:
+        return "4", True, "virtual_over4"
+    if normalized == RECOVERY_PENDING or float(recovery_debt or 0.0) > 0.009:
+        if int(split_remaining or 0) > 0:
+            return "4", False, "real_over4_full_recovery"
+        return "3", False, "real_over3_first_recovery"
+    return "1", False, "real_over1_normal"
 
 
 def _configured_stake(bot: RFDir5TradingBot, token: str, account_id: str, managed_id: int) -> float:
@@ -132,7 +144,8 @@ def install_aidr_execution_flow_fix() -> None:
         real_managed_ids: set[int] = set()
         virtual_opened: list[dict[str, Any]] = []
         virtual_waiting: set[str] = set()
-        virtual_recovery_signal = _is_virtual_recovery_signal(signal)
+        signal_barrier = str(getattr(signal, "barrier", "") or "").strip()
+        role_mismatches: set[str] = set()
 
         for token, account_id in eligible:
             managed_id = self._managed_account_id_for_token(token)
@@ -144,17 +157,26 @@ def install_aidr_execution_flow_fix() -> None:
                 account_id_masked=mask_account_id(account_id),
             )
             mode = str(protection.get("mode") or NORMAL_MODE)
-            if mode != VIRTUAL_MODE:
-                real_managed_ids.add(managed_id)
-                continue
-
             masked = mask_account_id(account_id)
-            if not virtual_recovery_signal:
-                virtual_waiting.add(masked)
-                self.logger.info(
-                    "AIDR_VIRTUAL_WAITING account=%s reason=requires_over4_signal",
+            expected_barrier, virtual_only, expected_action = _required_aidr_action(
+                mode=mode,
+                split_remaining=_read_split_remaining(repository.base, managed_id),
+                recovery_debt=float(protection.get("actual_recovery_debt") or 0.0),
+            )
+            if signal_barrier != expected_barrier:
+                role_mismatches.add(masked)
+                self.logger.warning(
+                    "AIDR_ROLE_MISMATCH_BLOCKED account=%s signal_barrier=%s "
+                    "required_barrier=%s required_action=%s mode=%s; retrying_with_correct_role=true",
                     masked,
+                    signal_barrier or "missing",
+                    expected_barrier,
+                    expected_action,
+                    mode,
                 )
+                continue
+            if not virtual_only:
+                real_managed_ids.add(managed_id)
                 continue
 
             configured_stake = _configured_stake(self, token, account_id, managed_id)
@@ -203,6 +225,21 @@ def install_aidr_execution_flow_fix() -> None:
             self.rf_last_purchase_monotonic = time.monotonic()
 
         if not real_managed_ids:
+            if role_mismatches and not virtual_opened and not virtual_waiting:
+                self.repository.mark_signal(
+                    signal.signal_id,
+                    status="SKIP_AIDR_ROLE_STATE_MISMATCH",
+                    expected_account_masks=sorted(role_mismatches),
+                    registered_account_masks=[],
+                )
+                self.rf_repository.set_signal_decision(
+                    signal.signal_id,
+                    "SKIP_AIDR_ROLE_STATE_MISMATCH",
+                    "ACCOUNT_STATE_CHANGED_BEFORE_PURCHASE",
+                    selected=False,
+                    validated_edge=getattr(signal, "validated_edge", None),
+                )
+                return
             _mark_virtual_signal(
                 self,
                 signal,

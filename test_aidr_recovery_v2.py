@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 import unittest
 from types import SimpleNamespace
 
@@ -19,7 +20,9 @@ from app.aidr_loss_continuation_fix import (
     _candidate_role,
     _selected_role,
 )
+from app.aidr_execution_flow_fix import _required_aidr_action
 from app.aidr_strict_recovery_guard import _debt_requires_virtual
+from app.final_personal_trade_stream import _virtual_rows_with_progress
 from app.strategy.decision_engine import parse_proposal_economics
 
 
@@ -42,6 +45,108 @@ class AIDRRecoveryV2Tests(unittest.TestCase):
         self.assertEqual(
             _candidate_role(SimpleNamespace(barrier="4", trigger_name="", direction="")),
             POST_VIRTUAL_ROLE,
+        )
+
+    def test_account_state_allows_only_its_exact_aidr_role(self) -> None:
+        self.assertEqual(
+            _required_aidr_action(
+                mode="NORMAL_MODE",
+                split_remaining=0,
+                recovery_debt=0.0,
+            ),
+            ("1", False, "real_over1_normal"),
+        )
+        self.assertEqual(
+            _required_aidr_action(
+                mode="RECOVERY_PENDING",
+                split_remaining=0,
+                recovery_debt=2.0,
+            ),
+            ("3", False, "real_over3_first_recovery"),
+        )
+        self.assertEqual(
+            _required_aidr_action(
+                mode="VIRTUAL_MODE",
+                split_remaining=0,
+                recovery_debt=5.0,
+            ),
+            ("4", True, "virtual_over4"),
+        )
+        self.assertEqual(
+            _required_aidr_action(
+                mode="RECOVERY_PENDING",
+                split_remaining=1,
+                recovery_debt=5.0,
+            ),
+            ("4", False, "real_over4_full_recovery"),
+        )
+        self.assertEqual(
+            _required_aidr_action(
+                mode="NORMAL_MODE",
+                split_remaining=0,
+                recovery_debt=0.35,
+            ),
+            ("3", False, "real_over3_first_recovery"),
+        )
+
+    def test_virtual_history_starts_a_new_sequence_after_each_two_wins(self) -> None:
+        start = datetime(2026, 8, 3, tzinfo=timezone.utc)
+        rows = [
+            SimpleNamespace(
+                id=index,
+                virtual_trade_id=f"virtual-{index}",
+                signal_id=f"signal-{index}",
+                market="R_25",
+                barrier="4",
+                simulated_stake=2.0,
+                expected_payout=3.0,
+                result="VIRTUAL_WIN",
+                reason="Hypothetical Outcome - No Purchase",
+                actual_last_digit=8,
+                exit_spot=100.0 + index,
+                created_at=start + timedelta(seconds=index),
+                settled_at=start + timedelta(seconds=index + 1),
+            )
+            for index in range(1, 5)
+        ]
+
+        payloads = _virtual_rows_with_progress(rows)
+
+        self.assertEqual(
+            [row["virtual_win_sequence"] for row in payloads],
+            [1, 2, 1, 2],
+        )
+        self.assertEqual(
+            [row["contract_type"].rsplit(" ", 1)[-1] for row in payloads],
+            ["1/2", "2/2", "1/2", "2/2"],
+        )
+
+    def test_virtual_history_uses_persisted_progress_snapshot(self) -> None:
+        start = datetime(2026, 8, 3, tzinfo=timezone.utc)
+        rows = [
+            SimpleNamespace(
+                id=index,
+                virtual_trade_id=f"stored-{index}",
+                signal_id=f"signal-{index}",
+                market="R_25",
+                barrier="4",
+                simulated_stake=2.0,
+                expected_payout=3.0,
+                result="VIRTUAL_WIN",
+                reason=f"Hypothetical Outcome - No Purchase | progress={progress}/2",
+                actual_last_digit=8,
+                exit_spot=100.0 + index,
+                created_at=start + timedelta(seconds=index),
+                settled_at=start + timedelta(seconds=index + 1),
+            )
+            for index, progress in enumerate((1, 2, 1), start=1)
+        ]
+
+        payloads = _virtual_rows_with_progress(rows)
+
+        self.assertEqual(
+            [row["virtual_win_sequence"] for row in payloads],
+            [1, 2, 1],
         )
 
     def test_full_recovery_stake_covers_debt_in_one_profit_target(self) -> None:

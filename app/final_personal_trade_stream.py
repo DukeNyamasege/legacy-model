@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import re
 from typing import Any
 
 from fastapi import Request
@@ -94,10 +95,19 @@ def _virtual_rows_with_progress(rows: list[VirtualTrade]) -> list[dict[str, Any]
     for row in ordered:
         outcome = _virtual_outcome(row.result)
         barrier = str(row.barrier or "3").strip() or "3"
+        stored_progress = re.search(r"progress=(\d+)/2", str(row.reason or ""))
         if outcome == "WIN":
-            streak = min(2, streak + 1)
+            streak = (
+                min(2, int(stored_progress.group(1)))
+                if stored_progress
+                else min(2, streak + 1)
+            )
             sequence = streak
             progress_text = f"WIN {streak}/2"
+            if streak >= 2:
+                # A 2/2 row arms one real OVER-4 recovery. Any later virtual
+                # row belongs to a new cycle after that real recovery lost.
+                streak = 0
         elif outcome == "LOSS":
             streak = 0
             sequence = 0

@@ -970,7 +970,6 @@ class RFDir5Repository:
                 trade.exit_tick_epoch = int(exit_epoch or 0)
                 trade.actual_last_digit = actual_exit_digit
                 trade.result = result
-                trade.reason = "Hypothetical Outcome - No Purchase"
                 trade.amount_charged = 0.0
                 trade.actual_profit_loss = 0.0
                 trade.actual_payout = 0.0
@@ -993,6 +992,10 @@ class RFDir5Repository:
                     state.virtual_win_count = 0
                     state.virtual_loss_count += 1
                     state.current_virtual_loss_streak += 1
+                trade.reason = (
+                    "Hypothetical Outcome - No Purchase | "
+                    f"progress={consecutive_virtual_wins if result == VIRTUAL_WIN else 0}/2"
+                )
                 if exit_virtual_mode:
                     state.protection_mode = REAL_RECOVERY_PENDING
                     state.recovery_pending = bool(state.recovery_loss_debt >= 0.01)
