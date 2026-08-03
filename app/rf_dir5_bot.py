@@ -216,7 +216,7 @@ class RFDir5TradingBot(TradingBot):
         text = "\n".join(
             (
                 "Model update: Virtual loss protection is live.",
-                "After 2 actual losses, affected accounts switch to $0 virtual checks until 2 consecutive virtual wins.",
+                "After 2 actual losses, affected accounts switch to $0 virtual checks until one virtual win.",
                 "Then the next qualifying entry resumes real/demo recovery trading.",
                 "Test our model: https://derivadmin.site/",
                 "Join other traders and let's train the future.",
@@ -239,7 +239,7 @@ class RFDir5TradingBot(TradingBot):
                 "What's new in this update:",
                 "• Custom stake amount — set any stake (min $0.35)",
                 "• Recovery (Martingale) toggle — turn off for flat staking",
-                "• Virtual protection now requires 2 consecutive virtual wins",
+                "• Virtual protection now requires one virtual win",
                 "• Continue / Start Again buttons when resuming after a stop",
                 "• Deep-blue dashboard redesign with mobile-friendly layout",
                 "",
@@ -746,7 +746,7 @@ class RFDir5TradingBot(TradingBot):
                 exit_quote=quote,
                 exit_epoch=epoch,
                 exit_digit=display_last_digit,
-                exit_after_wins=getattr(virtual_config, "exit_after_wins", 2),
+                exit_after_wins=getattr(virtual_config, "exit_after_wins", 1),
                 max_observations=getattr(virtual_config, "max_observations", 0),
             )
             or []

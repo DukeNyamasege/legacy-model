@@ -176,8 +176,8 @@ install_head_request_compat(app)
 
 # FINAL API AUTHORITIES. Nothing installed below these may replace their routes:
 # Pause preserves state; Stop/Reset clears all AIDR state and leaves execution
-# stopped; the trade stream combines actual contracts and visible virtual 1/2,
-# 2/2 progress for the exact managed-account row.
+# stopped; the trade stream combines actual contracts and visible virtual-win
+# progress for the exact managed-account row.
 install_lifecycle_reset_authority(app)
 install_final_personal_trade_stream(app)
 

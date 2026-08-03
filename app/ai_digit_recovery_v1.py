@@ -660,7 +660,7 @@ def _settle_virtual_aidr(original_settle):
                 self.base.set_managed_account_execution_status(
                     managed_id,
                     "recovery_pending",
-                    "2 consecutive virtual OVER-4 wins confirmed. Next real OVER-4 recovery targets the full debt once.",
+                    "One virtual OVER-4 win confirmed recovery. Next real OVER-4 recovery targets the full debt once.",
                 )
             elif mode == VIRTUAL_WAITING_FOR_WIN:
                 self.base.set_managed_account_execution_status(

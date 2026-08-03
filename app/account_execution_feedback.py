@@ -331,7 +331,7 @@ def install_account_execution_feedback() -> None:
                 "virtual_protection",
                 (
                     "2 actual losses triggered protection. Real contracts are being skipped "
-                    "until 2 consecutive virtual wins confirm recovery."
+                    "until one virtual win confirms recovery."
                 ),
             )
         return opened
@@ -358,14 +358,14 @@ def install_account_execution_feedback() -> None:
             result = str(item.get("result") or "").replace("_", " ").lower()
             if mode == RECOVERY_PENDING:
                 reason = (
-                    "2 consecutive virtual wins confirmed recovery. The next real entry is armed; "
+                    "One virtual win confirmed recovery. The next real entry is armed; "
                     "small-account protection will replace any oversized recovery stake with your base stake."
                 )
                 status = "recovery_pending"
             elif mode == VIRTUAL_MODE:
                 reason = (
                     f"Virtual protection active: latest observation {result}; "
-                    f"consecutive virtual wins {virtual_wins}/2. Real contracts remain skipped."
+                    f"virtual wins {virtual_wins}/1. Real contracts remain skipped."
                 )
                 status = "virtual_protection"
             else:

@@ -6,6 +6,7 @@ from sqlalchemy import select
 
 from app.ai_digit_recovery_v1 import (
     REAL_RECOVERY_PENDING,
+    VIRTUAL_WINS_REQUIRED,
     VIRTUAL_WAITING_FOR_WIN,
     _read_split_remaining,
     _write_split_remaining,
@@ -165,7 +166,7 @@ def install_aidr_strict_recovery_guard() -> None:
     Lifecycle:
       normal OVER 1 loss
       -> one real OVER 3 exact-debt recovery
-      -> if it loses, virtual OVER 4 until 2 consecutive virtual wins
+      -> if it loses, virtual OVER 4 until 1 virtual win
       -> one real OVER 4 trade targeting the entire accumulated debt
       -> an OVER-4 recovery loss returns immediately to virtual mode.
 
@@ -217,7 +218,8 @@ def install_aidr_strict_recovery_guard() -> None:
                         self,
                         managed_account_id,
                         "virtual_protection",
-                        f"Virtual OVER-4 confirmation active: {int(state.virtual_win_count or 0)}/2 consecutive wins.",
+                        f"Virtual OVER-4 confirmation active: {int(state.virtual_win_count or 0)}/"
+                        f"{VIRTUAL_WINS_REQUIRED} wins.",
                     )
                     return StakePlan(
                         None,
@@ -235,7 +237,7 @@ def install_aidr_strict_recovery_guard() -> None:
                         state,
                         reason=(
                             "Strict AIDR guard detected a failed recovery. Real contracts are blocked "
-                            "until 2 consecutive virtual OVER-4 wins."
+                            "until one virtual OVER-4 win."
                         ),
                     )
                     return StakePlan(
@@ -359,7 +361,7 @@ def install_aidr_strict_recovery_guard() -> None:
                         self,
                         state,
                         reason=(
-                            "AIDR recovery loss recorded. Waiting for 2 consecutive virtual OVER-4 wins "
+                            "AIDR recovery loss recorded. Waiting for one virtual OVER-4 win "
                             "before one full-debt OVER-4 recovery."
                         ),
                     )
@@ -477,7 +479,7 @@ def install_aidr_strict_recovery_guard() -> None:
                         self,
                         managed_id,
                         "recovery_pending",
-                        "2 consecutive virtual OVER-4 wins confirmed. One full-debt OVER-4 recovery is armed.",
+                        "One virtual OVER-4 win confirmed. One full-debt OVER-4 recovery is armed.",
                     )
                 item.setdefault("protection", {})["split_recovery_remaining"] = 1
             elif mode == VIRTUAL_WAITING_FOR_WIN and not paused:
@@ -485,7 +487,7 @@ def install_aidr_strict_recovery_guard() -> None:
                     self,
                     managed_id,
                     "virtual_protection",
-                    f"Virtual OVER-4 confirmation active: {wins}/2 consecutive wins.",
+                    f"Virtual OVER-4 confirmation active: {wins}/{VIRTUAL_WINS_REQUIRED} wins.",
                 )
 
             if paused:

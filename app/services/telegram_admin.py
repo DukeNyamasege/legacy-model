@@ -425,7 +425,7 @@ class TelegramAdminController:
             p = item["protection"]
             lines.append(
                 f"{item['masked']} — {p.get('mode')} | debt {float(p.get('debt') or 0):.2f} USD | "
-                f"losses {int(p.get('consecutive_losses') or 0)} | virtual wins {int(p.get('virtual_wins') or 0)}/2"
+                f"losses {int(p.get('consecutive_losses') or 0)} | virtual wins {int(p.get('virtual_wins') or 0)}/1"
             )
         return "\n".join(lines)
 

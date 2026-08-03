@@ -75,7 +75,7 @@ async def run_worker() -> None:
     # Active public-release strategy:
     # NORMAL   -> DIGITOVER 1
     # RECOVERY -> one DIGITOVER 3 trade targeting the first loss
-    # VIRTUAL  -> virtual DIGITOVER 4 until 2 consecutive wins
+    # VIRTUAL  -> virtual DIGITOVER 4 until 1 win
     # FULL     -> one real DIGITOVER 4 trade targeting all accumulated debt
     install_ai_digit_recovery_v1_strategy()
     install_aidr_execution_flow_fix()

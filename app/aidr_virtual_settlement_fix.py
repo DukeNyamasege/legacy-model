@@ -79,7 +79,7 @@ def _safe_settle_factory(original_settle: Callable[..., list[dict[str, Any]]]):
                         managed_id,
                         "recovery_pending",
                         (
-                            "2 consecutive virtual OVER-4 wins confirmed. Next real OVER-4 "
+                            "One virtual OVER-4 win confirmed recovery. Next real OVER-4 "
                             "recovery targets the full debt once."
                         ),
                     )

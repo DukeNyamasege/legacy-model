@@ -8,6 +8,7 @@ from fastapi import Request
 from sqlalchemy import or_, select
 
 import app.api as base_api
+from app.ai_digit_recovery_v1 import VIRTUAL_WINS_REQUIRED
 from app.final_public_controls import (
     _current_account_payload,
     _remove_route,
@@ -77,7 +78,7 @@ def _split_remaining(managed_account_id: int) -> int:
 
 
 def _virtual_rows_with_progress(rows: list[VirtualTrade]) -> list[dict[str, Any]]:
-    """Return today's retained virtual history labelled as 0/2, 1/2 and 2/2.
+    """Return retained virtual history with each row's original requirement.
 
     Stop and fresh Start reset the live recovery state but never remove older rows
     from the dashboard. Only the explicit Clear Today / Clear All action deletes
@@ -95,29 +96,36 @@ def _virtual_rows_with_progress(rows: list[VirtualTrade]) -> list[dict[str, Any]
     for row in ordered:
         outcome = _virtual_outcome(row.result)
         barrier = str(row.barrier or "3").strip() or "3"
-        stored_progress = re.search(r"progress=(\d+)/2", str(row.reason or ""))
+        stored_progress = re.search(r"progress=(\d+)/(\d+)", str(row.reason or ""))
+        row_required = (
+            max(1, int(stored_progress.group(2)))
+            if stored_progress
+            else VIRTUAL_WINS_REQUIRED
+            if outcome in {"OPEN", "CANCELLED"}
+            else 2
+        )
         if outcome == "WIN":
             streak = (
-                min(2, int(stored_progress.group(1)))
+                min(row_required, int(stored_progress.group(1)))
                 if stored_progress
-                else min(2, streak + 1)
+                else min(row_required, streak + 1)
             )
             sequence = streak
-            progress_text = f"WIN {streak}/2"
-            if streak >= 2:
-                # A 2/2 row arms one real OVER-4 recovery. Any later virtual
+            progress_text = f"WIN {streak}/{row_required}"
+            if streak >= row_required:
+                # A completed row arms one real OVER-4 recovery. Any later virtual
                 # row belongs to a new cycle after that real recovery lost.
                 streak = 0
         elif outcome == "LOSS":
             streak = 0
             sequence = 0
-            progress_text = "LOSS · STREAK 0/2"
+            progress_text = f"LOSS · STREAK 0/{row_required}"
         elif outcome == "CANCELLED":
             sequence = streak
             progress_text = "CANCELLED"
         else:
             sequence = streak
-            progress_text = f"PENDING · {streak}/2"
+            progress_text = f"PENDING · {streak}/{row_required}"
 
         payloads.append(
             {
@@ -146,7 +154,7 @@ def _virtual_rows_with_progress(rows: list[VirtualTrade]) -> list[dict[str, Any]
                 "virtual_result": str(row.result or "OPEN"),
                 "display_result": f"VIRTUAL {progress_text}",
                 "virtual_win_sequence": sequence,
-                "virtual_wins_required": 2,
+                "virtual_wins_required": row_required,
                 "history_retained": True,
                 "exit_digit": row.actual_last_digit,
                 "actual_last_digit": row.actual_last_digit,
@@ -169,7 +177,7 @@ def _aidr_summary(state: AccountRiskState | None, managed_account_id: int) -> di
     split = _split_remaining(managed_account_id)
     if raw_mode == VIRTUAL_WAITING_FOR_WIN:
         mode = "virtual"
-        next_action = f"Virtual OVER-4 confirmation: {wins}/2 consecutive wins."
+        next_action = f"Virtual OVER-4 confirmation: {wins}/{VIRTUAL_WINS_REQUIRED} wins."
     elif raw_mode == REAL_RECOVERY_PENDING and split > 0:
         mode = "full_recovery"
         next_action = "One real OVER-4 trade will target the full recovery debt."
@@ -185,7 +193,7 @@ def _aidr_summary(state: AccountRiskState | None, managed_account_id: int) -> di
         "recovery_debt": debt,
         "consecutive_losses": int(state.consecutive_losses or 0) if state is not None else 0,
         "virtual_wins": wins,
-        "virtual_wins_required": 2,
+        "virtual_wins_required": VIRTUAL_WINS_REQUIRED,
         "virtual_losses": int(state.virtual_loss_count or 0) if state is not None else 0,
         "virtual_observations": int(state.virtual_observation_count or 0) if state is not None else 0,
         "split_recovery_remaining": split,
@@ -294,7 +302,7 @@ def install_final_personal_trade_stream(app: Any) -> None:
                 "win_rate": wins / (wins + losses) if wins + losses else 0.0,
                 "virtual_observations": len(virtual_trades),
                 "virtual_wins": int(aidr["virtual_wins"]),
-                "virtual_wins_required": 2,
+                "virtual_wins_required": VIRTUAL_WINS_REQUIRED,
                 "virtual_losses": int(aidr["virtual_losses"]),
                 "virtual_open": sum(row.get("outcome") == "OPEN" for row in virtual_trades),
                 "history_rows": len(trades),

@@ -269,7 +269,7 @@ def install_stake_only_balance_policy() -> None:
                 managed_id,
                 "recovery_pending",
                 (
-                    "2 consecutive virtual wins confirmed recovery. The next real "
+                    "One virtual win confirmed recovery. The next real "
                     "entry is armed without a reserved-balance requirement; Deriv "
                     "will return the provider error if the current balance cannot "
                     "cover the requested stake."

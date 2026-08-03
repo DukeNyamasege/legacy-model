@@ -9,6 +9,7 @@ from app.ai_digit_recovery_v1 import (
     MIN_LIVE_EDGE,
     POST_VIRTUAL_BARRIER,
     RECOVERY_BARRIER,
+    VIRTUAL_WINS_REQUIRED,
     _read_split_remaining,
     calculate_full_recovery_stake,
     remaining_recovery_debt,
@@ -32,6 +33,8 @@ class AIDRRecoveryV2Tests(unittest.TestCase):
         quality = AIDR_STRATEGY_CONTRACT["quality"]
         self.assertEqual(RECOVERY_BARRIER, execution["first_recovery_barrier"])
         self.assertEqual(POST_VIRTUAL_BARRIER, execution["post_virtual_recovery_barrier"])
+        self.assertEqual(VIRTUAL_WINS_REQUIRED, 1)
+        self.assertEqual(execution["virtual_confirmation_wins"], 1)
         self.assertEqual(MIN_LIVE_EDGE, 0.0195)
         self.assertEqual(quality["quality_tightening_factor"], 1.3)
 
@@ -89,7 +92,7 @@ class AIDRRecoveryV2Tests(unittest.TestCase):
             ("3", False, "real_over3_first_recovery"),
         )
 
-    def test_virtual_history_starts_a_new_sequence_after_each_two_wins(self) -> None:
+    def test_virtual_history_preserves_legacy_two_win_sequences(self) -> None:
         start = datetime(2026, 8, 3, tzinfo=timezone.utc)
         rows = [
             SimpleNamespace(
@@ -121,7 +124,7 @@ class AIDRRecoveryV2Tests(unittest.TestCase):
             ["1/2", "2/2", "1/2", "2/2"],
         )
 
-    def test_virtual_history_uses_persisted_progress_snapshot(self) -> None:
+    def test_virtual_history_uses_one_win_persisted_progress_snapshot(self) -> None:
         start = datetime(2026, 8, 3, tzinfo=timezone.utc)
         rows = [
             SimpleNamespace(
@@ -133,21 +136,26 @@ class AIDRRecoveryV2Tests(unittest.TestCase):
                 simulated_stake=2.0,
                 expected_payout=3.0,
                 result="VIRTUAL_WIN",
-                reason=f"Hypothetical Outcome - No Purchase | progress={progress}/2",
+                reason="Hypothetical Outcome - No Purchase | progress=1/1",
                 actual_last_digit=8,
                 exit_spot=100.0 + index,
                 created_at=start + timedelta(seconds=index),
                 settled_at=start + timedelta(seconds=index + 1),
             )
-            for index, progress in enumerate((1, 2, 1), start=1)
+            for index in range(1, 4)
         ]
 
         payloads = _virtual_rows_with_progress(rows)
 
         self.assertEqual(
             [row["virtual_win_sequence"] for row in payloads],
-            [1, 2, 1],
+            [1, 1, 1],
         )
+        self.assertEqual(
+            [row["contract_type"].rsplit(" ", 1)[-1] for row in payloads],
+            ["1/1", "1/1", "1/1"],
+        )
+        self.assertTrue(all(row["virtual_wins_required"] == 1 for row in payloads))
 
     def test_full_recovery_stake_covers_debt_in_one_profit_target(self) -> None:
         stake = calculate_full_recovery_stake(

@@ -270,7 +270,13 @@ class RiseFallContractTests(unittest.TestCase):
         # AIDR arms its first exact OVER-3 recovery after one purchased loss.
         self.assertEqual(config.risk.recovery_trigger_losses, 1)
         self.assertEqual(config.risk.maximum_recovery_balance_fraction, 0.10)
-        self.assertEqual(config.virtual_protection.exit_after_wins, 2)
+        self.assertEqual(config.virtual_protection.exit_after_wins, 1)
+
+    def test_stale_vps_env_cannot_restore_two_win_virtual_exit(self) -> None:
+        with patch.dict("os.environ", {"VIRTUAL_EXIT_AFTER_WINS": "2"}):
+            config = load_test2_config(Path(__file__).with_name("config.yaml"))
+
+        self.assertEqual(config.virtual_protection.exit_after_wins, 1)
 
     def test_proposal_values_accept_strings_numbers_and_missing_commission(self) -> None:
         economics = parse_proposal_economics(
@@ -1554,28 +1560,7 @@ class RFRepositoryTests(unittest.TestCase):
             symbol=item.symbol,
             tick_sequence=item.tick_sequence + item.duration_ticks,
             exit_quote=Decimal("101.00"),
-            exit_after_wins=2,
-        )
-        protection = self.repository.virtual_protection_for_account(
-            managed_account_id=account_id
-        )
-        self.assertEqual(protection["mode"], "VIRTUAL_MODE")
-        self.assertEqual(protection["virtual_wins"], 1)
-        second = signal("RISE", tick_sequence=710)
-        self.repository.record_signal(second)
-        self.repository.start_virtual_trade(
-            managed_account_id=account_id,
-            account_id_masked="DOT***422",
-            signal=second,
-            configured_stake=2.0,
-            simulated_stake=2.0,
-            expected_payout=3.6,
-        )
-        second_settled = self.repository.settle_due_virtual_trades(
-            symbol=second.symbol,
-            tick_sequence=second.tick_sequence + second.duration_ticks,
-            exit_quote=Decimal("101.00"),
-            exit_after_wins=2,
+            exit_after_wins=1,
         )
         protection = self.repository.virtual_protection_for_account(
             managed_account_id=account_id
@@ -1593,9 +1578,9 @@ class RFRepositoryTests(unittest.TestCase):
             minimum_balance_reserve=0.50,
         )
 
-        self.assertEqual(second_settled[0]["result"], "VIRTUAL_WIN")
+        self.assertEqual(settled[0]["result"], "VIRTUAL_WIN")
         self.assertEqual(protection["mode"], "RECOVERY_PENDING")
-        self.assertEqual(protection["virtual_wins"], 2)
+        self.assertEqual(protection["virtual_wins"], 1)
         self.assertAlmostEqual(protection["actual_recovery_debt"], 4.0)
         self.assertTrue(plan.is_recovery)
         self.assertAlmostEqual(plan.required_recovery_stake, 8.0)
@@ -1630,8 +1615,7 @@ class RFRepositoryTests(unittest.TestCase):
             symbol=first.symbol,
             tick_sequence=first.tick_sequence + first.duration_ticks,
             exit_quote=Decimal("101.00"),
-            # Even a stale/unsafe caller setting cannot weaken the exact rule.
-            exit_after_wins=1,
+            exit_after_wins=2,
         )
         self.assertEqual(first_settled[0]["result"], "VIRTUAL_WIN")
         self.assertEqual(
@@ -1825,23 +1809,7 @@ class RFRepositoryTests(unittest.TestCase):
             symbol=item.symbol,
             tick_sequence=item.tick_sequence + item.duration_ticks,
             exit_quote=Decimal("101.00"),
-            exit_after_wins=2,
-        )
-        second = signal("RISE", tick_sequence=860)
-        self.repository.record_signal(second)
-        self.repository.start_virtual_trade(
-            managed_account_id=account_id,
-            account_id_masked="DOT***422",
-            signal=second,
-            configured_stake=2.0,
-            simulated_stake=2.0,
-            expected_payout=3.6,
-        )
-        self.repository.settle_due_virtual_trades(
-            symbol=second.symbol,
-            tick_sequence=second.tick_sequence + second.duration_ticks,
-            exit_quote=Decimal("101.00"),
-            exit_after_wins=2,
+            exit_after_wins=1,
         )
         self.assertEqual(
             self.repository.virtual_protection_for_account(
@@ -1864,6 +1832,29 @@ class RFRepositoryTests(unittest.TestCase):
         self.assertEqual(loss["protection_mode"], "VIRTUAL_MODE")
         self.assertAlmostEqual(loss["recovery_loss_debt"], 12.0)
 
+        next_virtual = signal("RISE", tick_sequence=870)
+        self.repository.record_signal(next_virtual)
+        self.repository.start_virtual_trade(
+            managed_account_id=account_id,
+            account_id_masked="DOT***422",
+            signal=next_virtual,
+            configured_stake=2.0,
+            simulated_stake=2.0,
+            expected_payout=3.6,
+        )
+        self.repository.settle_due_virtual_trades(
+            symbol=next_virtual.symbol,
+            tick_sequence=next_virtual.tick_sequence + next_virtual.duration_ticks,
+            exit_quote=Decimal("101.00"),
+            exit_after_wins=1,
+        )
+        self.assertEqual(
+            self.repository.virtual_protection_for_account(
+                managed_account_id=account_id
+            )["mode"],
+            "RECOVERY_PENDING",
+        )
+        self.repository.mark_recovery_attempt_started(account_id)
         win = self.repository.record_account_outcome(
             managed_account_id=account_id,
             account_id_masked="DOT***422",
@@ -1874,7 +1865,7 @@ class RFRepositoryTests(unittest.TestCase):
             virtual_protection_enabled=True,
             virtual_trigger_actual_losses=2,
         )
-        self.assertEqual(win["protection_mode"], "VIRTUAL_MODE")
+        self.assertEqual(win["protection_mode"], "NORMAL_MODE")
         self.assertEqual(win["consecutive_losses"], 0)
         self.assertAlmostEqual(win["recovery_loss_debt"], 0.0)
 

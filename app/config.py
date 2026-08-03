@@ -268,10 +268,9 @@ class RiskSettings(StrictModel):
 class VirtualProtectionSettings(StrictModel):
     enabled: bool = True
     # These are safety invariants, not tuning parameters.  Allowing a stale VPS
-    # environment variable to change either value can purchase a recovery after
-    # only one (or after non-consecutive) virtual win.
+    # environment variable to change either value would alter the AIDR lifecycle.
     trigger_actual_losses: Literal[2] = 2
-    exit_after_wins: Literal[2] = 2
+    exit_after_wins: Literal[1] = 1
     max_observations: int = Field(default=0, ge=0)
     scope: Literal["PER_ACCOUNT", "EXECUTION_GROUP"] = "PER_ACCOUNT"
 
@@ -444,10 +443,8 @@ def load_test2_config(path: str | Path = "config.yaml") -> Test2Config:
         raw.setdefault("virtual_protection", {})["trigger_actual_losses"] = int(
             os.environ["VIRTUAL_TRIGGER_ACTUAL_LOSSES"]
         )
-    if os.getenv("VIRTUAL_EXIT_AFTER_WINS"):
-        raw.setdefault("virtual_protection", {})["exit_after_wins"] = int(
-            os.environ["VIRTUAL_EXIT_AFTER_WINS"]
-        )
+    # One virtual win is a fixed AIDR transition, not a VPS tuning option.
+    raw.setdefault("virtual_protection", {})["exit_after_wins"] = 1
     if os.getenv("VIRTUAL_MAX_OBSERVATIONS"):
         raw.setdefault("virtual_protection", {})["max_observations"] = int(
             os.environ["VIRTUAL_MAX_OBSERVATIONS"]

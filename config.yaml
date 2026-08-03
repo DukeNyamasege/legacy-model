@@ -158,7 +158,7 @@ risk:
 virtual_protection:
   enabled: true
   trigger_actual_losses: 2
-  exit_after_wins: 2
+  exit_after_wins: 1
   max_observations: 0
   scope: PER_ACCOUNT
 telegram:

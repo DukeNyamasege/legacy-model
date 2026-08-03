@@ -154,7 +154,7 @@ _AIDR_STATUS_JS = r'''
 
   function statusHTML(payload) {
     const wins = Number(payload.virtual_wins || 0);
-    const required = Number(payload.virtual_wins_required || 2);
+    const required = Number(payload.virtual_wins_required || 1);
     return `
       <div><span>AIDR Mode</span><strong class="foa-aidr-mode ${esc(payload.mode)}">${esc(modeLabel(payload.mode))}</strong><small>${esc(payload.account || "Current account")}</small></div>
       <div><span>Recovery Debt</span><strong>${money(payload.recovery_debt)}</strong><small>Actual monetary losses only</small></div>
@@ -217,7 +217,7 @@ _AIDR_STATUS_JS = r'''
       allTrades.insertAdjacentElement("afterend", card);
     }
     const html = `
-      <div class="foa-card-head"><div><h2>Virtual Protection Trades ($0)</h2><p class="foa-virtual-note">Hypothetical OVER-4 observations used after a failed real recovery. They never deduct account balance or add debt.</p></div><span class="foa-period">${Number(payload.virtual_wins || 0)}/2 consecutive wins</span></div>
+      <div class="foa-card-head"><div><h2>Virtual Protection Trades ($0)</h2><p class="foa-virtual-note">Hypothetical OVER-4 observations used after a failed real recovery. They never deduct account balance or add debt.</p></div><span class="foa-period">${Number(payload.virtual_wins || 0)}/${Number(payload.virtual_wins_required || 1)} wins</span></div>
       <div class="foa-virtual-head"><span>Time</span><span>Market / Contract</span><span>Simulated Stake</span><span>Exit Digit</span><span>Result</span><span>Financial Impact</span></div>
       ${virtualRows(payload)}
     `;

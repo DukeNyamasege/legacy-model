@@ -6,6 +6,7 @@ from fastapi import Request
 from sqlalchemy import or_, select
 
 import app.api as base_api
+from app.ai_digit_recovery_v1 import VIRTUAL_WINS_REQUIRED
 from app.final_public_controls import PAUSED_STATUSES, STOPPED_STATUSES, _reporting_timezone, _today_bounds_utc
 from app.models import AccountRiskState, ManagedAccount, VirtualTrade
 from app.repositories.rf_dir5_repository import REAL_RECOVERY_PENDING, VIRTUAL_WAITING_FOR_WIN
@@ -95,8 +96,8 @@ def install_personal_virtual_status_api(app: Any) -> None:
             lifecycle = "running"
             mode = "virtual"
             next_action = (
-                f"Virtual OVER-4 confirmation: {virtual_wins}/2 consecutive wins. "
-                f"Waiting for {max(0, 2 - virtual_wins)} more."
+                f"Virtual OVER-4 confirmation: {virtual_wins}/{VIRTUAL_WINS_REQUIRED} wins. "
+                f"Waiting for {max(0, VIRTUAL_WINS_REQUIRED - virtual_wins)} more."
             )
         elif raw_mode == REAL_RECOVERY_PENDING and split_remaining > 0:
             lifecycle = "running"
@@ -150,7 +151,7 @@ def install_personal_virtual_status_api(app: Any) -> None:
             "recovery_debt": round(debt, 2),
             "consecutive_losses": int(state.consecutive_losses or 0) if state is not None else 0,
             "virtual_wins": virtual_wins,
-            "virtual_wins_required": 2,
+            "virtual_wins_required": VIRTUAL_WINS_REQUIRED,
             "virtual_losses": int(state.virtual_loss_count or 0) if state is not None else 0,
             "virtual_observations": int(state.virtual_observation_count or 0) if state is not None else 0,
             "split_recovery_remaining": split_remaining,

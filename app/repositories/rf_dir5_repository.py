@@ -782,7 +782,7 @@ class RFDir5Repository:
                 state.consecutive_losses = 0
                 if not state.recovery_pending:
                     state.recovery_pending_since = None
-                # Virtual guard can only be exited by 2 consecutive virtual wins,
+                # Virtual guard can only be exited by the configured virtual-win requirement,
                 # never by a real win. Recovery-pending clears only when the
                 # recovery debt is fully repaid.
                 if state.protection_mode == VIRTUAL_WAITING_FOR_WIN:
@@ -793,7 +793,7 @@ class RFDir5Repository:
                         state.entered_virtual_mode_at = None
                     else:
                         # One PUT is one recovery attempt. A residual debt
-                        # requires a fresh pair of virtual wins before another.
+                        # requires a fresh virtual confirmation before another.
                         state.protection_mode = VIRTUAL_WAITING_FOR_WIN
                         state.virtual_win_count = 0
                         state.current_virtual_loss_streak = 0
@@ -911,15 +911,12 @@ class RFDir5Repository:
         exit_quote: Decimal,
         exit_epoch: int = 0,
         exit_digit: int | None = None,
-        exit_after_wins: int = 2,
+        exit_after_wins: int = 1,
         max_observations: int = 0,
     ) -> list[dict[str, Any]]:
         settled: list[dict[str, Any]] = []
         now = utc_now()
-        # Recovery is deliberately armed by exactly two consecutive virtual
-        # wins.  Keep this invariant here as well as in configuration so direct
-        # callers cannot weaken the financial safety rule.
-        required_virtual_wins = 2
+        required_virtual_wins = max(1, int(exit_after_wins or 1))
         with self.database.session() as session:
             rows = session.scalars(
                 select(VirtualTrade)
@@ -994,7 +991,8 @@ class RFDir5Repository:
                     state.current_virtual_loss_streak += 1
                 trade.reason = (
                     "Hypothetical Outcome - No Purchase | "
-                    f"progress={consecutive_virtual_wins if result == VIRTUAL_WIN else 0}/2"
+                    f"progress={consecutive_virtual_wins if result == VIRTUAL_WIN else 0}/"
+                    f"{required_virtual_wins}"
                 )
                 if exit_virtual_mode:
                     state.protection_mode = REAL_RECOVERY_PENDING

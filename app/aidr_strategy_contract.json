@@ -14,7 +14,7 @@
     "virtual_barrier": 4,
     "post_virtual_recovery_barrier": 4,
     "virtual_trigger_actual_losses": 2,
-    "virtual_confirmation_wins": 2,
+    "virtual_confirmation_wins": 1,
     "post_virtual_recovery_targets": 1,
     "recovery_policy": "full_recorded_debt_once",
     "virtual_provider_purchase": false
