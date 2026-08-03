@@ -154,6 +154,35 @@ def legacy_global_tokens_enabled() -> bool:
     }
 
 
+def private_websocket_credential_from_payload(payload: Dict[str, Any]) -> str:
+    """Return this account's PAT or trade-scoped OAuth credential.
+
+    Private Deriv WebSocket sessions use the account's own credential to request
+    an OTP URL. OAuth access tokens are valid for that flow when their scope
+    includes ``trade``; a PAT is not required.
+    """
+
+    explicit_pat = str(payload.get("pat_token", "")).strip()
+    if explicit_pat:
+        return explicit_pat
+    auth_type = str(payload.get("auth_type", "pat")).strip().lower() or "pat"
+    access_token = str(payload.get("access_token", "")).strip()
+    if auth_type != "oauth":
+        return access_token
+    scopes = {
+        item.strip().lower()
+        for item in str(
+            payload.get("oauth_scope")
+            or payload.get("scope")
+            or payload.get("scopes")
+            or ""
+        ).replace(",", " ").split()
+        if item.strip()
+    }
+    oauth_token = access_token or str(payload.get("oauth_access_token", "")).strip()
+    return oauth_token if oauth_token and "trade" in scopes else ""
+
+
 def independent_execution_outcome(outcomes: Dict[str, str]) -> Optional[str]:
     """Return the settled account group's majority result, or None on a tie."""
 
@@ -1656,7 +1685,7 @@ class TradingBot:
                     self._set_account_execution_status(int(row.id), "error", str(exc))
                     self.logger.error("Managed token %s could not be decrypted: %s", row.id, exc)
                     continue
-                auth_type = str(payload.get("auth_type", "pat")).strip() or "pat"
+                auth_type = str(payload.get("auth_type", "pat")).strip().lower() or "pat"
                 identity = login_identity_from_auth_payload(payload)
                 token = self._purchase_token_from_payload(payload)
                 shared_token = shared_tokens_by_identity.get(identity, "")
@@ -1725,12 +1754,12 @@ class TradingBot:
                 if not token:
                     self._set_account_execution_status(
                         int(row.id),
-                        "bulk_execution_pat_required",
-                        "A verified Deriv Personal Access Token with trade scope is required",
+                        "token_required",
+                        "This account needs a trade-scoped OAuth credential or PAT",
                     )
                     self.logger.error(
-                        "Managed account %s is missing a Deriv API token/PAT required "
-                        "for REST bulk purchase; OAuth login alone cannot execute contracts.",
+                        "ACCOUNT_WEBSOCKET_CREDENTIAL_MISSING managed_id=%s "
+                        "reason=trade_scoped_oauth_or_pat_required",
                         row.id,
                     )
                     continue
@@ -1746,7 +1775,7 @@ class TradingBot:
                             or payload.get("environment")
                             or self.environment
                         ).strip().lower(),
-                        "auth_type": "pat" if auth_type == "oauth" else auth_type,
+                        "auth_type": auth_type,
                         "source": "private",
                         "managed_account_id": int(row.id),
                         "stake_amount": float(getattr(row, "stake_amount", 0.50)),
@@ -3750,6 +3779,7 @@ class TradingBot:
                 account_id,
                 self,
                 self._managed_account_id_for_token(token),
+                credential=self._credential_for_token(token),
             )
             self.sessions[token] = session
             session.task = asyncio.create_task(session.connect_and_run())
@@ -4326,14 +4356,7 @@ class TradingBot:
         }
 
     def _purchase_token_from_payload(self, payload: Dict[str, Any]) -> str:
-        explicit_pat = str(payload.get("pat_token", "")).strip()
-        if explicit_pat:
-            return explicit_pat
-        auth_type = str(payload.get("auth_type", "pat")).strip().lower() or "pat"
-        access_token = str(payload.get("access_token", "")).strip()
-        if auth_type != "oauth":
-            return access_token
-        return ""
+        return private_websocket_credential_from_payload(payload)
 
     def _auth_type_for_token(self, token: str) -> str:
         profile = getattr(self, "user_profiles", {}).get(token, {})

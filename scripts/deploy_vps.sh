@@ -305,6 +305,16 @@ run_release_gate() {
     python scripts/wait_for_database.py --timeout 180
     alembic upgrade head
   ' || fail "Release gate migration check failed."
+  echo "Release gate: verify AIDR and private WebSocket behavior against the isolated database"
+  candidate_compose run --rm --no-deps worker sh -ec '
+    python -m unittest -q \
+      test_custom_martingale.py \
+      test_aidr_recovery_v2.py \
+      tests.test_independent_websocket_execution \
+      tests.test_private_websocket_credentials \
+      test_rf_dir5.py \
+      test_strategy_logic.py
+  ' || fail "Release gate AIDR or private WebSocket tests failed. Production was not changed."
   candidate_compose up -d --force-recreate --wait --wait-timeout 180 api worker \
     || fail "Release gate API/worker did not become healthy."
   candidate_compose exec -T api python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health/database', timeout=5).read()" \
@@ -407,25 +417,6 @@ echo ""
 echo "2. Pull PostgreSQL and build exact API/worker images"
 compose pull database || fail "Failed to pull the PostgreSQL image."
 compose build api worker || fail "API/worker image build failed."
-
-# Run account-level stake tests inside the exact worker image before the live API
-# or worker is stopped. A failed System/Custom/Flat calculation leaves the current
-# production deployment untouched.
-echo ""
-echo "2a. Verify System and Custom Martingale stake calculations"
-compose run --rm --no-deps worker \
-  python -m unittest -q test_custom_martingale.py \
-  || fail "Custom Martingale unit tests failed."
-
-echo ""
-echo "2b. Verify AIDR recovery and independent private WebSocket execution"
-compose run --rm --no-deps worker \
-  python -m unittest -q \
-    test_aidr_recovery_v2.py \
-    tests.test_independent_websocket_execution \
-    test_rf_dir5.py \
-    test_strategy_logic.py \
-  || fail "AIDR or private WebSocket execution tests failed."
 
 echo ""
 echo "3. Gate the release in an isolated candidate stack before touching production"

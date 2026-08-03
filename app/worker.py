@@ -8,6 +8,7 @@ from app.account_execution_feedback import install_account_execution_feedback
 from app.account_lifecycle import install_worker_account_lifecycle
 from app.account_mode_execution_lock import install_account_mode_execution_lock
 from app.account_reenrollment import install_account_reenrollment
+from app.account_scoped_websocket_runtime import install_account_scoped_websocket_runtime
 from app.ai_digit_recovery_v1 import install_ai_digit_recovery_v1_strategy
 from app.aidr_execution_flow_fix import install_aidr_execution_flow_fix
 from app.aidr_loss_continuation_fix import install_aidr_loss_continuation_fix
@@ -45,6 +46,7 @@ async def run_worker() -> None:
     install_worker_account_lifecycle()
     install_account_mode_execution_lock()
     install_dual_demo_real_trading_support()
+    install_account_scoped_websocket_runtime()
     install_websocket_only_execution()
     install_private_buy_parameter_hardening()
     install_private_websocket_rate_limit()

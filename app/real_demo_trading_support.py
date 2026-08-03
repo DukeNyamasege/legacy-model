@@ -3,7 +3,11 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from enhanced_bot import TradingBot, normalize_account_type
+from enhanced_bot import (
+    TradingBot,
+    normalize_account_type,
+    private_websocket_credential_from_payload,
+)
 
 _INSTALLED = False
 
@@ -14,16 +18,6 @@ def _truthy(value: Any, default: bool = False) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on", "real"}
 
 
-def _token_scopes(payload: dict[str, Any]) -> set[str]:
-    raw = str(
-        payload.get("oauth_scope")
-        or payload.get("scope")
-        or payload.get("scopes")
-        or ""
-    ).replace(",", " ")
-    return {item.strip().lower() for item in raw.split() if item.strip()}
-
-
 def _account_purchase_token_from_payload(payload: dict[str, Any]) -> str:
     """Return this row's own trade-capable credential.
 
@@ -32,15 +26,7 @@ def _account_purchase_token_from_payload(payload: dict[str, Any]) -> str:
     access token is valid for the account-specific OTP/purchase flow.
     """
 
-    explicit_pat = str(payload.get("pat_token", "")).strip()
-    if explicit_pat:
-        return explicit_pat
-    auth_type = str(payload.get("auth_type", "pat")).strip().lower() or "pat"
-    access_token = str(payload.get("access_token", "")).strip()
-    if auth_type == "oauth":
-        oauth_token = access_token or str(payload.get("oauth_access_token", "")).strip()
-        return oauth_token if oauth_token and "trade" in _token_scopes(payload) else ""
-    return access_token
+    return private_websocket_credential_from_payload(payload)
 
 
 def _production_acknowledged(config: Any) -> bool:

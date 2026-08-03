@@ -138,7 +138,7 @@ class DashboardSessionAndReachabilityTests(unittest.TestCase):
 
     def test_vps_deploy_gates_release_before_live_cutover(self) -> None:
         deploy = (ROOT / "scripts" / "deploy_vps.sh").read_text(encoding="utf-8")
-        main_flow = deploy.split('echo "2a. Verify System and Custom Martingale stake calculations"', 1)[1]
+        main_flow = deploy.split('echo "2. Pull PostgreSQL and build exact API/worker images"', 1)[1]
         gate = main_flow.index("run_release_gate")
         stop_live = main_flow.index('echo "5. Stop old API and worker only after the release gate passes"')
         self.assertLess(gate, stop_live)
@@ -148,6 +148,15 @@ class DashboardSessionAndReachabilityTests(unittest.TestCase):
         self.assertIn('DERIV_TRADING_ENABLED: "false"', deploy)
         self.assertIn('TELEGRAM_NOTIFICATIONS_SUSPENDED: "true"', deploy)
         self.assertIn("Release gate smoke test failed. Production was not changed.", deploy)
+        self.assertIn(
+            "Release gate: verify AIDR and private WebSocket behavior against the isolated database",
+            deploy,
+        )
+        self.assertIn("candidate_compose run --rm --no-deps worker", deploy)
+        self.assertNotIn(
+            "\ncompose run --rm --no-deps worker",
+            main_flow[:stop_live],
+        )
         self.assertIn("Production cutover failed before containers were replaced", deploy)
         self.assertIn("Verify live PostgreSQL and create a pre-migration backup before cutover", deploy)
         self.assertIn("compose ps --status running -q database", deploy)
