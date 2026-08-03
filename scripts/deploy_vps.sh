@@ -15,7 +15,6 @@ PRODUCTION_CONTAINERS_RECREATED=false
 ACCOUNT_REENROLLMENT_STATUS="NOT REQUESTED"
 PREFLIGHT_PROJECT=""
 PREFLIGHT_OVERRIDE=""
-PREFLIGHT_PORT="${DEPLOY_PREFLIGHT_PORT:-18080}"
 cd "$PROJECT_DIR"
 
 compose() {
@@ -23,9 +22,8 @@ compose() {
 }
 
 candidate_compose() {
-  docker compose -p "$PREFLIGHT_PROJECT" \
-    -f docker-compose.yml \
-    -f docker-compose.vps.yml \
+  docker compose --project-directory "$PROJECT_DIR" \
+    -p "$PREFLIGHT_PROJECT" \
     -f "$PREFLIGHT_OVERRIDE" \
     "$@"
 }
@@ -186,9 +184,34 @@ write_preflight_override() {
   PREFLIGHT_OVERRIDE="$STATE_DIR/preflight-compose-$$.yml"
   cat > "$PREFLIGHT_OVERRIDE" <<EOF
 services:
+  database:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: \${POSTGRES_DB:-underdog_test2}
+      POSTGRES_USER: \${POSTGRES_USER:-underdog}
+      POSTGRES_PASSWORD: \${POSTGRES_PASSWORD}
+    volumes:
+      - test2_database:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \${POSTGRES_USER:-underdog} -d \${POSTGRES_DB:-underdog_test2}"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 5s
+    networks:
+      test2: {}
+
   api:
-    ports:
-      - "127.0.0.1:${PREFLIGHT_PORT}:8080"
+    build:
+      context: .
+      target: api
+    restart: unless-stopped
+    command: >-
+      sh -ec "python scripts/wait_for_database.py --timeout 180
+      && alembic upgrade head
+      && exec uvicorn app.api_v3:app --host 0.0.0.0 --port 8080"
+    env_file: .env
     environment:
       DATABASE_URL: postgresql+psycopg://\${POSTGRES_USER:-underdog}:\${POSTGRES_PASSWORD}@database:5432/\${POSTGRES_DB:-underdog_test2}
       DEPLOYMENT_ID: preflight-api
@@ -203,7 +226,27 @@ services:
       DEPLOYMENT_RELEASE_FROM: ""
       DEPLOYMENT_RELEASE_CHANGE_COUNT: "0"
       DEPLOYMENT_RELEASE_MESSAGE_B64: ""
+    depends_on:
+      database:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health/database', timeout=3).read()"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 20s
+    networks:
+      test2: {}
+
   worker:
+    build:
+      context: .
+      target: worker
+    restart: unless-stopped
+    command: >-
+      sh -ec "python scripts/wait_for_database.py --timeout 180
+      && exec python -m app.worker"
+    env_file: .env
     environment:
       DATABASE_URL: postgresql+psycopg://\${POSTGRES_USER:-underdog}:\${POSTGRES_PASSWORD}@database:5432/\${POSTGRES_DB:-underdog_test2}
       DEPLOYMENT_ID: preflight-worker
@@ -219,6 +262,23 @@ services:
       DEPLOYMENT_RELEASE_FROM: ""
       DEPLOYMENT_RELEASE_CHANGE_COUNT: "0"
       DEPLOYMENT_RELEASE_MESSAGE_B64: ""
+    volumes:
+      - test2_models:/app/model_artifacts
+    depends_on:
+      database:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    networks:
+      test2: {}
+
+volumes:
+  test2_database:
+  test2_models:
+
+networks:
+  test2:
+    internal: false
 EOF
 }
 
@@ -227,7 +287,7 @@ run_release_gate() {
   PREFLIGHT_PROJECT="legacy-model-preflight-$short_commit"
   write_preflight_override
   echo "Candidate project: $PREFLIGHT_PROJECT"
-  echo "Candidate API    : http://127.0.0.1:$PREFLIGHT_PORT"
+  echo "Candidate API    : internal api:8080 only; no host port is published"
   echo "Live production  : remains on the existing api/worker until this gate passes"
 
   cleanup_preflight
@@ -247,8 +307,8 @@ run_release_gate() {
   ' || fail "Release gate migration check failed."
   candidate_compose up -d --force-recreate --wait --wait-timeout 180 api worker \
     || fail "Release gate API/worker did not become healthy."
-  curl -fsS "http://127.0.0.1:$PREFLIGHT_PORT/health/database" >/dev/null 2>&1 \
-    || fail "Release gate candidate is not reachable on host port $PREFLIGHT_PORT."
+  candidate_compose exec -T api python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health/database', timeout=5).read()" \
+    || fail "Release gate candidate database health endpoint is unavailable inside the candidate API."
   candidate_compose exec -T api python scripts/production_smoke.py \
     --base-url http://127.0.0.1:8080 \
     --ready-timeout 180 \
