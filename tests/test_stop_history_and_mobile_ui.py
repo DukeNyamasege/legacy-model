@@ -124,6 +124,37 @@ class DashboardSessionAndReachabilityTests(unittest.TestCase):
         self.assertIn("API_DATABASE_HEALTHY=true", deploy)
         self.assertIn("leaving it running to avoid a public 502", deploy)
 
+    def test_vps_deploy_gates_release_before_live_cutover(self) -> None:
+        deploy = (ROOT / "scripts" / "deploy_vps.sh").read_text(encoding="utf-8")
+        main_flow = deploy.split('echo "2a. Verify System and Custom Martingale stake calculations"', 1)[1]
+        gate = main_flow.index("run_release_gate")
+        stop_live = main_flow.index('echo "5. Stop old API and worker only after the release gate passes"')
+        self.assertLess(gate, stop_live)
+
+        self.assertIn("legacy-model-preflight-", deploy)
+        self.assertIn("DERIV_ENVIRONMENT: demo", deploy)
+        self.assertIn('DERIV_TRADING_ENABLED: "false"', deploy)
+        self.assertIn('TELEGRAM_NOTIFICATIONS_SUSPENDED: "true"', deploy)
+        self.assertIn("Release gate smoke test failed. Production was not changed.", deploy)
+        self.assertIn("Production cutover failed before containers were replaced", deploy)
+        self.assertIn("Verify live PostgreSQL and create a pre-migration backup before cutover", deploy)
+        self.assertIn("compose ps --status running -q database", deploy)
+        cutover_section = main_flow.split('echo "5. Stop old API and worker only after the release gate passes"', 1)[0]
+        self.assertNotIn("compose stop worker api", cutover_section)
+        self.assertNotIn("recreate_database_container", deploy)
+
+    def test_github_release_gate_workflow_exists(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "release-gate.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("Release Gate", workflow)
+        self.assertIn("pull_request", workflow)
+        self.assertIn("branches: [main]", workflow)
+        self.assertIn("python -m compileall -q app scripts", workflow)
+        self.assertIn("python -m unittest -q tests.test_stop_history_and_mobile_ui", workflow)
+        self.assertIn("sh -n scripts/deploy_vps.sh scripts/update_vps.sh", workflow)
+        self.assertIn("docker build --target api", workflow)
+
 
 if __name__ == "__main__":
     unittest.main()

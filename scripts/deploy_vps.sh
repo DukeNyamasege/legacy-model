@@ -11,11 +11,35 @@ DEPLOY_STARTED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 STACK_STOPPED=false
 API_DATABASE_HEALTHY=false
 WORKER_STABLY_RUNNING=false
+PRODUCTION_CONTAINERS_RECREATED=false
 ACCOUNT_REENROLLMENT_STATUS="NOT REQUESTED"
+PREFLIGHT_PROJECT=""
+PREFLIGHT_OVERRIDE=""
+PREFLIGHT_PORT="${DEPLOY_PREFLIGHT_PORT:-18080}"
 cd "$PROJECT_DIR"
 
 compose() {
   docker compose -f docker-compose.yml -f docker-compose.vps.yml "$@"
+}
+
+candidate_compose() {
+  docker compose -p "$PREFLIGHT_PROJECT" \
+    -f docker-compose.yml \
+    -f docker-compose.vps.yml \
+    -f "$PREFLIGHT_OVERRIDE" \
+    "$@"
+}
+
+cleanup_preflight() {
+  if [ -n "$PREFLIGHT_PROJECT" ] && [ -n "$PREFLIGHT_OVERRIDE" ] && [ -f "$PREFLIGHT_OVERRIDE" ]; then
+    candidate_compose stop worker api database >/dev/null 2>&1 || true
+    candidate_compose rm -f worker api database >/dev/null 2>&1 || true
+    docker volume ls -q --filter "label=com.docker.compose.project=$PREFLIGHT_PROJECT" \
+      | while IFS= read -r volume_name; do
+          [ -n "$volume_name" ] && docker volume rm "$volume_name" >/dev/null 2>&1 || true
+        done
+    rm -f "$PREFLIGHT_OVERRIDE"
+  fi
 }
 
 fail() {
@@ -37,9 +61,21 @@ fail() {
       else
         compose stop worker >/dev/null 2>&1 || true
       fi
+    elif [ "$PRODUCTION_CONTAINERS_RECREATED" != "true" ]; then
+      echo "Production cutover failed before containers were replaced; restarting the previous api/worker."
+      compose start api worker >/dev/null 2>&1 || true
     else
       compose stop worker api >/dev/null 2>&1 || true
     fi
+  fi
+
+  if [ -n "$PREFLIGHT_PROJECT" ] && [ -n "$PREFLIGHT_OVERRIDE" ] && [ -f "$PREFLIGHT_OVERRIDE" ]; then
+    echo ""
+    echo "--- RELEASE GATE API LOGS ---"
+    candidate_compose logs --tail=180 api 2>/dev/null || true
+    echo ""
+    echo "--- RELEASE GATE WORKER LOGS ---"
+    candidate_compose logs --tail=220 worker 2>/dev/null || true
   fi
 
   compose ps || true
@@ -53,6 +89,7 @@ fail() {
   echo "--- WORKER LOGS ---"
   compose logs --tail=220 worker 2>/dev/null || true
   echo ""
+  cleanup_preflight
   echo "The PostgreSQL named volume was preserved."
   echo "The release comparison base remains in: $PENDING_FROM_COMMIT_FILE"
   exit 1
@@ -105,15 +142,6 @@ assert_database_container_integrity() {
   echo "DATABASE_CONTAINER_INTEGRITY networks=$networks data_mount=$data_mount"
 }
 
-recreate_database_container() {
-  # Removing a Compose container does not remove its named volume unless -v is
-  # explicitly supplied. This repairs stale/missing network attachments while
-  # preserving every PostgreSQL row.
-  compose stop database >/dev/null 2>&1 || true
-  compose rm -f database >/dev/null 2>&1 || true
-  compose up -d --force-recreate --no-deps database
-}
-
 backup_database() {
   mkdir -p "$BACKUP_DIR"
   timestamp=$(date -u +"%Y%m%dT%H%M%SZ")
@@ -152,6 +180,90 @@ maybe_reset_account_enrollment() {
       ;;
   esac
   return 0
+}
+
+write_preflight_override() {
+  PREFLIGHT_OVERRIDE="$STATE_DIR/preflight-compose-$$.yml"
+  cat > "$PREFLIGHT_OVERRIDE" <<EOF
+services:
+  api:
+    ports:
+      - "127.0.0.1:${PREFLIGHT_PORT}:8080"
+    environment:
+      DATABASE_URL: postgresql+psycopg://\${POSTGRES_USER:-underdog}:\${POSTGRES_PASSWORD}@database:5432/\${POSTGRES_DB:-underdog_test2}
+      DEPLOYMENT_ID: preflight-api
+      DERIV_ENVIRONMENT: demo
+      DERIV_TRADING_ENABLED: "false"
+      TRADING_MODE: demo
+      ALLOW_REAL_TRADING: "false"
+      PRODUCTION_ACKNOWLEDGEMENT: ""
+      TELEGRAM_ALERTS_ENABLED: "false"
+      TELEGRAM_NOTIFICATIONS_SUSPENDED: "true"
+      DEPLOYMENT_RELEASE_ID: ""
+      DEPLOYMENT_RELEASE_FROM: ""
+      DEPLOYMENT_RELEASE_CHANGE_COUNT: "0"
+      DEPLOYMENT_RELEASE_MESSAGE_B64: ""
+  worker:
+    environment:
+      DATABASE_URL: postgresql+psycopg://\${POSTGRES_USER:-underdog}:\${POSTGRES_PASSWORD}@database:5432/\${POSTGRES_DB:-underdog_test2}
+      DEPLOYMENT_ID: preflight-worker
+      DERIV_ENVIRONMENT: demo
+      DERIV_TRADING_ENABLED: "false"
+      TRADING_MODE: demo
+      ALLOW_REAL_TRADING: "false"
+      PRODUCTION_ACKNOWLEDGEMENT: ""
+      TELEGRAM_ALERTS_ENABLED: "false"
+      TELEGRAM_NOTIFICATIONS_SUSPENDED: "true"
+      INTERNAL_DASHBOARD_REFRESH_URL: http://api:8080/control/internal/dashboard-settlement-refresh
+      DEPLOYMENT_RELEASE_ID: ""
+      DEPLOYMENT_RELEASE_FROM: ""
+      DEPLOYMENT_RELEASE_CHANGE_COUNT: "0"
+      DEPLOYMENT_RELEASE_MESSAGE_B64: ""
+EOF
+}
+
+run_release_gate() {
+  short_commit=$(printf '%s' "$CURRENT_COMMIT" | cut -c1-12)
+  PREFLIGHT_PROJECT="legacy-model-preflight-$short_commit"
+  write_preflight_override
+  echo "Candidate project: $PREFLIGHT_PROJECT"
+  echo "Candidate API    : http://127.0.0.1:$PREFLIGHT_PORT"
+  echo "Live production  : remains on the existing api/worker until this gate passes"
+
+  cleanup_preflight
+  write_preflight_override
+  preflight_started_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+  candidate_compose config --quiet || {
+    candidate_compose config 2>&1 || true
+    fail "Release gate Compose configuration is invalid."
+  }
+  candidate_compose build api worker || fail "Release gate image build failed."
+  candidate_compose up -d --force-recreate --wait --wait-timeout 180 database \
+    || fail "Release gate PostgreSQL did not become healthy."
+  candidate_compose run --rm --no-deps worker sh -ec '
+    python scripts/wait_for_database.py --timeout 180
+    alembic upgrade head
+  ' || fail "Release gate migration check failed."
+  candidate_compose up -d --force-recreate --wait --wait-timeout 180 api worker \
+    || fail "Release gate API/worker did not become healthy."
+  curl -fsS "http://127.0.0.1:$PREFLIGHT_PORT/health/database" >/dev/null 2>&1 \
+    || fail "Release gate candidate is not reachable on host port $PREFLIGHT_PORT."
+  candidate_compose exec -T api python scripts/production_smoke.py \
+    --base-url http://127.0.0.1:8080 \
+    --ready-timeout 180 \
+    || fail "Release gate smoke test failed. Production was not changed."
+
+  PREFLIGHT_FATAL_LOG_MATCHES=$(candidate_compose logs --since="$preflight_started_at" api worker 2>&1 \
+    | grep -E 'SyntaxError|ImportError|DATABASE_UNAVAILABLE|DATABASE_REQUEST_UNAVAILABLE|Traceback|MODE_AWARE_DASHBOARD_BROADCAST_FAILED|DASHBOARD_SETTLEMENT_PUSH_DISABLED' \
+    || true)
+  if [ -n "$PREFLIGHT_FATAL_LOG_MATCHES" ]; then
+    echo "--- RELEASE GATE FATAL LOG MATCHES ---"
+    printf '%s\n' "$PREFLIGHT_FATAL_LOG_MATCHES"
+    fail "Release gate found fatal startup or integration logs. Production was not changed."
+  fi
+
+  cleanup_preflight
 }
 
 wait_for_telegram_release() {
@@ -245,26 +357,29 @@ compose run --rm --no-deps worker \
   python -m unittest -q test_custom_martingale.py \
   || fail "Custom Martingale unit tests failed."
 
-# Stop both request handling and execution only after replacement images have
-# passed every static/build validation. This prevents database-outage tracebacks
-# and guarantees that no old worker can trade during migration.
 echo ""
-echo "3. Stop old API and worker after replacement images validate"
+echo "3. Gate the release in an isolated candidate stack before touching production"
+run_release_gate
+
+echo ""
+echo "4. Verify live PostgreSQL and create a pre-migration backup before cutover"
+if [ -z "$(compose ps --status running -q database 2>/dev/null || true)" ]; then
+  compose up -d database || fail "Production PostgreSQL container could not be ensured."
+fi
+wait_for_database_container || fail "Production PostgreSQL is not healthy; live services were not changed."
+assert_database_container_integrity || fail "Production PostgreSQL integrity validation failed; live services were not changed."
+backup_database || fail "Pre-migration PostgreSQL backup failed; live services were not changed."
+
+# Stop both request handling and execution only after replacement images and the
+# isolated candidate stack have passed. Until this line, the live platform keeps
+# using the previous api/worker.
+echo ""
+echo "5. Stop old API and worker only after the release gate passes"
 compose stop worker api || true
 STACK_STOPPED=true
 
 echo ""
-echo "4. Recreate only the PostgreSQL container and repair its Compose network"
-recreate_database_container || fail "Database container/network recreation failed."
-wait_for_database_container || fail "PostgreSQL did not become healthy."
-assert_database_container_integrity || fail "PostgreSQL container integrity validation failed."
-
-echo ""
-echo "5. Create a pre-migration PostgreSQL backup"
-backup_database || fail "Pre-migration PostgreSQL backup failed."
-
-echo ""
-echo "6. Verify Docker DNS and run migrations once"
+echo "6. Verify Docker DNS and run production migrations once"
 compose run --rm --no-deps worker sh -ec '
   python scripts/wait_for_database.py --timeout 180
   alembic upgrade head
@@ -272,8 +387,9 @@ compose run --rm --no-deps worker sh -ec '
 
 echo ""
 echo "7. Replace API and require database-aware health"
+PRODUCTION_CONTAINERS_RECREATED=true
 compose up -d --force-recreate --no-deps api || fail "API container could not start."
-compose up -d --wait --wait-timeout 180 database api || fail "API/database did not become healthy."
+compose up -d --wait --wait-timeout 180 api || fail "API/database did not become healthy."
 
 if ! curl -fsS http://127.0.0.1:8080/health/database >/dev/null 2>&1; then
   fail "API database-health endpoint is unavailable."

@@ -73,6 +73,22 @@ curl -I https://www.derivadmin.site/health
 
 Then open `https://derivadmin.site`.
 
+## Release Gate
+
+Production deployments are gated in two layers:
+
+- GitHub runs `.github/workflows/release-gate.yml` on pull requests and pushes to
+  `main`. Enable branch protection for `main` and require the `Release Gate`
+  check before merging.
+- `scripts/deploy_vps.sh` starts an isolated Docker Compose candidate stack on
+  `127.0.0.1:18080`, disables trading and Telegram messages there, runs
+  migrations and smoke tests, and only then touches the live `api` and `worker`.
+
+If the candidate has a syntax error, failed import, migration failure, unhealthy
+API, broken dashboard asset, or smoke-test failure, deployment aborts and the
+existing live containers keep serving traders. The candidate port can be changed
+with `DEPLOY_PREFLIGHT_PORT=18081 sh scripts/deploy_vps.sh` if `18080` is busy.
+
 ## Safe Operations
 
 ```bash
@@ -104,11 +120,11 @@ recorded. Do not use `--allow-expired-one-tick` unless Deriv has independently
 confirmed that every listed contract has expired and the worker cannot
 reconcile it.
 
-Pause or resume through the authenticated API before maintenance. During an
-upgrade, leave the old worker running until the new image is built, pause it,
-then run `./scripts/deploy_vps.sh`. The database lease prevents overlap if two
-worker containers briefly coexist, but Compose should still keep one worker
-replica.
+During an upgrade, leave the old worker running and use `./scripts/deploy_vps.sh`.
+The deployment script keeps the old API and worker active while it validates the
+candidate stack, then stops them only at the final cutover. The database lease
+prevents overlap if two worker containers briefly coexist, but Compose should
+still keep one worker replica.
 
 PostgreSQL data and HMM metadata use named volumes. `SIGTERM` and `SIGINT` are
 handled by the worker so it can stop new entries, finish cleanup, and release its
