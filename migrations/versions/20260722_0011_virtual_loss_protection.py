@@ -17,12 +17,43 @@ branch_labels = None
 depends_on = None
 
 
+def _table_names() -> set[str]:
+    return set(sa.inspect(op.get_bind()).get_table_names())
+
+
+def _columns(table_name: str) -> set[str]:
+    if table_name not in _table_names():
+        return set()
+    return {column["name"] for column in sa.inspect(op.get_bind()).get_columns(table_name)}
+
+
+def _indexes(table_name: str) -> set[str]:
+    if table_name not in _table_names():
+        return set()
+    return {index["name"] for index in sa.inspect(op.get_bind()).get_indexes(table_name)}
+
+
+def _add_column_if_missing(table_name: str, column: sa.Column) -> None:
+    if column.name not in _columns(table_name):
+        op.add_column(table_name, column)
+
+
+def _create_index_if_missing(
+    index_name: str,
+    table_name: str,
+    columns: list[str],
+    **kwargs: object,
+) -> None:
+    if index_name not in _indexes(table_name):
+        op.create_index(index_name, table_name, columns, **kwargs)
+
+
 def upgrade() -> None:
-    op.add_column(
+    _add_column_if_missing(
         "account_risk_states",
         sa.Column("account_id_masked", sa.String(length=50), nullable=False, server_default=""),
     )
-    op.add_column(
+    _add_column_if_missing(
         "account_risk_states",
         sa.Column(
             "protection_mode",
@@ -31,7 +62,7 @@ def upgrade() -> None:
             server_default="NORMAL_MODE",
         ),
     )
-    op.add_column(
+    _add_column_if_missing(
         "account_risk_states",
         sa.Column(
             "virtual_observation_count",
@@ -40,15 +71,15 @@ def upgrade() -> None:
             server_default="0",
         ),
     )
-    op.add_column(
+    _add_column_if_missing(
         "account_risk_states",
         sa.Column("virtual_win_count", sa.Integer(), nullable=False, server_default="0"),
     )
-    op.add_column(
+    _add_column_if_missing(
         "account_risk_states",
         sa.Column("virtual_loss_count", sa.Integer(), nullable=False, server_default="0"),
     )
-    op.add_column(
+    _add_column_if_missing(
         "account_risk_states",
         sa.Column(
             "current_virtual_loss_streak",
@@ -57,75 +88,76 @@ def upgrade() -> None:
             server_default="0",
         ),
     )
-    op.add_column(
+    _add_column_if_missing(
         "account_risk_states",
         sa.Column("entered_virtual_mode_at", sa.DateTime(timezone=True), nullable=True),
     )
-    op.add_column(
+    _add_column_if_missing(
         "account_risk_states",
         sa.Column("recovery_pending_since", sa.DateTime(timezone=True), nullable=True),
     )
-    op.create_index(
+    _create_index_if_missing(
         "ix_account_risk_states_account_id_masked",
         "account_risk_states",
         ["account_id_masked"],
     )
 
-    op.create_table(
-        "virtual_trades",
-        sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column("virtual_trade_id", sa.String(length=100), nullable=False),
-        sa.Column("managed_account_id", sa.Integer(), nullable=False),
-        sa.Column("account_id_masked", sa.String(length=50), nullable=False),
-        sa.Column("run_id", sa.Integer(), nullable=False),
-        sa.Column("signal_id", sa.String(length=36), nullable=False),
-        sa.Column("execution_session_id", sa.String(length=100), nullable=False, server_default=""),
-        sa.Column("strategy_id", sa.String(length=100), nullable=False, server_default=""),
-        sa.Column("market", sa.String(length=30), nullable=False),
-        sa.Column("direction", sa.String(length=10), nullable=False, server_default=""),
-        sa.Column("contract_type", sa.String(length=30), nullable=False, server_default=""),
-        sa.Column("barrier", sa.String(length=20), nullable=False, server_default=""),
-        sa.Column("prediction_digit", sa.Integer(), nullable=True),
-        sa.Column("duration", sa.Integer(), nullable=False, server_default="1"),
-        sa.Column("duration_unit", sa.String(length=10), nullable=False, server_default="t"),
-        sa.Column("signal_time", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("entry_tick_sequence", sa.Integer(), nullable=False),
-        sa.Column("exit_tick_sequence", sa.Integer(), nullable=False),
-        sa.Column("entry_tick_epoch", sa.Integer(), nullable=False, server_default="0"),
-        sa.Column("exit_tick_epoch", sa.Integer(), nullable=True),
-        sa.Column("entry_spot", sa.Float(), nullable=False),
-        sa.Column("exit_spot", sa.Float(), nullable=True),
-        sa.Column("actual_last_digit", sa.Integer(), nullable=True),
-        sa.Column("configured_stake", sa.Float(), nullable=False, server_default="0"),
-        sa.Column("simulated_stake", sa.Float(), nullable=False, server_default="0"),
-        sa.Column("expected_payout", sa.Float(), nullable=True),
-        sa.Column("result", sa.String(length=30), nullable=False, server_default="OPEN"),
-        sa.Column("reason", sa.String(length=200), nullable=False, server_default=""),
-        sa.Column("amount_charged", sa.Float(), nullable=False, server_default="0"),
-        sa.Column("actual_profit_loss", sa.Float(), nullable=False, server_default="0"),
-        sa.Column("actual_payout", sa.Float(), nullable=False, server_default="0"),
-        sa.Column("recovery_debt_change", sa.Float(), nullable=False, server_default="0"),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("settled_at", sa.DateTime(timezone=True), nullable=True),
-        sa.ForeignKeyConstraint(["managed_account_id"], ["managed_accounts.id"]),
-        sa.ForeignKeyConstraint(["run_id"], ["test_runs.id"]),
-        sa.ForeignKeyConstraint(["signal_id"], ["directional_signals.signal_id"]),
-        sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint(
-            "managed_account_id",
-            "signal_id",
-            name="uq_virtual_trade_account_signal",
-        ),
-    )
-    op.create_index("ix_virtual_trades_virtual_trade_id", "virtual_trades", ["virtual_trade_id"], unique=True)
-    op.create_index("ix_virtual_trades_managed_account_id", "virtual_trades", ["managed_account_id"])
-    op.create_index("ix_virtual_trades_account_id_masked", "virtual_trades", ["account_id_masked"])
-    op.create_index("ix_virtual_trades_run_id", "virtual_trades", ["run_id"])
-    op.create_index("ix_virtual_trades_signal_id", "virtual_trades", ["signal_id"])
-    op.create_index("ix_virtual_trades_market", "virtual_trades", ["market"])
-    op.create_index("ix_virtual_trades_result", "virtual_trades", ["result"])
-    op.create_index("ix_virtual_trades_entry_tick_sequence", "virtual_trades", ["entry_tick_sequence"])
-    op.create_index("ix_virtual_trades_exit_tick_sequence", "virtual_trades", ["exit_tick_sequence"])
+    if "virtual_trades" not in _table_names():
+        op.create_table(
+            "virtual_trades",
+            sa.Column("id", sa.Integer(), nullable=False),
+            sa.Column("virtual_trade_id", sa.String(length=100), nullable=False),
+            sa.Column("managed_account_id", sa.Integer(), nullable=False),
+            sa.Column("account_id_masked", sa.String(length=50), nullable=False),
+            sa.Column("run_id", sa.Integer(), nullable=False),
+            sa.Column("signal_id", sa.String(length=36), nullable=False),
+            sa.Column("execution_session_id", sa.String(length=100), nullable=False, server_default=""),
+            sa.Column("strategy_id", sa.String(length=100), nullable=False, server_default=""),
+            sa.Column("market", sa.String(length=30), nullable=False),
+            sa.Column("direction", sa.String(length=10), nullable=False, server_default=""),
+            sa.Column("contract_type", sa.String(length=30), nullable=False, server_default=""),
+            sa.Column("barrier", sa.String(length=20), nullable=False, server_default=""),
+            sa.Column("prediction_digit", sa.Integer(), nullable=True),
+            sa.Column("duration", sa.Integer(), nullable=False, server_default="1"),
+            sa.Column("duration_unit", sa.String(length=10), nullable=False, server_default="t"),
+            sa.Column("signal_time", sa.DateTime(timezone=True), nullable=False),
+            sa.Column("entry_tick_sequence", sa.Integer(), nullable=False),
+            sa.Column("exit_tick_sequence", sa.Integer(), nullable=False),
+            sa.Column("entry_tick_epoch", sa.Integer(), nullable=False, server_default="0"),
+            sa.Column("exit_tick_epoch", sa.Integer(), nullable=True),
+            sa.Column("entry_spot", sa.Float(), nullable=False),
+            sa.Column("exit_spot", sa.Float(), nullable=True),
+            sa.Column("actual_last_digit", sa.Integer(), nullable=True),
+            sa.Column("configured_stake", sa.Float(), nullable=False, server_default="0"),
+            sa.Column("simulated_stake", sa.Float(), nullable=False, server_default="0"),
+            sa.Column("expected_payout", sa.Float(), nullable=True),
+            sa.Column("result", sa.String(length=30), nullable=False, server_default="OPEN"),
+            sa.Column("reason", sa.String(length=200), nullable=False, server_default=""),
+            sa.Column("amount_charged", sa.Float(), nullable=False, server_default="0"),
+            sa.Column("actual_profit_loss", sa.Float(), nullable=False, server_default="0"),
+            sa.Column("actual_payout", sa.Float(), nullable=False, server_default="0"),
+            sa.Column("recovery_debt_change", sa.Float(), nullable=False, server_default="0"),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+            sa.Column("settled_at", sa.DateTime(timezone=True), nullable=True),
+            sa.ForeignKeyConstraint(["managed_account_id"], ["managed_accounts.id"]),
+            sa.ForeignKeyConstraint(["run_id"], ["test_runs.id"]),
+            sa.ForeignKeyConstraint(["signal_id"], ["directional_signals.signal_id"]),
+            sa.PrimaryKeyConstraint("id"),
+            sa.UniqueConstraint(
+                "managed_account_id",
+                "signal_id",
+                name="uq_virtual_trade_account_signal",
+            ),
+        )
+    _create_index_if_missing("ix_virtual_trades_virtual_trade_id", "virtual_trades", ["virtual_trade_id"], unique=True)
+    _create_index_if_missing("ix_virtual_trades_managed_account_id", "virtual_trades", ["managed_account_id"])
+    _create_index_if_missing("ix_virtual_trades_account_id_masked", "virtual_trades", ["account_id_masked"])
+    _create_index_if_missing("ix_virtual_trades_run_id", "virtual_trades", ["run_id"])
+    _create_index_if_missing("ix_virtual_trades_signal_id", "virtual_trades", ["signal_id"])
+    _create_index_if_missing("ix_virtual_trades_market", "virtual_trades", ["market"])
+    _create_index_if_missing("ix_virtual_trades_result", "virtual_trades", ["result"])
+    _create_index_if_missing("ix_virtual_trades_entry_tick_sequence", "virtual_trades", ["entry_tick_sequence"])
+    _create_index_if_missing("ix_virtual_trades_exit_tick_sequence", "virtual_trades", ["exit_tick_sequence"])
 
 
 def downgrade() -> None:

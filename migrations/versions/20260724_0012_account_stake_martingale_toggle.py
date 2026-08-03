@@ -18,15 +18,17 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "managed_accounts",
-        sa.Column(
-            "martingale_enabled",
-            sa.Boolean(),
-            nullable=False,
-            server_default=sa.text("true"),
-        ),
-    )
+    existing = {column["name"] for column in sa.inspect(op.get_bind()).get_columns("managed_accounts")}
+    if "martingale_enabled" not in existing:
+        op.add_column(
+            "managed_accounts",
+            sa.Column(
+                "martingale_enabled",
+                sa.Boolean(),
+                nullable=False,
+                server_default=sa.text("true"),
+            ),
+        )
 
 
 def downgrade() -> None:
