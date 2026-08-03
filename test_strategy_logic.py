@@ -1601,7 +1601,7 @@ class AccountIsolationTests(unittest.IsolatedAsyncioTestCase):
         bot.market_states = {"1HZ100V": object(), "R_10": object()}
         bot.logger = MagicMock()
 
-        bot._register_master_market_outcome("1HZ100V", "loss")
+        bot._register_execution_market_outcome("1HZ100V", "loss")
 
         self.assertTrue(bot._market_rotation_blocks("1HZ100V"))
         self.assertFalse(bot._market_rotation_blocks("R_10"))
@@ -1623,9 +1623,9 @@ class AccountIsolationTests(unittest.IsolatedAsyncioTestCase):
         }
         bot.logger = MagicMock()
 
-        bot._register_master_market_outcome("1HZ100V", "loss")
+        bot._register_execution_market_outcome("1HZ100V", "loss")
         bot._complete_market_rotation_after_purchase("R_10")
-        bot._register_master_market_outcome("R_10", "loss")
+        bot._register_execution_market_outcome("R_10", "loss")
 
         self.assertFalse(bot._market_rotation_blocks("1HZ100V"))
         self.assertTrue(bot._market_rotation_blocks("R_10"))
@@ -1647,9 +1647,9 @@ class AccountIsolationTests(unittest.IsolatedAsyncioTestCase):
         }
         bot.logger = MagicMock()
 
-        bot._register_master_market_outcome("1HZ100V", "loss")
-        bot._register_master_market_outcome("R_10", "loss")
-        bot._register_master_market_outcome("R_25", "loss")
+        bot._register_execution_market_outcome("1HZ100V", "loss")
+        bot._register_execution_market_outcome("R_10", "loss")
+        bot._register_execution_market_outcome("R_25", "loss")
 
         self.assertFalse(bot._market_rotation_blocks("1HZ100V"))
         self.assertTrue(bot._market_rotation_blocks("R_10"))
@@ -1659,19 +1659,19 @@ class AccountIsolationTests(unittest.IsolatedAsyncioTestCase):
             bot.loss_rotation_blocked_markets,
         )
 
-    def test_copier_outcome_cannot_rotate_master_market_state(self) -> None:
+    def test_single_account_execution_outcome_updates_market_state(self) -> None:
         bot = enhanced_bot.TradingBot.__new__(enhanced_bot.TradingBot)
         bot.loss_rotation_blocked_market = ""
         bot.loss_rotation_blocked_markets = []
         bot.market_states = {"R_25": object()}
         bot.logger = MagicMock()
 
-        copier_outcomes = {"DOT90000002": "loss"}
-        master_outcome = copier_outcomes.get("DOT90000001")
-        if master_outcome:
-            bot._register_master_market_outcome("R_25", master_outcome)
+        account_outcomes = {"DOT90000002": "loss"}
+        execution_outcome = enhanced_bot.independent_execution_outcome(account_outcomes)
+        if execution_outcome:
+            bot._register_execution_market_outcome("R_25", execution_outcome)
 
-        self.assertEqual(bot.loss_rotation_blocked_market, "")
+        self.assertEqual(bot.loss_rotation_blocked_market, "R_25")
 
     def test_permanent_credential_errors_are_distinct_from_timeouts(self) -> None:
         self.assertTrue(
@@ -1913,7 +1913,7 @@ class ContractRuntimeLockTests(unittest.IsolatedAsyncioTestCase):
         bot._client_state_for_token = MagicMock(return_value=None)
         bot._finish_contract_transport_cleanup = AsyncMock()
         bot._register_trade_cycle_outcome = MagicMock()
-        bot._register_master_market_outcome = MagicMock()
+        bot._register_execution_market_outcome = MagicMock()
         bot._record_real_cycle_outcome = MagicMock()
         bot.bayesian = MagicMock()
 

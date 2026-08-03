@@ -1676,7 +1676,7 @@ class RFRepositoryTests(unittest.TestCase):
         self.assertEqual(protection["mode"], "RECOVERY_PENDING")
         self.assertEqual(protection["virtual_wins"], 2)
 
-    def test_adaptive_trap_requires_extra_virtual_win_before_recovery(self) -> None:
+    def test_adaptive_trap_keeps_one_virtual_win_before_recovery(self) -> None:
         account_id = self.create_managed_account("Alternating Trap")
         for balance in (98.0, 96.0):
             self.repository.record_account_outcome(
@@ -1692,9 +1692,7 @@ class RFRepositoryTests(unittest.TestCase):
         record_post_virtual_recovery_loss(self.base, account_id, debt=4.0)
 
         first = signal("RISE", tick_sequence=760)
-        second = signal("RISE", tick_sequence=770)
         self.repository.record_signal(first)
-        self.repository.record_signal(second)
 
         self.repository.start_virtual_trade(
             managed_account_id=account_id,
@@ -1715,32 +1713,10 @@ class RFRepositoryTests(unittest.TestCase):
         )
 
         self.assertEqual(first_settled[0]["result"], "VIRTUAL_WIN")
-        self.assertEqual(protection["mode"], "VIRTUAL_MODE")
-        self.assertEqual(protection["virtual_wins"], 1)
-        self.assertEqual(protection["virtual_wins_required"], 2)
-        self.assertTrue(protection["anti_trap_mode"])
-
-        self.repository.start_virtual_trade(
-            managed_account_id=account_id,
-            account_id_masked="DOT***422",
-            signal=second,
-            configured_stake=0.50,
-            simulated_stake=0.50,
-            expected_payout=0.90,
-        )
-        second_settled = self.repository.settle_due_virtual_trades(
-            symbol=second.symbol,
-            tick_sequence=second.tick_sequence + second.duration_ticks,
-            exit_quote=Decimal("101.00"),
-            exit_after_wins=1,
-        )
-        protection = self.repository.virtual_protection_for_account(
-            managed_account_id=account_id
-        )
-
-        self.assertEqual(second_settled[0]["result"], "VIRTUAL_WIN")
         self.assertEqual(protection["mode"], "RECOVERY_PENDING")
-        self.assertEqual(protection["virtual_wins"], 2)
+        self.assertEqual(protection["virtual_wins"], 1)
+        self.assertEqual(protection["virtual_wins_required"], 1)
+        self.assertFalse(protection["anti_trap_mode"])
 
     def test_virtual_loss_resets_two_win_confirmation_sequence(self) -> None:
         account_id = self.create_managed_account("Consecutive confirmations")
@@ -1948,32 +1924,9 @@ class RFRepositoryTests(unittest.TestCase):
         )
         self.assertEqual(
             protection["mode"],
-            "VIRTUAL_MODE",
-        )
-        self.assertEqual(protection["virtual_wins_required"], 2)
-
-        second_virtual = signal("RISE", tick_sequence=880)
-        self.repository.record_signal(second_virtual)
-        self.repository.start_virtual_trade(
-            managed_account_id=account_id,
-            account_id_masked="DOT***422",
-            signal=second_virtual,
-            configured_stake=2.0,
-            simulated_stake=2.0,
-            expected_payout=3.6,
-        )
-        self.repository.settle_due_virtual_trades(
-            symbol=second_virtual.symbol,
-            tick_sequence=second_virtual.tick_sequence + second_virtual.duration_ticks,
-            exit_quote=Decimal("101.00"),
-            exit_after_wins=1,
-        )
-        self.assertEqual(
-            self.repository.virtual_protection_for_account(
-                managed_account_id=account_id
-            )["mode"],
             "RECOVERY_PENDING",
         )
+        self.assertEqual(protection["virtual_wins_required"], 1)
         self.repository.mark_recovery_attempt_started(account_id)
         win = self.repository.record_account_outcome(
             managed_account_id=account_id,

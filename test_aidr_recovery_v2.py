@@ -21,6 +21,9 @@ from app.aidr_adaptive_virtual import (
     reset_adaptive_trap,
 )
 from app.aidr_loss_continuation_fix import (
+    AIDR_BASE_ALIGNMENT,
+    AIDR_MINIMUM_LIVE_EDGE,
+    AIDR_RECOVERY_ALIGNMENT,
     FIRST_RECOVERY_ROLE,
     NORMAL_ROLE,
     POST_VIRTUAL_ROLE,
@@ -46,7 +49,7 @@ class AIDRRecoveryV2Tests(unittest.TestCase):
         )
         self.assertEqual(adaptive_trap_state(repo, 42)["trap_score"], 0)
 
-    def test_adaptive_virtual_confirmation_tightens_on_alternating_trap(self) -> None:
+    def test_virtual_confirmation_stays_at_one_win_after_alternating_trap(self) -> None:
         repo = SimpleNamespace(values={})
         repo.runtime_preference = lambda key: repo.values.get(key, "")
         repo.set_runtime_preference = lambda key, value: repo.values.__setitem__(key, value)
@@ -54,12 +57,12 @@ class AIDRRecoveryV2Tests(unittest.TestCase):
         record_post_virtual_recovery_loss(repo, 42, debt=4.0)
         self.assertEqual(
             adaptive_virtual_wins_required(repo, 42, default_wins=1, recovery_debt=4.0),
-            2,
+            1,
         )
         record_post_virtual_recovery_loss(repo, 42, debt=8.0)
         self.assertEqual(
             adaptive_virtual_wins_required(repo, 42, default_wins=1, recovery_debt=8.0),
-            3,
+            1,
         )
         reset_adaptive_trap(repo, 42)
         self.assertEqual(
@@ -67,18 +70,18 @@ class AIDRRecoveryV2Tests(unittest.TestCase):
             1,
         )
 
-    def test_adaptive_virtual_confirmation_tightens_on_large_debt(self) -> None:
+    def test_virtual_confirmation_stays_at_one_win_with_large_debt(self) -> None:
         repo = SimpleNamespace(values={})
         repo.runtime_preference = lambda key: repo.values.get(key, "")
         repo.set_runtime_preference = lambda key, value: repo.values.__setitem__(key, value)
 
         self.assertEqual(
             adaptive_virtual_wins_required(repo, 42, default_wins=1, recovery_debt=8.0),
-            2,
+            1,
         )
         self.assertEqual(
             adaptive_virtual_wins_required(repo, 42, default_wins=1, recovery_debt=25.0),
-            3,
+            1,
         )
 
     def test_runtime_uses_canonical_strategy_contract(self) -> None:
@@ -88,7 +91,10 @@ class AIDRRecoveryV2Tests(unittest.TestCase):
         self.assertEqual(POST_VIRTUAL_BARRIER, execution["post_virtual_recovery_barrier"])
         self.assertEqual(VIRTUAL_WINS_REQUIRED, 1)
         self.assertEqual(execution["virtual_confirmation_wins"], 1)
-        self.assertEqual(MIN_LIVE_EDGE, 0.0195)
+        self.assertEqual(MIN_LIVE_EDGE, 0.015)
+        self.assertEqual(AIDR_BASE_ALIGNMENT, 0.60)
+        self.assertEqual(AIDR_RECOVERY_ALIGNMENT, 0.60)
+        self.assertEqual(AIDR_MINIMUM_LIVE_EDGE, 0.015)
         self.assertEqual(quality["quality_tightening_factor"], 1.3)
 
     def test_first_and_post_virtual_recovery_use_distinct_barriers(self) -> None:

@@ -47,8 +47,8 @@ async def _websocket_only_purchase_accounts_by_stake(
 ) -> list[dict[str, Any]]:
     """Execute every production account purchase through a private Deriv WebSocket.
 
-    REST Bulk Purchase is intentionally unreachable from the production worker.
-    The existing private-session buy path remains responsible for attaching
+    Batch REST purchasing is intentionally unreachable from the production
+    worker. The private-session buy path remains responsible for attaching
     app_markup_percentage, registering the provider contract and subscribing to
     settlement updates.
     """
@@ -165,7 +165,7 @@ async def _websocket_only_purchase_accounts_by_stake(
                 else "PRIVATE_WS"
             )
             # Historical rows may have a bulk_batch_id, but a new private
-            # WebSocket execution must never be classified as a Bulk purchase.
+            # WebSocket execution must never be classified as batch execution.
             item.pop("bulk_batch_id", None)
             transactions.append(item)
 

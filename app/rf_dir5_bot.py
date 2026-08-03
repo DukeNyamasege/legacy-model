@@ -44,7 +44,7 @@ class _ExecutionDisabledBayesian:
 
 
 class RFDir5TradingBot(TradingBot):
-    """PUT-only production worker using the proven account/transport envelope."""
+    """Production worker using one private WebSocket session per account."""
 
     def __init__(self, config_path: str | None = None) -> None:
         super().__init__(config_path)
@@ -1466,9 +1466,7 @@ class RFDir5TradingBot(TradingBot):
             )
             contracts: set[int] = set()
             registered: set[str] = set()
-            master_id = self._copytrading_master_account_id()
             self.outcomes_by_signal[signal.signal_id] = {}
-            self.signal_master_account_ids[signal.signal_id] = master_id
             self.signal_symbols[signal.signal_id] = signal.symbol
             requested_at = datetime.now(timezone.utc)
             for transaction in transactions:
@@ -1557,7 +1555,7 @@ class RFDir5TradingBot(TradingBot):
             )
             if missing_accounts:
                 self.logger.warning(
-                    "RF_COPY_PURCHASE_PARTIAL signal_id=%s purchased=%s expected=%s "
+                    "RF_WEBSOCKET_EXECUTION_PARTIAL signal_id=%s purchased=%s expected=%s "
                     "missing=%s; failed accounts were isolated and healthy accounts continue.",
                     signal.signal_id,
                     len(registered),
@@ -1654,20 +1652,11 @@ class RFDir5TradingBot(TradingBot):
             else:
                 reason = "account is not eligible for this purchase cycle"
             self.logger.warning(
-                "RF_ACCOUNT_EXCLUDED account=%s reason=%s; other accounts continue",
+                "RF_ACCOUNT_EXCLUDED account=%s reason=%s; independent accounts continue",
                 mask_account_id(account_id),
                 reason,
             )
 
-        master_account_id = self._copytrading_master_account_id()
-        if master_account_id and master_account_id not in {
-            account_id for _token, account_id in eligible
-        }:
-            self.logger.warning(
-                "RF_MASTER_ACCOUNT_EXCLUDED account=%s reason=not_purchase_eligible; "
-                "copier execution continues",
-                mask_account_id(master_account_id),
-            )
         return eligible
 
     def _sync_running_status_after_validation(self) -> None:
@@ -1825,13 +1814,13 @@ class RFDir5TradingBot(TradingBot):
     def _record_real_cycle_outcome(self, outcome: str) -> None:
         del outcome
 
-    def _register_master_market_outcome(self, symbol: str, outcome: str) -> None:
+    def _register_execution_market_outcome(self, symbol: str, outcome: str) -> None:
         if hasattr(self, "keyed_bayesian") and symbol:
             self.keyed_bayesian.update(
                 self._bayesian_key(symbol),
                 str(outcome).lower() == "win",
             )
-        super()._register_master_market_outcome(symbol, outcome)
+        super()._register_execution_market_outcome(symbol, outcome)
 
     def _complete_market_rotation_after_purchase(self, symbol: str) -> None:
         super()._complete_market_rotation_after_purchase(symbol)

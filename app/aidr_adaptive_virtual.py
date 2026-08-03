@@ -162,11 +162,8 @@ def adaptive_virtual_wins_required_for_state(
     default_wins: int = 1,
     recovery_debt: float = 0.0,
 ) -> int:
-    score = int((trap_state or {}).get("trap_score") or 0)
-    debt = max(0.0, float(recovery_debt or 0.0))
     base = max(1, int(default_wins or 1))
-    if score >= 3 or debt >= 25.0:
-        return max(base, 3)
-    if score >= 1 or debt >= 8.0:
-        return max(base, 2)
+    # A virtual confirmation remains mandatory, but trap history must not turn
+    # it into an unbounded waiting period while an account is recovering.
+    del trap_state, recovery_debt
     return base

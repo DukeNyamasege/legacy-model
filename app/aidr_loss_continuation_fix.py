@@ -25,11 +25,13 @@ _INSTALLED = False
 
 # One global entry window slows the 24/7 system without letting one account scope
 # buy repeatedly. Normal and recovery scopes use fair role arbitration so a trader
-# in virtual protection cannot stop every normal trader on the platform.
+# in virtual protection cannot stop every normal trader on the platform. The
+# thresholds preserve a positive edge while allowing the positive 0.016-0.024
+# candidates observed in the production audit to reach account execution.
 MINIMUM_AIDR_TRADE_INTERVAL_SECONDS = 15.0
-AIDR_BASE_ALIGNMENT = 0.78
+AIDR_BASE_ALIGNMENT = 0.60
 AIDR_RECOVERY_ALIGNMENT = 0.60
-AIDR_MINIMUM_LIVE_EDGE = 0.025
+AIDR_MINIMUM_LIVE_EDGE = 0.015
 NORMAL_ROLE = "NORMAL"
 FIRST_RECOVERY_ROLE = "RECOVERY_OVER3"
 POST_VIRTUAL_ROLE = "RECOVERY_OVER4"

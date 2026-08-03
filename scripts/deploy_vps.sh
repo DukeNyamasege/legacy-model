@@ -418,6 +418,16 @@ compose run --rm --no-deps worker \
   || fail "Custom Martingale unit tests failed."
 
 echo ""
+echo "2b. Verify AIDR recovery and independent private WebSocket execution"
+compose run --rm --no-deps worker \
+  python -m unittest -q \
+    test_aidr_recovery_v2.py \
+    tests.test_independent_websocket_execution \
+    test_rf_dir5.py \
+    test_strategy_logic.py \
+  || fail "AIDR or private WebSocket execution tests failed."
+
+echo ""
 echo "3. Gate the release in an isolated candidate stack before touching production"
 run_release_gate
 

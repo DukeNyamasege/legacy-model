@@ -64,7 +64,7 @@ def _refresh_enabled_oauth_rows(bot: TradingBot) -> None:
 def _account_scoped_runtime_accounts(self: TradingBot):
     """Remove sibling-token borrowing from the final private WS account set.
 
-    The base loader historically supported REST bulk purchase and could borrow a
+    The base loader historically supported shared credentials and could borrow a
     PAT from another row belonging to the same login. Production now uses one
     authenticated WebSocket per account. Each runtime profile therefore keeps
     only the credential stored on that exact ManagedAccount row. OAuth access

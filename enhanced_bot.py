@@ -2,12 +2,13 @@
 
 - Uses the official public WS endpoint for unauthenticated market data.
 - Fetches and caches symbol precision (pip_size) dynamically.
-- Performs multi-account copy trading via the new REST bulk-purchase endpoint.
+- Executes the same eligible contract through independent private WebSocket
+  sessions, one session per connected account.
 - Validates tokens and maps account IDs dynamically on startup via REST.
 - Uses account-specific OTPs for secure authenticated WebSocket connections.
 - Monitores open contracts via proposal_open_contract subscriptions (no polling).
 - Exposes OAuth 2.0 PKCE helper flow on the command-line (--login).
-- Daily risk management, stop-loss, and take-profit per copier.
+- Daily risk management, stop-loss, and take-profit per account.
 - Persistent cumulative-loss recovery with account-level affordability limits.
 - Tick-based cooldown and global locking.
 """
@@ -142,11 +143,30 @@ def load_tokens(tokens_path: str) -> List[str]:
 
 
 def legacy_global_tokens_enabled() -> bool:
-    return os.getenv("COPYTRADING_ALLOW_LEGACY_GLOBAL_TOKENS", "false").lower() in {
+    value = os.getenv(
+        "ALLOW_LEGACY_GLOBAL_TOKENS",
+        os.getenv("COPYTRADING_ALLOW_LEGACY_GLOBAL_TOKENS", "false"),
+    )
+    return value.lower() in {
         "1",
         "true",
         "yes",
     }
+
+
+def independent_execution_outcome(outcomes: Dict[str, str]) -> Optional[str]:
+    """Return the settled account group's majority result, or None on a tie."""
+
+    normalized = [
+        str(outcome).lower()
+        for outcome in outcomes.values()
+        if str(outcome).lower() in {"win", "loss"}
+    ]
+    wins = normalized.count("win")
+    losses = normalized.count("loss")
+    if wins == losses:
+        return None
+    return "win" if wins > losses else "loss"
 
 
 def load_user_profiles(users_path: str) -> Dict[str, Dict[str, Any]]:
@@ -865,7 +885,7 @@ class PublicMarketDataClient:
 
 
 class ClientSession:
-    """Manages the authenticated WebSocket connection and contract monitoring for a single copier account."""
+    """Manages the private WebSocket and contract monitoring for one account."""
     def __init__(
         self,
         token: str,
@@ -1470,7 +1490,6 @@ class TradingBot:
         self.contract_symbols: Dict[int, str] = {}
         self.pending_by_signal: Dict[str, Set[int]] = {}
         self.outcomes_by_signal: Dict[str, Dict[str, str]] = {}
-        self.signal_master_account_ids: Dict[str, str] = {}
         self.signal_symbols: Dict[str, str] = {}
         self.pending_contract_started_at: Dict[int, datetime] = {}
         self.delayed_contracts_logged: Set[int] = set()
@@ -2436,7 +2455,7 @@ class TradingBot:
     def _market_rotation_blocks(self, symbol: str) -> bool:
         return str(symbol) in self._loss_rotation_markets()
 
-    def _register_master_market_outcome(self, symbol: str, outcome: str) -> None:
+    def _register_execution_market_outcome(self, symbol: str, outcome: str) -> None:
         normalized_outcome = str(outcome).lower()
         blocked = self._loss_rotation_markets()
         if normalized_outcome == "win":
@@ -2621,7 +2640,6 @@ class TradingBot:
         self.contract_symbols.clear()
         self.pending_by_signal.clear()
         self.outcomes_by_signal.clear()
-        self.signal_master_account_ids.clear()
         self.signal_symbols.clear()
         self.pending_contract_started_at.clear()
         self.delayed_contracts_logged.clear()
@@ -2701,7 +2719,6 @@ class TradingBot:
         if not signal_id:
             return
         self.outcomes_by_signal.pop(signal_id, None)
-        self.signal_master_account_ids.pop(signal_id, None)
         self.signal_symbols.pop(signal_id, None)
 
     async def _finish_contract_transport_cleanup(
@@ -3557,12 +3574,11 @@ class TradingBot:
             if not eligible_accounts:
                 self.repository.mark_signal(signal.signal_id, status="SKIP_NO_ENABLED_ACCOUNTS")
                 self.logger.info(
-                    "Skipping purchase for signal %s because no copier accounts are enabled.",
+                    "Skipping purchase for signal %s because no eligible accounts are enabled.",
                     signal.signal_id,
                 )
                 return
             eligible_account_ids = {account_id for _, account_id in eligible_accounts}
-            master_account_id = self._copytrading_master_account_id()
             profit_ratio = economics.potential_profit / economics.stake
             stake_by_token = {
                 token: self._planned_stake_for_account(token, account_id, profit_ratio)
@@ -3596,7 +3612,6 @@ class TradingBot:
             signal_contracts: Set[int] = set()
             registered_account_ids: Set[str] = set()
             self.outcomes_by_signal[signal.signal_id] = {}
-            self.signal_master_account_ids[signal.signal_id] = master_account_id
             self.signal_symbols[signal.signal_id] = signal.symbol
 
             for tx in transactions:
@@ -3649,7 +3664,6 @@ class TradingBot:
 
             if not signal_contracts:
                 self.outcomes_by_signal.pop(signal.signal_id, None)
-                self.signal_master_account_ids.pop(signal.signal_id, None)
                 self.signal_symbols.pop(signal.signal_id, None)
                 self._save_state()
                 self.repository.mark_signal(
@@ -3674,7 +3688,7 @@ class TradingBot:
                     ],
                 )
                 self.logger.warning(
-                    "COPY_PURCHASE_PARTIAL signal_id=%s purchased=%s expected=%s missing=%s; "
+                    "WEBSOCKET_EXECUTION_PARTIAL signal_id=%s purchased=%s expected=%s missing=%s; "
                     "failed accounts were skipped and healthy accounts remain active.",
                     signal.signal_id,
                     len(purchased_account_ids),
@@ -4311,12 +4325,6 @@ class TradingBot:
             symbol_key: signal.symbol,
         }
 
-    def _copytrading_master_account_id(self) -> str:
-        configured = os.getenv("COPYTRADING_MASTER_ACCOUNT_ID", "").strip()
-        if configured:
-            return configured
-        return self.valid_clients[0][1] if self.valid_clients else ""
-
     def _purchase_token_from_payload(self, payload: Dict[str, Any]) -> str:
         explicit_pat = str(payload.get("pat_token", "")).strip()
         if explicit_pat:
@@ -4397,21 +4405,7 @@ class TradingBot:
                 continue
             seen_account_ids.add(account_id)
             unique_accounts.append((token, account_id))
-        accounts = unique_accounts
-        include_master = os.getenv("COPYTRADING_INCLUDE_MASTER", "true").lower() in {
-            "1",
-            "true",
-            "yes",
-        }
-        if include_master or len(accounts) <= 1:
-            return accounts
-        master_account_id = self._copytrading_master_account_id()
-        copiers = [
-            (token, account_id)
-            for token, account_id in accounts
-            if account_id != master_account_id
-        ]
-        return copiers or accounts
+        return unique_accounts
 
     def _store_account_balance_payload(
         self,
@@ -4820,31 +4814,29 @@ class TradingBot:
                 signal_id,
                 {account_id: outcome},
             )
-            master_account_id = self.signal_master_account_ids.pop(signal_id, "")
             signal_symbol = self.signal_symbols.pop(signal_id, "")
-            master_outcome = outcomes.get(master_account_id)
-            if master_outcome:
-                self.bayesian.update(master_outcome == "win")
-                self._record_real_cycle_outcome(master_outcome)
-                self._register_trade_cycle_outcome(master_outcome)
-                self._register_master_market_outcome(signal_symbol, master_outcome)
+            group_outcome = independent_execution_outcome(outcomes)
+            if group_outcome:
+                self.bayesian.update(group_outcome == "win")
+                self._record_real_cycle_outcome(group_outcome)
+                self._register_trade_cycle_outcome(group_outcome)
+                self._register_execution_market_outcome(signal_symbol, group_outcome)
                 self.logger.info(
-                    "CONTRACT_SETTLED signal_id=%s symbol=%s master_account=%s "
+                    "CONCURRENT_EXECUTION_SETTLED signal_id=%s symbol=%s "
                     "result=%s exit_digit=%s outcomes=%s",
                     signal_id,
                     signal_symbol,
-                    mask_account_id(master_account_id),
-                    master_outcome.upper(),
+                    group_outcome.upper(),
                     exit_digit,
                     {mask_account_id(k): v for k, v in outcomes.items()},
                 )
             else:
                 self.logger.warning(
-                    "MASTER_OUTCOME_UNAVAILABLE signal_id=%s symbol=%s master_account=%s; "
-                    "copier outcomes remain personal and do not affect global strategy state",
+                    "CONCURRENT_EXECUTION_MIXED_OUTCOMES signal_id=%s symbol=%s; "
+                    "a tied account group will not update shared strategy state outcomes=%s",
                     signal_id,
                     signal_symbol,
-                    mask_account_id(master_account_id),
+                    {mask_account_id(k): v for k, v in outcomes.items()},
                 )
 
         self._save_state()
@@ -5017,10 +5009,6 @@ class TradingBot:
                         trade.signal_id
                     ) or self.symbol
                     self.pending_by_signal.setdefault(trade.signal_id, set()).add(cid)
-                    self.signal_master_account_ids.setdefault(
-                        trade.signal_id,
-                        self._copytrading_master_account_id(),
-                    )
                     self.signal_symbols.setdefault(
                         trade.signal_id,
                         self.contract_symbols[cid],

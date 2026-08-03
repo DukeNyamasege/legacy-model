@@ -24,9 +24,9 @@
     "mid_window": 50,
     "long_window": 100,
     "deep_window": 500,
-    "minimum_normal_hit_rate": 0.75,
-    "minimum_recovery_hit_rate": 0.56,
-    "minimum_live_edge": 0.0195,
+    "minimum_normal_hit_rate": 0.60,
+    "minimum_recovery_hit_rate": 0.60,
+    "minimum_live_edge": 0.015,
     "quality_tightening_factor": 1.3,
     "recovery_profit_buffer": 0.01
   }
