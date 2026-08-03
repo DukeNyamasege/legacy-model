@@ -21,6 +21,11 @@ API published only on the host loopback interface, and Caddy on the host reverse
 proxies traffic to it so the public site is served at
 `https://derivadmin.site`.
 
+DNS should publish an `A` record for `derivadmin.site` and a `CNAME` for
+`www.derivadmin.site` pointing to `derivadmin.site`. Do not publish an `AAAA`
+record unless the VPS firewall and Caddy are verified over IPv6; otherwise some
+mobile/IPv6-preferred networks can time out while IPv4 users load normally.
+
 Required variables are `DERIV_APP_ID`, `DERIV_TOKEN`, `DERIV_ENVIRONMENT`,
 `DERIV_TRADING_ENABLED`, `TRADING_MODE`, `ALLOW_REAL_TRADING`, `TEST_RUN_ID`,
 `CONTROL_API_KEY`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, and
@@ -31,7 +36,12 @@ Required variables are `DERIV_APP_ID`, `DERIV_TOKEN`, `DERIV_ENVIRONMENT`,
 Point `derivadmin.site` at your VPS IP, then use a Caddyfile like this:
 
 ```caddy
-derivadmin.site {
+derivadmin.site, www.derivadmin.site {
+    encode zstd gzip
+
+    @www host www.derivadmin.site
+    redir @www https://derivadmin.site{uri} permanent
+
     reverse_proxy 127.0.0.1:8080
 
     header {
@@ -56,6 +66,9 @@ Once the stack is up and DNS is pointed at the VPS, verify:
 
 ```bash
 curl -i https://derivadmin.site/health
+curl -I https://derivadmin.site/
+curl -I https://derivadmin.site/ui/dashboard-v2.css
+curl -I https://www.derivadmin.site/health
 ```
 
 Then open `https://derivadmin.site`.

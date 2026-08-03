@@ -7,7 +7,7 @@ from fastapi.responses import Response
 from app.dashboard_stability_fix import _remove_route
 
 _INSTALLED = False
-UI_VERSION = "20260802-9"
+UI_VERSION = "20260803-1"
 
 
 def _headers(media_type: str) -> dict[str, str]:
@@ -26,7 +26,17 @@ def install_head_request_compat(app: Any) -> None:
     if _INSTALLED:
         return
 
-    for path in ("/", "/ui/dashboard-v2.js", "/ui/simplified-dashboard.js"):
+    for path in (
+        "/",
+        "/ui/dashboard-v2.js",
+        "/ui/dashboard-actions-v2.js",
+        "/ui/dashboard-v2.css",
+        "/ui/simplified-dashboard.js",
+        "/health",
+        "/health/live",
+        "/health/database",
+        "/runtime",
+    ):
         _remove_route(app, path, "HEAD")
 
     @app.head("/", include_in_schema=False)
@@ -37,9 +47,33 @@ def install_head_request_compat(app: Any) -> None:
     def dashboard_v2_head() -> Response:
         return Response(content=b"", headers=_headers("application/javascript"))
 
+    @app.head("/ui/dashboard-actions-v2.js", include_in_schema=False)
+    def dashboard_actions_v2_head() -> Response:
+        return Response(content=b"", headers=_headers("application/javascript"))
+
+    @app.head("/ui/dashboard-v2.css", include_in_schema=False)
+    def dashboard_v2_css_head() -> Response:
+        return Response(content=b"", headers=_headers("text/css; charset=utf-8"))
+
     @app.head("/ui/simplified-dashboard.js", include_in_schema=False)
     def simplified_dashboard_head() -> Response:
         return Response(content=b"", headers=_headers("application/javascript"))
+
+    @app.head("/health", include_in_schema=False)
+    def health_head() -> Response:
+        return Response(content=b"", headers=_headers("application/json"))
+
+    @app.head("/health/live", include_in_schema=False)
+    def health_live_head() -> Response:
+        return Response(content=b"", headers=_headers("application/json"))
+
+    @app.head("/health/database", include_in_schema=False)
+    def health_database_head() -> Response:
+        return Response(content=b"", headers=_headers("application/json"))
+
+    @app.head("/runtime", include_in_schema=False)
+    def runtime_head() -> Response:
+        return Response(content=b"", headers=_headers("application/json"))
 
     app.state.head_request_compat_installed = True
     _INSTALLED = True

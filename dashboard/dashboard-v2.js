@@ -2,29 +2,72 @@
   "use strict";
 
   const VERSION = "20260801-5";
+  const storageGet = key => {
+    try { return localStorage.getItem(key); }
+    catch (_) { return null; }
+  };
+  const storageSet = (key, value) => {
+    try { localStorage.setItem(key, value); }
+    catch (_) {}
+  };
+  const storageRemove = key => {
+    try { localStorage.removeItem(key); }
+    catch (_) {}
+  };
   const K = {
     theme: "foa-theme-v2",
     mode: "foa-mode-v2",
     view: "foa-view-v2",
     wizard: "foa-onboarding-dismissed-v2",
+    session: "foa-session-v2",
   };
   const VIEWS = new Set(["overview", "trades", "strategy", "settings"]);
+  function rememberedSession() {
+    const boot = window.FOA_BOOT_SESSION && typeof window.FOA_BOOT_SESSION === "object"
+      ? window.FOA_BOOT_SESSION
+      : null;
+    if (boot?.authenticated) return boot;
+    try {
+      const cached = JSON.parse(storageGet(K.session) || "null");
+      const fresh = cached?.authenticated && Date.now() - Number(cached.saved_at || 0) < 30 * 86400 * 1000;
+      return fresh ? cached : null;
+    } catch (_) {
+      return null;
+    }
+  }
+  const BOOT_SESSION = rememberedSession();
   const S = {
-    theme: localStorage.getItem(K.theme) || "dark",
-    mode: localStorage.getItem(K.mode) || "demo",
-    view: VIEWS.has(localStorage.getItem(K.view)) ? localStorage.getItem(K.view) : "overview",
-    me: null,
+    theme: storageGet(K.theme) || "dark",
+    mode: BOOT_SESSION?.account_type || storageGet(K.mode) || "demo",
+    view: VIEWS.has(storageGet(K.view)) ? storageGet(K.view) : "overview",
+    me: BOOT_SESSION?.authenticated ? {
+      authenticated: true,
+      account_type: BOOT_SESSION.account_type || "demo",
+      available_account_types: BOOT_SESSION.available_account_types || ["demo"],
+      label: BOOT_SESSION.label || "Restoring session",
+      account_id: BOOT_SESSION.account_id_masked || BOOT_SESSION.label || "Restoring session",
+      account_id_masked: BOOT_SESSION.account_id_masked || "",
+      currency: BOOT_SESSION.currency || "USD",
+      balance: 0,
+      enabled: Boolean(BOOT_SESSION.enabled),
+      has_trading_api_token: Boolean(BOOT_SESSION.has_trading_api_token),
+      requires_api_token: Boolean(BOOT_SESSION.requires_api_token),
+      trading_api_token_invalid: Boolean(BOOT_SESSION.trading_api_token_invalid),
+      settings: BOOT_SESSION.settings || {},
+      stats: { trades: 0, wins: 0, losses: 0, profit: 0 },
+      virtual_protection: {},
+    } : null,
     life: null,
     summary: null,
     trades: [],
     tradeSummary: {},
     busy: false,
     mutating: false,
-    booting: true,
+    booting: !BOOT_SESSION?.authenticated,
     loaderText: "Opening dashboard…",
     error: "",
     notice: "",
-    wizardOpen: localStorage.getItem(K.wizard) !== "1",
+    wizardOpen: BOOT_SESSION?.authenticated ? false : storageGet(K.wizard) !== "1",
   };
 
   const esc = value => String(value ?? "")
@@ -51,7 +94,7 @@
 
   function setTheme(value) {
     S.theme = value === "light" ? "light" : "dark";
-    localStorage.setItem(K.theme, S.theme);
+    storageSet(K.theme, S.theme);
     document.documentElement.dataset.theme = S.theme;
     const app = document.querySelector("#foa-simple-app");
     if (app) app.dataset.theme = S.theme;
@@ -317,9 +360,12 @@
 
   function switchView(view) {
     S.view = VIEWS.has(view) ? view : "overview";
-    localStorage.setItem(K.view, S.view);
+    storageSet(K.view, S.view);
     S.error = "";
     S.notice = "";
+    S.loaderText = "";
+    render();
+    return;
     setLoader(`Opening ${S.view}…`);
     window.setTimeout(() => {
       S.loaderText = "";
@@ -347,6 +393,30 @@
     }
   }
 
+  async function switchMode(mode) {
+    const nextMode = String(mode || "demo").toLowerCase() === "real" ? "real" : "demo";
+    const previousMode = S.mode;
+    const previousAccountType = S.me?.account_type;
+    S.mode = nextMode;
+    if (S.me) S.me.account_type = nextMode;
+    storageSet(K.mode, S.mode);
+    S.error = "";
+    S.notice = "";
+    render();
+    try {
+      await postJSON("/me/switch-account", { account_type: nextMode });
+      S.notice = `Switched to ${nextMode}.`;
+      await refresh(false, "Refreshing dashboard...");
+    } catch (error) {
+      S.mode = previousMode;
+      if (S.me) S.me.account_type = previousAccountType || previousMode;
+      storageSet(K.mode, S.mode);
+      S.error = String(error?.message || error);
+    } finally {
+      render();
+    }
+  }
+
   function bind(root) {
     root.querySelectorAll("[data-view]").forEach(button => {
       button.onclick = () => switchView(button.dataset.view);
@@ -364,15 +434,18 @@
       S.trades = [];
       S.tradeSummary = {};
       S.view = "overview";
-      localStorage.setItem(K.view, S.view);
+      storageSet(K.view, S.view);
+      storageRemove(K.session);
     }, "Logged out successfully.", "Logging out…");
     const dismiss = root.querySelector("#dismiss-wizard");
     if (dismiss) dismiss.onclick = () => {
       S.wizardOpen = false;
-      localStorage.setItem(K.wizard, "1");
+      storageSet(K.wizard, "1");
       render();
     };
     root.querySelectorAll("[data-mode]").forEach(button => {
+      button.onclick = () => switchMode(button.dataset.mode);
+      return;
       button.onclick = () => mutate(async () => {
         await postJSON("/me/switch-account", { account_type: button.dataset.mode });
         S.mode = button.dataset.mode;
@@ -482,6 +555,11 @@
     app.dataset.uiVersion = VERSION;
     document.body.appendChild(app);
     render();
+    if (authenticated()) {
+      refresh(false, "Refreshing dashboard...");
+      window.setInterval(() => refresh(false, "Refreshing dashboard..."), 8000);
+      return;
+    }
     refresh(true, "Opening dashboard…");
     window.setInterval(() => refresh(false, "Refreshing dashboard…"), 8000);
   }

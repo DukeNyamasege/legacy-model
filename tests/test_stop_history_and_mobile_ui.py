@@ -54,7 +54,49 @@ class CompactMobileUIContractTests(unittest.TestCase):
         self.assertIn("@media (max-width: 420px)", source)
         self.assertIn("font-size: 9.5px !important", source)
         self.assertIn("font-size: 16px !important", source)
+        self.assertIn("min-height: 44px !important", source)
+        self.assertIn("foa-top-actions", source)
         self.assertIn("X-FOA-Mobile-UI-Version", source)
+
+
+class DashboardSessionAndReachabilityTests(unittest.TestCase):
+    def test_returning_session_bootstrap_is_final_root_authority(self) -> None:
+        api_v3 = (ROOT / "app" / "api_v3.py").read_text(encoding="utf-8")
+        final_ui = api_v3.index("install_final_virtual_history_ui(app)")
+        session_resilience = api_v3.index("install_dashboard_session_resilience(app)")
+        head_compat = api_v3.index("install_head_request_compat(app)")
+        self.assertLess(final_ui, session_resilience)
+        self.assertLess(session_resilience, head_compat)
+
+        source = (ROOT / "app" / "dashboard_session_resilience.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("window.FOA_BOOT_SESSION=", source)
+        self.assertIn("base_api.get_current_account(request)", source)
+        self.assertIn('marker = \'<script src="/ui/dashboard-v2.js\'', source)
+
+    def test_dashboard_js_uses_safe_session_marker_and_fast_route_switch(self) -> None:
+        source = (ROOT / "dashboard" / "dashboard-v2.js").read_text(encoding="utf-8")
+        self.assertIn('session: "foa-session-v2"', source)
+        self.assertIn("window.FOA_BOOT_SESSION", source)
+        self.assertIn("booting: !BOOT_SESSION?.authenticated", source)
+        self.assertIn("function switchMode(mode)", source)
+        self.assertIn('refresh(false, "Refreshing dashboard...")', source)
+
+    def test_head_compatibility_covers_static_and_health_routes(self) -> None:
+        head = (ROOT / "app" / "head_request_compat.py").read_text(encoding="utf-8")
+        for path in (
+            "/ui/dashboard-v2.css",
+            "/ui/dashboard-actions-v2.js",
+            "/health",
+            "/health/live",
+            "/runtime",
+        ):
+            self.assertIn(path, head)
+        database = (ROOT / "app" / "database_runtime_hardening.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('@app.head("/health/database"', database)
 
 
 if __name__ == "__main__":

@@ -113,21 +113,43 @@ def _patched_dashboard_js() -> str:
     new_refresh = '''  async function refresh(force = false, loadingText = "Refreshing dashboard…") {
     if (S.busy && !force) return;
     const silent = !force && String(loadingText || "").toLowerCase().includes("refreshing");
+    const firstDataPaint = !S.summary;
     const activeElement = document.activeElement;
     const activeTag = String(activeElement?.tagName || "").toLowerCase();
     const editing = ["input", "select", "textarea"].includes(activeTag);
+    const requestedMode = S.mode;
     S.busy = !silent;
     if (!silent) {
       S.loaderText = loadingText;
       render(false);
     }
     try {
-      S.me = await getJSON("/me");
+      const mePromise = getJSON("/me");
+      const summaryPromise = getJSON(`/metrics/summary?mode=${encodeURIComponent(requestedMode)}`);
+      S.me = await mePromise;
       if (authenticated()) {
         S.mode = S.me.account_type || S.mode;
-        localStorage.setItem(K.mode, S.mode);
+        storageSet(K.mode, S.mode);
+        storageSet(K.session, JSON.stringify({
+          authenticated: true,
+          saved_at: Date.now(),
+          account_type: S.mode,
+          available_account_types: S.me.available_account_types || [S.mode],
+          label: S.me.label || "Account",
+          account_id_masked: S.me.account_id_masked || "",
+          currency: S.me.currency || "USD",
+          enabled: Boolean(S.me.enabled),
+          has_trading_api_token: Boolean(S.me.has_trading_api_token),
+          requires_api_token: Boolean(S.me.requires_api_token),
+          trading_api_token_invalid: Boolean(S.me.trading_api_token_invalid),
+          settings: S.me.settings || {},
+        }));
+      } else {
+        storageRemove(K.session);
       }
-      S.summary = await getJSON(`/metrics/summary?mode=${encodeURIComponent(S.mode)}`);
+      S.summary = requestedMode === S.mode
+        ? await summaryPromise
+        : await getJSON(`/metrics/summary?mode=${encodeURIComponent(S.mode)}`);
       if (authenticated()) {
         const [life, today] = await Promise.all([
           getJSON("/me/trading-lifecycle"),
@@ -148,7 +170,7 @@ def _patched_dashboard_js() -> str:
       S.busy = false;
       S.booting = false;
       S.loaderText = "";
-      if (!silent && !editing) render();
+      if ((!silent || firstDataPaint) && !editing) render();
     }
   }
 '''

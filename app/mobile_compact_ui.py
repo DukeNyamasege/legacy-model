@@ -7,7 +7,7 @@ from fastapi.responses import Response
 import app.api as base_api
 
 _INSTALLED = False
-UI_COMPACT_VERSION = "20260802-compact-1"
+UI_COMPACT_VERSION = "20260803-compact-session-nav"
 
 
 def _remove_route(app: Any, path: str, method: str) -> None:
@@ -132,13 +132,16 @@ def _compact_mobile_css() -> str:
     line-height: 1.05 !important;
   }
   html body #foa-simple-app button,
-  html body #foa-simple-app input,
-  html body #foa-simple-app select,
-  html body #foa-simple-app textarea,
   html body #foa-simple-app .foa-primary-link,
   html body #foa-simple-app .foa-secondary-link,
   html body #foa-simple-app .foa-login {
     font-size: 9.5px !important;
+  }
+  html body #foa-simple-app input,
+  html body #foa-simple-app select,
+  html body #foa-simple-app textarea {
+    font-size: 16px !important;
+    line-height: 1.25 !important;
   }
   html body #foa-simple-app button,
   html body #foa-simple-app .foa-primary-link,
@@ -151,9 +154,21 @@ def _compact_mobile_css() -> str:
   html body #foa-simple-app input,
   html body #foa-simple-app select,
   html body #foa-simple-app textarea {
-    min-height: 35px !important;
-    padding: 7px 9px !important;
+    min-height: 44px !important;
+    padding: 9px 10px !important;
     border-radius: 8px !important;
+  }
+  html body #foa-simple-app .foa-top-actions {
+    min-width: 0 !important;
+    max-width: 46vw !important;
+    gap: 5px !important;
+  }
+  html body #foa-simple-app .foa-login,
+  html body #foa-simple-app .foa-logout {
+    max-width: 118px !important;
+    white-space: normal !important;
+    line-height: 1.1 !important;
+    text-align: center !important;
   }
   html body #foa-simple-app .foa-actions-row,
   html body #foa-simple-app .foa-welcome-actions,
@@ -205,12 +220,15 @@ def _compact_mobile_css() -> str:
   html body #foa-simple-app .foa-bottom-nav {
     min-height: 52px !important;
     padding: 4px 5px calc(4px + env(safe-area-inset-bottom)) !important;
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
   }
   html body #foa-simple-app .foa-bottom-nav button {
     min-height: 43px !important;
     font-size: 8px !important;
     gap: 1px !important;
     padding: 3px 2px !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
   }
   html body #foa-simple-app .foa-bottom-nav button span {
     font-size: 13px !important;

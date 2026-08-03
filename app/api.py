@@ -2108,6 +2108,8 @@ def logout(request: Request) -> JSONResponse:
         REPOSITORY.delete_client_session(session_hash(session_token))
     response = JSONResponse({"success": True})
     response.delete_cookie(CLIENT_SESSION_COOKIE, domain=session_cookie_domain())
+    for stale_domain in ("derivadmin.site", ".derivadmin.site", "www.derivadmin.site"):
+        response.delete_cookie(CLIENT_SESSION_COOKIE, domain=stale_domain)
     return response
 
 

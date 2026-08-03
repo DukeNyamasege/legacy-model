@@ -14,14 +14,14 @@ from app.dashboard_loader_unlock import (
 from app.dashboard_stability_fix import _remove_route, _stable_actions_js
 
 _INSTALLED = False
-UI_VERSION = "20260802-9"
+UI_VERSION = "20260803-1"
 
 _RISK_DISCLAIMER_JS = r'''
 
 /* FOA_RISK_DISCLAIMER + FOA_VIRTUAL_WIN_PROGRESS: final non-observer UI layer. */
 (() => {
   "use strict";
-  const VERSION = "20260802-9";
+  const VERSION = "20260803-1";
   let started = false;
 
   function ensureStyle() {
@@ -84,6 +84,7 @@ _RISK_DISCLAIMER_JS = r'''
 def _versioned(source: str) -> str:
     value = source
     for old in (
+        "20260802-9",
         "20260802-8",
         "20260802-7",
         "20260802-6",

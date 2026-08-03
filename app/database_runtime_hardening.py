@@ -4,7 +4,7 @@ import time
 from typing import Any
 
 from fastapi import HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy.exc import OperationalError
 
 import app.api as base_api
@@ -59,5 +59,18 @@ def install_database_runtime_hardening(app: Any) -> None:
             "service": "test2-api",
             "database": "connected",
         }
+
+    @app.head("/health/database", include_in_schema=False)
+    def database_health_head() -> Response:
+        if not base_api.DATABASE.ping():
+            raise HTTPException(status_code=503, detail="Database unavailable")
+        return Response(
+            content=b"",
+            headers={
+                "Cache-Control": "no-store, max-age=0",
+                "Pragma": "no-cache",
+                "Content-Type": "application/json",
+            },
+        )
 
     _INSTALLED = True

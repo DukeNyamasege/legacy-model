@@ -139,11 +139,17 @@ def install_oauth_session_recovery(app: Any) -> None:
 
         # Remove an older domain-scoped cookie so it cannot compete with the new
         # host-only value in the Cookie header after this successful login.
-        if configured_cookie_domain:
+        stale_domains = {
+            configured_cookie_domain,
+            "derivadmin.site",
+            ".derivadmin.site",
+            "www.derivadmin.site",
+        }
+        for stale_domain in sorted(domain for domain in stale_domains if domain):
             response.delete_cookie(
                 key=base_api.CLIENT_SESSION_COOKIE,
                 path="/",
-                domain=configured_cookie_domain,
+                domain=stale_domain,
             )
         response.headers["X-OAuth-Session-Policy"] = (
             f"{proof_source};host-only-cookie"

@@ -31,6 +31,9 @@ from app.aidr_virtual_settlement_fix import install_aidr_virtual_settlement_fix 
 from app.custom_martingale import install_custom_martingale_api  # noqa: E402
 from app.dashboard_loader_unlock import install_dashboard_loader_unlock  # noqa: E402
 from app.dashboard_readability import install_dashboard_readability  # noqa: E402
+from app.dashboard_session_resilience import (  # noqa: E402
+    install_dashboard_session_resilience,
+)
 from app.dashboard_settings_guard import install_dashboard_settings_guard  # noqa: E402
 from app.dashboard_smoke_compat import install_dashboard_smoke_compat  # noqa: E402
 from app.dashboard_stability_fix import install_dashboard_stability_fix  # noqa: E402
@@ -169,6 +172,10 @@ install_dashboard_loader_unlock(app)
 # explicit VIRTUAL OVER 4 badge and $0.00 impact. A permanent risk disclaimer is
 # also displayed on every dashboard page.
 install_final_virtual_history_ui(app)
+
+# Keep returning users on the dashboard shell immediately when their HttpOnly
+# session cookie is still valid. The full personal data refresh stays async.
+install_dashboard_session_resilience(app)
 
 # Verification commands use curl -I, which sends HEAD. Browsers use GET, but the
 # final dynamic dashboard routes must also answer HEAD with normal headers.
