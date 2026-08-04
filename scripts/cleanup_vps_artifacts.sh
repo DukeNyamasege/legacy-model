@@ -8,8 +8,17 @@ MODE=${1:-manual}
 BUILD_CACHE_MAX_AGE=${BUILD_CACHE_MAX_AGE:-72h}
 BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-14}
 BACKUP_RETAIN_COUNT=${BACKUP_RETAIN_COUNT:-5}
+ALLOW_REMOVE_RUNNING_PREFLIGHT=${ALLOW_REMOVE_RUNNING_PREFLIGHT:-false}
+DEPLOYMENT_LOCK_HELD=${DEPLOYMENT_LOCK_HELD:-false}
 
 cd "$PROJECT_DIR"
+
+truthy() {
+  case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
 is_active_image_id() {
   candidate=$1
@@ -29,7 +38,7 @@ echo "============================================================"
 echo "SAFE VPS ARTIFACT CLEANUP"
 echo "============================================================"
 echo "Mode: $MODE"
-echo "This cleanup preserves running containers and every production named volume."
+echo "This cleanup preserves running production containers and every production named volume."
 
 echo ""
 echo "--- DISK BEFORE ---"
@@ -37,13 +46,21 @@ df -h / 2>/dev/null || true
 docker system df 2>/dev/null || true
 
 active_preflights=$(running_preflight_projects || true)
+remove_running=false
 if [ -n "$active_preflights" ]; then
-  echo ""
-  echo "ACTIVE CANDIDATE DEPLOYMENT DETECTED:" >&2
-  printf '%s\n' "$active_preflights" >&2
-  echo "Cleanup refused to avoid deleting a release gate that may still be running." >&2
-  echo "Wait for that deployment to finish, or inspect it manually before retrying." >&2
-  exit 1
+  if truthy "$ALLOW_REMOVE_RUNNING_PREFLIGHT" && truthy "$DEPLOYMENT_LOCK_HELD"; then
+    remove_running=true
+    echo ""
+    echo "Removing stale candidate project(s) under the exclusive VPS update lock:"
+    printf '%s\n' "$active_preflights"
+  else
+    echo ""
+    echo "ACTIVE CANDIDATE DEPLOYMENT DETECTED:" >&2
+    printf '%s\n' "$active_preflights" >&2
+    echo "Cleanup refused because the exclusive updater lock was not declared." >&2
+    echo "Wait for the deployment to finish or run the normal update script." >&2
+    exit 1
+  fi
 fi
 
 # Remove exited one-shot containers belonging to this production Compose project.
@@ -56,13 +73,18 @@ docker ps -aq \
       docker rm "$container_id" >/dev/null 2>&1 || true
     done
 
-# Failed/repeated release gates use isolated Compose project names. No active
-# candidate exists at this point, so only stopped/created remnants are selected.
-# Production volumes use project=legacy-model and cannot match this section.
+# Failed/repeated release gates use isolated Compose project names. A locked updater
+# may force-remove a stale running candidate; manual cleanup removes only stopped
+# remnants. Production volumes use project=legacy-model and cannot match.
 docker ps -a --format '{{.ID}} {{.Status}} {{.Label "com.docker.compose.project"}}' \
   | awk '$NF ~ /^legacy-model-preflight-/ {print $1}' \
   | while IFS= read -r container_id; do
-      [ -n "$container_id" ] && docker rm "$container_id" >/dev/null 2>&1 || true
+      [ -n "$container_id" ] || continue
+      if [ "$remove_running" = "true" ]; then
+        docker rm -f "$container_id" >/dev/null 2>&1 || true
+      else
+        docker rm "$container_id" >/dev/null 2>&1 || true
+      fi
     done
 
 docker network ls --format '{{.ID}} {{.Label "com.docker.compose.project"}}' \
