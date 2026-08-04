@@ -99,7 +99,8 @@ def install_fast_integration_health(app: Any) -> None:
         for mode in ("demo", "real"):
             try:
                 # dashboard_summary is a last-good cache read. It deliberately
-                # ignores force=True and never runs all-time accounting here.
+                # ignores legacy forced-refresh requests and never runs all-time
+                # accounting inside this health endpoint.
                 payload = base_api.dashboard_summary(account_type=mode)
                 performance = dict(payload.get("system_performance") or {})
                 today = dict(performance.get("today") or {})
