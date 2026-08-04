@@ -7,6 +7,8 @@ BACKUP_DIR="$PROJECT_DIR/deploy-backups"
 REPORT_DIR="$PROJECT_DIR/performance-reports"
 MODE=${1:-manual}
 BUILD_CACHE_MAX_AGE=${BUILD_CACHE_MAX_AGE:-72h}
+BUILD_CACHE_PRESSURE_MAX_AGE=${BUILD_CACHE_PRESSURE_MAX_AGE:-12h}
+DISK_PRESSURE_THRESHOLD_PERCENT=${DISK_PRESSURE_THRESHOLD_PERCENT:-70}
 BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-14}
 BACKUP_RETAIN_COUNT=${BACKUP_RETAIN_COUNT:-5}
 REPORT_RETENTION_DAYS=${REPORT_RETENTION_DAYS:-7}
@@ -35,6 +37,12 @@ running_preflight_projects() {
   docker ps --format '{{.Label "com.docker.compose.project"}}' 2>/dev/null \
     | awk '/^legacy-model-preflight-/ {print}' \
     | sort -u
+}
+
+root_disk_usage_percent() {
+  df -P / 2>/dev/null \
+    | awk 'NR == 2 {gsub(/%/, "", $5); print $5}' \
+    | tr -d '[:space:]'
 }
 
 prune_retained_files() {
@@ -139,9 +147,25 @@ docker images --no-trunc --format '{{.Repository}} {{.ID}}' \
 docker image prune -f >/dev/null 2>&1 || true
 
 # BuildKit cache is often the largest residue after repeated candidate builds.
-# A bounded age filter avoids throwing away layers from the deployment currently
-# being prepared while removing older unused build cache.
-docker builder prune -f --filter "until=$BUILD_CACHE_MAX_AGE" >/dev/null 2>&1 || true
+# Under normal disk conditions retain up to 72 hours of reusable layers. When the
+# root filesystem is already under pressure, reclaim unused cache older than 12
+# hours. Docker never deletes layers required by running production containers.
+disk_usage=$(root_disk_usage_percent || true)
+build_cache_age=$BUILD_CACHE_MAX_AGE
+case "$disk_usage" in
+  ''|*[!0-9]*)
+    echo "Build-cache pressure check unavailable; using age=$build_cache_age"
+    ;;
+  *)
+    if [ "$disk_usage" -ge "$DISK_PRESSURE_THRESHOLD_PERCENT" ]; then
+      build_cache_age=$BUILD_CACHE_PRESSURE_MAX_AGE
+      echo "Disk pressure detected usage=${disk_usage}% threshold=${DISK_PRESSURE_THRESHOLD_PERCENT}% build_cache_age=$build_cache_age"
+    else
+      echo "Disk pressure not detected usage=${disk_usage}% threshold=${DISK_PRESSURE_THRESHOLD_PERCENT}% build_cache_age=$build_cache_age"
+    fi
+    ;;
+esac
+docker builder prune -f --filter "until=$build_cache_age" >/dev/null 2>&1 || true
 
 # Keep the newest backups/reports regardless of age, then expire older files. This
 # prevents diagnostics and repeated predeploy dumps from becoming future disk use.
