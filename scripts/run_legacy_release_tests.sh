@@ -15,5 +15,7 @@ exec python -m unittest -q \
   tests.test_multi_strategy \
   tests.test_multi_strategy_concurrency \
   tests.test_generated_multi_strategy_js \
+  tests.test_performance_hardening \
+  tests.test_generated_request_broker_js \
   test_rf_dir5.py \
   test_strategy_logic.py
