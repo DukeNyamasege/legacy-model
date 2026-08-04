@@ -44,7 +44,7 @@ jobs:
 
       - name: Validate deployment shell and Compose
         run: |
-          sh -n scripts/deploy_vps.sh scripts/update_vps.sh
+          sh -n scripts/deploy_vps.sh scripts/update_vps.sh scripts/run_legacy_release_tests.sh
           docker compose -f docker-compose.yml -f docker-compose.vps.yml config --quiet
 
       - name: Compile Python
@@ -62,7 +62,7 @@ jobs:
           python -m unittest -q tests.test_stop_history_and_mobile_ui
           python -m unittest -q test_custom_martingale.py
           python -m unittest -q test_aidr_recovery_v2.py tests.test_aidr_virtual_soft_gate tests.test_independent_websocket_execution tests.test_private_websocket_credentials
-          python -m unittest -q test_rf_dir5.py test_strategy_logic.py
+          sh scripts/run_legacy_release_tests.sh
 
       - name: Build API image
         run: docker build --target api -t legacy-model-release-gate-api:${{ github.sha }} .
