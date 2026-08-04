@@ -86,15 +86,19 @@ class StrategyV2PreferenceTests(unittest.TestCase):
 
 
 class StrategyV2SourceContractTests(unittest.TestCase):
-    def test_manual_virtual_trade_parent_is_created_before_execution(self) -> None:
+    def test_manual_virtual_trade_parent_is_created_at_selected_execution_boundary(self) -> None:
         source = (ROOT / "app" / "strategy_v2_runtime.py").read_text(
             encoding="utf-8"
         )
         parent = source.index("session.add(")
-        candidate_return = source.index("return signal", parent)
-        self.assertIn("DirectionalSignal(", source[parent:candidate_return])
-        self.assertIn("_ensure_parent_signal(bot, signal, route)", source)
-        self.assertIn("VirtualTrade", source)
+        parent_end = source.index("def _ordinary_probability", parent)
+        guard = source.index("async def selected_buy_with_parent")
+        ensure = source.index("_ensure_parent_signal(self, signal, route)", guard)
+        execute = source.index("await original_selected_buy", ensure)
+        self.assertIn("DirectionalSignal(", source[parent:parent_end])
+        self.assertLess(ensure, execute)
+        self.assertIn("avoiding writes", source)
+        self.assertNotIn("make_digit_with_parent", source)
 
     def test_system_and_manual_routing_are_separate(self) -> None:
         source = (ROOT / "app" / "strategy_v2_runtime.py").read_text(
