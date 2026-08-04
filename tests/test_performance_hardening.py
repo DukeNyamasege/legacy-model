@@ -27,6 +27,19 @@ class ApiPerformanceSourceTests(unittest.TestCase):
         self.assertNotIn("force=True", source)
         self.assertIn("elapsed_ms < 5000.0", source)
 
+    def test_snapshot_rebuilds_are_bounded_before_startup(self) -> None:
+        health = (ROOT / "app" / "fast_integration_health.py").read_text(
+            encoding="utf-8"
+        )
+        throttle = (ROOT / "app" / "dashboard_snapshot_throttle.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("install_dashboard_snapshot_throttle()", health)
+        self.assertIn('DASHBOARD_REBUILD_MIN_INTERVAL_SECONDS", "15"', throttle)
+        self.assertIn("return min(120.0, max(5.0, configured))", throttle)
+        self.assertIn("base_api._build_dashboard_snapshot = _bounded_snapshot_build", throttle)
+        self.assertIn("_MODE_LOCKS", throttle)
+
     def test_personal_reads_do_not_wait_for_deriv(self) -> None:
         source = (ROOT / "app" / "api_performance_hardening.py").read_text(
             encoding="utf-8"
