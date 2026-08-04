@@ -76,6 +76,9 @@ from app.public_trader_stats_ui import install_public_trader_stats_ui  # noqa: E
 from app.reset_trades_always_ui import install_reset_trades_always_ui  # noqa: E402
 from app.settings_persistence_fix import install_settings_persistence_fix  # noqa: E402
 from app.simplified_dashboard_api import install_simplified_dashboard_api  # noqa: E402
+from app.strategy_v2_api import install_strategy_v2_api  # noqa: E402
+from app.strategy_v2_preferences import install_strategy_v2_preferences  # noqa: E402
+from app.strategy_v2_ui import install_strategy_v2_ui  # noqa: E402
 from app.telegram_silence import install_telegram_silence  # noqa: E402
 
 # Disable channel announcements, private alerts and Telegram polling before any
@@ -98,8 +101,7 @@ install_custom_martingale_api()
 # progress in either process.
 install_aidr_virtual_settlement_fix()
 
-# Active Digits/Over metadata remains compatible with the existing model. The
-# account strategy selector adds other families without changing this baseline.
+# Active System Strategy metadata remains compatible with the existing model.
 install_ai_digit_recovery_v1_strategy()
 install_aidr_execution_flow_fix()
 
@@ -161,7 +163,7 @@ install_account_identity_ui(app)
 # route, so balance, P/L, win rate, totals, wins and losses move in real time.
 install_live_metrics_ui(app)
 
-# Show public platform stats for everyone, logged in or not: only total registered
+# Show public platform stats for everyone, logged in or out: only total registered
 # traders and trading now.
 install_public_trader_stats_ui(app)
 
@@ -189,11 +191,17 @@ install_head_request_compat(app)
 # actual or virtual contract, then starts the selected family from base stake.
 install_lifecycle_reset_authority(app)
 install_final_personal_trade_stream(app)
-install_multi_strategy_api(app)
 
-# Install the strategy selector after every older generated dashboard route. It is
-# the final feature presentation for Digits, Even/Odd and Rise/Fall.
+# Install compatibility first, then make the v2 four-family schema authoritative:
+# System Strategy, manual Over/Under with prediction, Even/Odd and Rise/Fall.
+install_strategy_v2_preferences()
+install_multi_strategy_api(app)
+install_strategy_v2_api(app)
+
+# Install the original generated selector, then append the v2 prediction control,
+# fixed-contract lifecycle explanation and explicit System Strategy presentation.
 install_multi_strategy_ui(app)
+install_strategy_v2_ui(app)
 
 # FINAL PERFORMANCE AUTHORITIES. Resolve the exact server-side account session once,
 # never wait for Deriv inside /me, bound personal-history rows, cache public counts,
