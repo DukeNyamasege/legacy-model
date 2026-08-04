@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 import unittest
 from pathlib import Path
@@ -10,6 +11,10 @@ from app.recovery_state_persistence_hardening import _persist_recovery_attempt
 from app.repositories.rf_dir5_repository import (
     REAL_RECOVERY_PENDING,
     VIRTUAL_WAITING_FOR_WIN,
+)
+from app.settlement_observability_hardening import (
+    _SettlementObservabilityFilter,
+    _settled_contract_duration,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -103,6 +108,70 @@ class ContractParameterHardeningTests(unittest.TestCase):
         self.assertEqual(signal.duration_ticks, 1)
 
 
+class SettlementObservabilityHardeningTests(unittest.TestCase):
+    def test_digit_settlement_reports_one_tick(self) -> None:
+        bot = SimpleNamespace(duration=5)
+        self.assertEqual(
+            _settled_contract_duration(
+                bot,
+                {"contract_type": "DIGITOVER", "duration": 5},
+            ),
+            1,
+        )
+
+    def test_rise_fall_settlement_uses_provider_duration(self) -> None:
+        bot = SimpleNamespace(duration=5)
+        self.assertEqual(
+            _settled_contract_duration(
+                bot,
+                {"contract_type": "CALL", "duration": 3},
+            ),
+            3,
+        )
+
+    def test_contract_timing_filter_uses_exact_contract_override(self) -> None:
+        bot = SimpleNamespace(
+            duration=5,
+            _settlement_duration_log_overrides={"123": 1},
+        )
+        record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=1,
+            msg=(
+                "CONTRACT_TIMING account=%s contract_id=%s duration=%s_ticks "
+                "lifecycle_seconds=%.3f provider_lifecycle_seconds=%s "
+                "sla_seconds=%.1f sla_status=%s"
+            ),
+            args=("DOT***123", 123, 5, 1.0, "1.000", 15.0, "MET"),
+            exc_info=None,
+        )
+        self.assertTrue(_SettlementObservabilityFilter(bot).filter(record))
+        self.assertEqual(record.args[2], 1)
+
+    def test_unavailable_markup_is_informational_not_execution_error(self) -> None:
+        bot = SimpleNamespace(duration=1)
+        record = logging.LogRecord(
+            name="test",
+            level=logging.WARNING,
+            pathname=__file__,
+            lineno=1,
+            msg=(
+                "APP_MARKUP_NOT_CONFIRMED account=%s contract_id=%s "
+                "expected_percentage=%.2f reported_app_markup_amount=%s; "
+                "verify Registered Apps markup"
+            ),
+            args=("DOT***123", 123, 3.0, "unavailable"),
+            exc_info=None,
+        )
+        self.assertTrue(_SettlementObservabilityFilter(bot).filter(record))
+        self.assertIn("APP_MARKUP_UNVERIFIED", record.msg)
+        self.assertNotIn("APP_MARKUP_NOT_CONFIRMED", record.msg)
+        self.assertEqual(record.levelno, logging.INFO)
+        self.assertEqual(record.levelname, "INFO")
+
+
 class _FakeSession:
     def __init__(self, state):
         self.state = state
@@ -168,15 +237,21 @@ class RecoveryPersistenceHardeningTests(unittest.TestCase):
 
 
 class DeploymentSourceContractTests(unittest.TestCase):
-    def test_worker_installs_persistence_after_strict_recovery_guard(self) -> None:
+    def test_worker_install_order(self) -> None:
         source = (ROOT / "app" / "worker.py").read_text(encoding="utf-8")
         strict = source.index("install_aidr_strict_recovery_guard()")
         persistence = source.index(
             "install_recovery_state_persistence_hardening()"
         )
+        production = source.index("install_production_worker_integration()")
+        observability = source.index(
+            "install_settlement_observability_hardening()"
+        )
         bot = source.index("bot = RFDir5TradingBot()")
         self.assertLess(strict, persistence)
-        self.assertLess(persistence, bot)
+        self.assertLess(persistence, production)
+        self.assertLess(production, observability)
+        self.assertLess(observability, bot)
 
     def test_postgres_and_diagnostics_are_bounded(self) -> None:
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
