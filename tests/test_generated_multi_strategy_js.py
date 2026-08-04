@@ -1,12 +1,32 @@
 from __future__ import annotations
 
+import ast
 import shutil
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
-from app.multi_strategy_ui import _MULTI_STRATEGY_JS
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _generated_script() -> str:
+    source_path = ROOT / "app" / "multi_strategy_ui.py"
+    module = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
+    for statement in module.body:
+        if not isinstance(statement, ast.Assign):
+            continue
+        if not any(
+            isinstance(target, ast.Name) and target.id == "_MULTI_STRATEGY_JS"
+            for target in statement.targets
+        ):
+            continue
+        value = ast.literal_eval(statement.value)
+        if not isinstance(value, str) or not value.strip():
+            raise AssertionError("_MULTI_STRATEGY_JS must be a non-empty string")
+        return value
+    raise AssertionError("_MULTI_STRATEGY_JS was not found")
 
 
 class GeneratedMultiStrategyJavaScriptTests(unittest.TestCase):
@@ -16,7 +36,7 @@ class GeneratedMultiStrategyJavaScriptTests(unittest.TestCase):
             self.skipTest("node is not installed in this test environment")
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "multi-strategy-ui.js"
-            path.write_text(_MULTI_STRATEGY_JS, encoding="utf-8")
+            path.write_text(_generated_script(), encoding="utf-8")
             result = subprocess.run(
                 [node, "--check", str(path)],
                 capture_output=True,
