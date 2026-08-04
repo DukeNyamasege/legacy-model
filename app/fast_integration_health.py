@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import Depends, HTTPException
 
 import app.api as base_api
+from app.dashboard_snapshot_throttle import install_dashboard_snapshot_throttle
 from app.production_integration_hardening import _validate_oauth_configuration
 
 _INSTALLED = False
@@ -39,6 +40,11 @@ def install_fast_integration_health(app: Any) -> None:
     global _INSTALLED
     if _INSTALLED:
         return
+
+    # Install before FastAPI startup events begin. Hundreds of account settlements
+    # can mark snapshots dirty in one second, but the expensive all-time reference
+    # replay is allowed to rebuild each mode only at a bounded interval.
+    install_dashboard_snapshot_throttle()
 
     _remove_route(app, "/health/integration", "GET")
 
