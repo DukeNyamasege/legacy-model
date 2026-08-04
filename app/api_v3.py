@@ -7,6 +7,13 @@ from app.account_reenrollment import install_account_reenrollment
 
 install_account_reenrollment()
 
+# Personal Pause, Stop, TP, SL, credential and balance outcomes must never be
+# written into the platform-wide BotState. Install the class-level guard before
+# app.api creates its repository instance.
+from app.per_account_virtual_runtime import install_account_isolation_invariants
+
+install_account_isolation_invariants()
+
 # Install canonical fixed-base accounting before app.api creates its repository.
 # The API and worker therefore read the same account-independent model ledger and
 # cannot reintroduce debt-sized Martingale replay in dashboard calculations.
