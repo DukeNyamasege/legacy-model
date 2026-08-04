@@ -35,6 +35,9 @@ from app.recovery_state_persistence_hardening import (
     install_recovery_state_persistence_hardening,
 )
 from app.rf_dir5_bot import RFDir5TradingBot
+from app.settlement_observability_hardening import (
+    install_settlement_observability_hardening,
+)
 from app.stake_only_balance_policy import install_stake_only_balance_policy
 from app.strategy_v2_runtime import install_strategy_v2_runtime
 from app.strict_streak_guard import install_strict_streak_guard
@@ -132,6 +135,11 @@ async def run_worker() -> None:
 
     install_production_worker_integration()
     install_every_tick_debug_logging()
+
+    # Install last so settlement logs observe the final wrapped execution path.
+    # It corrects the legacy global-duration log and keeps absent provider markup
+    # metadata as an informational verification item rather than a trade error.
+    install_settlement_observability_hardening()
 
     bot = RFDir5TradingBot()
     promoted = reconcile_existing_virtual_confirmations(bot.rf_repository)
