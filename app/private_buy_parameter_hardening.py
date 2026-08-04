@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from app.rf_dir5_bot import RFDir5TradingBot
 from enhanced_bot import ClientSession, TradingBot, mask_account_id
 
 
@@ -79,7 +80,7 @@ def _clean_contract_parameters(
 
 
 def _one_tick_proposal_request(
-    self: TradingBot,
+    self: RFDir5TradingBot,
     signal: Any,
     stake_amount: float,
     duration_ticks: int,
@@ -88,10 +89,12 @@ def _one_tick_proposal_request(
 
     original = _ORIGINAL_PROPOSAL_REQUEST
     if original is None:
-        raise RuntimeError("Original TradingBot._proposal_request_for is not installed")
+        raise RuntimeError("Original RFDir5TradingBot._proposal_request_for is not installed")
 
     contract_type = str(getattr(signal, "contract_type", "") or "").upper()
-    requested_duration = 1 if contract_type in _ONE_TICK_DIGIT_CONTRACTS else int(duration_ticks)
+    requested_duration = (
+        1 if contract_type in _ONE_TICK_DIGIT_CONTRACTS else int(duration_ticks)
+    )
     if contract_type in _ONE_TICK_DIGIT_CONTRACTS:
         try:
             signal.duration_ticks = 1
@@ -162,12 +165,16 @@ async def _sanitized_send_request(
     if request.get("buy") and isinstance(parameters, dict):
         removed_markup = "app_markup_percentage" in parameters
         original_duration = parameters.get("duration")
+        original_duration_unit = parameters.get("duration_unit")
         request["parameters"] = _clean_contract_parameters(parameters)
         cleaned = request["parameters"]
         one_tick_enforced = (
             str(cleaned.get("contract_type") or "").upper()
             in _ONE_TICK_DIGIT_CONTRACTS
-            and (str(original_duration) != "1" or cleaned.get("duration_unit") != "t")
+            and (
+                str(original_duration) != "1"
+                or str(original_duration_unit or "").lower() != "t"
+            )
         )
         bot = getattr(self, "bot", None)
         if bot is not None:
@@ -193,16 +200,32 @@ async def _sanitized_send_request(
 
 
 def install_private_buy_parameter_hardening() -> None:
-    """Install proposal and direct-buy hardening before bot startup."""
+    """Install proposal and direct-buy hardening before bot startup.
+
+    `_proposal_request_for` belongs to RFDir5TradingBot, not its TradingBot base.
+    Targeting the base class caused the candidate worker to crash before its first
+    heartbeat. The installer now patches the exact live proposal builder and
+    validates its presence before changing any method.
+    """
 
     global _INSTALLED, _ORIGINAL_SEND_REQUEST, _ORIGINAL_PROPOSAL_REQUEST
     if _INSTALLED:
         return
-    _ORIGINAL_PROPOSAL_REQUEST = TradingBot._proposal_request_for
-    TradingBot._proposal_request_for = _one_tick_proposal_request
-    TradingBot._direct_buy_request = _clean_direct_buy_request
-    _ORIGINAL_SEND_REQUEST = ClientSession.send_request
+
+    proposal_builder = getattr(RFDir5TradingBot, "_proposal_request_for", None)
+    if not callable(proposal_builder):
+        raise RuntimeError(
+            "RFDir5TradingBot._proposal_request_for is required before private buy hardening"
+        )
+    send_request = getattr(ClientSession, "send_request", None)
+    if not callable(send_request):
+        raise RuntimeError("ClientSession.send_request is required before buy hardening")
+
+    _ORIGINAL_PROPOSAL_REQUEST = proposal_builder
+    RFDir5TradingBot._proposal_request_for = _one_tick_proposal_request
+    RFDir5TradingBot._direct_buy_request = _clean_direct_buy_request
+    _ORIGINAL_SEND_REQUEST = send_request
     ClientSession.send_request = _sanitized_send_request
-    TradingBot._private_buy_parameter_hardening_installed = True
+    RFDir5TradingBot._private_buy_parameter_hardening_installed = True
     ClientSession._private_buy_parameter_hardening_installed = True
     _INSTALLED = True
