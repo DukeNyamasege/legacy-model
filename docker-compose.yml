@@ -12,7 +12,12 @@ services:
       postgres
       -c checkpoint_timeout=${POSTGRES_CHECKPOINT_TIMEOUT:-15min}
       -c checkpoint_completion_target=${POSTGRES_CHECKPOINT_COMPLETION_TARGET:-0.9}
+      -c max_wal_size=${POSTGRES_MAX_WAL_SIZE:-2GB}
+      -c min_wal_size=${POSTGRES_MIN_WAL_SIZE:-512MB}
       -c wal_compression=${POSTGRES_WAL_COMPRESSION:-on}
+      -c idle_in_transaction_session_timeout=${POSTGRES_IDLE_IN_TRANSACTION_TIMEOUT:-60s}
+      -c lock_timeout=${POSTGRES_LOCK_TIMEOUT:-5s}
+      -c track_io_timing=${POSTGRES_TRACK_IO_TIMING:-on}
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-underdog_test2}
       POSTGRES_USER: ${POSTGRES_USER:-underdog}
