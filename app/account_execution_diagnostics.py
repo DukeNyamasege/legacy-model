@@ -11,6 +11,8 @@ _TRANSIENT_STATUSES = {
     "reconnecting",
     "contract_verification_pending",
     "execution_waiting",
+    "signal_waiting",
+    "cycle_skipped",
 }
 
 
