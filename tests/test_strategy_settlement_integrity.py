@@ -45,8 +45,17 @@ class WorkerStartupCompatibilityTests(unittest.TestCase):
             encoding="utf-8"
         )
         installer = source.split("def install_private_buy_parameter_hardening", 1)[1]
-        self.assertIn("RFDir5TradingBot._proposal_request_for", installer)
-        self.assertNotIn("TradingBot._proposal_request_for", installer)
+        self.assertRegex(
+            installer,
+            r"(?m)^\s*RFDir5TradingBot\._proposal_request_for\s*=",
+        )
+        # Match only an assignment whose class name starts the source line. The
+        # previous substring assertion also matched the valid RFDir5TradingBot
+        # assignment and even explanatory prose in the installer's docstring.
+        self.assertNotRegex(
+            installer,
+            r"(?m)^\s*TradingBot\._proposal_request_for\s*=",
+        )
 
 
 class StrategySettlementRuleTests(unittest.TestCase):
