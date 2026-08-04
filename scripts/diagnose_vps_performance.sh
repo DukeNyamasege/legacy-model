@@ -132,11 +132,18 @@ SELECT pid,
          WHEN xact_start IS NULL THEN NULL
          ELSE now() - xact_start
        END AS transaction_age,
-       left(translate(query, chr(10) || chr(13) || chr(9), '   '), 220) AS query
+       left(
+         translate(
+           query,
+           chr(10) || chr(13) || chr(9),
+           chr(32) || chr(32) || chr(32)
+         ),
+         220
+       ) AS query
 FROM pg_stat_activity
 WHERE datname = current_database()
   AND pid <> pg_backend_pid()
-  AND state <> 'idle'
+  AND state <> $$idle$$
 ORDER BY COALESCE(xact_start, query_start)
 LIMIT 20;
 
@@ -167,14 +174,14 @@ SQL
   section "POSTGRES CHECKPOINTS AND WAL"
   compose exec -T database sh -ec '
     psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" <<"SQL"
-SELECT current_setting('checkpoint_timeout') AS checkpoint_timeout,
-       current_setting('checkpoint_completion_target') AS checkpoint_completion_target,
-       current_setting('max_wal_size') AS max_wal_size,
-       current_setting('min_wal_size') AS min_wal_size,
-       current_setting('idle_in_transaction_session_timeout') AS idle_transaction_timeout,
-       current_setting('lock_timeout') AS lock_timeout,
-       current_setting('track_io_timing') AS track_io_timing,
-       current_setting('shared_buffers') AS shared_buffers;
+SELECT current_setting($$checkpoint_timeout$$) AS checkpoint_timeout,
+       current_setting($$checkpoint_completion_target$$) AS checkpoint_completion_target,
+       current_setting($$max_wal_size$$) AS max_wal_size,
+       current_setting($$min_wal_size$$) AS min_wal_size,
+       current_setting($$idle_in_transaction_session_timeout$$) AS idle_transaction_timeout,
+       current_setting($$lock_timeout$$) AS lock_timeout,
+       current_setting($$track_io_timing$$) AS track_io_timing,
+       current_setting($$shared_buffers$$) AS shared_buffers;
 SQL
     psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT * FROM pg_stat_checkpointer;" 2>/dev/null \
       || psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT checkpoints_timed, checkpoints_req, checkpoint_write_time, checkpoint_sync_time, buffers_checkpoint FROM pg_stat_bgwriter;"
