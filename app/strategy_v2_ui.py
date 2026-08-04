@@ -13,17 +13,18 @@ from app.multi_strategy_ui import _append as append_v1
 from app.multi_strategy_ui import _headers as headers_v1
 
 _INSTALLED = False
-UI_VERSION = "20260804-strategy-v2-1"
+UI_VERSION = "20260804-strategy-v2-2"
 
 _STRATEGY_V2_JS = r'''
 
-/* FOA_STRATEGY_V2_UI_VERSION:20260804-1 */
+/* FOA_STRATEGY_V2_UI_VERSION:20260804-2 */
 (() => {
   "use strict";
-  const VERSION = "20260804-1";
+  const VERSION = "20260804-2";
   let catalog = null;
   let serverSelection = null;
   let loading = false;
+  let applying = false;
   const draftPredictions = new Map();
 
   const esc = value => String(value ?? "")
@@ -32,6 +33,10 @@ _STRATEGY_V2_JS = r'''
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+
+  const setText = (node, value) => {
+    if (node && node.textContent !== String(value)) node.textContent = String(value);
+  };
 
   async function jsonRequest(url, options = {}) {
     const response = await fetch(url, {
@@ -86,7 +91,7 @@ _STRATEGY_V2_JS = r'''
     if (family !== "digits") return null;
     const key = `${family}:${side}`;
     const input = document.getElementById("foa-strategy-prediction");
-    if (input && input.value !== "") return Number(input.value);
+    if (input && input.dataset.choiceKey === key && input.value !== "") return Number(input.value);
     if (draftPredictions.has(key)) return Number(draftPredictions.get(key));
     if (serverSelection?.family === family && serverSelection?.side === side && serverSelection?.prediction !== null && serverSelection?.prediction !== undefined) {
       return Number(serverSelection.prediction);
@@ -111,10 +116,10 @@ _STRATEGY_V2_JS = r'''
     if (!summary) return;
     const values = summary.querySelectorAll("strong");
     const meta = sideMeta(family, side) || {};
-    if (values[0]) values[0].textContent = selectionLabel(family, side, prediction);
-    if (values[1]) values[1].textContent = contractLabel(family, side, prediction);
-    if (values[2]) values[2].textContent = family === "digits" ? contractLabel(family, side, prediction) : (meta.normal_rule || "Validated qualifying signal");
-    if (values[3]) values[3].textContent = meta.recovery_rule || "Same selected contract";
+    setText(values[0], selectionLabel(family, side, prediction));
+    setText(values[1], contractLabel(family, side, prediction));
+    setText(values[2], family === "digits" ? contractLabel(family, side, prediction) : (meta.normal_rule || "Validated qualifying signal"));
+    setText(values[3], meta.recovery_rule || "Same selected contract");
   }
 
   function flowSteps(family, side, prediction) {
@@ -158,48 +163,77 @@ _STRATEGY_V2_JS = r'''
       const key = `v2:${family}:${side}:${prediction ?? ""}`;
       if (flow.dataset.strategyV2Key !== key) {
         flow.dataset.strategyV2Key = key;
-        const h1 = intro.querySelector("h1");
-        const p = intro.querySelector("p");
-        if (h1) h1.textContent = selectionLabel(family, side, prediction);
-        if (p) p.textContent = catalog?.families?.[family]?.description || "Account-selected strategy with isolated execution.";
+        setText(intro.querySelector("h1"), selectionLabel(family, side, prediction));
+        setText(intro.querySelector("p"), catalog?.families?.[family]?.description || "Account-selected strategy with isolated execution.");
         flow.innerHTML = flowSteps(family, side, prediction).map(step => `<article class="foa-card"><span class="foa-step">${esc(step[0])}</span><h2>${esc(step[1])}</h2><strong>${esc(step[2])}</strong><p>${esc(step[3])}</p></article>`).join("");
       }
     }
     const badge = document.querySelector(".foa-active-strategy-badge");
-    if (badge) badge.innerHTML = `<i></i>${esc(selectionLabel(family, side, prediction))} · ${esc(contractLabel(family, side, prediction))}`;
+    const badgeKey = `${family}:${side}:${prediction ?? ""}`;
+    if (badge && badge.dataset.strategyV2Key !== badgeKey) {
+      badge.dataset.strategyV2Key = badgeKey;
+      badge.innerHTML = `<i></i>${esc(selectionLabel(family, side, prediction))} · ${esc(contractLabel(family, side, prediction))}`;
+    }
     const buttonLabel = family === "system" ? "Start System AutoTrade" : `Start ${side.charAt(0).toUpperCase() + side.slice(1)} AutoTrade`;
     document.querySelectorAll('[data-control="start"]').forEach(button => {
-      if (!button.querySelector("svg")) button.textContent = buttonLabel;
-      button.setAttribute("aria-label", buttonLabel);
+      if (!button.querySelector("svg")) setText(button, buttonLabel);
+      if (button.getAttribute("aria-label") !== buttonLabel) button.setAttribute("aria-label", buttonLabel);
     });
     document.body.dataset.foaStrategyV2Family = family;
     document.body.dataset.foaStrategyV2Side = side;
     document.body.dataset.foaStrategyV2Prediction = prediction ?? "";
   }
 
+  function bindPrediction(input, card, family, side) {
+    if (!input || input.dataset.strategyV2Bound === VERSION) return;
+    input.dataset.strategyV2Bound = VERSION;
+    input.oninput = () => {
+      const value = Number(input.value);
+      draftPredictions.set(`${family}:${side}`, value);
+      const text = card.querySelector(".foa-prediction-box p");
+      setText(text, `Choose the permanent barrier for this account. ${side.toUpperCase()} ${value} remains unchanged during normal, recovery and virtual execution.`);
+      updateSummary(family, side, value);
+      updatePresentation(family, side, value);
+    };
+  }
+
   function injectChoiceControls(card, family, side, prediction) {
-    card.querySelector(".foa-prediction-box,.foa-system-note")?.remove();
     const summary = card.querySelector(".foa-strategy-summary");
     if (!summary) return;
+    const editable = Boolean(card.querySelector(".foa-strategy-family:not(:disabled)"));
+    const choiceKey = `${family}:${side}`;
+    let predictionBox = card.querySelector(".foa-prediction-box");
+    let systemNote = card.querySelector(".foa-system-note");
+
     if (family === "digits") {
+      if (systemNote) systemNote.remove();
       const meta = sideMeta(family, side) || {};
-      const stopped = !card.querySelector(".foa-strategy-family:not(:disabled)") ? false : true;
-      summary.insertAdjacentHTML("beforebegin", `
-        <div class="foa-prediction-box">
-          <div><b>Prediction digit</b><p>Choose the permanent barrier for this account. ${esc(side.toUpperCase())} ${esc(prediction)} remains unchanged during normal, recovery and virtual execution.</p></div>
-          <input id="foa-strategy-prediction" class="foa-prediction-input" type="number" inputmode="numeric" step="1" min="${esc(meta.prediction_min)}" max="${esc(meta.prediction_max)}" value="${esc(prediction)}" ${stopped ? "" : "disabled"} aria-label="Prediction digit">
-        </div>`);
-      const input = document.getElementById("foa-strategy-prediction");
-      if (input) input.oninput = () => {
-        const value = Number(input.value);
-        draftPredictions.set(`${family}:${side}`, value);
-        const text = card.querySelector(".foa-prediction-box p");
-        if (text) text.textContent = `Choose the permanent barrier for this account. ${side.toUpperCase()} ${value} remains unchanged during normal, recovery and virtual execution.`;
-        updateSummary(family, side, value);
-        updatePresentation(family, side, value);
-      };
-    } else if (family === "system") {
-      summary.insertAdjacentHTML("beforebegin", `<div class="foa-system-note"><strong>Default system sequence:</strong> OVER 1 normal → OVER 3 first recovery → virtual OVER 4 after the second loss → real OVER 4 recovery.</div>`);
+      if (!predictionBox || predictionBox.dataset.choiceKey !== choiceKey) {
+        if (predictionBox) predictionBox.remove();
+        summary.insertAdjacentHTML("beforebegin", `
+          <div class="foa-prediction-box" data-choice-key="${esc(choiceKey)}">
+            <div><b>Prediction digit</b><p>Choose the permanent barrier for this account. ${esc(side.toUpperCase())} ${esc(prediction)} remains unchanged during normal, recovery and virtual execution.</p></div>
+            <input id="foa-strategy-prediction" class="foa-prediction-input" data-choice-key="${esc(choiceKey)}" type="number" inputmode="numeric" step="1" min="${esc(meta.prediction_min)}" max="${esc(meta.prediction_max)}" value="${esc(prediction)}" ${editable ? "" : "disabled"} aria-label="Prediction digit">
+          </div>`);
+        predictionBox = card.querySelector(".foa-prediction-box");
+      }
+      const input = predictionBox?.querySelector("#foa-strategy-prediction");
+      if (input) {
+        input.disabled = !editable;
+        input.min = String(meta.prediction_min);
+        input.max = String(meta.prediction_max);
+        bindPrediction(input, card, family, side);
+      }
+      return;
+    }
+
+    if (predictionBox) predictionBox.remove();
+    if (family === "system") {
+      if (!systemNote) {
+        summary.insertAdjacentHTML("beforebegin", `<div class="foa-system-note"><strong>Default system sequence:</strong> OVER 1 normal → OVER 3 first recovery → virtual OVER 4 after the second loss → real OVER 4 recovery.</div>`);
+      }
+    } else if (systemNote) {
+      systemNote.remove();
     }
   }
 
@@ -212,35 +246,41 @@ _STRATEGY_V2_JS = r'''
     const button = document.getElementById("foa-save-strategy");
     const message = document.getElementById("foa-strategy-message");
     if (button) button.disabled = true;
-    if (message) { message.className = "foa-strategy-message"; message.textContent = "Saving strategy…"; }
+    if (message) { message.className = "foa-strategy-message"; setText(message, "Saving strategy…"); }
     try {
       const result = await jsonRequest("/me/strategy-settings", {
         method: "POST",
         body: JSON.stringify({ family, side, prediction }),
       });
       serverSelection = result.selection;
-      if (message) { message.className = "foa-strategy-message ok"; message.textContent = result.message || "Strategy saved."; }
+      if (message) { message.className = "foa-strategy-message ok"; setText(message, result.message || "Strategy saved."); }
       window.setTimeout(() => window.location.reload(), 700);
     } catch (error) {
-      if (message) { message.className = "foa-strategy-message error"; message.textContent = String(error.message || error); }
+      if (message) { message.className = "foa-strategy-message error"; setText(message, String(error.message || error)); }
       if (button) button.disabled = false;
     }
   }
 
   function apply() {
-    ensureStyles();
-    const card = document.getElementById("foa-strategy-selector");
-    if (!card || !catalog) return;
-    const family = activeFamily();
-    const side = activeSide();
-    const prediction = predictionFor(family, side);
-    injectChoiceControls(card, family, side, prediction);
-    updateSummary(family, side, prediction);
-    updatePresentation(family, side, prediction);
-    const save = document.getElementById("foa-save-strategy");
-    if (save && save.dataset.strategyV2Bound !== VERSION) {
-      save.dataset.strategyV2Bound = VERSION;
-      save.onclick = saveV2;
+    if (applying) return;
+    applying = true;
+    try {
+      ensureStyles();
+      const card = document.getElementById("foa-strategy-selector");
+      if (!card || !catalog) return;
+      const family = activeFamily();
+      const side = activeSide();
+      const prediction = predictionFor(family, side);
+      injectChoiceControls(card, family, side, prediction);
+      updateSummary(family, side, prediction);
+      updatePresentation(family, side, prediction);
+      const save = document.getElementById("foa-save-strategy");
+      if (save && save.dataset.strategyV2Bound !== VERSION) {
+        save.dataset.strategyV2Bound = VERSION;
+        save.onclick = saveV2;
+      }
+    } finally {
+      applying = false;
     }
   }
 
@@ -263,7 +303,7 @@ _STRATEGY_V2_JS = r'''
   function start() {
     observer.observe(document.documentElement, { childList: true, subtree: true });
     load();
-    window.setInterval(apply, 700);
+    window.setInterval(apply, 1200);
     window.setInterval(load, 10000);
   }
   document.readyState === "loading" ? document.addEventListener("DOMContentLoaded", start, { once: true }) : start();
@@ -274,7 +314,7 @@ _STRATEGY_V2_JS = r'''
 
 def _append_v2(source: str) -> str:
     source = append_v1(source)
-    if "FOA_STRATEGY_V2_UI_VERSION:20260804-1" not in source:
+    if "FOA_STRATEGY_V2_UI_VERSION:20260804-2" not in source:
         source += _STRATEGY_V2_JS
     return source
 
