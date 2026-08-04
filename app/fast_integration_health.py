@@ -35,6 +35,13 @@ def install_fast_integration_health(app: Any) -> None:
     health request even though PostgreSQL, the worker and both containers were
     healthy. Deep accounting work belongs to the background snapshot publisher;
     deployment health verifies the last-good snapshots and never triggers it.
+
+    Latency is reported as a warning rather than a readiness failure. During
+    production cutover the worker validates many account credentials while the API
+    warms caches. That temporary contention can make a correct cached-state check
+    exceed five seconds even though every functional integration invariant passes.
+    Database, authentication configuration, heartbeat, dashboard validity and
+    route integrity remain mandatory and still return HTTP 503 when unavailable.
     """
 
     global _INSTALLED
@@ -55,6 +62,7 @@ def install_fast_integration_health(app: Any) -> None:
         started = time.monotonic()
         checks: dict[str, Any] = {}
         failures: list[str] = []
+        warnings: list[str] = []
 
         def record(name: str, passed: bool, detail: Any) -> None:
             checks[name] = {"ok": bool(passed), "detail": detail}
@@ -170,31 +178,35 @@ def install_fast_integration_health(app: Any) -> None:
         }
 
         elapsed_ms = round((time.monotonic() - started) * 1000.0, 3)
+        latency_ok = elapsed_ms < 5000.0
         checks["latency_budget"] = {
-            "ok": elapsed_ms < 5000.0,
+            "ok": latency_ok,
+            "critical": False,
             "detail": {
                 "elapsed_ms": elapsed_ms,
                 "budget_ms": 5000.0,
                 "forced_dashboard_rebuild": False,
+                "startup_contention_is_warning": True,
             },
         }
-        if elapsed_ms >= 5000.0:
-            failures.append("latency_budget")
+        if not latency_ok:
+            warnings.append("latency_budget")
 
         response = {
             "status": "ready" if not failures else "not_ready",
             "checked_at": datetime.now(timezone.utc).isoformat(),
             "model_version": base_api.CONFIG.model.version,
             "transport": "private_deriv_websocket",
-            "health_profile": "cached-nonblocking-v1",
+            "health_profile": "cached-nonblocking-v2",
             "elapsed_ms": elapsed_ms,
             "checks": checks,
             "failures": failures,
+            "warnings": warnings,
         }
         if failures:
             raise HTTPException(status_code=503, detail=response)
         return response
 
     app.state.fast_integration_health_installed = True
-    app.state.integration_health_profile = "cached-nonblocking-v1"
+    app.state.integration_health_profile = "cached-nonblocking-v2"
     _INSTALLED = True
