@@ -336,6 +336,10 @@ class DeploymentSourceInvariantTests(unittest.TestCase):
         self.assertIn("PRIVATE_CONNECTION_PURCHASE_TIMEOUT", source)
         self.assertIn("PRIVATE_BUY_CONNECTION_RETRY", source)
         self.assertIn("_connect_before_private_buy", source)
+        self.assertIn("first_results = await purchase_batch(ready)", source)
+        self.assertIn("initially_unready", source)
+        self.assertIn("ready_accounts_purchase_now=true", source)
+        self.assertIn("final_blocked.pop(account_id, None)", source)
 
     def test_private_connection_scheduler_uses_one_start_slot_per_attempt(self) -> None:
         source = (
