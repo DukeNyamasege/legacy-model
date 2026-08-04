@@ -305,16 +305,20 @@ run_release_gate() {
     python scripts/wait_for_database.py --timeout 180
     alembic upgrade head
   ' || fail "Release gate migration check failed."
-  echo "Release gate: verify AIDR and private WebSocket behavior against the isolated database"
+
+  echo "Release gate: verify AIDR and private WebSocket behavior against isolated PostgreSQL"
   candidate_compose run --rm --no-deps worker sh -ec '
     python -m unittest -q \
       test_custom_martingale.py \
       test_aidr_recovery_v2.py \
       tests.test_independent_websocket_execution \
-      tests.test_private_websocket_credentials \
-      test_rf_dir5.py \
-      test_strategy_logic.py
+      tests.test_private_websocket_credentials
   ' || fail "Release gate AIDR or private WebSocket tests failed. Production was not changed."
+
+  echo "Release gate: verify legacy strategy behavior in per-test local databases"
+  candidate_compose run --rm --no-deps worker sh scripts/run_legacy_release_tests.sh \
+    || fail "Release gate legacy strategy tests failed. Production was not changed."
+
   candidate_compose up -d --force-recreate --wait --wait-timeout 180 api worker \
     || fail "Release gate API/worker did not become healthy."
   candidate_compose exec -T api python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health/database', timeout=5).read()" \
@@ -402,7 +406,7 @@ fi
 
 echo ""
 echo "1. Validate shell, Compose, Python and dashboard JavaScript syntax"
-sh -n scripts/deploy_vps.sh scripts/update_vps.sh \
+sh -n scripts/deploy_vps.sh scripts/update_vps.sh scripts/run_legacy_release_tests.sh \
   || fail "Deployment shell syntax validation failed."
 compose config --quiet || fail "Docker Compose configuration is invalid."
 python3 -m compileall -q app scripts || fail "Python syntax validation failed."
