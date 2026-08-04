@@ -15,6 +15,7 @@ exec python -m unittest -q \
   tests.test_multi_strategy \
   tests.test_multi_strategy_concurrency \
   tests.test_strategy_v2 \
+  tests.test_per_account_virtual_runtime \
   tests.test_websocket_execution_hardening \
   tests.test_generated_multi_strategy_js \
   tests.test_performance_hardening \
