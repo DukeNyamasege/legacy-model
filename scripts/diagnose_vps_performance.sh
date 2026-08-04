@@ -63,8 +63,12 @@ endpoint_timing() {
     --format 'table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}\t{{.BlockIO}}\t{{.PIDs}}' \
     2>/dev/null || true
   echo ""
-  docker inspect -f '{{.Name}} restarts={{.RestartCount}} status={{.State.Status}} started={{.State.StartedAt}}' \
-    $(compose ps -q 2>/dev/null) 2>/dev/null || true
+  container_ids=$(compose ps -q 2>/dev/null || true)
+  if [ -n "$container_ids" ]; then
+    # shellcheck disable=SC2086
+    docker inspect -f '{{.Name}} restarts={{.RestartCount}} status={{.State.Status}} started={{.State.StartedAt}}' \
+      $container_ids 2>/dev/null || true
+  fi
 
   section "LOCAL API TIMINGS"
   endpoint_timing "health live" "http://127.0.0.1:8080/health/live"
@@ -124,11 +128,11 @@ SELECT pid,
        wait_event_type,
        wait_event,
        now() - query_start AS query_age,
-       left(regexp_replace(query, E"[\\n\\r\\t]+", " ", "g"), 220) AS query
+       left(regexp_replace(query, E$$[\n\r\t]+$$, $$ $$, $$g$$), 220) AS query
 FROM pg_stat_activity
 WHERE datname = current_database()
   AND pid <> pg_backend_pid()
-  AND state <> "idle"
+  AND state <> $$idle$$
 ORDER BY query_start
 LIMIT 20;
 
@@ -158,12 +162,12 @@ SQL
 
   section "POSTGRES CHECKPOINTS AND WAL"
   compose exec -T database sh -ec '
-    psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "
-      SELECT current_setting('"'"'checkpoint_timeout'"'"'),
-             current_setting('"'"'checkpoint_completion_target'"'"'),
-             current_setting('"'"'max_wal_size'"'"'),
-             current_setting('"'"'shared_buffers'"'"');
-    "
+    psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" <<"SQL"
+SELECT current_setting($$checkpoint_timeout$$) AS checkpoint_timeout,
+       current_setting($$checkpoint_completion_target$$) AS checkpoint_completion_target,
+       current_setting($$max_wal_size$$) AS max_wal_size,
+       current_setting($$shared_buffers$$) AS shared_buffers;
+SQL
     psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT * FROM pg_stat_checkpointer;" 2>/dev/null \
       || psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT checkpoints_timed, checkpoints_req, checkpoint_write_time, checkpoint_sync_time, buffers_checkpoint FROM pg_stat_bgwriter;"
   ' 2>&1 || true
