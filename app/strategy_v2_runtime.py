@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-import json
-from decimal import Decimal
 from typing import Any, Callable
-
-from sqlalchemy import select
 
 from app.models import DirectionalSignal
 from app.strategy_v2_preferences import (
@@ -25,7 +21,9 @@ def _ensure_parent_signal(bot: Any, signal: Any, route: Any) -> None:
 
     Rise/Fall already uses RFDir5Repository.record_signal. Manual digit and parity
     candidates previously existed only in candidate_signals, so PostgreSQL rejected
-    every virtual-trade insert after the account entered protection mode.
+    every virtual-trade insert after the account entered protection mode. The
+    parent is created only after arbitration selects the signal, avoiding writes
+    for candidates that are later rejected by spacing, edge or market arbitration.
     """
 
     signal_id = str(getattr(signal, "signal_id", "") or "").strip()
@@ -75,9 +73,12 @@ def _ensure_parent_signal(bot: Any, signal: Any, route: Any) -> None:
                 },
                 quality_score=int(getattr(signal, "quality_score", 1) or 1),
                 validated_edge=getattr(signal, "validated_edge", None),
-                selected_for_execution=False,
-                execution_decision="PENDING",
-                execution_reason="Manual strategy candidate awaiting arbitration",
+                selected_for_execution=True,
+                execution_decision="STRATEGY_V2_SELECTED",
+                execution_reason=(
+                    "Selected manual strategy signal registered before actual or "
+                    "virtual account execution"
+                ),
             )
         )
 
@@ -138,24 +139,25 @@ def install_strategy_v2_runtime() -> None:
     aidr._enabled_accounts = system_accounts
     ms._filter_aidr_over_accounts = system_accounts
 
-    original_make_digit = ms._make_digit_signal
+    # The legacy multi-strategy router is already installed at this point. Add the
+    # missing database parent at its selected execution boundary, immediately
+    # before that router can open a VirtualTrade or purchase a real contract.
+    original_selected_buy = ms.RFDir5TradingBot._buy_selected_accounts
 
-    def make_digit_with_parent(*args: Any, **kwargs: Any) -> Any | None:
-        signal = original_make_digit(*args, **kwargs)
-        if signal is None:
-            return None
-        bot = args[0] if args else kwargs.get("bot")
-        route = getattr(bot, "_multi_strategy_signal_routes", {}).get(
-            str(signal.signal_id)
+    async def selected_buy_with_parent(
+        self: Any,
+        signal: Any,
+        economics: Any,
+    ) -> None:
+        route = getattr(self, "_multi_strategy_signal_routes", {}).get(
+            str(getattr(signal, "signal_id", "") or "")
         )
-        if route is None:
-            raise RuntimeError(
-                f"Manual strategy signal {signal.signal_id} has no account route"
-            )
-        _ensure_parent_signal(bot, signal, route)
-        return signal
+        if route is not None:
+            _ensure_parent_signal(self, signal, route)
+        await original_selected_buy(self, signal, economics)
 
-    ms._make_digit_signal = make_digit_with_parent
+    selected_buy_with_parent._strategy_v2_parent_guard = True  # type: ignore[attr-defined]
+    ms.RFDir5TradingBot._buy_selected_accounts = selected_buy_with_parent
 
     def queue_v2_signals(bot: Any, tick_data: dict[str, Any]) -> None:
         tick = tick_data.get("tick") or {}
