@@ -75,7 +75,7 @@ jobs:
       - name: Run focused release tests
         run: |
           python -m unittest -q tests.test_stop_history_and_mobile_ui
-          python -m unittest -q tests.test_multi_strategy tests.test_multi_strategy_concurrency tests.test_strategy_v2 tests.test_per_account_virtual_runtime
+          python -m unittest -q tests.test_multi_strategy tests.test_multi_strategy_concurrency tests.test_strategy_v2 tests.test_standardized_execution_runtime tests.test_per_account_virtual_runtime
           python -m unittest -q tests.test_websocket_execution_hardening
           python -m unittest -q tests.test_performance_hardening tests.test_generated_request_broker_js
           python -m unittest -q test_custom_martingale.py
