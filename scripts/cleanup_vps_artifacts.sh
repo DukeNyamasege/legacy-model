@@ -4,10 +4,13 @@ set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PROJECT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 BACKUP_DIR="$PROJECT_DIR/deploy-backups"
+REPORT_DIR="$PROJECT_DIR/performance-reports"
 MODE=${1:-manual}
 BUILD_CACHE_MAX_AGE=${BUILD_CACHE_MAX_AGE:-72h}
 BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-14}
 BACKUP_RETAIN_COUNT=${BACKUP_RETAIN_COUNT:-5}
+REPORT_RETENTION_DAYS=${REPORT_RETENTION_DAYS:-7}
+REPORT_RETAIN_COUNT=${REPORT_RETAIN_COUNT:-10}
 ALLOW_REMOVE_RUNNING_PREFLIGHT=${ALLOW_REMOVE_RUNNING_PREFLIGHT:-false}
 DEPLOYMENT_LOCK_HELD=${DEPLOYMENT_LOCK_HELD:-false}
 
@@ -32,6 +35,27 @@ running_preflight_projects() {
   docker ps --format '{{.Label "com.docker.compose.project"}}' 2>/dev/null \
     | awk '/^legacy-model-preflight-/ {print}' \
     | sort -u
+}
+
+prune_retained_files() {
+  directory=$1
+  pattern=$2
+  days=$3
+  retain=$4
+  [ -d "$directory" ] || return 0
+  keep_file=$(mktemp)
+  find "$directory" -maxdepth 1 -type f -name "$pattern" -printf '%T@ %p\n' 2>/dev/null \
+    | sort -nr \
+    | awk -v keep="$retain" 'NR <= keep {$1=""; sub(/^ /,""); print}' \
+    > "$keep_file"
+  find "$directory" -maxdepth 1 -type f -name "$pattern" -mtime "+$days" 2>/dev/null \
+    | while IFS= read -r candidate; do
+        [ -n "$candidate" ] || continue
+        if ! grep -Fx "$candidate" "$keep_file" >/dev/null 2>&1; then
+          rm -f "$candidate"
+        fi
+      done
+  rm -f "$keep_file"
 }
 
 echo "============================================================"
@@ -119,23 +143,10 @@ docker image prune -f >/dev/null 2>&1 || true
 # being prepared while removing older unused build cache.
 docker builder prune -f --filter "until=$BUILD_CACHE_MAX_AGE" >/dev/null 2>&1 || true
 
-# Retain recent database backups. Never remove the newest configured count even if
-# they are older than the day limit.
-if [ -d "$BACKUP_DIR" ]; then
-  keep_file=$(mktemp)
-  find "$BACKUP_DIR" -maxdepth 1 -type f -name 'predeploy_*.dump' -printf '%T@ %p\n' 2>/dev/null \
-    | sort -nr \
-    | awk -v keep="$BACKUP_RETAIN_COUNT" 'NR <= keep {$1=""; sub(/^ /,""); print}' \
-    > "$keep_file"
-  find "$BACKUP_DIR" -maxdepth 1 -type f -name 'predeploy_*.dump' -mtime "+$BACKUP_RETENTION_DAYS" 2>/dev/null \
-    | while IFS= read -r backup; do
-        [ -n "$backup" ] || continue
-        if ! grep -Fx "$backup" "$keep_file" >/dev/null 2>&1; then
-          rm -f "$backup"
-        fi
-      done
-  rm -f "$keep_file"
-fi
+# Keep the newest backups/reports regardless of age, then expire older files. This
+# prevents diagnostics and repeated predeploy dumps from becoming future disk use.
+prune_retained_files "$BACKUP_DIR" 'predeploy_*.dump' "$BACKUP_RETENTION_DAYS" "$BACKUP_RETAIN_COUNT"
+prune_retained_files "$REPORT_DIR" '*.log' "$REPORT_RETENTION_DAYS" "$REPORT_RETAIN_COUNT"
 
 echo ""
 echo "--- DISK AFTER ---"
