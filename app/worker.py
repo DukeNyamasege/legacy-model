@@ -33,6 +33,7 @@ from app.profit_accuracy_guard import install_profit_accuracy_guard
 from app.real_demo_trading_support import install_dual_demo_real_trading_support
 from app.rf_dir5_bot import RFDir5TradingBot
 from app.stake_only_balance_policy import install_stake_only_balance_policy
+from app.strategy_v2_runtime import install_strategy_v2_runtime
 from app.strict_streak_guard import install_strict_streak_guard
 from app.telegram_admin_integration import install_telegram_admin_integration
 from app.telegram_silence import install_telegram_silence
@@ -96,9 +97,8 @@ async def run_worker() -> None:
     # Results resolve by immutable managed_account_id, never duplicate masked IDs.
     install_aidr_virtual_settlement_fix()
 
-    # Existing Digits -> Over strategy remains unchanged for accounts that select
-    # it: OVER 1 normal, OVER 3 first recovery, virtual OVER 4, then one real
-    # OVER 4 full-debt recovery.
+    # System Strategy remains the default AIDR sequence: OVER 1 normal, OVER 3
+    # first recovery, virtual OVER 4 and then real OVER 4 full-debt recovery.
     install_ai_digit_recovery_v1_strategy()
     install_aidr_execution_flow_fix()
     install_aidr_loss_continuation_fix()
@@ -110,10 +110,11 @@ async def run_worker() -> None:
     # Stop/Reset wins settlement races and cannot be reversed by a late callback.
     install_aidr_strict_recovery_guard()
 
-    # Final account strategy router. AIDR receives only Digits/Over accounts;
-    # Digits/Under, Even/Odd and Rise/Fall use the same private purchase,
-    # recovery, virtual protection and account-isolation infrastructure.
+    # Build the legacy router first, then make v2 authoritative. V2 separates the
+    # System Strategy from manual Over/Under, persists the user's prediction, and
+    # creates the database parent required before any manual virtual trade opens.
     install_multi_strategy_runtime()
+    install_strategy_v2_runtime()
 
     # Every family has its own candidate stream, but the authenticated purchase
     # boundary is atomic. Recheck staleness/open cycles after acquiring the gate
