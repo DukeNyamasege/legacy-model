@@ -241,6 +241,7 @@ async def _fresh_grouped_aidr_arbitrate(bot: RFDir5TradingBot) -> None:
             "global_stop_on_role_error=false",
             parent_cycle_id,
             symbol,
+            trigger_role,
             result_by_role,
             len(scopes[continuation.NORMAL_ROLE]),
             len(scopes[continuation.FIRST_RECOVERY_ROLE]),
