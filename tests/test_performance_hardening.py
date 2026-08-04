@@ -49,8 +49,16 @@ class ApiPerformanceSourceTests(unittest.TestCase):
         source = (ROOT / "app" / "api_performance_hardening.py").read_text(
             encoding="utf-8"
         )
-        self.assertIn('stale_requests_cancelled_by_ui', source)
+        self.assertIn("stale_requests_cancelled_by_ui", source)
         self.assertIn('f"{int(target[\'managed_account_id\'])}:{target_type}"', source)
+
+    def test_request_broker_executes_before_dashboard_boot(self) -> None:
+        source = (ROOT / "app" / "dashboard_request_coalescing.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('return _REQUEST_BROKER_JS + "\\n" + source', source)
+        self.assertNotIn("source += _REQUEST_BROKER_JS", source)
+        self.assertIn("abortManagedReads()", source)
 
 
 class DatabaseWritePressureTests(unittest.TestCase):
@@ -68,6 +76,18 @@ class DatabaseWritePressureTests(unittest.TestCase):
         self.assertIn('TICK_PERSIST_FLUSH_SECONDS", "1.0"', source)
         self.assertIn("on_conflict_do_nothing", source)
         self.assertIn("state.rows = rows + state.rows", source)
+
+    def test_duplicate_provider_callbacks_are_idempotent(self) -> None:
+        worker = (ROOT / "app" / "worker.py").read_text(encoding="utf-8")
+        source = (ROOT / "app" / "trade_registration_idempotency.py").read_text(
+            encoding="utf-8"
+        )
+        install = worker.index("install_trade_registration_idempotency()")
+        bot = worker.index("bot = RFDir5TradingBot()")
+        self.assertLess(install, bot)
+        self.assertIn("on_conflict_do_nothing()", source)
+        self.assertIn("DUPLICATE_PURCHASE_REGISTRATION_IGNORED", source)
+        self.assertIn("Test2Repository.register_purchase = idempotent_register_purchase", source)
 
     def test_personal_query_indexes_are_migrated(self) -> None:
         source = (
