@@ -43,6 +43,8 @@ from app.settlement_observability_hardening import (
     install_settlement_observability_hardening,
 )
 from app.stake_only_balance_policy import install_stake_only_balance_policy
+from app.standardized_execution_runtime import install_standardized_execution_runtime
+from app.standardized_signal_metadata import install_standardized_signal_metadata
 from app.strategy_settlement_integrity import install_strategy_settlement_integrity
 from app.strategy_v2_runtime import install_strategy_v2_runtime
 from app.strict_streak_guard import install_strict_streak_guard
@@ -149,10 +151,18 @@ async def run_worker() -> None:
     # no money. Failures remain isolated to their exact managed account.
     install_uniform_virtual_runtime()
 
-    # Every family has its own candidate stream, but the authenticated financial
-    # purchase boundary is atomic. The gate protects against duplicate provider
-    # purchases; it does not block $0 virtual observations or stop other accounts.
+    # Serialize provider setup and local registration mutations. Standardized
+    # account groups are allowed to coexist with contracts owned by other groups;
+    # an account skips only when its own previous contract is still settling.
     install_multi_strategy_concurrency_guard()
+
+    # Remove cross-account competition after every legacy strategy wrapper has
+    # been installed. On one qualified opportunity, System NORMAL accounts receive
+    # OVER-1, first-recovery accounts OVER-3, post-virtual accounts OVER-4, and each
+    # manual strategy group receives its exact selected contract. Every scoped
+    # account receives either a purchase/virtual receipt or a recorded skip reason.
+    install_standardized_signal_metadata()
+    install_standardized_execution_runtime()
 
     install_production_worker_integration()
     install_every_tick_debug_logging()
