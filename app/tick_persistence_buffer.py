@@ -10,7 +10,6 @@ from typing import Any
 
 from sqlalchemy import update
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.models import BotState, Tick, utc_now
 from app.repositories.test2_repository import Test2Repository
@@ -37,6 +36,10 @@ def _flush_seconds() -> float:
     return max(0.25, min(10.0, float(os.getenv("TICK_PERSIST_FLUSH_SECONDS", "1.0"))))
 
 
+def _uses_postgresql(repository: Test2Repository) -> bool:
+    return repository.database.engine.dialect.name == "postgresql"
+
+
 def _state(repository: Test2Repository) -> _BufferState:
     with _STATES_LOCK:
         value = _STATES.get(repository)
@@ -49,20 +52,11 @@ def _state(repository: Test2Repository) -> _BufferState:
 def _insert_rows(repository: Test2Repository, rows: list[dict[str, Any]]) -> None:
     if not rows:
         return
-    dialect = repository.database.engine.dialect.name
     with repository.database.session() as session:
-        if dialect == "postgresql":
-            statement = postgres_insert(Tick).values(rows).on_conflict_do_nothing(
-                index_elements=["run_id", "connection_session_id", "sequence_id"]
-            )
-            session.execute(statement)
-        elif dialect == "sqlite":
-            statement = sqlite_insert(Tick).values(rows).on_conflict_do_nothing(
-                index_elements=["run_id", "connection_session_id", "sequence_id"]
-            )
-            session.execute(statement)
-        else:
-            session.execute(Tick.__table__.insert(), rows)
+        statement = postgres_insert(Tick).values(rows).on_conflict_do_nothing(
+            index_elements=["run_id", "connection_session_id", "sequence_id"]
+        )
+        session.execute(statement)
 
 
 def flush_tick_buffer(
@@ -70,6 +64,8 @@ def flush_tick_buffer(
     *,
     force: bool = False,
 ) -> int:
+    if not _uses_postgresql(repository):
+        return 0
     state = _state(repository)
     now = time.monotonic()
     with state.lock:
@@ -121,19 +117,20 @@ def _flush_all() -> None:
 
 
 def install_tick_persistence_buffer() -> None:
-    """Persist ticks in bounded batches instead of one transaction per tick.
+    """Persist production PostgreSQL ticks in bounded batches.
 
     Ten subscribed synthetic markets can generate many tick events each second.
     The former record_tick implementation committed every event and updated the
     same BotState row each time, producing continuous WAL/checkpoint pressure.
-    Strategy analysis remains in memory; this buffer changes only persistence
-    transport and flushes at least once per second or every configured batch.
+    Strategy analysis remains in memory; only PostgreSQL transport is batched.
+    SQLite tests and local development retain immediate persistence semantics.
     """
 
     global _INSTALLED
     if _INSTALLED:
         return
 
+    original_record_tick = Test2Repository.record_tick
     original_recent_digits = Test2Repository.recent_digits
     original_current_tick_sequence = Test2Repository.current_tick_sequence
 
@@ -148,6 +145,18 @@ def install_tick_persistence_buffer() -> None:
         final_digit: int,
         connection_session_id: str,
     ) -> None:
+        if not _uses_postgresql(self):
+            original_record_tick(
+                self,
+                sequence_id=sequence_id,
+                symbol=symbol,
+                epoch=epoch,
+                tick_id=tick_id,
+                quote=quote,
+                final_digit=final_digit,
+                connection_session_id=connection_session_id,
+            )
+            return
         state = _state(self)
         with state.lock:
             state.rows.append(
