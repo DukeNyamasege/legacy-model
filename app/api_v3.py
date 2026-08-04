@@ -77,6 +77,7 @@ from app.reset_trades_always_ui import install_reset_trades_always_ui  # noqa: E
 from app.settings_persistence_fix import install_settings_persistence_fix  # noqa: E402
 from app.simplified_dashboard_api import install_simplified_dashboard_api  # noqa: E402
 from app.strategy_v2_api import install_strategy_v2_api  # noqa: E402
+from app.strategy_v2_final_ui import install_strategy_v2_final_ui  # noqa: E402
 from app.strategy_v2_preferences import install_strategy_v2_preferences  # noqa: E402
 from app.strategy_v2_ui import install_strategy_v2_ui  # noqa: E402
 from app.telegram_silence import install_telegram_silence  # noqa: E402
@@ -198,8 +199,9 @@ install_strategy_v2_preferences()
 install_multi_strategy_api(app)
 install_strategy_v2_api(app)
 
-# Install the original generated selector, then append the v2 prediction control,
-# fixed-contract lifecycle explanation and explicit System Strategy presentation.
+# Install the original generated selector and its v2 controls. The request broker
+# is installed afterwards, then one final route composes broker + selector so
+# neither layer can overwrite the other.
 install_multi_strategy_ui(app)
 install_strategy_v2_ui(app)
 
@@ -208,6 +210,7 @@ install_strategy_v2_ui(app)
 # coalesce duplicate browser pollers and abort stale account-mode requests.
 install_api_performance_hardening(app)
 install_dashboard_request_coalescing(app)
+install_strategy_v2_final_ui(app)
 
 # Deployment integration health reads last-good cached snapshots and is required to
 # finish within a five-second budget. It never forces all-time accounting work.
