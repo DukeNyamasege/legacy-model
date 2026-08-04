@@ -107,8 +107,8 @@ class SourceContractTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("aidr._enabled_accounts = _filter_aidr_over_accounts", source)
-        self.assertIn('route.selection.family == "digits"', source)
-        self.assertIn('route.selection.side == "over"', source)
+        self.assertIn('for route in _routes_for(bot, "digits", "over")', source)
+        self.assertIn("if route.selection.family == family and route.selection.side == side", source)
         self.assertIn('"DIGITEVEN"', source)
         self.assertIn('"DIGITODD"', source)
         self.assertIn('contract_type == "PUT"', source)
