@@ -4,6 +4,7 @@ set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PROJECT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 STATE_DIR="$PROJECT_DIR/.deployment_state"
+REPORT_DIR="$PROJECT_DIR/performance-reports"
 LAST_SUCCESSFUL_COMMIT_FILE="$STATE_DIR/last_successful_commit"
 PENDING_FROM_COMMIT_FILE="$STATE_DIR/pending_from_commit"
 DEPLOY_LOCK_FILE="$STATE_DIR/vps-update.lock"
@@ -29,10 +30,11 @@ write_state_file() {
 command -v git >/dev/null 2>&1 || fail "git is not installed"
 command -v flock >/dev/null 2>&1 || fail "flock is not installed"
 [ -f .env ] || fail "Missing .env. Copy .env.vps.example to .env and configure it first."
-mkdir -p "$STATE_DIR"
+mkdir -p "$STATE_DIR" "$REPORT_DIR"
 
-# Hold one kernel-managed lock for the entire cleanup/build/test/cutover cycle. A
-# killed shell releases it automatically, so no stale lock file can block recovery.
+# Hold one kernel-managed lock for the entire diagnostics/cleanup/build/test/cutover
+# cycle. A killed shell releases it automatically, so no stale lock file blocks
+# recovery and two updates cannot delete or replace each other's candidate stack.
 exec 9>"$DEPLOY_LOCK_FILE"
 flock -n 9 || fail "Another VPS update is already running"
 
@@ -78,6 +80,14 @@ sh -n \
   scripts/run_legacy_release_tests.sh \
   scripts/cleanup_vps_artifacts.sh \
   scripts/diagnose_vps_performance.sh
+
+# Capture the slow system exactly as it exists before old candidate containers,
+# images or build cache are removed. This read-only report lets us distinguish
+# disk capacity from CPU, memory, block I/O, API latency and PostgreSQL pressure.
+PREDEPLOY_REPORT="$REPORT_DIR/pre-cleanup-$(date -u +"%Y%m%dT%H%M%SZ").log"
+echo "Collecting pre-cleanup performance evidence: $PREDEPLOY_REPORT"
+PERFORMANCE_REPORT_FILE="$PREDEPLOY_REPORT" \
+  sh scripts/diagnose_vps_performance.sh || true
 
 # The exclusive lock proves no second updater is using an isolated candidate.
 # Therefore a running preflight project at this point is residue from an interrupted
