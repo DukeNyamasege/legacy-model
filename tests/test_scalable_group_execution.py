@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+import app.deriv_request_broker as request_broker
 import app.scalable_group_execution as grouped
 
 
@@ -59,15 +60,72 @@ class GroupingHelperTests(unittest.TestCase):
         self.assertFalse(grouped._safe_bulk_retry(item))
 
 
+class RequestBrokerHelperTests(unittest.TestCase):
+    def test_bulk_purchase_is_classified_as_trade(self) -> None:
+        self.assertTrue(
+            request_broker._request_is_trade(
+                "/trading/v1/options/contracts/bulk-purchase/demo"
+            )
+        )
+        self.assertFalse(
+            request_broker._request_is_trade(
+                "/trading/v1/options/accounts"
+            )
+        )
+
+    def test_only_account_list_reads_are_coalesced(self) -> None:
+        account_key = request_broker._coalesce_key(
+            "GET",
+            "/trading/v1/options/accounts",
+            "credential",
+            None,
+        )
+        otp_key = request_broker._coalesce_key(
+            "POST",
+            "/trading/v1/options/accounts/DOT123/otp",
+            "credential",
+            None,
+        )
+        bulk_key = request_broker._coalesce_key(
+            "POST",
+            "/trading/v1/options/contracts/bulk-purchase/demo",
+            "",
+            {"accounts": []},
+        )
+        self.assertIsNotNone(account_key)
+        self.assertIsNone(otp_key)
+        self.assertIsNone(bulk_key)
+
+    def test_trade_requests_have_one_attempt(self) -> None:
+        broker = request_broker._DerivRequestBroker()
+        self.assertEqual(
+            broker._attempts(
+                "POST",
+                "/trading/v1/options/contracts/bulk-purchase/demo",
+            ),
+            1,
+        )
+        self.assertGreater(
+            broker._attempts("GET", "/trading/v1/options/accounts"),
+            1,
+        )
+
+
 class DeploymentSourceInvariantTests(unittest.TestCase):
-    def test_worker_installs_scalable_runtime_after_immediate_delivery(self) -> None:
+    def test_worker_installs_request_broker_and_final_scalable_authorities(self) -> None:
         source = (ROOT / "app" / "worker.py").read_text(encoding="utf-8")
+        broker = source.index("install_deriv_request_broker()")
         immediate = source.index("install_guaranteed_signal_delivery()")
         grouped_install = source.index("install_scalable_group_execution()")
+        role_hardening = source.index(
+            "install_scalable_group_execution_hardening()"
+        )
         production = source.index("install_production_worker_integration()")
         bot = source.index("bot = RFDir5TradingBot()")
+        self.assertLess(broker, immediate)
         self.assertLess(immediate, grouped_install)
-        self.assertLess(grouped_install, production)
+        self.assertLess(grouped_install, role_hardening)
+        self.assertLess(role_hardening, production)
         self.assertLess(production, bot)
 
     def test_contract_metadata_is_public_and_not_multiplied_by_accounts(self) -> None:
@@ -111,11 +169,29 @@ class DeploymentSourceInvariantTests(unittest.TestCase):
         source = (ROOT / "app" / "scalable_group_execution.py").read_text(
             encoding="utf-8"
         )
+        broker = (ROOT / "app" / "deriv_request_broker.py").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("automatic_replay=false", source)
         self.assertIn("duplicate_protection=true", source)
         self.assertIn("BULK_OUTCOME_UNKNOWN", source)
         self.assertIn("PRIVATE_BUY_OUTCOME_UNKNOWN", source)
         self.assertIn("prevent a duplicate contract", source)
+        self.assertIn("trade_timeout_replay=false", broker)
+        self.assertIn("if _request_is_trade(path):\n            return 1", broker)
+
+    def test_request_broker_uses_keepalive_bounded_pool_and_coalescing(self) -> None:
+        source = (ROOT / "app" / "deriv_request_broker.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("aiohttp.TCPConnector", source)
+        self.assertIn("limit_per_host", source)
+        self.assertIn("keepalive_timeout=30", source)
+        self.assertIn("asyncio.Semaphore", source)
+        self.assertIn("_coalesce_key", source)
+        self.assertIn("DERIV_ACCOUNT_LIST_CACHE_SECONDS", source)
+        self.assertIn("enhanced_bot._rest_request = _brokered_rest_request", source)
+        self.assertIn("await _BROKER.close()", source)
 
     def test_provider_confirmation_diagnostics_preserve_exact_transport_result(self) -> None:
         source = (ROOT / "app" / "scalable_group_execution.py").read_text(
@@ -127,23 +203,38 @@ class DeploymentSourceInvariantTests(unittest.TestCase):
         self.assertIn("standardized._missing_reason = exact_missing_reason", source)
         self.assertIn("_ACTIVE_RECEIPT_SIGNAL_ID", source)
 
-    def test_system_roles_use_task_local_scopes_and_report_every_result(self) -> None:
+    def test_system_roles_use_task_local_scopes(self) -> None:
         source = (ROOT / "app" / "scalable_group_execution.py").read_text(
             encoding="utf-8"
         )
         self.assertIn("ContextVar", source)
         self.assertIn("_AIDR_SCOPE_IDS", source)
         self.assertIn("_AIDR_RECOVERY_ENABLED", source)
-        self.assertIn("await asyncio.gather(*dispatch_tasks", source)
-        self.assertIn("AIDR_ROLE_DISPATCH_RESULT", source)
-        self.assertIn("AIDR_GROUPED_CYCLE_COMPLETE", source)
         self.assertIn("role_scope_context=task_local", source)
         self.assertIn("global_stop_on_role_error=false", source)
 
+    def test_each_system_role_uses_a_fresh_bounded_subcycle(self) -> None:
+        source = (
+            ROOT / "app" / "scalable_group_execution_hardening.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("for role in standardized.AIDR_EXECUTION_ORDER", source)
+        self.assertIn("AIDR_ROLE_SUBCYCLE_STARTED", source)
+        self.assertIn("fresh_proposal=true", source)
+        self.assertIn("AIDR_ROLE_SUBCYCLE_COMPLETE", source)
+        self.assertIn("signal_created_for_this_subcycle=true", source)
+        self.assertIn("AIDR_ROLE_DISPATCH_RESULT", source)
+        self.assertIn("fresh_role_subcycles=true", source)
+        self.assertIn("signal_holding=false", source)
+        self.assertNotIn("await asyncio.gather(*dispatch_tasks", source)
+
     def test_account_errors_cannot_stop_global_execution(self) -> None:
-        source = (ROOT / "app" / "scalable_group_execution.py").read_text(
-            encoding="utf-8"
-        )
+        grouped_source = (
+            ROOT / "app" / "scalable_group_execution.py"
+        ).read_text(encoding="utf-8")
+        role_source = (
+            ROOT / "app" / "scalable_group_execution_hardening.py"
+        ).read_text(encoding="utf-8")
+        source = grouped_source + "\n" + role_source
         self.assertIn("global_execution_continues=true", source)
         self.assertIn("global_stop_on_error=false", source)
         self.assertNotIn("repository.set_status(\"STOPPED\")", source)
