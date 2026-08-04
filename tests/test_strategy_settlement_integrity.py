@@ -1,12 +1,11 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 import unittest
 from decimal import Decimal
 from pathlib import Path
 
-from app.private_buy_parameter_hardening import (
-    install_private_buy_parameter_hardening,
-)
 from app.rf_dir5_bot import RFDir5TradingBot
 from app.strategy_settlement_integrity import _strategy_outcome
 
@@ -17,9 +16,28 @@ ROOT = Path(__file__).resolve().parents[1]
 class WorkerStartupCompatibilityTests(unittest.TestCase):
     def test_private_buy_installer_targets_live_rf_proposal_builder(self) -> None:
         self.assertTrue(callable(getattr(RFDir5TradingBot, "_proposal_request_for", None)))
-        install_private_buy_parameter_hardening()
-        self.assertTrue(
-            getattr(RFDir5TradingBot, "_private_buy_parameter_hardening_installed", False)
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "from app.private_buy_parameter_hardening import "
+                    "install_private_buy_parameter_hardening; "
+                    "from app.rf_dir5_bot import RFDir5TradingBot; "
+                    "install_private_buy_parameter_hardening(); "
+                    "assert RFDir5TradingBot._private_buy_parameter_hardening_installed"
+                ),
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        self.assertEqual(
+            result.returncode,
+            0,
+            msg=(result.stdout + "\n" + result.stderr).strip(),
         )
 
     def test_source_does_not_patch_missing_base_method(self) -> None:
