@@ -76,6 +76,8 @@ class DatabaseWritePressureTests(unittest.TestCase):
         self.assertIn('TICK_PERSIST_FLUSH_SECONDS", "1.0"', source)
         self.assertIn("on_conflict_do_nothing", source)
         self.assertIn("state.rows = rows + state.rows", source)
+        self.assertIn('dialect.name == "postgresql"', source)
+        self.assertIn("original_record_tick(", source)
 
     def test_duplicate_provider_callbacks_are_idempotent(self) -> None:
         worker = (ROOT / "app" / "worker.py").read_text(encoding="utf-8")
@@ -103,15 +105,17 @@ class VpsCleanupSourceTests(unittest.TestCase):
         source = (ROOT / "scripts" / "update_vps.sh").read_text(encoding="utf-8")
         cleanup = source.index("cleanup_vps_artifacts.sh pre-deploy")
         deploy = source.index("sh ./scripts/deploy_vps.sh")
-        diagnostics = source.index("diagnose_vps_performance.sh")
+        diagnostics = source.rindex("sh scripts/diagnose_vps_performance.sh")
         self.assertLess(cleanup, deploy)
-        self.assertGreater(diagnostics, cleanup)
+        self.assertGreater(diagnostics, deploy)
+        self.assertIn('flock -n 9 || fail "Another VPS update is already running"', source)
 
     def test_cleanup_preserves_production_volumes(self) -> None:
         source = (ROOT / "scripts" / "cleanup_vps_artifacts.sh").read_text(
             encoding="utf-8"
         )
         self.assertIn("legacy-model-preflight-", source)
+        self.assertIn("DEPLOYMENT_LOCK_HELD", source)
         self.assertNotIn("docker system prune -a", source)
         self.assertNotIn("docker volume prune", source)
         self.assertIn("test2_database", source)
