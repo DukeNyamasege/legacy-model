@@ -19,6 +19,12 @@ is_active_image_id() {
   done | grep -Fx "$candidate" >/dev/null 2>&1
 }
 
+running_preflight_projects() {
+  docker ps --format '{{.Label "com.docker.compose.project"}}' 2>/dev/null \
+    | awk '/^legacy-model-preflight-/ {print}' \
+    | sort -u
+}
+
 echo "============================================================"
 echo "SAFE VPS ARTIFACT CLEANUP"
 echo "============================================================"
@@ -30,6 +36,16 @@ echo "--- DISK BEFORE ---"
 df -h / 2>/dev/null || true
 docker system df 2>/dev/null || true
 
+active_preflights=$(running_preflight_projects || true)
+if [ -n "$active_preflights" ]; then
+  echo ""
+  echo "ACTIVE CANDIDATE DEPLOYMENT DETECTED:" >&2
+  printf '%s\n' "$active_preflights" >&2
+  echo "Cleanup refused to avoid deleting a release gate that may still be running." >&2
+  echo "Wait for that deployment to finish, or inspect it manually before retrying." >&2
+  exit 1
+fi
+
 # Remove exited one-shot containers belonging to this production Compose project.
 # Running api/worker/database containers are never selected.
 docker ps -aq \
@@ -40,13 +56,13 @@ docker ps -aq \
       docker rm "$container_id" >/dev/null 2>&1 || true
     done
 
-# Failed/repeated release gates use isolated Compose project names. Remove their
-# containers, then their networks and volumes by exact project label. Production
-# volumes use project=legacy-model and therefore cannot match this section.
-docker ps -a --format '{{.ID}} {{.Label "com.docker.compose.project"}}' \
-  | awk '$2 ~ /^legacy-model-preflight-/ {print $1}' \
+# Failed/repeated release gates use isolated Compose project names. No active
+# candidate exists at this point, so only stopped/created remnants are selected.
+# Production volumes use project=legacy-model and cannot match this section.
+docker ps -a --format '{{.ID}} {{.Status}} {{.Label "com.docker.compose.project"}}' \
+  | awk '$NF ~ /^legacy-model-preflight-/ {print $1}' \
   | while IFS= read -r container_id; do
-      [ -n "$container_id" ] && docker rm -f "$container_id" >/dev/null 2>&1 || true
+      [ -n "$container_id" ] && docker rm "$container_id" >/dev/null 2>&1 || true
     done
 
 docker network ls --format '{{.ID}} {{.Label "com.docker.compose.project"}}' \
