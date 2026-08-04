@@ -602,6 +602,7 @@ async def _ready_accounts(
     accounts: list[tuple[str, str]],
     *,
     timeout: float,
+    phase: str,
 ) -> tuple[list[tuple[str, str]], dict[str, dict[str, Any]]]:
     sessions = [
         _ensure_session(bot, token, account_id)
@@ -620,12 +621,22 @@ async def _ready_accounts(
         if not isinstance(outcome, Exception) and bool(outcome):
             ready.append((token, account_id))
             continue
-        bot.logger.error(
-            "PRIVATE_CONNECTION_PURCHASE_TIMEOUT account=%s timeout_seconds=%.1f "
-            "purchase_sent=false retry_on_next_qualified_cycle=true",
-            mask_account_id(account_id),
-            timeout,
-        )
+        if phase == "grace":
+            bot.logger.warning(
+                "PRIVATE_CONNECTION_STILL_CONNECTING account=%s "
+                "grace_seconds=%.1f ready_accounts_purchase_now=true "
+                "this_account_retrying_separately=true",
+                mask_account_id(account_id),
+                timeout,
+            )
+        else:
+            bot.logger.error(
+                "PRIVATE_CONNECTION_PURCHASE_TIMEOUT account=%s "
+                "timeout_seconds=%.1f purchase_sent=false "
+                "retry_on_next_qualified_cycle=true",
+                mask_account_id(account_id),
+                timeout,
+            )
         blocked[account_id] = {
             "account_id": account_id,
             "error": {
@@ -766,6 +777,7 @@ def install_guaranteed_signal_delivery() -> None:
             self,
             eligible_accounts,
             timeout=PRIVATE_READY_TIMEOUT_SECONDS,
+            phase="grace",
         )
         results_by_account: dict[str, dict[str, Any]] = {}
 
@@ -826,6 +838,7 @@ def install_guaranteed_signal_delivery() -> None:
                 self,
                 retry_candidates,
                 timeout=PRIVATE_RETRY_TIMEOUT_SECONDS,
+                phase="retry",
             )
             final_blocked.update(retry_blocked)
             if retry_ready:
