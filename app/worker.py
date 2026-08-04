@@ -24,6 +24,7 @@ from app.deployment_announcement import install_dynamic_deployment_announcement
 from app.hybrid_data_integrity import install_hybrid_data_integrity
 from app.hybrid_digit_put import install_hybrid_digit_put_strategy
 from app.hybrid_runtime_config import install_hybrid_runtime_config
+from app.multi_strategy_concurrency import install_multi_strategy_concurrency_guard
 from app.multi_strategy_runtime import install_multi_strategy_runtime
 from app.private_buy_parameter_hardening import install_private_buy_parameter_hardening
 from app.private_websocket_rate_limit import install_private_websocket_rate_limit
@@ -101,6 +102,11 @@ async def run_worker() -> None:
     # Digits/Under, Even/Odd and Rise/Fall use the same private purchase,
     # recovery, virtual protection and account-isolation infrastructure.
     install_multi_strategy_runtime()
+
+    # Every family has its own candidate stream, but the authenticated purchase
+    # boundary is atomic. Recheck staleness/open cycles after acquiring the gate
+    # so two strategy groups can never race into overlapping provider contracts.
+    install_multi_strategy_concurrency_guard()
 
     install_production_worker_integration()
     install_every_tick_debug_logging()
