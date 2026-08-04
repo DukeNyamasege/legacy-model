@@ -21,6 +21,7 @@ from app.aidr_virtual_soft_gate import install_aidr_virtual_soft_gate
 from app.custom_martingale import install_custom_martingale_worker
 from app.dashboard_actual_trade_fallback import install_dashboard_actual_trade_fallback
 from app.deployment_announcement import install_dynamic_deployment_announcement
+from app.deriv_request_broker import install_deriv_request_broker
 from app.guaranteed_signal_delivery import install_guaranteed_signal_delivery
 from app.hybrid_data_integrity import install_hybrid_data_integrity
 from app.hybrid_digit_put import install_hybrid_digit_put_strategy
@@ -41,6 +42,9 @@ from app.recovery_state_persistence_hardening import (
 )
 from app.rf_dir5_bot import RFDir5TradingBot
 from app.scalable_group_execution import install_scalable_group_execution
+from app.scalable_group_execution_hardening import (
+    install_scalable_group_execution_hardening,
+)
 from app.settlement_observability_hardening import (
     install_settlement_observability_hardening,
 )
@@ -83,6 +87,11 @@ async def run_worker() -> None:
     # while PostgreSQL WAL and BotState row churn fall from one transaction per
     # tick to roughly one transaction per second.
     install_tick_persistence_buffer()
+
+    # All worker REST traffic shares one keep-alive pool with bounded per-host
+    # concurrency. Identical account-list reads are coalesced, safe reads/OTP calls
+    # receive bounded retries, and trade requests are never blindly replayed.
+    install_deriv_request_broker()
 
     install_dashboard_actual_trade_fallback()
     install_worker_account_lifecycle()
@@ -173,9 +182,14 @@ async def run_worker() -> None:
     # comes from one public cache rather than account-by-market requests. Identical
     # PAT contracts use official bulk shards of at most 100 accounts; OAuth members
     # retain bounded private WebSocket groups. System role scopes are task-local,
-    # every role reports an explicit dispatch result, and no account/provider error
-    # can set or stop the global worker state.
+    # and exact provider outcomes replace generic missing confirmations.
     install_scalable_group_execution()
+
+    # The final System authority creates a fresh proposal only when each role's own
+    # grouped subcycle is ready. NORMAL, first recovery and post-virtual roles are
+    # attempted independently without retaining an aging signal or allowing one
+    # role/account error to stop the worker.
+    install_scalable_group_execution_hardening()
 
     install_production_worker_integration()
     install_every_tick_debug_logging()
