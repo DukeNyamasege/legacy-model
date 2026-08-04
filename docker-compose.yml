@@ -1,7 +1,18 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: ${DOCKER_LOG_MAX_SIZE:-25m}
+    max-file: ${DOCKER_LOG_MAX_FILES:-3}
+
 services:
   database:
     image: postgres:17-alpine
     restart: unless-stopped
+    command: >-
+      postgres
+      -c checkpoint_timeout=${POSTGRES_CHECKPOINT_TIMEOUT:-15min}
+      -c checkpoint_completion_target=${POSTGRES_CHECKPOINT_COMPLETION_TARGET:-0.9}
+      -c wal_compression=${POSTGRES_WAL_COMPRESSION:-on}
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-underdog_test2}
       POSTGRES_USER: ${POSTGRES_USER:-underdog}
@@ -14,6 +25,7 @@ services:
       timeout: 5s
       retries: 24
       start_period: 5s
+    logging: *default-logging
     networks:
       test2: {}
 
@@ -41,6 +53,7 @@ services:
       start_period: 20s
     ports:
       - "127.0.0.1:8080:8080"
+    logging: *default-logging
     networks:
       test2: {}
 
@@ -56,7 +69,9 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-underdog}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB:-underdog_test2}
       DEPLOYMENT_ID: vps-worker
-      LIVE_TICK_LOG_LINES: ${LIVE_TICK_LOG_LINES:-true}
+      LIVE_TICK_LOG_LINES: ${LIVE_TICK_LOG_LINES:-false}
+      TICK_PERSIST_BATCH_SIZE: ${TICK_PERSIST_BATCH_SIZE:-50}
+      TICK_PERSIST_FLUSH_SECONDS: ${TICK_PERSIST_FLUSH_SECONDS:-1.0}
       INTERNAL_DASHBOARD_REFRESH_URL: http://api:8080/control/internal/dashboard-settlement-refresh
       DEPLOYMENT_RELEASE_ID: ${DEPLOYMENT_RELEASE_ID:-}
       DEPLOYMENT_RELEASE_FROM: ${DEPLOYMENT_RELEASE_FROM:-}
@@ -69,6 +84,7 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
+    logging: *default-logging
     networks:
       test2: {}
 
