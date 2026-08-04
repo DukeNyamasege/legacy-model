@@ -10,9 +10,10 @@ import app.hybrid_digit_put as hybrid
 _INSTALLED = False
 
 _QUALITY = aidr.AIDR_STRATEGY_CONTRACT["quality"]
-POST_VIRTUAL_TIGHTENING_FACTOR = float(
-    _QUALITY.get("post_virtual_tightening_factor", 1.05)
-)
+# Virtual observation uses the ordinary contract probability. This metadata is
+# retained for compatibility, but values above 1.0 can no longer tighten the $0
+# virtual path and keep an account waiting unnecessarily.
+POST_VIRTUAL_TIGHTENING_FACTOR = 1.0
 POST_VIRTUAL_MINIMUM_LIVE_EDGE = float(
     _QUALITY.get("minimum_post_virtual_live_edge", 0.005)
 )
@@ -25,11 +26,7 @@ def _ordinary_over_hit_rate(barrier: int) -> float:
     return (9 - normalized) / 10.0
 
 
-POST_VIRTUAL_ALIGNMENT = min(
-    1.0,
-    _ordinary_over_hit_rate(aidr.POST_VIRTUAL_BARRIER)
-    * max(1.0, POST_VIRTUAL_TIGHTENING_FACTOR),
-)
+POST_VIRTUAL_ALIGNMENT = _ordinary_over_hit_rate(aidr.POST_VIRTUAL_BARRIER)
 
 
 def _is_post_virtual_barrier(value: Any) -> bool:
@@ -40,7 +37,7 @@ def _is_post_virtual_barrier(value: Any) -> bool:
 
 
 def soft_alignment_for_barrier(barrier: Any, requested: float) -> float:
-    """Use only a 5% tightening for virtual/full-recovery OVER-4 entries."""
+    """Use the ordinary 50% OVER-4 baseline with no virtual tightening."""
 
     requested_rate = max(0.0, min(1.0, float(requested or 0.0)))
     if _is_post_virtual_barrier(barrier):
@@ -49,7 +46,7 @@ def soft_alignment_for_barrier(barrier: Any, requested: float) -> float:
 
 
 def soft_edge_for_signal(signal: Any, requested: float) -> float:
-    """Keep a small positive edge without trapping the $0 virtual sequence."""
+    """Keep a small edge for real recovery; $0 virtual bypasses proposals."""
 
     requested_edge = max(0.0, float(requested or 0.0))
     if _is_post_virtual_barrier(getattr(signal, "barrier", "")):
@@ -58,12 +55,13 @@ def soft_edge_for_signal(signal: Any, requested: float) -> float:
 
 
 def install_aidr_virtual_soft_gate() -> None:
-    """Install role-specific soft gates after AIDR continuation arbitration.
+    """Install role-specific ordinary gates after continuation arbitration.
 
     Normal OVER-1 and first-recovery OVER-3 retain their existing filters.
-    Virtual OVER-4 observations and the single real OVER-4 recovery use the
-    ordinary 50% OVER-4 hit rate tightened by only 5%, rather than inheriting the
-    60% recovery alignment. Adaptive trap history cannot increase these gates.
+    Virtual OVER-4 and real post-virtual OVER-4 use the ordinary 50% contract
+    baseline rather than a 60% recovery gate. The per-account virtual runtime
+    bypasses provider proposal/edge and real-purchase cadence for the $0
+    observation; real recovery still obtains a fresh proposal before buying.
     """
 
     global _INSTALLED
@@ -92,7 +90,7 @@ def install_aidr_virtual_soft_gate() -> None:
 
         # `_make_aidr_candidate` is synchronous, so the process-wide value is
         # restored before control returns to the event loop. Other roles retain
-        # the normal 60% recovery threshold.
+        # their own normal and first-recovery thresholds.
         previous = float(aidr.MIN_RECOVERY_HIT_RATE)
         aidr.MIN_RECOVERY_HIT_RATE = soft_alignment_for_barrier(barrier, previous)
         try:
@@ -117,10 +115,6 @@ def install_aidr_virtual_soft_gate() -> None:
             soft_edge_for_signal(signal, minimum_edge),
         )
 
-    # The active hybrid callbacks point to functions defined in the continuation
-    # module. Those functions resolve these globals at call time, so replacing the
-    # globals updates the live candidate and proposal path without changing normal
-    # or first-recovery behavior.
     continuation._make_aidr_candidate = make_candidate_with_soft_virtual_gate
     continuation._proposal_ok = proposal_with_soft_virtual_edge
     continuation.AIDR_POST_VIRTUAL_ALIGNMENT = POST_VIRTUAL_ALIGNMENT
@@ -128,7 +122,6 @@ def install_aidr_virtual_soft_gate() -> None:
         POST_VIRTUAL_MINIMUM_LIVE_EDGE
     )
 
-    # Keep direct AIDR callers consistent with the active continuation path.
     aidr._make_aidr_candidate = make_candidate_with_soft_virtual_gate
     aidr._proposal_ok = proposal_with_soft_virtual_edge
 
