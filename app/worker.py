@@ -38,6 +38,7 @@ from app.telegram_admin_integration import install_telegram_admin_integration
 from app.telegram_silence import install_telegram_silence
 from app.tick_debug_logging import install_every_tick_debug_logging
 from app.tick_persistence_buffer import install_tick_persistence_buffer
+from app.trade_registration_idempotency import install_trade_registration_idempotency
 from app.unresolved_contract_safety import install_unresolved_contract_safety
 from app.websocket_only_execution import install_websocket_only_execution
 
@@ -51,6 +52,11 @@ async def run_worker() -> None:
     # worker. It is retained for audit, quarantined with zero financial impact,
     # and excluded from private-WebSocket reconciliation.
     install_unresolved_contract_safety()
+
+    # Provider purchase confirmations can arrive through more than one private
+    # callback. Conflict-safe registration keeps the first committed Trade row and
+    # turns later identical callbacks into harmless no-ops.
+    install_trade_registration_idempotency()
 
     # Persist public ticks in bounded batches. Strategy state remains in memory,
     # while PostgreSQL WAL and BotState row churn fall from one transaction per
