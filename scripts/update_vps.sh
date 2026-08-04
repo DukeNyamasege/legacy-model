@@ -108,5 +108,9 @@ else
   echo "Deployment failed. The comparison base was retained in $PENDING_FROM_COMMIT_FILE" >&2
   echo "Collecting a token-free performance report for the failed attempt..." >&2
   sh scripts/diagnose_vps_performance.sh || true
+  echo "Removing failed candidate residue under the still-held updater lock..." >&2
+  DEPLOYMENT_LOCK_HELD=true \
+    ALLOW_REMOVE_RUNNING_PREFLIGHT=true \
+    sh scripts/cleanup_vps_artifacts.sh failed-deploy || true
   exit "$status"
 fi
