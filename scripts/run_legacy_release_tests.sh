@@ -14,6 +14,7 @@ export FRONTEND_ORIGINS="http://127.0.0.1:8080,http://localhost:8080,https://der
 exec python -m unittest -q \
   tests.test_multi_strategy \
   tests.test_multi_strategy_concurrency \
+  tests.test_strategy_v2 \
   tests.test_generated_multi_strategy_js \
   tests.test_performance_hardening \
   tests.test_generated_request_broker_js \
