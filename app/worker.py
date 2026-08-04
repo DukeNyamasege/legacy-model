@@ -26,6 +26,10 @@ from app.hybrid_digit_put import install_hybrid_digit_put_strategy
 from app.hybrid_runtime_config import install_hybrid_runtime_config
 from app.multi_strategy_concurrency import install_multi_strategy_concurrency_guard
 from app.multi_strategy_runtime import install_multi_strategy_runtime
+from app.per_account_virtual_runtime import (
+    install_account_isolation_invariants,
+    install_uniform_virtual_runtime,
+)
 from app.private_buy_parameter_hardening import install_private_buy_parameter_hardening
 from app.private_websocket_rate_limit import install_private_websocket_rate_limit
 from app.production_worker_integration import install_production_worker_integration
@@ -54,6 +58,11 @@ async def run_worker() -> None:
     # Only the current enrollment generation is visible to the worker. Historical
     # registrations remain preserved but cannot auto-start after a reset.
     install_account_reenrollment()
+
+    # Account lifecycle outcomes are never allowed to become platform control
+    # states. TP, SL, manual Stop, credential or balance failures isolate only the
+    # affected account while the worker and every other account remain active.
+    install_account_isolation_invariants()
 
     # A malformed legacy placeholder contract ID must never restart the whole
     # worker. It is retained for audit, quarantined with zero financial impact,
@@ -110,8 +119,8 @@ async def run_worker() -> None:
     install_aidr_execution_flow_fix()
     install_aidr_loss_continuation_fix()
 
-    # Virtual OVER-4 and post-virtual recovery use the ordinary 50% baseline with
-    # only five-percent relative tightening (52.5%).
+    # OVER-4 uses the ordinary 50% contract baseline. The final uniform virtual
+    # layer below removes proposal and real-purchase cadence from $0 observations.
     install_aidr_virtual_soft_gate()
 
     # Stop/Reset wins settlement races and cannot be reversed by a late callback.
@@ -128,9 +137,15 @@ async def run_worker() -> None:
     install_multi_strategy_runtime()
     install_strategy_v2_runtime()
 
-    # Every family has its own candidate stream, but the authenticated purchase
-    # boundary is atomic. Recheck staleness/open cycles after acquiring the gate
-    # so two strategy groups can never race into overlapping provider contracts.
+    # Every strategy now shares the same account-level lifecycle: two actual
+    # losses enter virtual mode, one qualifying virtual win arms real recovery,
+    # and virtual observations bypass provider proposal/cadence because they risk
+    # no money. Failures remain isolated to their exact managed account.
+    install_uniform_virtual_runtime()
+
+    # Every family has its own candidate stream, but the authenticated financial
+    # purchase boundary is atomic. The gate protects against duplicate provider
+    # purchases; it does not block $0 virtual observations or stop other accounts.
     install_multi_strategy_concurrency_guard()
 
     install_production_worker_integration()
@@ -151,6 +166,8 @@ async def run_worker() -> None:
     loop = asyncio.get_running_loop()
 
     def stop() -> None:
+        # Only an operating-system shutdown signal can stop the worker process.
+        # Account Pause/Stop/TP/SL paths never call this function.
         bot.is_running = False
 
     for signal_name in (signal.SIGINT, signal.SIGTERM):
