@@ -60,6 +60,7 @@ jobs:
       - name: Run focused release tests
         run: |
           python -m unittest -q tests.test_stop_history_and_mobile_ui
+          python -m unittest -q tests.test_multi_strategy
           python -m unittest -q test_custom_martingale.py
           python -m unittest -q test_aidr_recovery_v2.py tests.test_aidr_virtual_soft_gate tests.test_independent_websocket_execution tests.test_private_websocket_credentials
           sh scripts/run_legacy_release_tests.sh
