@@ -13,17 +13,17 @@ from app.multi_strategy_ui import (
 )
 
 _INSTALLED = False
-UI_VERSION = "20260804-request-coalescing-1"
+UI_VERSION = "20260804-request-coalescing-2"
 
 _REQUEST_BROKER_JS = r'''
 
-/* FOA_REQUEST_COALESCING_VERSION:20260804-1
+/* FOA_REQUEST_COALESCING_VERSION:20260804-2
    Several historical UI layers poll the same personal routes. Keep those visual
    layers compatible while one broker coalesces identical requests, caches short
    reads, and aborts stale Demo responses before switching to Real (and vice versa). */
 (() => {
   "use strict";
-  const VERSION = "20260804-1";
+  const VERSION = "20260804-2";
   if (window.FOA_REQUEST_COALESCING_VERSION) return;
 
   const nativeFetch = window.fetch.bind(window);
@@ -57,8 +57,7 @@ _REQUEST_BROKER_JS = r'''
   }
 
   function ttlFor(pathname) {
-    if (managedTTL.has(pathname)) return managedTTL.get(pathname);
-    return 0;
+    return managedTTL.get(pathname) || 0;
   }
 
   function cacheKey(parts) {
@@ -87,7 +86,7 @@ _REQUEST_BROKER_JS = r'''
     document.body.dataset.foaAccountRequestGeneration = String(generation);
   }
 
-  async function fetchAndStore(input, init, parts, key, ttl) {
+  async function fetchAndStore(input, init, key, ttl) {
     const controller = new AbortController();
     controllers.add(controller);
     const externalSignal = init?.signal;
@@ -147,7 +146,7 @@ _REQUEST_BROKER_JS = r'''
     const pending = inFlight.get(key);
     if (pending) return pending.then(responseFrom);
 
-    const promise = fetchAndStore(input, init, parts, key, ttl)
+    const promise = fetchAndStore(input, init, key, ttl)
       .finally(() => inFlight.delete(key));
     inFlight.set(key, promise);
     return promise.then(responseFrom);
@@ -155,8 +154,6 @@ _REQUEST_BROKER_JS = r'''
 
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
-      // Let active pages refresh promptly without every historical interval
-      // starting a separate network request.
       for (const [key, entry] of cache.entries()) {
         if (entry.expiresAt <= Date.now()) cache.delete(key);
       }
@@ -177,9 +174,12 @@ def _script(*, compatibility: bool = False) -> str:
     source = multi_strategy_append(
         base_compat_script() if compatibility else base_dashboard_script()
     )
-    if "FOA_REQUEST_COALESCING_VERSION" not in source:
-        source += _REQUEST_BROKER_JS
-    return source
+    if "FOA_REQUEST_COALESCING_VERSION" in source:
+        return source
+    # The broker must execute before any historical dashboard IIFE can call boot()
+    # and start its polling interval. Appending it was too late when the script was
+    # loaded after DOMContentLoaded.
+    return _REQUEST_BROKER_JS + "\n" + source
 
 
 def _headers() -> dict[str, str]:
