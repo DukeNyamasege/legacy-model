@@ -9,7 +9,9 @@ from types import SimpleNamespace
 
 import app.aidr_loss_continuation_fix as continuation
 from app.guaranteed_signal_delivery import (
-    _LiveTickSequence,
+    IMMEDIATE_SIGNAL_MAX_AGE_SECONDS,
+    _ImmediateTickSequence,
+    _finalize_private_boundary,
     _role_matches_account,
     refresh_signal_for_delivery,
 )
@@ -89,11 +91,11 @@ class SignalMetadataCompatibilityTests(unittest.TestCase):
         self.assertEqual(signal.signal_tick_epoch, 777)
         clear_standardized_cycle_id(signal)
 
-    def test_qualified_cycle_does_not_expire_during_internal_processing(self) -> None:
+    def test_recent_signal_tracks_ticks_only_during_short_purchase_window(self) -> None:
         install_standardized_signal_metadata()
-        signal = _signal(signal_id="old-qualified")
-        signal.generated_monotonic = time.monotonic() - 7200.0
-        signal._standardized_cycle_id = "cycle-guaranteed"
+        signal = _signal(signal_id="recent-qualified")
+        signal.generated_monotonic = time.monotonic()
+        signal._standardized_cycle_id = "cycle-immediate"
         market = SimpleNamespace(
             tick_sequence=51,
             ticks_history=[{"quote": Decimal("202.45"), "epoch": 900}],
@@ -101,19 +103,41 @@ class SignalMetadataCompatibilityTests(unittest.TestCase):
         bot = SimpleNamespace(
             market_states={"1HZ100V": market},
             _tick_identity=lambda symbol, epoch, quote: f"{symbol}:{epoch}:{quote}",
-            logger=logging.getLogger("guaranteed-signal-test"),
+            logger=logging.getLogger("immediate-signal-test"),
         )
 
         self.assertTrue(refresh_signal_for_delivery(bot, signal))
-        self.assertIsInstance(signal.tick_sequence, _LiveTickSequence)
+        self.assertIsInstance(signal.tick_sequence, _ImmediateTickSequence)
         self.assertEqual(int(signal.tick_sequence), 51)
-        self.assertTrue(51 == signal.tick_sequence)
 
-        # A new market tick while account preparation is running must not turn the
-        # already-qualified standardized cycle into a stale-signal skip.
         market.tick_sequence = 52
+        market.ticks_history.append(
+            {"quote": Decimal("202.46"), "epoch": 901}
+        )
         self.assertEqual(int(signal.tick_sequence), 52)
-        self.assertTrue(52 == signal.tick_sequence)
+
+        self.assertTrue(_finalize_private_boundary(bot, signal))
+        self.assertIsInstance(signal.tick_sequence, int)
+        self.assertEqual(signal.tick_sequence, 52)
+        clear_standardized_cycle_id(signal)
+
+    def test_old_signal_is_rejected_instead_of_held(self) -> None:
+        install_standardized_signal_metadata()
+        signal = _signal(signal_id="expired-qualified")
+        signal.generated_monotonic = (
+            time.monotonic() - IMMEDIATE_SIGNAL_MAX_AGE_SECONDS - 1.0
+        )
+        signal._standardized_cycle_id = "cycle-expired"
+        market = SimpleNamespace(
+            tick_sequence=60,
+            ticks_history=[{"quote": Decimal("303.10"), "epoch": 1000}],
+        )
+        bot = SimpleNamespace(
+            market_states={"1HZ100V": market},
+            _tick_identity=lambda symbol, epoch, quote: f"{symbol}:{epoch}:{quote}",
+            logger=logging.getLogger("expired-signal-test"),
+        )
+        self.assertFalse(refresh_signal_for_delivery(bot, signal))
         clear_standardized_cycle_id(signal)
 
 
@@ -134,9 +158,18 @@ class AccountGroupIdentityTests(unittest.TestCase):
         over_one = _signal(signal_id="one", barrier="1")
         over_three = _signal(signal_id="three", barrier="3")
 
-        self.assertNotEqual(_route_key(route_a, over_one), _route_key(route_a, over_three))
-        self.assertNotEqual(_route_key(route_a, over_one), _route_key(route_b, over_one))
-        self.assertNotEqual(_queue_key(route_a, over_one), _queue_key(route_a, over_three))
+        self.assertNotEqual(
+            _route_key(route_a, over_one),
+            _route_key(route_a, over_three),
+        )
+        self.assertNotEqual(
+            _route_key(route_a, over_one),
+            _route_key(route_b, over_one),
+        )
+        self.assertNotEqual(
+            _queue_key(route_a, over_one),
+            _queue_key(route_a, over_three),
+        )
 
     def test_system_execution_order_contains_every_role(self) -> None:
         self.assertEqual(
@@ -148,8 +181,14 @@ class AccountGroupIdentityTests(unittest.TestCase):
             ),
         )
         self.assertEqual(_role_spec(continuation.NORMAL_ROLE), (1, False))
-        self.assertEqual(_role_spec(continuation.FIRST_RECOVERY_ROLE), (3, True))
-        self.assertEqual(_role_spec(continuation.POST_VIRTUAL_ROLE), (4, True))
+        self.assertEqual(
+            _role_spec(continuation.FIRST_RECOVERY_ROLE),
+            (3, True),
+        )
+        self.assertEqual(
+            _role_spec(continuation.POST_VIRTUAL_ROLE),
+            (4, True),
+        )
 
     def test_live_manual_scope_keeps_exact_role_membership(self) -> None:
         selection = SimpleNamespace(family="digits", side="under")
@@ -175,25 +214,41 @@ class AccountGroupIdentityTests(unittest.TestCase):
         )
         self.assertTrue(
             _role_matches_account(
-                SimpleNamespace(family="digits", side="under", role="NORMAL"),
+                SimpleNamespace(
+                    family="digits",
+                    side="under",
+                    role="NORMAL",
+                ),
                 normal,
             )
         )
         self.assertTrue(
             _role_matches_account(
-                SimpleNamespace(family="digits", side="under", role="RECOVERY"),
+                SimpleNamespace(
+                    family="digits",
+                    side="under",
+                    role="RECOVERY",
+                ),
                 recovery,
             )
         )
         self.assertTrue(
             _role_matches_account(
-                SimpleNamespace(family="digits", side="under", role="POST_VIRTUAL"),
+                SimpleNamespace(
+                    family="digits",
+                    side="under",
+                    role="POST_VIRTUAL",
+                ),
                 post_virtual,
             )
         )
         self.assertTrue(
             _role_matches_account(
-                SimpleNamespace(family="digits", side="under", role="VIRTUAL"),
+                SimpleNamespace(
+                    family="digits",
+                    side="under",
+                    role="VIRTUAL",
+                ),
                 virtual,
             )
         )
@@ -205,28 +260,34 @@ class DeploymentSourceInvariantTests(unittest.TestCase):
         concurrency = source.index("install_multi_strategy_concurrency_guard()")
         metadata = source.index("install_standardized_signal_metadata()")
         standardized = source.index("install_standardized_execution_runtime()")
-        guaranteed = source.index("install_guaranteed_signal_delivery()")
+        immediate = source.index("install_guaranteed_signal_delivery()")
         bot = source.index("bot = RFDir5TradingBot()")
         self.assertLess(concurrency, metadata)
         self.assertLess(metadata, standardized)
-        self.assertLess(standardized, guaranteed)
-        self.assertLess(guaranteed, bot)
+        self.assertLess(standardized, immediate)
+        self.assertLess(immediate, bot)
 
     def test_standardized_router_removes_cross_group_winner_statuses(self) -> None:
-        source = (ROOT / "app" / "standardized_execution_runtime.py").read_text(
-            encoding="utf-8"
-        )
+        source = (
+            ROOT / "app" / "standardized_execution_runtime.py"
+        ).read_text(encoding="utf-8")
         self.assertNotIn('status="SKIP_AIDR_ROLE_FAIRNESS"', source)
-        self.assertNotIn('status="SKIP_MULTI_STRATEGY_ARBITRATION"', source)
+        self.assertNotIn(
+            'status="SKIP_MULTI_STRATEGY_ARBITRATION"',
+            source,
+        )
         self.assertIn("for role in AIDR_EXECUTION_ORDER", source)
-        self.assertIn("for selected, economics, route in selected_groups", source)
+        self.assertIn(
+            "for selected, economics, route in selected_groups",
+            source,
+        )
         self.assertIn("competition_removed=true", source)
         self.assertIn("role_competition_removed=true", source)
 
     def test_every_scoped_account_has_receipt_or_skip_diagnostics(self) -> None:
-        source = (ROOT / "app" / "standardized_execution_runtime.py").read_text(
-            encoding="utf-8"
-        )
+        source = (
+            ROOT / "app" / "standardized_execution_runtime.py"
+        ).read_text(encoding="utf-8")
         self.assertIn("ACCOUNT_CYCLE_RECEIVED", source)
         self.assertIn("ACCOUNT_CYCLE_NOT_PURCHASED", source)
         self.assertIn("ACCOUNT_CYCLE_WAITING", source)
@@ -235,37 +296,57 @@ class DeploymentSourceInvariantTests(unittest.TestCase):
         self.assertIn('"signal_waiting"', source)
         self.assertIn('"cycle_skipped"', source)
 
-    def test_standardized_groups_can_coexist_with_disjoint_open_contracts(self) -> None:
-        source = (ROOT / "app" / "multi_strategy_concurrency.py").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("if pending_count and not standardized", source)
-        self.assertIn("if pending_count and standardized", source)
-        self.assertIn("STANDARDIZED_GROUP_COEXISTS_WITH_OPEN_CONTRACTS", source)
-        self.assertIn("account_scoped_eligibility=true", source)
-        self.assertIn("refresh_signal_for_execution", source)
+    def test_immediate_runtime_has_no_infinite_signal_holding(self) -> None:
+        source = (
+            ROOT / "app" / "guaranteed_signal_delivery.py"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn('float("inf")', source)
+        self.assertNotIn("STANDARDIZED_SIGNAL_PINNED", source)
+        self.assertIn("IMMEDIATE_SIGNAL_DEADLINE_MISSED", source)
+        self.assertIn("IMMEDIATE_PRIVATE_BUY_BOUNDARY", source)
+        self.assertIn("infinite_signal_holding=false", source)
+        self.assertIn("connect_before_buy=true", source)
+        self.assertIn("reconnect_retry=1", source)
 
-    def test_signal_metadata_supports_all_slotted_strategy_signals(self) -> None:
-        source = (ROOT / "app" / "standardized_signal_metadata.py").read_text(
-            encoding="utf-8"
+    def test_one_system_trigger_dispatches_all_account_roles(self) -> None:
+        source = (
+            ROOT / "app" / "guaranteed_signal_delivery.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("AIDR_SHARED_TRIGGER_DISPATCH", source)
+        self.assertIn("independent_role_edge_gate=false", source)
+        self.assertIn("for role in standardized.AIDR_EXECUTION_ORDER", source)
+        self.assertIn(
+            "scopes[continuation.NORMAL_ROLE]",
+            source,
         )
-        self.assertIn("_install_for(DigitSignal)", source)
-        self.assertIn("_install_for(SignalEvent)", source)
-        self.assertIn('name == "_standardized_cycle_id"', source)
-        self.assertIn("_METADATA_TTL_SECONDS", source)
+        self.assertIn(
+            "scopes[continuation.FIRST_RECOVERY_ROLE]",
+            source,
+        )
+        self.assertIn(
+            "scopes[continuation.POST_VIRTUAL_ROLE]",
+            source,
+        )
 
-    def test_guaranteed_delivery_removes_internal_expiry_and_drains_queues(self) -> None:
-        source = (ROOT / "app" / "guaranteed_signal_delivery.py").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn('MAX_STANDARDIZED_SIGNAL_AGE_SECONDS = float("inf")', source)
-        self.assertIn('_METADATA_TTL_SECONDS = float("inf")', source)
-        self.assertIn("STANDARDIZED_SIGNAL_PINNED", source)
-        self.assertIn("STANDARDIZED_PRIVATE_BOUNDARY", source)
-        self.assertIn("new_accounts_join_current_cycle=true", source)
-        self.assertIn('while getattr(bot, "_multi_strategy_candidates", {})', source)
-        self.assertIn('while getattr(bot, "hybrid_digit_candidates", {})', source)
-        self.assertIn("internal_expiry=false", source)
+    def test_private_connections_are_ready_before_buy_and_retry_once(self) -> None:
+        source = (
+            ROOT / "app" / "guaranteed_signal_delivery.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("wait_until_connected", source)
+        self.assertIn("PRIVATE_CONNECTION_PURCHASE_TIMEOUT", source)
+        self.assertIn("PRIVATE_BUY_CONNECTION_RETRY", source)
+        self.assertIn("_connect_before_private_buy", source)
+
+    def test_private_connection_scheduler_uses_one_start_slot_per_attempt(self) -> None:
+        source = (
+            ROOT / "app" / "private_websocket_rate_limit.py"
+        ).read_text(encoding="utf-8")
+        self.assertEqual(source.count("await gate.wait_for_start_slot()"), 1)
+        self.assertIn("start_slots_per_attempt=1", source)
+        self.assertIn("wake_private_connection", source)
+        self.assertIn("wait_until_connected", source)
+        self.assertIn("0.25", source)
+        self.assertIn("handshake_concurrency", source)
 
 
 if __name__ == "__main__":
