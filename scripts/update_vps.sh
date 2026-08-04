@@ -6,6 +6,7 @@ PROJECT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 STATE_DIR="$PROJECT_DIR/.deployment_state"
 LAST_SUCCESSFUL_COMMIT_FILE="$STATE_DIR/last_successful_commit"
 PENDING_FROM_COMMIT_FILE="$STATE_DIR/pending_from_commit"
+DEPLOY_LOCK_FILE="$STATE_DIR/vps-update.lock"
 cd "$PROJECT_DIR"
 
 fail() {
@@ -26,7 +27,14 @@ write_state_file() {
 }
 
 command -v git >/dev/null 2>&1 || fail "git is not installed"
+command -v flock >/dev/null 2>&1 || fail "flock is not installed"
 [ -f .env ] || fail "Missing .env. Copy .env.vps.example to .env and configure it first."
+mkdir -p "$STATE_DIR"
+
+# Hold one kernel-managed lock for the entire cleanup/build/test/cutover cycle. A
+# killed shell releases it automatically, so no stale lock file can block recovery.
+exec 9>"$DEPLOY_LOCK_FILE"
+flock -n 9 || fail "Another VPS update is already running"
 
 # VPS deployments may change executable bits with chmod. Git content safety must
 # still reject real edits, while permission-only changes must not block updates.
@@ -36,7 +44,6 @@ git -c core.fileMode=false diff --cached --quiet \
   || fail "The Git index contains staged content changes. Commit or unstage them first."
 
 git checkout main
-mkdir -p "$STATE_DIR"
 CURRENT_CHECKOUT=$(git rev-parse HEAD)
 PREVIOUS_COMMIT=${DEPLOY_PREVIOUS_COMMIT:-}
 
@@ -72,14 +79,19 @@ sh -n \
   scripts/cleanup_vps_artifacts.sh \
   scripts/diagnose_vps_performance.sh
 
-# Remove only unused preflight containers/images/build cache from older attempts.
-# The running API/worker/database and production named volumes are preserved.
-sh scripts/cleanup_vps_artifacts.sh pre-deploy
+# The exclusive lock proves no second updater is using an isolated candidate.
+# Therefore a running preflight project at this point is residue from an interrupted
+# older deployment and may be removed. Production containers/volumes never match.
+DEPLOYMENT_LOCK_HELD=true \
+  ALLOW_REMOVE_RUNNING_PREFLIGHT=true \
+  sh scripts/cleanup_vps_artifacts.sh pre-deploy
 
 if DEPLOY_PREVIOUS_COMMIT="$PREVIOUS_COMMIT" sh ./scripts/deploy_vps.sh; then
   # The successful cutover can leave the former API/worker image dangling. Prune
   # it after the new containers are confirmed, again preserving active images.
-  sh scripts/cleanup_vps_artifacts.sh post-deploy || true
+  DEPLOYMENT_LOCK_HELD=true \
+    ALLOW_REMOVE_RUNNING_PREFLIGHT=true \
+    sh scripts/cleanup_vps_artifacts.sh post-deploy || true
   exit 0
 else
   status=$?
