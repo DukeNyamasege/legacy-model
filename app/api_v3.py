@@ -28,9 +28,13 @@ from app.ai_digit_recovery_v1 import install_ai_digit_recovery_v1_strategy  # no
 from app.aidr_api_metadata import install_aidr_api_metadata  # noqa: E402
 from app.aidr_execution_flow_fix import install_aidr_execution_flow_fix  # noqa: E402
 from app.aidr_virtual_settlement_fix import install_aidr_virtual_settlement_fix  # noqa: E402
+from app.api_performance_hardening import install_api_performance_hardening  # noqa: E402
 from app.custom_martingale import install_custom_martingale_api  # noqa: E402
 from app.dashboard_loader_unlock import install_dashboard_loader_unlock  # noqa: E402
 from app.dashboard_readability import install_dashboard_readability  # noqa: E402
+from app.dashboard_request_coalescing import (  # noqa: E402
+    install_dashboard_request_coalescing,
+)
 from app.dashboard_session_resilience import (  # noqa: E402
     install_dashboard_session_resilience,
 )
@@ -40,6 +44,7 @@ from app.dashboard_stability_fix import install_dashboard_stability_fix  # noqa:
 from app.database_runtime_hardening import (  # noqa: E402
     install_database_runtime_hardening,
 )
+from app.fast_integration_health import install_fast_integration_health  # noqa: E402
 from app.final_personal_trade_stream import install_final_personal_trade_stream  # noqa: E402
 from app.final_public_controls import install_final_public_controls  # noqa: E402
 from app.final_virtual_history_ui import install_final_virtual_history_ui  # noqa: E402
@@ -133,9 +138,9 @@ install_personal_virtual_status_api(app)
 # token; the token is required only before starting execution.
 install_settings_persistence_fix(app)
 
-# Show the exact logged-in account ID and refresh personal balances with a short
-# throttle so users can identify BOT/ROT accounts and see deductions/settlements
-# promptly after trades.
+# This compatibility layer remains loaded for its exact identity presentation.
+# The final performance authority below replaces its synchronous provider refresh
+# with the existing off-request balance refresher.
 install_personal_account_identity_balance(app)
 
 # Readability is installed after the production dashboard route so the final HTML
@@ -187,9 +192,18 @@ install_final_personal_trade_stream(app)
 install_multi_strategy_api(app)
 
 # Install the strategy selector after every older generated dashboard route. It is
-# the final JavaScript authority and presents Digits, Even/Odd and Rise/Fall with
-# compact desktop/mobile controls.
+# the final feature presentation for Digits, Even/Odd and Rise/Fall.
 install_multi_strategy_ui(app)
+
+# FINAL PERFORMANCE AUTHORITIES. Resolve the exact server-side account session once,
+# never wait for Deriv inside /me, bound personal-history rows, cache public counts,
+# coalesce duplicate browser pollers and abort stale account-mode requests.
+install_api_performance_hardening(app)
+install_dashboard_request_coalescing(app)
+
+# Deployment integration health reads last-good cached snapshots and is required to
+# finish within a five-second budget. It never forces all-time accounting work.
+install_fast_integration_health(app)
 
 # Database failures are converted into controlled 503 responses after every final
 # route has been installed.
