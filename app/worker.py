@@ -40,6 +40,7 @@ from app.recovery_state_persistence_hardening import (
     install_recovery_state_persistence_hardening,
 )
 from app.rf_dir5_bot import RFDir5TradingBot
+from app.scalable_group_execution import install_scalable_group_execution
 from app.settlement_observability_hardening import (
     install_settlement_observability_hardening,
 )
@@ -102,8 +103,7 @@ async def run_worker() -> None:
     install_dynamic_deployment_announcement()
 
     # Build the shared RF/hybrid envelope for public ticks, proposals, private
-    # account WebSockets, settlement and virtual observations. No copy-trading or
-    # bulk-transport behavior is modified by the hardening in this release.
+    # account WebSockets, settlement and virtual observations.
     install_strict_streak_guard()
     install_hybrid_runtime_config()
     install_hybrid_data_integrity()
@@ -165,11 +165,17 @@ async def run_worker() -> None:
     install_standardized_signal_metadata()
     install_standardized_execution_runtime()
 
-    # Install after standardization so qualified cycles cannot expire while the
-    # worker prepares proposals or many accounts. The delivery layer pins each
-    # selected signal to the live tick until private transport, refreshes account
-    # membership at purchase time, and drains opportunities queued during a cycle.
+    # Replace legacy signal expiry with a short immediate purchase boundary and
+    # refresh account membership before execution.
     install_guaranteed_signal_delivery()
+
+    # Install after every routing and transport wrapper. Contract metadata now
+    # comes from one public cache rather than account-by-market requests. Identical
+    # PAT contracts use official bulk shards of at most 100 accounts; OAuth members
+    # retain bounded private WebSocket groups. System role scopes are task-local,
+    # every role reports an explicit dispatch result, and no account/provider error
+    # can set or stop the global worker state.
+    install_scalable_group_execution()
 
     install_production_worker_integration()
     install_every_tick_debug_logging()
