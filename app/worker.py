@@ -31,6 +31,9 @@ from app.private_websocket_rate_limit import install_private_websocket_rate_limi
 from app.production_worker_integration import install_production_worker_integration
 from app.profit_accuracy_guard import install_profit_accuracy_guard
 from app.real_demo_trading_support import install_dual_demo_real_trading_support
+from app.recovery_state_persistence_hardening import (
+    install_recovery_state_persistence_hardening,
+)
 from app.rf_dir5_bot import RFDir5TradingBot
 from app.stake_only_balance_policy import install_stake_only_balance_policy
 from app.strategy_v2_runtime import install_strategy_v2_runtime
@@ -83,7 +86,8 @@ async def run_worker() -> None:
     install_dynamic_deployment_announcement()
 
     # Build the shared RF/hybrid envelope for public ticks, proposals, private
-    # account WebSockets, settlement, virtual observations and bulk purchases.
+    # account WebSockets, settlement and virtual observations. No copy-trading or
+    # bulk-transport behavior is modified by the hardening in this release.
     install_strict_streak_guard()
     install_hybrid_runtime_config()
     install_hybrid_data_integrity()
@@ -109,6 +113,11 @@ async def run_worker() -> None:
 
     # Stop/Reset wins settlement races and cannot be reversed by a late callback.
     install_aidr_strict_recovery_guard()
+
+    # Recovery start is idempotent. A recovery state that was already committed by
+    # the strict planner is verified as persisted instead of being reported as a
+    # false state_persisted=False failure at the WebSocket purchase boundary.
+    install_recovery_state_persistence_hardening()
 
     # Build the legacy router first, then make v2 authoritative. V2 separates the
     # System Strategy from manual Over/Under, persists the user's prediction, and
