@@ -21,6 +21,7 @@ from app.aidr_virtual_soft_gate import install_aidr_virtual_soft_gate
 from app.custom_martingale import install_custom_martingale_worker
 from app.dashboard_actual_trade_fallback import install_dashboard_actual_trade_fallback
 from app.deployment_announcement import install_dynamic_deployment_announcement
+from app.guaranteed_signal_delivery import install_guaranteed_signal_delivery
 from app.hybrid_data_integrity import install_hybrid_data_integrity
 from app.hybrid_digit_put import install_hybrid_digit_put_strategy
 from app.hybrid_runtime_config import install_hybrid_runtime_config
@@ -163,6 +164,12 @@ async def run_worker() -> None:
     # account receives either a purchase/virtual receipt or a recorded skip reason.
     install_standardized_signal_metadata()
     install_standardized_execution_runtime()
+
+    # Install after standardization so qualified cycles cannot expire while the
+    # worker prepares proposals or many accounts. The delivery layer pins each
+    # selected signal to the live tick until private transport, refreshes account
+    # membership at purchase time, and drains opportunities queued during a cycle.
+    install_guaranteed_signal_delivery()
 
     install_production_worker_integration()
     install_every_tick_debug_logging()
