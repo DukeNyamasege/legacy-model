@@ -161,6 +161,19 @@ class DeploymentSourceInvariantTests(unittest.TestCase):
         self.assertEqual(source.count("bot.is_running = False"), 1)
         self.assertIn("Only an operating-system shutdown signal", source)
 
+    def test_base_worker_has_no_account_driven_process_shutdown(self) -> None:
+        source = (ROOT / "enhanced_bot.py").read_text(encoding="utf-8")
+        self.assertEqual(source.count("self.is_running = False"), 1)
+        shutdown = source.split("self.is_running = False", 1)[0][-500:]
+        self.assertIn("TRADER_LOCK_LOST", shutdown)
+        repository = (
+            ROOT / "app" / "repositories" / "test2_repository.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            '{"EMERGENCY_STOP", "MANUAL_PAUSE", "STOPPED"}',
+            repository,
+        )
+
     def test_api_installs_account_isolation_before_repository_creation(self) -> None:
         source = (ROOT / "app" / "api_v3.py").read_text(encoding="utf-8")
         isolation = source.index("install_account_isolation_invariants()")
