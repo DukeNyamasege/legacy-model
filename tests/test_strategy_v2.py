@@ -131,6 +131,9 @@ class StrategyV2SourceContractTests(unittest.TestCase):
         ui_source = (ROOT / "app" / "strategy_v2_ui.py").read_text(
             encoding="utf-8"
         )
+        final_ui_source = (ROOT / "app" / "strategy_v2_final_ui.py").read_text(
+            encoding="utf-8"
+        )
         self.assertLess(
             api_source.index("install_multi_strategy_api(app)"),
             api_source.index("install_strategy_v2_api(app)"),
@@ -139,6 +142,13 @@ class StrategyV2SourceContractTests(unittest.TestCase):
             api_source.index("install_multi_strategy_ui(app)"),
             api_source.index("install_strategy_v2_ui(app)"),
         )
+        self.assertLess(
+            api_source.index("install_dashboard_request_coalescing(app)"),
+            api_source.index("install_strategy_v2_final_ui(app)"),
+        )
+        self.assertIn("broker_script", final_ui_source)
+        self.assertIn("_STRATEGY_V2_JS", final_ui_source)
+        self.assertIn("FOA_STRATEGY_V2_UI_VERSION:20260804-2", final_ui_source)
         self.assertIn("Prediction digit", ui_source)
         self.assertIn("Start System AutoTrade", ui_source)
         self.assertIn("FOA_STRATEGY_V2_UI_VERSION", ui_source)
