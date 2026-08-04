@@ -114,24 +114,32 @@ class DatabaseWritePressureTests(unittest.TestCase):
 
 
 class VpsCleanupSourceTests(unittest.TestCase):
-    def test_update_cleans_before_deploy_and_diagnoses_failure(self) -> None:
+    def test_update_cleans_before_after_and_on_failed_deploy(self) -> None:
         source = (ROOT / "scripts" / "update_vps.sh").read_text(encoding="utf-8")
-        cleanup = source.index("cleanup_vps_artifacts.sh pre-deploy")
+        pre_cleanup = source.index("cleanup_vps_artifacts.sh pre-deploy")
         deploy = source.index("sh ./scripts/deploy_vps.sh")
         diagnostics = source.rindex("sh scripts/diagnose_vps_performance.sh")
-        self.assertLess(cleanup, deploy)
+        post_cleanup = source.index("cleanup_vps_artifacts.sh post-deploy")
+        failed_cleanup = source.index("cleanup_vps_artifacts.sh failed-deploy")
+        self.assertLess(pre_cleanup, deploy)
         self.assertGreater(diagnostics, deploy)
+        self.assertGreater(post_cleanup, deploy)
+        self.assertGreater(failed_cleanup, deploy)
         self.assertIn('flock -n 9 || fail "Another VPS update is already running"', source)
 
-    def test_cleanup_preserves_production_volumes(self) -> None:
+    def test_cleanup_keeps_only_container_referenced_images(self) -> None:
         source = (ROOT / "scripts" / "cleanup_vps_artifacts.sh").read_text(
             encoding="utf-8"
         )
         self.assertIn("legacy-model-preflight-", source)
         self.assertIn("DEPLOYMENT_LOCK_HELD", source)
+        self.assertIn("docker image prune -a -f", source)
+        self.assertIn("docker builder prune -a -f", source)
+        self.assertIn("assert_running_images_preserved", source)
         self.assertNotIn("docker system prune -a", source)
         self.assertNotIn("docker volume prune", source)
         self.assertIn("test2_database", source)
+        self.assertIn("test2_models", source)
 
     def test_compose_rotates_logs_and_disables_tick_spam(self) -> None:
         source = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
