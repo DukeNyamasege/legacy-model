@@ -27,6 +27,17 @@ class ApiPerformanceSourceTests(unittest.TestCase):
         self.assertNotIn("force=True", source)
         self.assertIn("elapsed_ms < 5000.0", source)
 
+    def test_startup_latency_is_visible_but_not_a_false_readiness_failure(self) -> None:
+        source = (ROOT / "app" / "fast_integration_health.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('"critical": False', source)
+        self.assertIn('warnings.append("latency_budget")', source)
+        self.assertNotIn('failures.append("latency_budget")', source)
+        self.assertIn('"health_profile": "cached-nonblocking-v2"', source)
+        self.assertIn('"warnings": warnings', source)
+        self.assertIn('if failures:', source)
+
     def test_snapshot_rebuilds_are_bounded_before_startup(self) -> None:
         health = (ROOT / "app" / "fast_integration_health.py").read_text(
             encoding="utf-8"
