@@ -56,9 +56,7 @@ jobs:
 
       - name: Validate deployment shell and Compose
         run: |
-          sh -n \
-            scripts/deploy_vps.sh \
-            scripts/update_vps.sh \
+          sh -n scripts/deploy_vps.sh scripts/update_vps.sh \
             scripts/run_legacy_release_tests.sh \
             scripts/cleanup_vps_artifacts.sh \
             scripts/diagnose_vps_performance.sh
