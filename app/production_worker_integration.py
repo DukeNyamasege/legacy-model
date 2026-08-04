@@ -80,14 +80,18 @@ def install_production_worker_integration() -> None:
         result = original_load_accounts(self)
         try:
             for account in self.repository.list_managed_accounts():
-                if str(account.execution_status or "").strip().lower() != "bulk_execution_pat_required":
+                if (
+                    str(account.execution_status or "").strip().lower()
+                    != "bulk_execution_pat_required"
+                ):
                     continue
                 self.repository.set_managed_account_execution_status(
                     int(account.id),
                     "token_required",
                     (
-                        "A verified Deriv Personal Access Token with trade scope is "
-                        "required for authenticated private WebSocket purchases."
+                        "A valid Deriv trade credential is required. PAT accounts "
+                        "use grouped bulk execution; trade-scoped OAuth accounts "
+                        "use bounded account-scoped WebSocket execution."
                     ),
                 )
         except Exception as exc:
