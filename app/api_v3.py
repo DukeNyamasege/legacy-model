@@ -51,6 +51,8 @@ from app.head_request_compat import install_head_request_compat  # noqa: E402
 from app.lifecycle_reset_authority import install_lifecycle_reset_authority  # noqa: E402
 from app.live_metrics_ui import install_live_metrics_ui  # noqa: E402
 from app.model_pnl_display_aliases import install_model_pnl_display_aliases  # noqa: E402
+from app.multi_strategy_api import install_multi_strategy_api  # noqa: E402
+from app.multi_strategy_ui import install_multi_strategy_ui  # noqa: E402
 from app.oauth_session_recovery import install_oauth_session_recovery  # noqa: E402
 from app.personal_account_identity_balance import (  # noqa: E402
     install_personal_account_identity_balance,
@@ -91,8 +93,8 @@ install_custom_martingale_api()
 # progress in either process.
 install_aidr_virtual_settlement_fix()
 
-# Active public-release strategy metadata: DIGITOVER 1 normal, DIGITOVER 3
-# first recovery, then virtual OVER-4 confirmation and one full-debt recovery.
+# Active Digits/Over metadata remains compatible with the existing model. The
+# account strategy selector adds other families without changing this baseline.
 install_ai_digit_recovery_v1_strategy()
 install_aidr_execution_flow_fix()
 
@@ -140,8 +142,8 @@ install_personal_account_identity_balance(app)
 # always includes the high-contrast text boost and simplified desktop/mobile UI.
 install_dashboard_readability(app)
 
-# Stable mobile dashboard is installed last. It keeps Recent Trades from changing
-# structure during silent refreshes and reduces mobile typography.
+# Stable mobile dashboard keeps Recent Trades from changing structure during
+# silent refreshes and retains compact phone typography.
 install_dashboard_stability_fix(app)
 install_dashboard_settings_guard(app)
 
@@ -150,9 +152,8 @@ install_dashboard_settings_guard(app)
 install_dashboard_smoke_compat(app)
 install_account_identity_ui(app)
 
-# Final UI layer: keep overview and trades-page KPI numbers live without a full
-# route rebuild, so balance, P/L, win rate, totals, wins and losses move in real
-# time while the stable Recent Trades table remains untouched.
+# Keep overview and trades-page KPI numbers live without rebuilding the whole
+# route, so balance, P/L, win rate, totals, wins and losses move in real time.
 install_live_metrics_ui(app)
 
 # Show public platform stats for everyone, logged in or not: only total registered
@@ -167,10 +168,7 @@ install_reset_trades_always_ui(app)
 # display account-level AIDR/virtual progress without rebuilding the whole page.
 install_dashboard_loader_unlock(app)
 
-# Final presentation authority: virtual observations appear inside the same
-# Today's Recent Trades / complete-history tables as actual trades, with an
-# explicit VIRTUAL OVER 4 badge and $0.00 impact. A permanent risk disclaimer is
-# also displayed on every dashboard page.
+# Unified actual/virtual trade history and permanent risk disclaimer.
 install_final_virtual_history_ui(app)
 
 # Keep returning users on the dashboard shell immediately when their HttpOnly
@@ -181,12 +179,17 @@ install_dashboard_session_resilience(app)
 # final dynamic dashboard routes must also answer HEAD with normal headers.
 install_head_request_compat(app)
 
-# FINAL API AUTHORITIES. Nothing installed below these may replace their routes:
-# Pause preserves state; Stop/Reset clears all AIDR state and leaves execution
-# stopped; the trade stream combines actual contracts and visible virtual-win
-# progress for the exact managed-account row.
+# FINAL ACCOUNT AUTHORITIES. Pause preserves state; Stop clears recovery and keeps
+# history. Strategy switching is allowed only from a complete Stop with no open
+# actual or virtual contract, then starts the selected family from base stake.
 install_lifecycle_reset_authority(app)
 install_final_personal_trade_stream(app)
+install_multi_strategy_api(app)
+
+# Install the strategy selector after every older generated dashboard route. It is
+# the final JavaScript authority and presents Digits, Even/Odd and Rise/Fall with
+# compact desktop/mobile controls.
+install_multi_strategy_ui(app)
 
 # Database failures are converted into controlled 503 responses after every final
 # route has been installed.
