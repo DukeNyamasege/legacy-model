@@ -27,7 +27,7 @@ IMMEDIATE_SIGNAL_MAX_AGE_SECONDS = max(
 )
 PRIVATE_READY_TIMEOUT_SECONDS = max(
     3.0,
-    float(os.getenv("PRIVATE_PURCHASE_READY_TIMEOUT_SECONDS", "20")),
+    float(os.getenv("PRIVATE_PURCHASE_READY_TIMEOUT_SECONDS", "2.5")),
 )
 PRIVATE_RETRY_TIMEOUT_SECONDS = max(
     2.0,
@@ -374,6 +374,15 @@ async def _immediate_aidr_arbitrate(bot: RFDir5TradingBot) -> None:
         if not any(scopes.values()):
             return
 
+        # Start or wake every account session before proposal work. Connection
+        # setup then runs in parallel with provider proposal evaluation, and one
+        # slow account cannot delay purchases for accounts that are already ready.
+        all_scope_ids = set().union(*scopes.values())
+        for token, account_id in list(getattr(bot, "valid_clients", []) or []):
+            managed_id = bot._managed_account_id_for_token(token)
+            if managed_id is not None and int(managed_id) in all_scope_ids:
+                _ensure_session(bot, token, account_id)
+
         fresh = [
             candidate
             for candidate in queued
@@ -647,11 +656,13 @@ def _merge_results(
     results: list[dict[str, Any]],
     blocked: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    by_account = {
-        str(item.get("account_id") or ""): item
-        for item in results
-    }
-    by_account.update(blocked)
+    by_account = dict(blocked)
+    by_account.update(
+        {
+            str(item.get("account_id") or ""): item
+            for item in results
+        }
+    )
     return [
         by_account.get(
             account_id,
@@ -748,67 +759,92 @@ def install_guaranteed_signal_delivery() -> None:
         if not eligible_accounts:
             return []
 
-        ready, blocked = await _ready_accounts(
+        # Give sessions a short grace window, then purchase every ready account
+        # immediately. Accounts still connecting are retried separately and never
+        # hold back the ready majority.
+        ready, initially_blocked = await _ready_accounts(
             self,
             eligible_accounts,
             timeout=PRIVATE_READY_TIMEOUT_SECONDS,
         )
-        if signal_metadata.standardized_cycle_id(signal):
-            if not _finalize_private_boundary(self, signal):
-                return _merge_results(eligible_accounts, [], blocked)
+        results_by_account: dict[str, dict[str, Any]] = {}
 
-        first_results: list[dict[str, Any]] = []
-        if ready:
-            first_results = await original_purchase(
+        async def purchase_batch(
+            batch: list[tuple[str, str]],
+        ) -> list[dict[str, Any]]:
+            if not batch:
+                return []
+            if signal_metadata.standardized_cycle_id(signal):
+                if not _finalize_private_boundary(self, signal):
+                    return [
+                        {
+                            "account_id": account_id,
+                            "error": {
+                                "code": "IMMEDIATE_DEADLINE_MISSED",
+                                "message": "The immediate purchase deadline was missed",
+                            },
+                        }
+                        for _token, account_id in batch
+                    ]
+            return await original_purchase(
                 self,
                 signal=signal,
-                eligible_accounts=ready,
+                eligible_accounts=batch,
                 stake_by_token={
                     token: stake_by_token[token]
-                    for token, _account_id in ready
+                    for token, _account_id in batch
                 },
                 pre_trade_profit_ratio=pre_trade_profit_ratio,
             )
 
-        by_account = {
-            str(item.get("account_id") or ""): item
-            for item in first_results
-        }
-        retry_accounts = [
+        first_results = await purchase_batch(ready)
+        for item in first_results:
+            results_by_account[str(item.get("account_id") or "")] = item
+
+        connection_failed = [
             (token, account_id)
             for token, account_id in ready
-            if _is_connection_error(by_account.get(account_id, {}))
+            if _is_connection_error(results_by_account.get(account_id, {}))
         ]
-        if retry_accounts:
+        initially_unready = [
+            (token, account_id)
+            for token, account_id in eligible_accounts
+            if account_id in initially_blocked
+        ]
+        retry_candidates = list(
+            {
+                account_id: (token, account_id)
+                for token, account_id in (
+                    initially_unready + connection_failed
+                )
+            }.values()
+        )
+
+        final_blocked = dict(initially_blocked)
+        if retry_candidates:
             retry_ready, retry_blocked = await _ready_accounts(
                 self,
-                retry_accounts,
+                retry_candidates,
                 timeout=PRIVATE_RETRY_TIMEOUT_SECONDS,
             )
-            blocked.update(retry_blocked)
+            final_blocked.update(retry_blocked)
             if retry_ready:
                 self.logger.warning(
                     "PRIVATE_BUY_CONNECTION_RETRY signal_id=%s accounts=%s retry=1",
                     str(getattr(signal, "signal_id", "") or ""),
                     len(retry_ready),
                 )
-                retry_results = await original_purchase(
-                    self,
-                    signal=signal,
-                    eligible_accounts=retry_ready,
-                    stake_by_token={
-                        token: stake_by_token[token]
-                        for token, _account_id in retry_ready
-                    },
-                    pre_trade_profit_ratio=pre_trade_profit_ratio,
-                )
+                retry_results = await purchase_batch(retry_ready)
                 for item in retry_results:
-                    by_account[str(item.get("account_id") or "")] = item
+                    account_id = str(item.get("account_id") or "")
+                    results_by_account[account_id] = item
+                    if not item.get("error"):
+                        final_blocked.pop(account_id, None)
 
         return _merge_results(
             eligible_accounts,
-            list(by_account.values()),
-            blocked,
+            list(results_by_account.values()),
+            final_blocked,
         )
 
     connect_then_purchase._connect_before_private_buy = True  # type: ignore[attr-defined]
