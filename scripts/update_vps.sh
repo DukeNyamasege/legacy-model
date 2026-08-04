@@ -63,14 +63,28 @@ git pull --ff-only origin main
 CURRENT_COMMIT=$(git rev-parse HEAD)
 echo "Target VPS commit                       : $CURRENT_COMMIT"
 
-# Invoke through sh instead of chmod so the updater never modifies its own Git
-# executable bit and never creates a false local-change blocker.
-sh -n scripts/deploy_vps.sh scripts/update_vps.sh
+# Invoke through sh instead of chmod so the updater never modifies Git executable
+# bits. Validate every operational script before deleting or creating artifacts.
+sh -n \
+  scripts/deploy_vps.sh \
+  scripts/update_vps.sh \
+  scripts/run_legacy_release_tests.sh \
+  scripts/cleanup_vps_artifacts.sh \
+  scripts/diagnose_vps_performance.sh
+
+# Remove only unused preflight containers/images/build cache from older attempts.
+# The running API/worker/database and production named volumes are preserved.
+sh scripts/cleanup_vps_artifacts.sh pre-deploy
 
 if DEPLOY_PREVIOUS_COMMIT="$PREVIOUS_COMMIT" sh ./scripts/deploy_vps.sh; then
+  # The successful cutover can leave the former API/worker image dangling. Prune
+  # it after the new containers are confirmed, again preserving active images.
+  sh scripts/cleanup_vps_artifacts.sh post-deploy || true
   exit 0
 else
   status=$?
   echo "Deployment failed. The comparison base was retained in $PENDING_FROM_COMMIT_FILE" >&2
+  echo "Collecting a token-free performance report for the failed attempt..." >&2
+  sh scripts/diagnose_vps_performance.sh || true
   exit "$status"
 fi
