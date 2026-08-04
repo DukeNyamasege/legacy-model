@@ -43,6 +43,7 @@ from app.settlement_observability_hardening import (
     install_settlement_observability_hardening,
 )
 from app.stake_only_balance_policy import install_stake_only_balance_policy
+from app.strategy_settlement_integrity import install_strategy_settlement_integrity
 from app.strategy_v2_runtime import install_strategy_v2_runtime
 from app.strict_streak_guard import install_strict_streak_guard
 from app.telegram_admin_integration import install_telegram_admin_integration
@@ -136,6 +137,11 @@ async def run_worker() -> None:
     # creates the database parent required before any manual virtual trade opens.
     install_multi_strategy_runtime()
     install_strategy_v2_runtime()
+
+    # Settle Over/Under, Even/Odd and Rise/Fall by their own contract rules. The
+    # virtual-trade boundary also creates its directional parent transactionally,
+    # preventing FK errors from escaping into the tick loop.
+    install_strategy_settlement_integrity()
 
     # Every strategy now shares the same account-level lifecycle: two actual
     # losses enter virtual mode, one qualifying virtual win arms real recovery,
