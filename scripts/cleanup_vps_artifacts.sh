@@ -57,15 +57,34 @@ prune_retained_files() {
   rm -f "$keep_file"
 }
 
-assert_running_images_preserved() {
-  image_file=$1
-  while IFS= read -r image_id; do
-    [ -n "$image_id" ] || continue
-    docker image inspect "$image_id" >/dev/null 2>&1 || {
-      echo "Cleanup safety invariant failed: running image disappeared: $image_id" >&2
+snapshot_running_containers() {
+  snapshot_file=$1
+  : > "$snapshot_file"
+  docker ps -q --no-trunc | while IFS= read -r container_id; do
+    [ -n "$container_id" ] || continue
+    docker inspect -f '{{.Id}} {{.Image}}' "$container_id" 2>/dev/null || true
+  done | sort -u > "$snapshot_file"
+}
+
+assert_running_containers_preserved() {
+  snapshot_file=$1
+  while IFS=' ' read -r container_id expected_image_id; do
+    [ -n "$container_id" ] || continue
+    current=$(docker inspect -f '{{.Image}} {{.State.Running}}' "$container_id" 2>/dev/null) || {
+      echo "Cleanup safety invariant failed: running container disappeared: $container_id" >&2
       return 1
     }
-  done < "$image_file"
+    actual_image_id=$(printf '%s\n' "$current" | awk '{print $1}')
+    actual_running=$(printf '%s\n' "$current" | awk '{print $2}')
+    if [ "$actual_running" != "true" ]; then
+      echo "Cleanup safety invariant failed: container stopped: $container_id" >&2
+      return 1
+    fi
+    if [ "$actual_image_id" != "$expected_image_id" ]; then
+      echo "Cleanup safety invariant failed: container image changed: $container_id expected=$expected_image_id actual=$actual_image_id" >&2
+      return 1
+    fi
+  done < "$snapshot_file"
 }
 
 echo "============================================================"
@@ -133,15 +152,14 @@ docker volume ls --format '{{.Name}} {{.Label "com.docker.compose.project"}}' \
       [ -n "$volume_name" ] && docker volume rm "$volume_name" >/dev/null 2>&1 || true
     done
 
-# Record every image backing a currently running container. Docker image prune
-# already protects these references; the explicit post-prune assertion makes that
-# production-safety guarantee visible and testable.
-running_images_file=$(mktemp)
-trap 'rm -f "$running_images_file"' EXIT HUP INT TERM
-docker ps -q | while IFS= read -r container_id; do
-  [ -n "$container_id" ] || continue
-  docker inspect -f '{{.Image}}' "$container_id" 2>/dev/null || true
-done | sort -u > "$running_images_file"
+# Snapshot the exact running containers after stale candidate removal and before
+# image/cache pruning. Some old containers can legitimately run from an untagged
+# image whose metadata is no longer returned by `docker image inspect`. Verifying
+# the container itself avoids that false failure while still proving that cleanup
+# did not stop, delete, recreate or switch any production container.
+running_containers_file=$(mktemp)
+trap 'rm -f "$running_containers_file"' EXIT HUP INT TERM
+snapshot_running_containers "$running_containers_file"
 
 # Delete candidate tags explicitly first, then delete every image not referenced by
 # any container. After a successful cutover this removes all former API/worker
@@ -159,15 +177,15 @@ docker images --no-trunc --format '{{.Repository}} {{.ID}}' \
 
 echo "Removing every Docker image not referenced by a container..."
 docker image prune -a -f >/dev/null
-assert_running_images_preserved "$running_images_file"
+assert_running_containers_preserved "$running_containers_file"
 
 # BuildKit cache is not required by running containers. Remove all unused cache on
 # every pre-deploy, post-deploy and failed-deploy cleanup. This prevents each Git
 # release from leaving another multi-gigabyte copy behind. The next build may be
-# slower, but disk use remains bounded and the current running image is untouched.
+# slower, but disk use remains bounded and current containers remain untouched.
 echo "Removing all unused Docker build cache..."
 docker builder prune -a -f >/dev/null
-assert_running_images_preserved "$running_images_file"
+assert_running_containers_preserved "$running_containers_file"
 
 # Keep the newest database backups and diagnostic reports regardless of age, then
 # expire older files. Backups are data protection, not disposable Docker images.
