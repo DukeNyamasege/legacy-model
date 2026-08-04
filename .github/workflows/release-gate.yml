@@ -44,11 +44,16 @@ jobs:
 
       - name: Validate deployment shell and Compose
         run: |
-          sh -n scripts/deploy_vps.sh scripts/update_vps.sh scripts/run_legacy_release_tests.sh
+          sh -n \
+            scripts/deploy_vps.sh \
+            scripts/update_vps.sh \
+            scripts/run_legacy_release_tests.sh \
+            scripts/cleanup_vps_artifacts.sh \
+            scripts/diagnose_vps_performance.sh
           docker compose -f docker-compose.yml -f docker-compose.vps.yml config --quiet
 
       - name: Compile Python
-        run: python -m compileall -q app scripts
+        run: python -m compileall -q app scripts tests alembic
 
       - name: Check dashboard JavaScript syntax
         run: |
@@ -60,7 +65,8 @@ jobs:
       - name: Run focused release tests
         run: |
           python -m unittest -q tests.test_stop_history_and_mobile_ui
-          python -m unittest -q tests.test_multi_strategy
+          python -m unittest -q tests.test_multi_strategy tests.test_multi_strategy_concurrency
+          python -m unittest -q tests.test_performance_hardening tests.test_generated_request_broker_js
           python -m unittest -q test_custom_martingale.py
           python -m unittest -q test_aidr_recovery_v2.py tests.test_aidr_virtual_soft_gate tests.test_independent_websocket_execution tests.test_private_websocket_credentials
           sh scripts/run_legacy_release_tests.sh
