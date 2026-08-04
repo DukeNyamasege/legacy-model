@@ -149,7 +149,7 @@ class DashboardSessionAndReachabilityTests(unittest.TestCase):
         self.assertIn('TELEGRAM_NOTIFICATIONS_SUSPENDED: "true"', deploy)
         self.assertIn("Release gate smoke test failed. Production was not changed.", deploy)
         self.assertIn(
-            "Release gate: verify AIDR and private WebSocket behavior against the isolated database",
+            "Release gate: verify AIDR and private WebSocket behavior against isolated PostgreSQL",
             deploy,
         )
         self.assertIn("candidate_compose run --rm --no-deps worker", deploy)
