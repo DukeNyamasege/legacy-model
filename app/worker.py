@@ -24,6 +24,7 @@ from app.deployment_announcement import install_dynamic_deployment_announcement
 from app.hybrid_data_integrity import install_hybrid_data_integrity
 from app.hybrid_digit_put import install_hybrid_digit_put_strategy
 from app.hybrid_runtime_config import install_hybrid_runtime_config
+from app.multi_strategy_runtime import install_multi_strategy_runtime
 from app.private_buy_parameter_hardening import install_private_buy_parameter_hardening
 from app.private_websocket_rate_limit import install_private_websocket_rate_limit
 from app.production_worker_integration import install_production_worker_integration
@@ -35,6 +36,7 @@ from app.strict_streak_guard import install_strict_streak_guard
 from app.telegram_admin_integration import install_telegram_admin_integration
 from app.telegram_silence import install_telegram_silence
 from app.tick_debug_logging import install_every_tick_debug_logging
+from app.unresolved_contract_safety import install_unresolved_contract_safety
 from app.websocket_only_execution import install_websocket_only_execution
 
 
@@ -42,6 +44,11 @@ async def run_worker() -> None:
     # Only the current enrollment generation is visible to the worker. Historical
     # registrations remain preserved but cannot auto-start after a reset.
     install_account_reenrollment()
+
+    # A malformed legacy placeholder contract ID must never restart the whole
+    # worker. It is retained for audit, quarantined with zero financial impact,
+    # and excluded from private-WebSocket reconciliation.
+    install_unresolved_contract_safety()
 
     install_dashboard_actual_trade_fallback()
     install_worker_account_lifecycle()
@@ -61,9 +68,8 @@ async def run_worker() -> None:
     install_telegram_admin_integration()
     install_dynamic_deployment_announcement()
 
-    # Build the old RF/hybrid envelope only for shared WebSocket, candidate,
-    # account and settlement infrastructure. The active strategy is installed
-    # afterwards and disables all PUT scheduling.
+    # Build the shared RF/hybrid envelope for public ticks, proposals, private
+    # account WebSockets, settlement, virtual observations and bulk purchases.
     install_strict_streak_guard()
     install_hybrid_runtime_config()
     install_hybrid_data_integrity()
@@ -73,28 +79,28 @@ async def run_worker() -> None:
     install_stake_only_balance_policy()
     install_custom_martingale_worker()
 
-    # Patch the AIDR virtual-settlement factory before the strategy wraps the
-    # repository. Virtual results then resolve by immutable managed_account_id,
-    # never by a duplicate masked account ID.
+    # Patch the virtual-settlement factory before strategy wrappers are installed.
+    # Results resolve by immutable managed_account_id, never duplicate masked IDs.
     install_aidr_virtual_settlement_fix()
 
-    # Active public-release strategy:
-    # NORMAL   -> DIGITOVER 1
-    # RECOVERY -> one DIGITOVER 3 trade targeting the first loss
-    # VIRTUAL  -> virtual DIGITOVER 4 until 1 win
-    # FULL     -> one real DIGITOVER 4 trade targeting all accumulated debt
+    # Existing Digits -> Over strategy remains unchanged for accounts that select
+    # it: OVER 1 normal, OVER 3 first recovery, virtual OVER 4, then one real
+    # OVER 4 full-debt recovery.
     install_ai_digit_recovery_v1_strategy()
     install_aidr_execution_flow_fix()
     install_aidr_loss_continuation_fix()
 
-    # Virtual OVER-4 and its single post-virtual recovery use the ordinary 50%
-    # OVER-4 baseline tightened by only 5% (52.5%) with a small positive edge.
-    # Normal OVER-1 and first recovery OVER-3 keep their existing filters.
+    # Virtual OVER-4 and post-virtual recovery use the ordinary 50% baseline with
+    # only five-percent relative tightening (52.5%).
     install_aidr_virtual_soft_gate()
 
-    # Final recovery authority. It also makes Stop/Reset win every race against a
-    # late actual or virtual settlement and never re-enables a disabled account.
+    # Stop/Reset wins settlement races and cannot be reversed by a late callback.
     install_aidr_strict_recovery_guard()
+
+    # Final account strategy router. AIDR receives only Digits/Over accounts;
+    # Digits/Under, Even/Odd and Rise/Fall use the same private purchase,
+    # recovery, virtual protection and account-isolation infrastructure.
+    install_multi_strategy_runtime()
 
     install_production_worker_integration()
     install_every_tick_debug_logging()
