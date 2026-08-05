@@ -36,6 +36,7 @@ from app.private_buy_parameter_hardening import install_private_buy_parameter_ha
 from app.private_websocket_rate_limit import install_private_websocket_rate_limit
 from app.production_worker_integration import install_production_worker_integration
 from app.profit_accuracy_guard import install_profit_accuracy_guard
+from app.public_websocket_resilience import install_public_websocket_resilience
 from app.real_demo_trading_support import install_dual_demo_real_trading_support
 from app.recovery_state_persistence_hardening import (
     install_recovery_state_persistence_hardening,
@@ -92,6 +93,11 @@ async def run_worker() -> None:
     # private WebSockets. One keep-alive pool coalesces safe account reads, bounds
     # per-host pressure, and rejects any multi-account REST trading path locally.
     install_deriv_request_broker()
+
+    # The public market stream is a single shared connection. Candidate workers do
+    # not open a duplicate external stream, while production reconnects with
+    # bounded exponential backoff and a long cooldown after provider throttling.
+    install_public_websocket_resilience()
 
     install_dashboard_actual_trade_fallback()
     install_worker_account_lifecycle()
