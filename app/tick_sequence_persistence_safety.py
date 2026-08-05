@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from functools import wraps
 from typing import Any
 
@@ -114,4 +115,9 @@ def install_tick_sequence_persistence_safety() -> None:
 
     RFDir5Repository._tick_sequence_persistence_safety_installed = True
     Test2Repository._tick_sequence_persistence_safety_installed = True
+    logging.getLogger("deriv_bot").warning(
+        "TICK_SEQUENCE_PERSISTENCE_SAFETY_INSTALLED version=%s "
+        "repository_wrappers=4 orm_before_flush=true live_tracking_preserved=true",
+        _VERSION,
+    )
     _INSTALLED = True
