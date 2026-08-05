@@ -21,6 +21,7 @@ from app.aidr_virtual_soft_gate import install_aidr_virtual_soft_gate
 from app.custom_martingale import install_custom_martingale_worker
 from app.dashboard_actual_trade_fallback import install_dashboard_actual_trade_fallback
 from app.deployment_announcement import install_dynamic_deployment_announcement
+from app.deriv_rate_limit_circuit import install_deriv_rate_limit_circuit
 from app.deriv_request_broker import install_deriv_request_broker
 from app.guaranteed_signal_delivery import install_guaranteed_signal_delivery
 from app.hybrid_data_integrity import install_hybrid_data_integrity
@@ -93,6 +94,11 @@ async def run_worker() -> None:
     # private WebSockets. One keep-alive pool coalesces safe account reads, bounds
     # per-host pressure, and rejects any multi-account REST trading path locally.
     install_deriv_request_broker()
+
+    # Cloudflare 1015 or HTTP 429 opens one shared circuit. New account-discovery
+    # and OTP requests are rejected locally during cooldown instead of multiplying
+    # provider pressure across hundreds of accounts.
+    install_deriv_rate_limit_circuit()
 
     # The public market stream is a single shared connection. Candidate workers do
     # not open a duplicate external stream, while production reconnects with
