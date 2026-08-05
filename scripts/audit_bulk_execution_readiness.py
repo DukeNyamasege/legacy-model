@@ -131,12 +131,18 @@ def main() -> int:
             ).strip().lower()
             runtime_auth_type = "pat" if not own_token and shared_token else auth_type
             bulk_capable = bool(effective_token) and runtime_auth_type == "pat"
-            if bool(row.enabled):
+            enabled = bool(row.enabled)
+            status = str(row.execution_status or "").strip().lower()
+
+            if enabled:
                 counters["enabled"] += 1
             if item["decrypt_ok"]:
                 counters["decrypt_ok"] += 1
             else:
                 counters["decrypt_failed"] += 1
+                counters[
+                    "decrypt_failed_enabled" if enabled else "decrypt_failed_disabled"
+                ] += 1
             if own_token:
                 counters["own_token"] += 1
             if shared_token:
@@ -145,17 +151,19 @@ def main() -> int:
                 counters["bulk_capable"] += 1
             if own_token and auth_type == "oauth":
                 counters["pat_auth_type_mismatch"] += 1
-            if str(row.execution_status or "").lower() in {
+            if status in {
                 "credential_error",
                 "token_required",
                 "bulk_execution_pat_required",
             }:
                 counters["token_status_blocked"] += 1
+            if status in {"invalid_account", "credential_decrypt_error"}:
+                counters["credential_quarantined"] += 1
 
             print(
                 f"{row.id} "
                 f"{mask_account_id(account_id) if account_id else 'missing'} "
-                f"{str(bool(row.enabled)).lower()} "
+                f"{str(enabled).lower()} "
                 f"{row.execution_status or '-'} "
                 f"{auth_type or '-'} "
                 f"{account_type or '-'} "
@@ -172,9 +180,12 @@ def main() -> int:
             f"total={len(accounts)} enabled={counters['enabled']} "
             f"decrypt_ok={counters['decrypt_ok']} "
             f"decrypt_failed={counters['decrypt_failed']} "
+            f"decrypt_failed_enabled={counters['decrypt_failed_enabled']} "
+            f"decrypt_failed_disabled={counters['decrypt_failed_disabled']} "
             f"own_token={counters['own_token']} shared_token={counters['shared_token']} "
             f"bulk_capable={counters['bulk_capable']} "
             f"token_status_blocked={counters['token_status_blocked']} "
+            f"credential_quarantined={counters['credential_quarantined']} "
             f"pat_auth_type_mismatch={counters['pat_auth_type_mismatch']}"
         )
 
@@ -305,12 +316,30 @@ def main() -> int:
             == "pat"
         )
     )
+
+    if counters["decrypt_failed_enabled"]:
+        print(
+            "WARNING="
+            f"{counters['decrypt_failed_enabled']} enabled credential row(s) cannot be "
+            "decrypted and must be quarantined or reconnected"
+        )
+    if counters["decrypt_failed_disabled"]:
+        print(
+            "WARNING="
+            f"{counters['decrypt_failed_disabled']} disabled historical credential row(s) "
+            "cannot be decrypted; healthy account execution is unaffected"
+        )
+    if counters["credential_quarantined"]:
+        print(
+            "INFO="
+            f"{counters['credential_quarantined']} invalid credential/account row(s) are "
+            "quarantined and excluded from financial execution"
+        )
+
     if not encryption_key:
         print("BLOCKER=DERIV_TOKEN_ENCRYPTION_KEY is missing in the worker environment")
     elif not accounts:
         print("BLOCKER=no managed_accounts rows exist")
-    elif counters["decrypt_failed"]:
-        print("BLOCKER=one or more stored credentials cannot be decrypted with the worker key")
     elif counters["pat_auth_type_mismatch"]:
         print("BLOCKER=API token exists but auth_type is oauth; runtime bulk capability rejects it")
     elif enabled_bulk_capable == 0:
