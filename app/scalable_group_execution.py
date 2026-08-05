@@ -281,6 +281,35 @@ async def _grouped_purchase_accounts_by_stake(
     return normalized
 
 
+async def _buy_one_serialized(
+    bot: RFDir5TradingBot,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Compatibility stub for legacy private-WebSocket buy pacing installers.
+
+    The production financial transport is REST_BULK_PURCHASE through
+    _purchase_accounts_by_stake. This stub only prevents old hot-path pacing
+    modules from crashing during startup if they still reference the removed
+    per-account private-WebSocket helper.
+    """
+
+    account_id = str(kwargs.get("account_id") or kwargs.get("account") or "")
+    logger = getattr(bot, "logger", logging.getLogger(__name__))
+    logger.error(
+        "PRIVATE_WEBSOCKET_BUY_DISABLED account=%s transport=REST_BULK_PURCHASE "
+        "bulk_purchase=true startup_compatibility_stub=true",
+        mask_account_id(account_id) if account_id else "unknown",
+    )
+    return {
+        "account_id": account_id,
+        "execution_transport": "REST_BULK_PURCHASE",
+        "error": {
+            "code": "PRIVATE_WEBSOCKET_BUY_DISABLED",
+            "message": "Private WebSocket buys are disabled; REST bulk purchase is the only financial transport.",
+        },
+    }
+
+
 def _public_contract_cache_on_private_ready(
     self: RFDir5TradingBot,
     session: Any,
