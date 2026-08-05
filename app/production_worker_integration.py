@@ -85,13 +85,15 @@ def install_production_worker_integration() -> None:
                     != "bulk_execution_pat_required"
                 ):
                     continue
+                # Repair status text left by old deployments. The current worker
+                # performs financial execution only through the account's own
+                # authenticated private WebSocket.
                 self.repository.set_managed_account_execution_status(
                     int(account.id),
                     "token_required",
                     (
-                        "A valid Deriv trade credential is required. PAT accounts "
-                        "use grouped bulk execution; trade-scoped OAuth accounts "
-                        "use bounded account-scoped WebSocket execution."
+                        "A valid Deriv trade authorization is required to establish "
+                        "this account's private WebSocket trading session."
                     ),
                 )
         except Exception as exc:
