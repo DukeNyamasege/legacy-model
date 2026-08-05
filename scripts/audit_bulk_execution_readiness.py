@@ -3,10 +3,16 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+import sys
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from sqlalchemy import desc, func, select
 
@@ -22,9 +28,6 @@ from app.models import (
 )
 from app.token_store import decrypt_auth_payload
 from enhanced_bot import login_identity_from_auth_payload, mask_account_id
-
-
-ROOT = Path(__file__).resolve().parents[1]
 
 
 def _purchase_api_token(payload: dict[str, Any]) -> str:
