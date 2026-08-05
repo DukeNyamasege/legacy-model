@@ -7,15 +7,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "app" / "websocket_hot_path_hardening.py"
-WORKER = ROOT / "app" / "worker.py"
+ROLE_HARDENING = ROOT / "app" / "scalable_group_execution_hardening.py"
 
 
 class WebSocketHotPathSourceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.source = SOURCE.read_text(encoding="utf-8")
-        cls.worker = WORKER.read_text(encoding="utf-8")
+        cls.role_hardening = ROLE_HARDENING.read_text(encoding="utf-8")
         ast.parse(cls.source)
+        ast.parse(cls.role_hardening)
 
     def test_public_reader_is_isolated_from_tick_processing(self) -> None:
         self.assertIn("PUBLIC_TICK_QUEUE_SIZE", self.source)
@@ -67,15 +68,20 @@ class WebSocketHotPathSourceTests(unittest.TestCase):
         )[1].split("def _schedule_group_cache_refresh", 1)[0]
         self.assertNotIn("contracts_for", cache_function)
 
-    def test_worker_installs_hardening_after_final_execution_layers(self) -> None:
+    def test_role_hardening_installs_hot_path_last(self) -> None:
         self.assertIn(
             "from app.websocket_hot_path_hardening import (",
-            self.worker,
+            self.role_hardening,
         )
-        self.assertIn("install_websocket_hot_path_hardening()", self.worker)
+        self.assertIn(
+            "install_websocket_hot_path_hardening()",
+            self.role_hardening,
+        )
         self.assertGreater(
-            self.worker.index("install_websocket_hot_path_hardening()"),
-            self.worker.index("install_scalable_group_execution_hardening()"),
+            self.role_hardening.index("install_websocket_hot_path_hardening()"),
+            self.role_hardening.index(
+                "standardized._standardized_aidr_arbitrate = "
+            ),
         )
 
 
