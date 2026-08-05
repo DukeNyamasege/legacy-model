@@ -25,6 +25,24 @@ def test_rest_bulk_partitioning_groups_by_strategy_contract_mode_and_stake() -> 
     assert "MAX_BULK_ACCOUNTS_PER_REQUEST = 100" in source
 
 
+def test_more_than_100_accounts_are_sharded_inside_each_partition() -> None:
+    source = (ROOT / "app" / "rest_bulk_partitioning.py").read_text(encoding="utf-8")
+    assert "for offset in range(0, len(accounts), MAX_BULK_ACCOUNTS_PER_REQUEST)" in source
+    assert "accounts[offset : offset + MAX_BULK_ACCOUNTS_PER_REQUEST]" in source
+    assert "max_accounts_per_request" in source
+    assert "REST_BULK_PARTITION_READY" in source
+    assert "shards=%s" in source
+
+
+def test_single_account_shard_is_its_own_master_context() -> None:
+    source = (ROOT / "app" / "rest_bulk_partitioning.py").read_text(encoding="utf-8")
+    assert "ordered_accounts = sorted" in source
+    assert "leader_token, leader_account = ordered_accounts[0]" in source
+    assert "leader_managed_account_id=leader_id" in source
+    assert "BULK_MASTER_CONTEXT" in source
+    assert "reason=first_active_member_in_partition" in source
+
+
 def test_rest_bulk_partitioning_enforces_three_percent_markup_and_api_token_notice() -> None:
     source = (ROOT / "app" / "rest_bulk_partitioning.py").read_text(encoding="utf-8")
     assert "REQUIRED_APP_MARKUP_PERCENTAGE = 3.0" in source
