@@ -41,7 +41,10 @@ def test_signal_kill_reasons_cover_observed_and_pipeline_failures() -> None:
     assert "PROPOSAL_NOT_PURCHASED" in source
     assert "PURCHASE_CONFIRMATION_MISSING" in source
     assert "CONSUMED_WITHOUT_PURCHASE" in source
-    assert "not selected in the current rotating execution cohort" in source
+    # The runtime sentence is intentionally split across adjacent Python string
+    # literals for readability, so validate both source fragments separately.
+    assert "this account was not selected in " in source
+    assert "the current rotating execution cohort" in source
     assert '"title": "Signal killed — contract not purchased"' in source
 
 
