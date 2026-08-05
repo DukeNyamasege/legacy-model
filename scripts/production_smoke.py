@@ -27,6 +27,40 @@ REDIRECT_STATUS_CODES = {302, 303, 307, 308}
 READINESS_PROBE_TIMEOUT_SECONDS = 30.0
 
 
+def _positive_int(name: str, default: int, minimum: int = 1) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        value = int(default)
+    return max(int(minimum), value)
+
+
+def _positive_float(name: str, default: float, minimum: float = 0.0) -> float:
+    try:
+        value = float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        value = float(default)
+    return max(float(minimum), value)
+
+
+PROVIDER_WS_ATTEMPTS = _positive_int("DEPLOY_PROVIDER_WS_ATTEMPTS", 5)
+PROVIDER_WS_OPEN_TIMEOUT_SECONDS = _positive_float(
+    "DEPLOY_PROVIDER_WS_OPEN_TIMEOUT_SECONDS",
+    20.0,
+    5.0,
+)
+PROVIDER_WS_BACKOFF_BASE_SECONDS = _positive_float(
+    "DEPLOY_PROVIDER_WS_BACKOFF_BASE_SECONDS",
+    5.0,
+    1.0,
+)
+PROVIDER_WS_BACKOFF_MAX_SECONDS = _positive_float(
+    "DEPLOY_PROVIDER_WS_BACKOFF_MAX_SECONDS",
+    30.0,
+    PROVIDER_WS_BACKOFF_BASE_SECONDS,
+)
+
+
 class SmokeFailure(RuntimeError):
     pass
 
@@ -205,11 +239,10 @@ async def verify_dashboard_websocket(base_url: str, mode: str) -> dict[str, Any]
         }
 
 
-async def verify_deriv_public_websocket(url: str) -> dict[str, Any]:
-    req_id = 760731
+async def _verify_deriv_public_websocket_once(url: str, req_id: int) -> dict[str, Any]:
     async with websockets.connect(
         url,
-        open_timeout=15,
+        open_timeout=PROVIDER_WS_OPEN_TIMEOUT_SECONDS,
         close_timeout=5,
         ping_interval=20,
         ping_timeout=20,
@@ -235,11 +268,62 @@ async def verify_deriv_public_websocket(url: str) -> dict[str, Any]:
             return {"url": url, "msg_type": response.get("msg_type")}
 
 
+async def verify_deriv_public_websocket(url: str) -> dict[str, Any]:
+    errors: list[str] = []
+    for attempt in range(1, PROVIDER_WS_ATTEMPTS + 1):
+        req_id = 760731 + attempt
+        try:
+            result = await _verify_deriv_public_websocket_once(url, req_id)
+            result["attempts"] = attempt
+            result["retry_policy"] = "bounded_exponential"
+            return result
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            errors.append(error)
+            if attempt >= PROVIDER_WS_ATTEMPTS:
+                break
+            delay = min(
+                PROVIDER_WS_BACKOFF_MAX_SECONDS,
+                PROVIDER_WS_BACKOFF_BASE_SECONDS * (2 ** (attempt - 1)),
+            )
+            print(
+                json.dumps(
+                    {
+                        "event": "DERIV_PUBLIC_WS_SMOKE_RETRY",
+                        "attempt": attempt,
+                        "maximum_attempts": PROVIDER_WS_ATTEMPTS,
+                        "error": error,
+                        "retry_seconds": delay,
+                    },
+                    sort_keys=True,
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+            await asyncio.sleep(delay)
+
+    raise SmokeFailure(
+        "Deriv public WebSocket remained unavailable after "
+        f"{PROVIDER_WS_ATTEMPTS} bounded attempts: "
+        + " | ".join(errors[-3:])
+    )
+
+
+def _automatic_provider_skip() -> bool:
+    deployment_id = os.getenv("DEPLOYMENT_ID", "").strip().lower()
+    return deployment_id.startswith("preflight-api")
+
+
 async def async_checks(base_url: str, public_ws_url: str, skip_provider: bool) -> dict[str, Any]:
     dashboard = {}
     for mode in ("demo", "real"):
         dashboard[mode] = await verify_dashboard_websocket(base_url, mode)
-    provider = {"skipped": True}
+    provider = {
+        "skipped": True,
+        "reason": "isolated_preflight_avoids_duplicate_provider_connection",
+    }
     if not skip_provider:
         provider = await verify_deriv_public_websocket(public_ws_url)
     return {"dashboard_websocket": dashboard, "deriv_public_websocket": provider}
@@ -431,12 +515,13 @@ def main() -> int:
     }
 
     report["checks"]["oauth_start"] = validate_oauth_start(session, base_url, config)
+    skip_provider = bool(args.skip_provider) or _automatic_provider_skip()
     report["checks"].update(
         asyncio.run(
             async_checks(
                 base_url,
                 str(config.deriv.public_ws_url),
-                bool(args.skip_provider),
+                skip_provider,
             )
         )
     )
