@@ -14,7 +14,7 @@ WORKER_INSTALLER = ROOT / "app" / "production_worker_integration.py"
 API_INSTALLER = ROOT / "app" / "database_runtime_hardening.py"
 MIGRATION = (
     ROOT
-    / "alembic"
+    / "migrations"
     / "versions"
     / "20260805_0020_bulk_execution_schema_repair.py"
 )
