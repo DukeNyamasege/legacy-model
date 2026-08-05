@@ -20,8 +20,6 @@ def install_database_runtime_hardening(app: Any) -> None:
     if _INSTALLED:
         return
 
-    # Keep one authoritative database-health route even when legacy wrappers are
-    # imported in a different order.
     app.router.routes[:] = [
         route
         for route in app.router.routes
@@ -73,15 +71,16 @@ def install_database_runtime_hardening(app: Any) -> None:
             },
         )
 
-    # Reinstall the final account alert route, replace its noisy UI/filter, then
-    # make seamless stop/rejoin, strategy switching, market persistence and
-    # non-destructive personal history reset the final API authorities.
     from app.final_execution_alert_api import install_final_execution_alert_api
     from app.execution_alert_refinement import install_execution_alert_refinement
     from app.seamless_personal_execution import install_seamless_personal_execution
+    from app.seamless_personal_execution_final import (
+        install_final_seamless_personal_execution,
+    )
 
     install_final_execution_alert_api(app)
     install_execution_alert_refinement(app)
     install_seamless_personal_execution(app)
+    install_final_seamless_personal_execution(app)
 
     _INSTALLED = True
