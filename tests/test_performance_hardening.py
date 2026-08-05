@@ -117,7 +117,7 @@ class DatabaseWritePressureTests(unittest.TestCase):
 
     def test_personal_query_indexes_are_migrated(self) -> None:
         source = (
-            ROOT / "alembic" / "versions" / "20260804_0019_performance_indexes.py"
+            ROOT / "migrations" / "versions" / "20260804_0019_performance_indexes.py"
         ).read_text(encoding="utf-8")
         self.assertIn("ix_trades_managed_purchase_time_v2", source)
         self.assertIn("ix_virtual_managed_created_at_v2", source)
