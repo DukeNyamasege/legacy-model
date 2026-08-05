@@ -15,7 +15,7 @@ from app.rf_dir5_bot import RFDir5TradingBot
 
 
 _INSTALLED = False
-SCALABLE_ROLE_HARDENING_VERSION = "fresh-websocket-role-subcycles-v3"
+SCALABLE_ROLE_HARDENING_VERSION = "fresh-websocket-role-subcycles-v4"
 
 
 async def _fresh_role_subcycle(
@@ -102,10 +102,8 @@ async def _fresh_grouped_aidr_arbitrate(bot: RFDir5TradingBot) -> None:
     """Run a bounded rotating System cohort through fresh role subcycles.
 
     One parent opportunity chooses one market. A maximum round-robin cohort is
-    selected before provider proposal work, so the platform doesn't keep every
-    configured account WebSocket active or send one signal to the whole account
-    population. Every selected account still uses its own authenticated private
-    WebSocket and retains its own recovery state.
+    selected only after at least one current candidate survives the local freshness
+    check. This avoids waking account WebSockets for stale or empty cycles.
     """
 
     from app import rotating_execution_cohorts as cohorts
@@ -120,6 +118,24 @@ async def _fresh_grouped_aidr_arbitrate(bot: RFDir5TradingBot) -> None:
     async with standardized._cycle_gate(bot):
         bot._prune_stale_pending_contracts("fresh_websocket_aidr_pre_proposal")
         if continuation._cadence_blocked(bot, queued):
+            return
+
+        # Reject stale candidates before rotating or waking any private account.
+        fresh = [
+            candidate
+            for candidate in queued
+            if (
+                getattr(bot, "market_states", {}).get(str(candidate.symbol))
+                is not None
+                and int(bot.market_states[candidate.symbol].tick_sequence)
+                == int(candidate.tick_sequence)
+            )
+        ]
+        if not fresh:
+            bot.logger.info(
+                "EXECUTION_COHORT_NOT_ACTIVATED strategy=digits/over/system "
+                "reason=no_fresh_candidate private_sessions_started=0"
+            )
             return
 
         normal, recovery, post_virtual, virtual = aidr._account_recovery_groups(bot)
@@ -141,19 +157,6 @@ async def _fresh_grouped_aidr_arbitrate(bot: RFDir5TradingBot) -> None:
             selection.financial_ids,
             strategy="digits/over/system",
         )
-
-        fresh = [
-            candidate
-            for candidate in queued
-            if (
-                getattr(bot, "market_states", {}).get(str(candidate.symbol))
-                is not None
-                and int(bot.market_states[candidate.symbol].tick_sequence)
-                == int(candidate.tick_sequence)
-            )
-        ]
-        if not fresh:
-            return
 
         # The old path requested provider proposals for every fresh market at the
         # same instant. Rank locally, then test only a few candidates sequentially.
@@ -266,7 +269,8 @@ def install_scalable_group_execution_hardening() -> None:
     logging.getLogger(__name__).warning(
         "SCALABLE_ROLE_HARDENING_INSTALLED version=%s "
         "fresh_role_subcycles=true signal_holding=false "
-        "rotating_cohort=true all_accounts_same_signal=false "
+        "rotating_cohort=true stale_cycle_activation=false "
+        "all_accounts_same_signal=false "
         "private_websocket_only=true bulk_purchase=false copy_trading=false "
         "global_stop_on_role_error=false",
         SCALABLE_ROLE_HARDENING_VERSION,
