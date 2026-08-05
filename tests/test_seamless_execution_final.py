@@ -171,9 +171,10 @@ def test_bulk_schema_repair_runs_before_services() -> None:
     assert 'revision = "20260805_0020"' in source
     assert 'down_revision = "20260804_0019"' in source
     assert "CREATE TABLE IF NOT EXISTS bulk_execution_batches" in source
-    assert "ADD COLUMN IF NOT EXISTS request_metadata" in source
+    assert '"request_metadata": "JSONB' in source
+    assert "ALTER TABLE bulk_execution_batches ADD COLUMN IF NOT EXISTS {name}" in source
     assert "CREATE TABLE IF NOT EXISTS bulk_execution_members" in source
-    assert "ADD COLUMN IF NOT EXISTS bulk_batch_id" in source
+    assert "ALTER TABLE trades ADD COLUMN IF NOT EXISTS bulk_batch_id" in source
 
 
 def test_final_installers_are_last_authorities() -> None:
