@@ -12,6 +12,7 @@ export COPYTRADING_ALLOW_LEGACY_GLOBAL_TOKENS=true
 export FRONTEND_ORIGINS="http://127.0.0.1:8080,http://localhost:8080,https://derivadmin.site,https://legacymodel.netlify.app"
 
 exec python -m unittest -q \
+  tests.test_personal_token_sync \
   tests.test_multi_strategy \
   tests.test_multi_strategy_concurrency \
   tests.test_strategy_v2 \
