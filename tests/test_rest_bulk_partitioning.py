@@ -35,6 +35,14 @@ def test_rest_bulk_partitioning_enforces_three_percent_markup_and_api_token_noti
     assert "API_TOKEN_REQUIRED" in source
 
 
+def test_rest_bulk_partitioning_patches_final_rfdir5_purchase_methods() -> None:
+    source = (ROOT / "app" / "rest_bulk_partitioning.py").read_text(encoding="utf-8")
+    assert "from app.rf_dir5_bot import RFDir5TradingBot" in source
+    assert "RFDir5TradingBot._purchase_accounts_by_stake = _partitioned_purchase_accounts_by_stake" in source
+    assert "RFDir5TradingBot._purchase_stake_group_for_environment = _partitioned_purchase_stake_group_for_environment" in source
+    assert "final_class=RFDir5TradingBot" in source
+
+
 def test_worker_reapplies_rest_partitioning_after_scalable_layers() -> None:
     source = (ROOT / "app" / "worker.py").read_text(encoding="utf-8")
     first_scalable = source.index("install_scalable_group_execution()")
