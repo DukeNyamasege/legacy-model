@@ -48,30 +48,32 @@ def quarantine_undecryptable_enabled_accounts(bot: Any) -> int:
     unchanged. No token, encrypted payload or exception text is logged.
     """
 
-    quarantined = 0
+    quarantined: dict[int, tuple[str, str]] = {}
     encryption_key = str(getattr(bot, "encryption_key", "") or "").strip()
     if not encryption_key:
+        setattr(bot, "_credential_failure_quarantined", quarantined)
         return 0
 
     for row in list(bot.repository.list_managed_accounts()):
         if not bool(getattr(row, "enabled", False)):
             continue
 
+        managed_id = int(row.id)
         if is_token_account_binding_failure(
             str(getattr(row, "execution_status", "") or ""),
             str(getattr(row, "execution_status_reason", "") or ""),
         ):
             bot.repository.quarantine_managed_account(
-                int(row.id),
+                managed_id,
                 "invalid_account",
                 _ACCOUNT_BINDING_REASON,
             )
-            quarantined += 1
+            quarantined[managed_id] = ("invalid_account", _ACCOUNT_BINDING_REASON)
             bot.logger.warning(
                 "ACCOUNT_BULK_CREDENTIAL_QUARANTINED managed_id=%s "
                 "source=persisted_status token_removed=false "
                 "shared_credentials_preserved=true global_execution_continues=true",
-                int(row.id),
+                managed_id,
             )
             continue
 
@@ -81,18 +83,35 @@ def quarantine_undecryptable_enabled_accounts(bot: Any) -> int:
                 raise ValueError("credential payload is not an object")
         except Exception:
             bot.repository.quarantine_managed_account(
-                int(row.id),
+                managed_id,
                 "credential_decrypt_error",
                 _DECRYPT_FAILURE_REASON,
             )
-            quarantined += 1
+            quarantined[managed_id] = (
+                "credential_decrypt_error",
+                _DECRYPT_FAILURE_REASON,
+            )
             bot.logger.warning(
                 "ACCOUNT_CREDENTIAL_DECRYPT_QUARANTINED managed_id=%s "
                 "credential_preserved=true global_execution_continues=true",
-                int(row.id),
+                managed_id,
             )
 
-    return quarantined
+    setattr(bot, "_credential_failure_quarantined", quarantined)
+    return len(quarantined)
+
+
+def _restore_quarantine_reasons(bot: Any) -> None:
+    """Restore exact account repair instructions after legacy disabled-row cleanup."""
+
+    quarantined = dict(getattr(bot, "_credential_failure_quarantined", {}) or {})
+    for managed_id, value in quarantined.items():
+        status, reason = value
+        bot.repository.set_managed_account_execution_status(
+            int(managed_id),
+            str(status),
+            str(reason),
+        )
 
 
 def install_bulk_credential_failure_hardening() -> None:
@@ -131,13 +150,16 @@ def install_bulk_credential_failure_hardening() -> None:
 
     def load_accounts_after_credential_quarantine(self: TradingBot):
         quarantined = quarantine_undecryptable_enabled_accounts(self)
+        result = current_load(self)
+        _restore_quarantine_reasons(self)
         if quarantined:
             self.logger.warning(
                 "UNSAFE_ACCOUNT_CREDENTIAL_QUARANTINE_COMPLETE accounts=%s "
-                "credentials_preserved=true global_execution_continues=true",
+                "credentials_preserved=true repair_reasons_preserved=true "
+                "global_execution_continues=true",
                 quarantined,
             )
-        return current_load(self)
+        return result
 
     account_local_execution_status._bulk_credential_failure_hardening = True
     load_accounts_after_credential_quarantine._bulk_credential_failure_hardening = True
