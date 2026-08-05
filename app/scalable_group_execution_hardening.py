@@ -15,7 +15,7 @@ from app.rf_dir5_bot import RFDir5TradingBot
 
 
 _INSTALLED = False
-SCALABLE_ROLE_HARDENING_VERSION = "fresh-role-subcycles-v1"
+SCALABLE_ROLE_HARDENING_VERSION = "fresh-websocket-role-subcycles-v2"
 
 
 async def _fresh_role_subcycle(
@@ -33,7 +33,8 @@ async def _fresh_role_subcycle(
     started = time.monotonic()
     bot.logger.warning(
         "AIDR_ROLE_SUBCYCLE_STARTED parent_cycle_id=%s trigger_role=%s "
-        "role=%s symbol=%s barrier=%s accounts=%s fresh_proposal=true",
+        "role=%s symbol=%s barrier=%s accounts=%s fresh_proposal=true "
+        "transport=PRIVATE_WEBSOCKET_ONLY",
         parent_cycle_id,
         trigger_role,
         role,
@@ -50,7 +51,7 @@ async def _fresh_role_subcycle(
     except Exception as exc:
         bot.logger.exception(
             "AIDR_ROLE_SUBCYCLE_PROPOSAL_FAILED parent_cycle_id=%s role=%s "
-            "symbol=%s barrier=%s error=%s",
+            "symbol=%s barrier=%s error=%s global_execution_continues=true",
             parent_cycle_id,
             role,
             symbol,
@@ -86,7 +87,7 @@ async def _fresh_role_subcycle(
     bot.logger.warning(
         "AIDR_ROLE_SUBCYCLE_COMPLETE parent_cycle_id=%s role=%s barrier=%s "
         "accounts=%s result=%s elapsed_ms=%.1f "
-        "signal_created_for_this_subcycle=true",
+        "signal_created_for_this_subcycle=true transport=PRIVATE_WEBSOCKET_ONLY",
         parent_cycle_id,
         role,
         barrier,
@@ -98,12 +99,12 @@ async def _fresh_role_subcycle(
 
 
 async def _fresh_grouped_aidr_arbitrate(bot: RFDir5TradingBot) -> None:
-    """Run every active System role as its own fresh grouped subcycle.
+    """Run every active System role as its own fresh WebSocket subcycle.
 
-    The parent System opportunity chooses one market. Each active role then creates
-    a new current proposal immediately before its own transport, so OVER-1, OVER-3
-    and OVER-4 cannot expire while waiting for a different role's account group.
-    Role failures remain account-group scoped and never stop the worker.
+    The parent System opportunity chooses one market. Each active role creates a
+    new current proposal immediately before its own private-WebSocket dispatch, so
+    OVER-1, OVER-3 and OVER-4 cannot expire while waiting for another role. Role
+    failures remain account-group scoped and never stop the worker.
     """
 
     cfg = bot.test2_config.hybrid_strategy
@@ -114,7 +115,7 @@ async def _fresh_grouped_aidr_arbitrate(bot: RFDir5TradingBot) -> None:
         return
 
     async with standardized._cycle_gate(bot):
-        bot._prune_stale_pending_contracts("fresh_grouped_aidr_pre_proposal")
+        bot._prune_stale_pending_contracts("fresh_websocket_aidr_pre_proposal")
         if continuation._cadence_blocked(bot, queued):
             return
 
@@ -127,16 +128,12 @@ async def _fresh_grouped_aidr_arbitrate(bot: RFDir5TradingBot) -> None:
         if not any(scopes.values()):
             return
 
-        # Warm only OAuth/private sessions while trigger proposals are evaluated.
-        # PAT accounts use grouped bulk purchase and do not depend on private WS.
+        # Every financial account uses its own private WebSocket. Warm missing
+        # sessions while the shared public trigger proposal is evaluated.
         all_scope_ids = set().union(*scopes.values())
         for token, account_id in list(getattr(bot, "valid_clients", []) or []):
             managed_id = bot._managed_account_id_for_token(token)
-            if (
-                managed_id is not None
-                and int(managed_id) in all_scope_ids
-                and not bot._bulk_purchase_token_capable(token)
-            ):
+            if managed_id is not None and int(managed_id) in all_scope_ids:
                 grouped.immediate._ensure_session(bot, token, account_id)
 
         fresh = [
@@ -188,10 +185,9 @@ async def _fresh_grouped_aidr_arbitrate(bot: RFDir5TradingBot) -> None:
         parent_cycle_id = str(uuid.uuid4())
         result_by_role: dict[str, str] = {}
 
-        # Sequential by role is intentional: base registration state remains
-        # deterministic, while each role gets a newly created proposal immediately
-        # before its own grouped transport. Account requests inside each role are
-        # still grouped and concurrent under bounded provider limits.
+        # Role order stays deterministic because registration state is shared, but
+        # the accounts inside each role are dispatched in bounded WebSocket groups.
+        # Each role receives a newly created proposal immediately before transport.
         for role in standardized.AIDR_EXECUTION_ORDER:
             scope = scopes[role]
             if not scope:
@@ -221,7 +217,7 @@ async def _fresh_grouped_aidr_arbitrate(bot: RFDir5TradingBot) -> None:
             bot.logger.warning(
                 "AIDR_ROLE_DISPATCH_RESULT parent_cycle_id=%s trigger_role=%s "
                 "role=%s barrier=%s accounts=%s result=%s "
-                "global_execution_continues=true",
+                "transport=PRIVATE_WEBSOCKET_ONLY global_execution_continues=true",
                 parent_cycle_id,
                 trigger_role,
                 role,
@@ -238,6 +234,7 @@ async def _fresh_grouped_aidr_arbitrate(bot: RFDir5TradingBot) -> None:
             "trigger_role=%s role_results=%s normal_accounts=%s "
             "first_recovery_accounts=%s post_virtual_accounts=%s "
             "fresh_role_subcycles=true role_scope_context=task_local "
+            "private_websocket_only=true bulk_purchase=false copy_trading=false "
             "global_stop_on_role_error=false",
             parent_cycle_id,
             symbol,
@@ -256,7 +253,7 @@ async def _drain_fresh_aidr(bot: RFDir5TradingBot) -> None:
 
 
 def install_scalable_group_execution_hardening() -> None:
-    """Make fresh role subcycles the final System execution authority."""
+    """Make fresh private-WebSocket role subcycles the final authority."""
 
     global _INSTALLED
     if _INSTALLED:
@@ -271,6 +268,7 @@ def install_scalable_group_execution_hardening() -> None:
     logging.getLogger(__name__).warning(
         "SCALABLE_ROLE_HARDENING_INSTALLED version=%s "
         "fresh_role_subcycles=true signal_holding=false "
-        "grouped_transport=true global_stop_on_role_error=false",
+        "private_websocket_only=true bulk_purchase=false copy_trading=false "
+        "global_stop_on_role_error=false",
         SCALABLE_ROLE_HARDENING_VERSION,
     )
