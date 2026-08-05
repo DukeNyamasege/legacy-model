@@ -107,15 +107,19 @@ def install_production_worker_integration() -> None:
     TradingBot._finish_contract_transport_cleanup = cleanup_then_publish
     TradingBot._load_runtime_accounts = load_accounts_with_current_transport_status
 
-    # This installer runs after scalable execution hardening and final REST bulk
-    # partitioning. Restore the user's intended strategy authority here so those
-    # later wrappers cannot re-enable independent per-tick manual signals or
-    # replace exact strategy-group scopes with barrier-wide account scopes.
+    # These installers run after scalable execution hardening and final REST bulk
+    # partitioning. Restore the intended shared strategy authority and then make
+    # the qualified-role proposal path final so later wrappers cannot kill an
+    # aligned signal before REST purchase begins.
     from app.shared_system_strategy_clock import (
         install_final_shared_system_strategy_clock,
     )
+    from app.proposal_execution_recovery import (
+        install_proposal_execution_recovery,
+    )
 
     install_final_shared_system_strategy_clock()
+    install_proposal_execution_recovery()
 
     TradingBot._production_worker_integration_installed = True
     _INSTALLED = True
