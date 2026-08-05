@@ -108,18 +108,22 @@ def install_production_worker_integration() -> None:
     TradingBot._load_runtime_accounts = load_accounts_with_current_transport_status
 
     # These installers run after scalable execution hardening and final REST bulk
-    # partitioning. Restore the intended shared strategy authority and then make
-    # the qualified-role proposal path final so later wrappers cannot kill an
-    # aligned signal before REST purchase begins.
+    # partitioning. Restore the intended shared strategy authority, make the
+    # qualified-role proposal path final, then install response/lifecycle recovery
+    # as the final worker authority.
     from app.shared_system_strategy_clock import (
         install_final_shared_system_strategy_clock,
     )
     from app.proposal_execution_recovery import (
         install_proposal_execution_recovery,
     )
+    from app.seamless_execution_runtime import (
+        install_seamless_execution_runtime,
+    )
 
     install_final_shared_system_strategy_clock()
     install_proposal_execution_recovery()
+    install_seamless_execution_runtime()
 
     TradingBot._production_worker_integration_installed = True
     _INSTALLED = True
