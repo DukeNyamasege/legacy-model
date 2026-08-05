@@ -15,7 +15,7 @@ from app.rf_dir5_bot import RFDir5TradingBot
 
 
 _INSTALLED = False
-SCALABLE_ROLE_HARDENING_VERSION = "fresh-websocket-role-subcycles-v4"
+SCALABLE_ROLE_HARDENING_VERSION = "fresh-rest-bulk-role-subcycles-v5"
 
 
 async def _fresh_role_subcycle(
@@ -34,7 +34,7 @@ async def _fresh_role_subcycle(
     bot.logger.warning(
         "AIDR_ROLE_SUBCYCLE_STARTED parent_cycle_id=%s trigger_role=%s "
         "role=%s symbol=%s barrier=%s accounts=%s fresh_proposal=true "
-        "transport=PRIVATE_WEBSOCKET_ONLY",
+        "transport=REST_BULK_PURCHASE",
         parent_cycle_id,
         trigger_role,
         role,
@@ -87,7 +87,7 @@ async def _fresh_role_subcycle(
     bot.logger.warning(
         "AIDR_ROLE_SUBCYCLE_COMPLETE parent_cycle_id=%s role=%s barrier=%s "
         "accounts=%s result=%s elapsed_ms=%.1f "
-        "signal_created_for_this_subcycle=true transport=PRIVATE_WEBSOCKET_ONLY",
+        "signal_created_for_this_subcycle=true transport=REST_BULK_PURCHASE",
         parent_cycle_id,
         role,
         barrier,
@@ -103,7 +103,7 @@ async def _fresh_grouped_aidr_arbitrate(bot: RFDir5TradingBot) -> None:
 
     One parent opportunity chooses one market. A maximum round-robin cohort is
     selected only after at least one current candidate survives the local freshness
-    check. This avoids waking account WebSockets for stale or empty cycles.
+    check. This avoids activating a stale or empty financial cycle.
     """
 
     from app import rotating_execution_cohorts as cohorts
@@ -116,11 +116,11 @@ async def _fresh_grouped_aidr_arbitrate(bot: RFDir5TradingBot) -> None:
         return
 
     async with standardized._cycle_gate(bot):
-        bot._prune_stale_pending_contracts("fresh_websocket_aidr_pre_proposal")
+        bot._prune_stale_pending_contracts("fresh_rest_bulk_aidr_pre_proposal")
         if continuation._cadence_blocked(bot, queued):
             return
 
-        # Reject stale candidates before rotating or waking any private account.
+        # Reject stale candidates before rotating or preparing any financial account.
         fresh = [
             candidate
             for candidate in queued
@@ -134,7 +134,7 @@ async def _fresh_grouped_aidr_arbitrate(bot: RFDir5TradingBot) -> None:
         if not fresh:
             bot.logger.info(
                 "EXECUTION_COHORT_NOT_ACTIVATED strategy=digits/over/system "
-                "reason=no_fresh_candidate private_sessions_started=0"
+                "reason=no_fresh_candidate financial_accounts_started=0"
             )
             return
 
@@ -150,8 +150,8 @@ async def _fresh_grouped_aidr_arbitrate(bot: RFDir5TradingBot) -> None:
         if not any(scopes.values()):
             return
 
-        # Only the selected financial cohort receives active private sessions.
-        # Virtual-only members keep their simulated state without a financial WS.
+        # Only the selected financial cohort is activated for this cycle.
+        # Virtual-only members keep their simulated state without a real purchase.
         await cohorts.activate_cycle_accounts(
             bot,
             selection.financial_ids,
@@ -170,7 +170,7 @@ async def _fresh_grouped_aidr_arbitrate(bot: RFDir5TradingBot) -> None:
         result_by_role: dict[str, str] = {}
 
         # Role order stays deterministic. Each selected role receives a fresh
-        # proposal immediately before its own bounded private-WebSocket dispatch.
+        # proposal immediately before its own REST bulk-purchase dispatch.
         for role in standardized.AIDR_EXECUTION_ORDER:
             scope = scopes[role]
             if not scope:
@@ -200,7 +200,7 @@ async def _fresh_grouped_aidr_arbitrate(bot: RFDir5TradingBot) -> None:
             bot.logger.warning(
                 "AIDR_ROLE_DISPATCH_RESULT parent_cycle_id=%s trigger_role=%s "
                 "role=%s barrier=%s accounts=%s result=%s "
-                "transport=PRIVATE_WEBSOCKET_ONLY global_execution_continues=true",
+                "transport=REST_BULK_PURCHASE global_execution_continues=true",
                 parent_cycle_id,
                 trigger_role,
                 role,
@@ -218,7 +218,7 @@ async def _fresh_grouped_aidr_arbitrate(bot: RFDir5TradingBot) -> None:
             "first_recovery_accounts=%s post_virtual_accounts=%s "
             "fresh_role_subcycles=true role_scope_context=task_local "
             "rotating_cohort=true cohort_limit=%s all_accounts_same_signal=false "
-            "private_websocket_only=true bulk_purchase=false copy_trading=false "
+            "transport=REST_BULK_PURCHASE bulk_purchase=true copy_trading=false "
             "global_stop_on_role_error=false",
             parent_cycle_id,
             symbol,
@@ -238,7 +238,7 @@ async def _drain_fresh_aidr(bot: RFDir5TradingBot) -> None:
 
 
 def install_scalable_group_execution_hardening() -> None:
-    """Make rotating private-WebSocket role subcycles the final authority."""
+    """Make rotating REST-bulk role subcycles the final authority."""
 
     global _INSTALLED
     if _INSTALLED:
@@ -275,7 +275,7 @@ def install_scalable_group_execution_hardening() -> None:
         "fresh_role_subcycles=true signal_holding=false "
         "rotating_cohort=true stale_cycle_activation=false "
         "proposal_relay_sockets=2 all_accounts_same_signal=false "
-        "private_websocket_only=true bulk_purchase=false copy_trading=false "
+        "transport=REST_BULK_PURCHASE bulk_purchase=true copy_trading=false "
         "global_stop_on_role_error=false",
         SCALABLE_ROLE_HARDENING_VERSION,
     )
