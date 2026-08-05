@@ -14,7 +14,7 @@ from app.token_store import decrypt_auth_payload, encrypt_auth_payload
 PersonalApiTokenRequest = base_api.PersonalApiTokenRequest
 
 _INSTALLED = False
-_VERSION = "20260805-linked-account-token-sync-2"
+_VERSION = "20260805-linked-account-token-sync-3"
 _TOKEN_REQUIRED_STATUSES = {
     "credential_error",
     "credential_decrypt_error",
@@ -38,7 +38,7 @@ _TOKEN_SYNC_JS = r'''
 /* FOA_LINKED_ACCOUNT_TOKEN_SYNC: one trade-scoped token, exact account validation. */
 (() => {
   "use strict";
-  const VERSION = "20260805-2";
+  const VERSION = "20260805-3";
 
   const setText = (node, value) => {
     if (node && node.textContent !== value) node.textContent = value;
@@ -68,7 +68,7 @@ _TOKEN_SYNC_JS = r'''
       note.id = "foa-token-sync-guidance";
       setText(
         note,
-        "The token is verified against the selected account ID, its trade permission and active Options status. When valid, it is encrypted and synchronized to every Demo or Real account returned by Deriv for that token. Invalid or unrelated tokens are rejected."
+        "The token is verified against the selected account ID, its trade permission and active Options status. When valid, it is encrypted and synchronized to every active Demo or Real account returned by Deriv for that token. Invalid, unrelated or inactive accounts are rejected."
       );
     }
 
@@ -128,6 +128,10 @@ def _provider_account_type(account: dict[str, Any]) -> str:
 
 def _provider_account_status(account: dict[str, Any]) -> str:
     return str(account.get("status") or "active").strip().lower() or "active"
+
+
+def _provider_account_is_connectable(account: dict[str, Any]) -> bool:
+    return _provider_account_status(account) in {"active", "open"}
 
 
 def _provider_accounts_by_id(accounts: Any) -> dict[str, dict[str, Any]]:
@@ -302,7 +306,7 @@ def _install_token_route(app: Any) -> None:
             raise HTTPException(status_code=400, detail=reason)
 
         provider_status = _provider_account_status(current_provider_account)
-        if provider_status not in {"active", "open"}:
+        if not _provider_account_is_connectable(current_provider_account):
             reason = (
                 f"The selected Options account is not active in Deriv "
                 f"(status: {provider_status})."
@@ -314,6 +318,7 @@ def _install_token_route(app: Any) -> None:
         verified_ids = sorted(accounts_by_id)
         synced_types: set[str] = set()
         synced_account_ids: set[str] = set()
+        rejected_linked_accounts = 0
 
         for managed_row in base_api.REPOSITORY.list_managed_accounts():
             payload = _load_managed_payload(managed_row, account)
@@ -322,6 +327,19 @@ def _install_token_route(app: Any) -> None:
             if provider_account is None:
                 continue
             provider_type = _provider_account_type(provider_account)
+            linked_status = _provider_account_status(provider_account)
+            if not _provider_account_is_connectable(provider_account):
+                base_api.REPOSITORY.quarantine_managed_account(
+                    int(managed_row.id),
+                    "invalid_account",
+                    (
+                        f"Deriv Options account is not active (status: {linked_status}). "
+                        "Reconnect it after the account becomes active."
+                    )[:160],
+                )
+                rejected_linked_accounts += 1
+                continue
+
             updated_payload = _synced_payload(
                 payload,
                 api_token=api_token,
@@ -379,6 +397,7 @@ def _install_token_route(app: Any) -> None:
                 "provider_account_type": _provider_account_type(current_provider_account),
                 "shared_account_types": sorted(synced_types),
                 "synced_account_count": len(synced_account_ids),
+                "rejected_linked_account_count": rejected_linked_accounts,
                 "trade_scope_verified": True,
             },
         )
@@ -390,9 +409,10 @@ def _install_token_route(app: Any) -> None:
             "provider_account_type": _provider_account_type(current_provider_account),
             "shared_account_types": sorted(synced_types),
             "synced_account_count": len(synced_account_ids),
+            "rejected_linked_account_count": rejected_linked_accounts,
             "message": (
-                "Token verified and synchronized to every linked Options account "
-                "returned by Deriv."
+                "Token verified and synchronized to every active linked Options "
+                "account returned by Deriv."
             ),
         }
 
