@@ -17,6 +17,9 @@ from app.strategy_v2_ui import _STRATEGY_V2_JS
 
 _INSTALLED = False
 UI_VERSION = "20260805-signal-alerts-2"
+_BASE_CANDIDATE_ALERT = original_ui._candidate_alert
+_BASE_MATCHES_STRATEGY = original_ui._matches_strategy
+_BASE_ACCOUNT_WAS_EXPECTED = original_ui._account_was_expected
 
 # These are scanning or ranking outcomes. They mean the market did not finish
 # qualifying and must never be presented to a trader as a killed entry.
@@ -66,7 +69,7 @@ _REFINED_ALERT_JS = r'''
 
   const POLL_MS = 3000;
   const DISMISS_KEY = "foa-dismissed-execution-alerts-v2";
-  const DISMISS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+  const MAX_DISMISSED = 200;
   let inFlight = false;
   let hideTimer = null;
   let currentId = "";
@@ -76,13 +79,7 @@ _REFINED_ALERT_JS = r'''
   function dismissedMap() {
     try {
       const parsed = JSON.parse(localStorage.getItem(DISMISS_KEY) || "{}");
-      const now = Date.now();
-      const clean = {};
-      for (const [id, timestamp] of Object.entries(parsed || {})) {
-        if (Number(timestamp) > now - DISMISS_TTL_MS) clean[id] = Number(timestamp);
-      }
-      localStorage.setItem(DISMISS_KEY, JSON.stringify(clean));
-      return clean;
+      return parsed && typeof parsed === "object" ? parsed : {};
     } catch (_err) {
       return {};
     }
@@ -97,7 +94,10 @@ _REFINED_ALERT_JS = r'''
     try {
       const values = dismissedMap();
       values[id] = Date.now();
-      localStorage.setItem(DISMISS_KEY, JSON.stringify(values));
+      const newest = Object.entries(values)
+        .sort((a, b) => Number(b[1]) - Number(a[1]))
+        .slice(0, MAX_DISMISSED);
+      localStorage.setItem(DISMISS_KEY, JSON.stringify(Object.fromEntries(newest)));
     } catch (_err) {}
   }
 
@@ -111,6 +111,7 @@ _REFINED_ALERT_JS = r'''
         pointer-events: none;
         box-sizing: border-box;
       }
+      #foa-execution-alert-host:empty { display: none; }
       #foa-execution-alert-host[data-placement="right"],
       #foa-execution-alert-host[data-placement="left"] {
         position: fixed;
@@ -388,7 +389,7 @@ def _actionable_candidate_alert(
     decision: ModelDecisionRecord | None,
 ) -> dict[str, Any] | None:
     status = str(signal.final_status or "CREATED").strip().upper()
-    expected = original_ui._account_was_expected(signal, account_mask)
+    expected = _BASE_ACCOUNT_WAS_EXPECTED(signal, account_mask)
 
     # Cohort rotation and strategy scanning are normal operation, not errors for
     # an account that was not selected for that financial cycle.
@@ -412,7 +413,7 @@ def _actionable_candidate_alert(
     ):
         return None
 
-    alert = original_ui._candidate_alert(
+    alert = _BASE_CANDIDATE_ALERT(
         signal,
         now=now,
         account_mask=account_mask,
@@ -430,7 +431,7 @@ def _actionable_matches_strategy(signal: CandidateSignalRecord, selection: Any) 
     # contract family before routing, so every enabled strategy must see it.
     if trigger.startswith("AIDR-") and status.startswith("SKIP_PROVIDER_"):
         return True
-    return original_ui._matches_strategy(signal, selection)
+    return _BASE_MATCHES_STRATEGY(signal, selection)
 
 
 def _script(*, compatibility: bool = False) -> str:
