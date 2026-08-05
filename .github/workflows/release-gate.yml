@@ -61,6 +61,7 @@ jobs:
             scripts/cleanup_vps_artifacts.sh \
             scripts/diagnose_vps_performance.sh
           docker compose -f docker-compose.yml -f docker-compose.vps.yml config --quiet
+          python scripts/audit_bulk_execution_readiness.py --help >/dev/null
 
       - name: Compile Python
         run: python -m compileall -q app scripts tests alembic
@@ -75,6 +76,7 @@ jobs:
       - name: Run focused release tests
         run: |
           python -m unittest -q tests.test_stop_history_and_mobile_ui
+          python -m unittest -q tests.test_seamless_execution_final
           python -m unittest -q tests.test_multi_strategy tests.test_multi_strategy_concurrency tests.test_strategy_v2 tests.test_standardized_execution_runtime tests.test_per_account_virtual_runtime
           python -m unittest -q tests.test_websocket_execution_hardening
           python -m unittest -q tests.test_performance_hardening tests.test_generated_request_broker_js
