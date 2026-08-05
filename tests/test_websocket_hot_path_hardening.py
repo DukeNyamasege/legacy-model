@@ -81,6 +81,17 @@ class WebSocketHotPathSourceTests(unittest.TestCase):
         )[1].split("def _schedule_batched_group_cache_refresh", 1)[0]
         self.assertNotIn("runtime_preference(", loader)
 
+    def test_duplicate_accounts_share_one_private_socket(self) -> None:
+        self.assertIn("DUPLICATE_PRIVATE_SESSION_COALESCED", self.scalability)
+        self.assertIn("_private_session_by_account_id", self.scalability)
+        self.assertIn("new_connection_opened=false", self.scalability)
+        self.assertIn("duplicate_account_sessions=false", self.scalability)
+
+    def test_settlement_workers_are_serialized_per_market(self) -> None:
+        self.assertIn("_install_serialized_settlement_drains", self.scalability)
+        self.assertIn("with _settlement_lock(owner, state)", self.scalability)
+        self.assertIn("settlement_rows_serialized=true", self.scalability)
+
     def test_model_training_runs_outside_event_loop(self) -> None:
         self.assertIn("_install_background_model_training", self.scalability)
         self.assertIn("hot._HOT_EXECUTOR.submit(drain)", self.scalability)
