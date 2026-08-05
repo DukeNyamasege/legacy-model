@@ -56,7 +56,7 @@ def _is_rate_limit_html(text: str) -> bool:
     )
 
 
-def _is_disallowed_multi_account_trade(path: str) -> bool:
+def _request_is_bulk_purchase(path: str) -> bool:
     value = str(path or "").lower()
     return "/trading/v1/options/contracts/bulk-purchase/" in value
 
@@ -130,7 +130,7 @@ class _BrokerConfig:
 
 
 class _DerivRequestBroker:
-    """One keep-alive pool for account discovery and private-WS OTP setup."""
+    """One keep-alive pool for Deriv REST setup and bulk execution."""
 
     def __init__(self) -> None:
         self.config = _BrokerConfig.load()
@@ -184,7 +184,7 @@ class _DerivRequestBroker:
             LOGGER.warning(
                 "DERIV_HTTP_BROKER_READY connector_limit=%s limit_per_host=%s "
                 "request_concurrency=%s keepalive=true account_read_coalescing=true "
-                "financial_execution_transport=PRIVATE_WEBSOCKET_ONLY",
+                "financial_execution_transport=REST_BULK_PURCHASE",
                 self.config.connector_limit,
                 self.config.limit_per_host,
                 self.config.request_concurrency,
@@ -198,6 +198,10 @@ class _DerivRequestBroker:
             await session.close()
 
     def _attempts(self, method: str, path: str) -> int:
+        # Financial POSTs must not be replayed automatically because a network
+        # timeout can hide a successful provider-side purchase. Bulk purchase is
+        # therefore intentionally single-attempt; account setup reads keep the
+        # bounded safe retries.
         if str(method).upper() == "GET":
             return 3
         if _request_is_otp(path):
@@ -228,22 +232,6 @@ class _DerivRequestBroker:
         credential: str = "",
         json_data: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        if _is_disallowed_multi_account_trade(path):
-            LOGGER.error(
-                "MULTI_ACCOUNT_REST_TRADE_BLOCKED path=%s "
-                "financial_execution_transport=PRIVATE_WEBSOCKET_ONLY",
-                path,
-            )
-            return {
-                "error": {
-                    "code": "MULTI_ACCOUNT_REST_TRADE_DISABLED",
-                    "message": (
-                        "This worker is configured for account-scoped private "
-                        "WebSocket execution only."
-                    ),
-                }
-            }
-
         self._ensure_loop_primitives()
         key = _coalesce_key(method, path, credential, json_data)
         if key is None:
@@ -435,7 +423,7 @@ async def _brokered_rest_request(
 
 
 def install_deriv_request_broker() -> None:
-    """Pool only account/OTP REST traffic; financial execution stays on WS."""
+    """Pool Deriv REST traffic and allow official bulk-purchase execution."""
 
     global _INSTALLED
     if _INSTALLED:
@@ -457,6 +445,6 @@ def install_deriv_request_broker() -> None:
     LOGGER.warning(
         "DERIV_REQUEST_BROKER_INSTALLED shared_keepalive=true "
         "account_list_coalescing=true bounded_concurrency=true "
-        "financial_execution_transport=PRIVATE_WEBSOCKET_ONLY "
-        "multi_account_rest_trade_disabled=true",
+        "financial_execution_transport=REST_BULK_PURCHASE "
+        "official_bulk_purchase_enabled=true",
     )
