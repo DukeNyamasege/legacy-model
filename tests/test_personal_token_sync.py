@@ -32,9 +32,9 @@ class PersonalTokenSyncTests(unittest.TestCase):
             self.source,
         )
         self.assertIn("provider_type = _provider_account_type(provider_account)", self.source)
-        self.assertIn("provider_status not in {\"active\", \"open\"}", self.source)
+        self.assertIn("_provider_account_is_connectable(current_provider_account)", self.source)
 
-    def test_successful_token_is_synced_to_all_returned_linked_accounts(self) -> None:
+    def test_successful_token_is_synced_to_all_active_returned_accounts(self) -> None:
         self.assertIn(
             "for managed_row in base_api.REPOSITORY.list_managed_accounts()",
             self.source,
@@ -43,6 +43,8 @@ class PersonalTokenSyncTests(unittest.TestCase):
         self.assertIn("\"pat_shared_demo_real\": True", self.source)
         self.assertIn("\"pat_verified_scope\": \"trade\"", self.source)
         self.assertIn("PERSONAL_API_TOKEN_VERIFIED_AND_SYNCED", self.source)
+        self.assertIn("rejected_linked_accounts", self.source)
+        self.assertIn("Deriv Options account is not active", self.source)
 
     def test_missing_or_rejected_credentials_reopen_the_input_field(self) -> None:
         for status in (
