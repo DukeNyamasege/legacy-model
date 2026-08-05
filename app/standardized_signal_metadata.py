@@ -64,14 +64,26 @@ def _install_for(signal_type: type[Any]) -> None:
     signal_type._standardized_signal_metadata_installed = True
 
 
+def install_signal_metadata_accessors() -> None:
+    """Install only transient cycle-ID accessors on slotted signal classes.
+
+    This narrow installer is safe for unit tests and utility processes because it
+    does not change account routing, candidate persistence, proposal handling or
+    financial execution. Production startup calls the full installer below.
+    """
+
+    _install_for(DigitSignal)
+    _install_for(SignalEvent)
+
+
 def install_standardized_signal_metadata() -> None:
-    """Permit transient cycle IDs and activate one shared System signal clock."""
+    """Install metadata accessors and activate the production shared signal clock."""
 
     global _INSTALLED
     if _INSTALLED:
         return
-    _install_for(DigitSignal)
-    _install_for(SignalEvent)
+
+    install_signal_metadata_accessors()
 
     # Install after Strategy V2 has resolved persisted selections but before the
     # standardized and guaranteed-delivery wrappers capture AIDR purchase hooks.
