@@ -17,6 +17,7 @@ exec python -m unittest -q \
   tests.test_strategy_v2 \
   tests.test_standardized_execution_runtime \
   tests.test_scalable_group_execution \
+  tests.test_provider_connection_resilience \
   tests.test_per_account_virtual_runtime \
   tests.test_strategy_settlement_integrity \
   tests.test_websocket_execution_hardening \
