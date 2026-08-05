@@ -2,8 +2,8 @@
   "use strict";
 
   const $ = id => document.getElementById(id);
-  const REQUIRED_PAT_MESSAGE = "Action required: Link your Deriv Personal Access Token with trade scope in Settings > Credentials to enable bulk purchase trading.";
-  const INVALID_PAT_MESSAGE = "Your Deriv token has expired or is invalid. Go to Settings > Credentials and add a new trade-scope token.";
+  const REQUIRED_PAT_MESSAGE = "Action required: Link your Deriv API token with trade scope in Settings > Credentials. How to get it: open Deriv, go to Security & limits, open API token, create a token with trade permission, then paste it here.";
+  const INVALID_PAT_MESSAGE = "Your Deriv API token has expired or is invalid. Go to Settings > Credentials and add a new token with trade permission.";
 
   const api = async (path, options = {}) => {
     const response = await fetch(path, {
@@ -203,10 +203,10 @@
     }
 
     controls.primary.title = tokenNotice
-      ? "Link your Deriv Personal Access Token with trade scope in Settings before trading."
+      ? "Link your Deriv API token with trade scope in Settings before trading."
       : "";
     controls.pauseResume.title = tokenNotice
-      ? "Link your Deriv Personal Access Token with trade scope in Settings before trading."
+      ? "Link your Deriv API token with trade scope in Settings before trading."
       : "";
   }
 
