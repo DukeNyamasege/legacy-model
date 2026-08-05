@@ -33,7 +33,8 @@ def test_proposal_failure_logs_exact_exception_and_is_installed_last() -> None:
     assert "error_type=%s error=%s" in source
     assert "sanitize_account_ids(str(exc))" in source
     assert "immediate._provider_proposal = _qualified_provider_proposal" in source
-    assert "hybrid._digit_proposal = _qualified_provider_proposal" in source
+    assert "hybrid._digit_proposal" not in source
+    assert "scanner_unchanged=true" in source
     assert "install_proposal_execution_recovery()" in worker
     assert worker.index("install_final_shared_system_strategy_clock()") < worker.index(
         "install_proposal_execution_recovery()"
