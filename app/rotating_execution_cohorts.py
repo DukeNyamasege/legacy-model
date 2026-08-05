@@ -3,14 +3,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 import app.aidr_loss_continuation_fix as continuation
 import app.guaranteed_signal_delivery as immediate
 import app.multi_strategy_runtime as multi
 import app.private_websocket_rate_limit as private_ws
+import app.standardized_execution_runtime as standardized
 from app.repositories.rf_dir5_repository import NORMAL_MODE, RECOVERY_PENDING, VIRTUAL_MODE
 from app.rf_dir5_bot import RFDir5TradingBot
 from enhanced_bot import ClientSession
@@ -18,7 +20,7 @@ from enhanced_bot import ClientSession
 
 LOGGER = logging.getLogger(__name__)
 _INSTALLED = False
-ROTATING_COHORT_VERSION = "strategy-round-robin-v1"
+ROTATING_COHORT_VERSION = "strategy-round-robin-v2"
 
 COHORT_SIZE = max(1, int(os.getenv("EXECUTION_COHORT_SIZE", "10")))
 NORMAL_RESERVE = max(
@@ -40,9 +42,16 @@ TRIGGER_PROPOSAL_INTERVAL_SECONDS = max(
     0.0,
     float(os.getenv("EXECUTION_TRIGGER_PROPOSAL_INTERVAL_SECONDS", "0.10")),
 )
+PROPOSAL_START_INTERVAL_SECONDS = max(
+    0.0,
+    float(os.getenv("EXECUTION_PROPOSAL_START_INTERVAL_SECONDS", "0.15")),
+)
 
 _ORIGINAL_STILL_CONFIGURED = private_ws._still_configured
 _ORIGINAL_MULTI_PROPOSAL_FOR = multi._proposal_for
+_ORIGINAL_BUY_SELECTED_ACCOUNTS: Callable[
+    [RFDir5TradingBot, Any, Any], Awaitable[None]
+] | None = None
 
 
 @dataclass(slots=True)
@@ -74,6 +83,37 @@ def _activation_lock(bot: RFDir5TradingBot) -> asyncio.Lock:
         value = asyncio.Lock()
         bot._execution_cohort_activation_lock = value
     return value
+
+
+def _proposal_lock(bot: RFDir5TradingBot) -> asyncio.Lock:
+    value = getattr(bot, "_execution_proposal_lock", None)
+    if not isinstance(value, asyncio.Lock):
+        value = asyncio.Lock()
+        bot._execution_proposal_lock = value
+    return value
+
+
+async def _wait_for_proposal_start_slot(bot: RFDir5TradingBot) -> None:
+    now = time.monotonic()
+    next_start = float(
+        getattr(bot, "_execution_next_proposal_start", 0.0) or 0.0
+    )
+    if next_start > now:
+        await asyncio.sleep(next_start - now)
+        now = time.monotonic()
+    bot._execution_next_proposal_start = (
+        now + PROPOSAL_START_INTERVAL_SECONDS
+    )
+
+
+def _signal_is_stale(signal: Any) -> bool:
+    generated = float(getattr(signal, "generated_monotonic", 0.0) or 0.0)
+    if not generated:
+        return False
+    return (
+        time.monotonic() - generated
+        > float(standardized.MAX_STANDARDIZED_SIGNAL_AGE_SECONDS)
+    )
 
 
 async def _persist_cursor(bot: RFDir5TradingBot, key: str, cursor: int) -> None:
@@ -339,12 +379,15 @@ async def activate_cycle_accounts(
         bot._execution_cohort_generation = generation
 
         started = 0
+        already_connected = 0
         for token, account_id in list(getattr(bot, "valid_clients", []) or []):
             managed_id = bot._managed_account_id_for_token(token)
             if managed_id is None or int(managed_id) not in selected:
                 continue
-            immediate._ensure_session(bot, token, account_id)
+            session = immediate._ensure_session(bot, token, account_id)
             started += 1
+            if bool(getattr(session, "is_connected", False)):
+                already_connected += 1
 
         previous_reaper = getattr(bot, "_execution_cohort_reaper_task", None)
         if isinstance(previous_reaper, asyncio.Task) and not previous_reaper.done():
@@ -355,11 +398,12 @@ async def activate_cycle_accounts(
         )
         bot.logger.warning(
             "EXECUTION_COHORT_ACTIVE strategy=%s financial_accounts=%s "
-            "private_sessions_started=%s handover_seconds=%.1f "
+            "private_sessions_started=%s already_connected=%s handover_seconds=%.1f "
             "all_other_accounts_standby=true pending_contracts_preserved=true",
             strategy,
             len(selected),
             started,
+            already_connected,
             HANDOVER_SECONDS,
         )
 
@@ -513,56 +557,119 @@ async def _rotating_multi_proposal_for(
     signal: Any,
     predicted: float,
 ) -> Any | None:
+    """Serialize public proposals; defer cohort mutation until a signal is chosen."""
+
     route = getattr(bot, "_multi_strategy_signal_routes", {}).get(
         str(getattr(signal, "signal_id", "") or "")
     )
     if route is None:
         return await _ORIGINAL_MULTI_PROPOSAL_FOR(bot, signal, predicted)
-
-    pool_size = len(set(route.scope_ids))
-    selected, financial_ids = await _select_multi_route_cohort(bot, route)
-    route.scope_ids = set(selected)
-    if not selected:
-        bot.repository.mark_signal(signal.signal_id, status="SKIP_NO_COHORT_ACCOUNTS")
+    if _signal_is_stale(signal):
+        bot.repository.mark_signal(
+            signal.signal_id,
+            status="SKIP_COHORT_PROPOSAL_EXPIRED",
+            stale=True,
+        )
         return None
 
-    await activate_cycle_accounts(
-        bot,
-        financial_ids,
-        strategy=f"{route.family}/{route.side}/{route.role}",
+    async with _proposal_lock(bot):
+        if _signal_is_stale(signal):
+            bot.repository.mark_signal(
+                signal.signal_id,
+                status="SKIP_COHORT_PROPOSAL_QUEUE_EXPIRED",
+                stale=True,
+            )
+            return None
+        await _wait_for_proposal_start_slot(bot)
+        bot.logger.info(
+            "EXECUTION_PROPOSAL_SERIALIZED strategy=%s/%s role=%s symbol=%s "
+            "concurrent_proposals=false cohort_selection_deferred=true",
+            route.family,
+            route.side,
+            route.role,
+            str(getattr(signal, "symbol", "") or ""),
+        )
+        return await _ORIGINAL_MULTI_PROPOSAL_FOR(bot, signal, predicted)
+
+
+async def _rotating_buy_selected_accounts(
+    self: RFDir5TradingBot,
+    signal: Any,
+    economics: Any,
+) -> None:
+    original = _ORIGINAL_BUY_SELECTED_ACCOUNTS
+    if original is None:
+        raise RuntimeError("Rotating cohort purchase authority is not installed")
+
+    route = getattr(self, "_multi_strategy_signal_routes", {}).get(
+        str(getattr(signal, "signal_id", "") or "")
     )
-    bot.logger.warning(
+    if route is None:
+        await original(self, signal, economics)
+        return
+
+    original_scope = {
+        int(value)
+        for value in set(getattr(route, "scope_ids", set()) or set())
+    }
+    selected, financial_ids = await _select_multi_route_cohort(self, route)
+    if not selected:
+        self.repository.mark_signal(
+            signal.signal_id,
+            status="SKIP_NO_COHORT_ACCOUNTS",
+        )
+        return
+
+    route.scope_ids = set(selected)
+    self.logger.warning(
         "EXECUTION_COHORT_SELECTED strategy=%s/%s role=%s "
         "pool_accounts=%s selected_accounts=%s financial_accounts=%s "
-        "rotation=round_robin recovery_state_preserved=true",
+        "rotation=round_robin recovery_state_preserved=true "
+        "selection_at_purchase_boundary=true",
         route.family,
         route.side,
         route.role,
-        pool_size,
+        len(original_scope),
         len(selected),
         len(financial_ids),
     )
-    return await _ORIGINAL_MULTI_PROPOSAL_FOR(bot, signal, predicted)
+    try:
+        await activate_cycle_accounts(
+            self,
+            financial_ids,
+            strategy=f"{route.family}/{route.side}/{route.role}",
+        )
+        await original(self, signal, economics)
+    finally:
+        # The inner receipt and strategy routers must see only the chosen cohort.
+        # Restore the full subscribed pool afterwards so non-selected accounts are
+        # treated as standby, not as accounts whose own strategy failed.
+        route.scope_ids = set(original_scope)
 
 
 def install_rotating_execution_cohorts() -> None:
     """Keep only one strategy-specific round-robin cohort financially active."""
 
-    global _INSTALLED
+    global _INSTALLED, _ORIGINAL_BUY_SELECTED_ACCOUNTS
     if _INSTALLED:
         return
 
+    _ORIGINAL_BUY_SELECTED_ACCOUNTS = RFDir5TradingBot._buy_selected_accounts
     private_ws._still_configured = _cohort_still_configured
     multi._proposal_for = _rotating_multi_proposal_for
+    RFDir5TradingBot._buy_selected_accounts = _rotating_buy_selected_accounts
 
     RFDir5TradingBot._rotating_execution_cohorts_installed = True
     _INSTALLED = True
     LOGGER.warning(
         "ROTATING_EXECUTION_COHORTS_INSTALLED version=%s cohort_size=%s "
         "normal_reserve=%s persistent_private_sockets_for_all_accounts=false "
+        "proposal_concurrency=1 proposal_start_interval_seconds=%.2f "
+        "cohort_selection_at_purchase_boundary=true "
         "one_account_one_private_websocket=true bulk_purchase=false "
         "copy_trading=false per_account_recovery_state=true",
         ROTATING_COHORT_VERSION,
         COHORT_SIZE,
         NORMAL_RESERVE,
+        PROPOSAL_START_INTERVAL_SECONDS,
     )
