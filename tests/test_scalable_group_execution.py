@@ -39,13 +39,13 @@ class RestBulkExecutionHelperTests(unittest.IsolatedAsyncioTestCase):
                 {
                     "error": {
                         "code": "PAT_REQUIRED",
-                        "message": "Link your Deriv PAT with trade scope.",
+                        "message": "Link your Deriv API token with trade scope.",
                     }
                 }
             )
         )
 
-    async def test_missing_pat_is_rejected_before_rest_bulk_call(self) -> None:
+    async def test_missing_api_token_is_rejected_before_rest_bulk_call(self) -> None:
         status_updates: list[tuple[int | None, str, str]] = []
         bot = SimpleNamespace(
             _managed_account_id_for_token=lambda token: 7,
@@ -85,7 +85,7 @@ class RestBulkExecutionHelperTests(unittest.IsolatedAsyncioTestCase):
 
 
 class CredentialStatusTests(unittest.TestCase):
-    def test_connected_pat_hides_credential_input(self) -> None:
+    def test_connected_api_token_hides_credential_input(self) -> None:
         status = credential_status_from_execution("active", has_token=True)
         self.assertTrue(status["connected"])
         self.assertEqual(status["status"], "connected")
@@ -101,12 +101,14 @@ class CredentialStatusTests(unittest.TestCase):
         self.assertEqual(status["status"], "expired")
         self.assertIn("Settings > Credentials", status["message"])
 
-    def test_missing_token_prompts_trade_scope_pat(self) -> None:
+    def test_missing_token_prompts_trade_scope_api_token(self) -> None:
         status = credential_status_from_execution("bulk_execution_pat_required")
         self.assertFalse(status["connected"])
         self.assertEqual(status["status"], "missing")
-        self.assertIn("Personal Access Token", status["message"])
+        self.assertIn("Deriv API token", status["message"])
+        self.assertIn("Security & limits", status["message"])
         self.assertIn("trade scope", status["message"])
+        self.assertNotIn("Personal Access Token", status["message"])
 
 
 class RequestBrokerHelperTests(unittest.TestCase):
