@@ -40,6 +40,15 @@ def is_token_account_binding_failure(status: str, reason: str) -> bool:
     return any(marker in normalized_reason for marker in _BINDING_FAILURE_MARKERS)
 
 
+def _worker_encryption_key(bot: Any) -> str:
+    direct = str(getattr(bot, "encryption_key", "") or "").strip()
+    if direct:
+        return direct
+    config = getattr(bot, "test2_config", None)
+    deriv = getattr(config, "deriv", None)
+    return str(getattr(deriv, "token_encryption_key", "") or "").strip()
+
+
 def quarantine_undecryptable_enabled_accounts(bot: Any) -> int:
     """Disable unsafe enabled credential rows before runtime account loading.
 
@@ -49,9 +58,13 @@ def quarantine_undecryptable_enabled_accounts(bot: Any) -> int:
     """
 
     quarantined: dict[int, tuple[str, str]] = {}
-    encryption_key = str(getattr(bot, "encryption_key", "") or "").strip()
+    encryption_key = _worker_encryption_key(bot)
     if not encryption_key:
         setattr(bot, "_credential_failure_quarantined", quarantined)
+        bot.logger.warning(
+            "ACCOUNT_CREDENTIAL_QUARANTINE_SKIPPED reason=encryption_key_unavailable "
+            "global_execution_continues=true"
+        )
         return 0
 
     for row in list(bot.repository.list_managed_accounts()):
