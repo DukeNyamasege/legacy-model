@@ -11,13 +11,13 @@ import app.ai_digit_recovery_v1 as aidr
 import app.aidr_loss_continuation_fix as continuation
 import app.multi_strategy_runtime as multi
 import app.standardized_execution_runtime as standardized
-from app.repositories.rf_dir5_repository import VIRTUAL_MODE
+from app.repositories.rf_dir5_repository import RFDir5Repository, VIRTUAL_MODE
 from app.rf_dir5_bot import RFDir5TradingBot
 
 
 _INSTALLED = False
 _FINAL_INSTALLED = False
-SHARED_CLOCK_VERSION = "aidr-shared-signal-clock-v2"
+SHARED_CLOCK_VERSION = "aidr-shared-signal-clock-v3"
 
 
 def _all_strategy_accounts(bot: RFDir5TradingBot) -> list[tuple[str, str, int]]:
@@ -34,6 +34,20 @@ def _disable_parallel_manual_tick_generator(
     _tick_data: dict[str, Any],
 ) -> None:
     """Manual contracts are routed only after the System AIDR clock qualifies."""
+
+    return None
+
+
+def _suppress_legacy_rf_candidate(
+    _repository: RFDir5Repository,
+    _signal: Any,
+) -> None:
+    """Do not persist RF-PUT ghost candidates while AIDR is authoritative.
+
+    The inherited RF detector still helps maintain its market history, but its PUT
+    queue is disabled by AIDR. Persisting those never-executable rows produced
+    CREATED_NOT_CONSUMED noise and made every market movement look like an entry.
+    """
 
     return None
 
@@ -464,6 +478,7 @@ async def _shared_clock_buy_for_scope(
 
 def _apply_shared_clock_authority() -> None:
     multi._queue_non_aidr_signals = _disable_parallel_manual_tick_generator
+    RFDir5Repository.record_signal = _suppress_legacy_rf_candidate
     aidr._enabled_accounts = _all_strategy_accounts
     multi._filter_aidr_over_accounts = _all_strategy_accounts
     aidr._buy_for_scope = _shared_clock_buy_for_scope
@@ -473,7 +488,7 @@ def _apply_shared_clock_authority() -> None:
 
 
 def install_shared_system_strategy_clock() -> None:
-    """Disable the noisy manual generator before execution wrappers are built."""
+    """Disable noisy generators before execution wrappers are built."""
 
     global _INSTALLED
     if _INSTALLED:
@@ -490,7 +505,8 @@ def install_final_shared_system_strategy_clock() -> None:
     _FINAL_INSTALLED = True
     logging.getLogger(__name__).warning(
         "SHARED_SYSTEM_STRATEGY_CLOCK_FINAL version=%s entry_gate=system_aidr "
-        "manual_tick_generator=false exact_account_scope=true "
-        "proposal_verified_contract_cache=true transport=REST_BULK_PURCHASE",
+        "manual_tick_generator=false legacy_rf_candidate_persistence=false "
+        "exact_account_scope=true proposal_verified_contract_cache=true "
+        "transport=REST_BULK_PURCHASE",
         SHARED_CLOCK_VERSION,
     )
