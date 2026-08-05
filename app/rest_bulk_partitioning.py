@@ -9,6 +9,8 @@ from typing import Any
 
 import app.scalable_group_execution as scalable_group_execution
 import enhanced_bot
+from app.deriv.http import mask_app_id
+from app.repositories.rf_dir5_repository import VIRTUAL_MODE
 from enhanced_bot import (
     CandidateSignal,
     TradingBot,
@@ -19,13 +21,17 @@ from enhanced_bot import (
     sanitize_account_ids,
     token_tag,
 )
-from app.deriv.http import mask_app_id
 
 
 _INSTALLED = False
 REST_BULK_PARTITIONING_VERSION = "strategy-contract-markup-v1"
 REQUIRED_APP_MARKUP_PERCENTAGE = 3.0
 MAX_BULK_ACCOUNTS_PER_REQUEST = 100
+API_TOKEN_MESSAGE = (
+    "Please link your Deriv API token with trade scope in Settings > Credentials. "
+    "How to get it: open Deriv, go to Security & limits, open API token, create "
+    "a token with trade permission, then paste it here."
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,8 +65,7 @@ def _normalized_barrier(value: Any) -> str:
 
 def _route_for_signal(bot: TradingBot, signal: CandidateSignal) -> Any | None:
     routes = getattr(bot, "_multi_strategy_signal_routes", {})
-    route = routes.get(str(getattr(signal, "signal_id", "") or ""))
-    return route
+    return routes.get(str(getattr(signal, "signal_id", "") or ""))
 
 
 def _system_role_from_signal(signal: CandidateSignal) -> str:
@@ -91,7 +96,10 @@ def _partition_key(
         side = "over"
         role = _system_role_from_signal(signal)
     return BulkPartitionKey(
-        account_type=normalize_account_type(bot._account_environment_for_token(token), getattr(bot, "environment", "demo")),
+        account_type=normalize_account_type(
+            bot._account_environment_for_token(token),
+            getattr(bot, "environment", "demo"),
+        ),
         family=family,
         side=side,
         role=role,
@@ -101,7 +109,12 @@ def _partition_key(
         duration=int(getattr(bot, "duration", 1) or 1),
         duration_unit=str(getattr(bot, "duration_unit", "t") or "t"),
         stake=round(float(stake), 2),
-        martingale_enabled=bool(getattr(bot, "user_profiles", {}).get(token, {}).get("martingale_enabled", True)),
+        martingale_enabled=bool(
+            getattr(bot, "user_profiles", {}).get(token, {}).get(
+                "martingale_enabled",
+                True,
+            )
+        ),
     )
 
 
@@ -121,7 +134,7 @@ def _markup_error_results(
     configured = float(getattr(bot, "app_markup_percentage", 0.0) or 0.0)
     message = (
         f"Deriv App markup must be {REQUIRED_APP_MARKUP_PERCENTAGE:.2f}% before "
-        "financial execution. Update the registered Deriv app markup and the VPS config."
+        "financial execution. Update the registered Deriv app markup and VPS config."
     )
     for token, account_id in eligible_accounts:
         bot._set_account_execution_status(
@@ -148,6 +161,32 @@ def _markup_error_results(
     ]
 
 
+def _virtual_rejection(
+    bot: TradingBot,
+    *,
+    managed_id: int | None,
+    account_id: str,
+    stake: float,
+) -> dict[str, Any] | None:
+    if managed_id is None:
+        return None
+    protection = bot.rf_repository.virtual_protection_for_account(
+        managed_account_id=managed_id,
+        account_id_masked=mask_account_id(account_id),
+    )
+    if str(protection.get("mode") or "") != VIRTUAL_MODE:
+        return None
+    return {
+        "account_id": account_id,
+        "stake_amount": stake,
+        "execution_transport": "REST_BULK_PURCHASE",
+        "error": {
+            "code": "VIRTUAL_MODE",
+            "message": "Financial purchase blocked while virtual protection is active.",
+        },
+    }
+
+
 async def _partitioned_purchase_accounts_by_stake(
     self: TradingBot,
     *,
@@ -156,34 +195,43 @@ async def _partitioned_purchase_accounts_by_stake(
     stake_by_token: dict[str, float],
     pre_trade_profit_ratio: float = 0.0,
 ) -> list[dict[str, Any]]:
-    if not eligible_accounts:
+    requested = list(eligible_accounts)
+    if not requested:
         return []
     if not _markup_configured(self):
-        return _markup_error_results(self, eligible_accounts, stake_by_token)
+        results = _markup_error_results(self, requested, stake_by_token)
+        scalable_group_execution._record_transport_outcomes(self, signal, requested, results)
+        return results
 
     partitions: dict[BulkPartitionKey, list[tuple[str, str]]] = {}
     rejected: list[dict[str, Any]] = []
-    for token, account_id in eligible_accounts:
+    for token, account_id in requested:
+        managed_id = self._managed_account_id_for_token(token)
+        stake = round(float(stake_by_token.get(token, 0.0) or 0.0), 2)
+        virtual = _virtual_rejection(
+            self,
+            managed_id=managed_id,
+            account_id=account_id,
+            stake=stake,
+        )
+        if virtual is not None:
+            rejected.append(virtual)
+            continue
         if not self._bulk_purchase_token_capable(token):
-            message = (
-                "Please link your Deriv API token with trade scope in Settings > "
-                "Credentials to enable bulk purchase trading."
-            )
             self._set_account_execution_status(
-                self._managed_account_id_for_token(token),
+                managed_id,
                 "bulk_execution_pat_required",
-                message,
+                API_TOKEN_MESSAGE,
             )
             rejected.append(
                 {
                     "account_id": account_id,
-                    "stake_amount": round(float(stake_by_token.get(token, 0.0) or 0.0), 2),
+                    "stake_amount": stake,
                     "execution_transport": "REST_BULK_PURCHASE",
-                    "error": {"code": "API_TOKEN_REQUIRED", "message": message},
+                    "error": {"code": "API_TOKEN_REQUIRED", "message": API_TOKEN_MESSAGE},
                 }
             )
             continue
-        stake = round(float(stake_by_token[token]), 2)
         key = _partition_key(self, signal, token=token, stake=stake)
         partitions.setdefault(key, []).append((token, account_id))
 
@@ -201,9 +249,17 @@ async def _partitioned_purchase_accounts_by_stake(
             item[0].stake,
         ),
     ):
-        accounts.sort(key=lambda item: (self._managed_account_id_for_token(item[0]) or 2**63, item[1]))
+        accounts.sort(
+            key=lambda item: (self._managed_account_id_for_token(item[0]) or 2**63, item[1])
+        )
         for offset in range(0, len(accounts), MAX_BULK_ACCOUNTS_PER_REQUEST):
-            shards.append((key, offset // MAX_BULK_ACCOUNTS_PER_REQUEST + 1, accounts[offset : offset + MAX_BULK_ACCOUNTS_PER_REQUEST]))
+            shards.append(
+                (
+                    key,
+                    offset // MAX_BULK_ACCOUNTS_PER_REQUEST + 1,
+                    accounts[offset : offset + MAX_BULK_ACCOUNTS_PER_REQUEST],
+                )
+            )
         self.logger.warning(
             "REST_BULK_PARTITION_READY signal_id=%s account_type=%s strategy_group=%s "
             "symbol=%s contract=%s stake=%.2f accounts=%s shards=%s "
@@ -215,7 +271,8 @@ async def _partitioned_purchase_accounts_by_stake(
             key.contract_label,
             key.stake,
             len(accounts),
-            (len(accounts) + MAX_BULK_ACCOUNTS_PER_REQUEST - 1) // MAX_BULK_ACCOUNTS_PER_REQUEST,
+            (len(accounts) + MAX_BULK_ACCOUNTS_PER_REQUEST - 1)
+            // MAX_BULK_ACCOUNTS_PER_REQUEST,
             REQUIRED_APP_MARKUP_PERCENTAGE,
             float(getattr(self, "app_markup_percentage", 0.0) or 0.0),
         )
@@ -263,6 +320,18 @@ async def _partitioned_purchase_accounts_by_stake(
             transaction["partition_account_type"] = key.account_type
             transaction.setdefault("execution_transport", "REST_BULK_PURCHASE")
             transactions.append(transaction)
+
+    scalable_group_execution._record_transport_outcomes(self, signal, requested, transactions)
+    confirmed = sum(1 for item in transactions if item.get("contract_id") and not item.get("error"))
+    self.logger.warning(
+        "PURCHASE_EXECUTION_SUMMARY signal_id=%s partitions=%s confirmed=%s failed=%s "
+        "markup_percentage=%.2f transport=REST_BULK_PURCHASE",
+        str(getattr(signal, "signal_id", "") or ""),
+        len(shards),
+        confirmed,
+        len(transactions) - confirmed,
+        REQUIRED_APP_MARKUP_PERCENTAGE,
+    )
     return transactions
 
 
@@ -282,11 +351,10 @@ async def _partitioned_purchase_stake_group_for_environment(
         raise ValueError("Deriv bulk purchase shards cannot exceed 100 accounts")
     environment = normalize_account_type(environment, getattr(self, "environment", "demo"))
     if partition_key is None:
-        first_token = eligible_accounts[0][0]
         partition_key = _partition_key(
             self,
             signal,
-            token=first_token,
+            token=eligible_accounts[0][0],
             stake=round(float(stake_amount), 2),
         )
     if environment == "real" and not self._real_trading_allowed():
@@ -532,11 +600,15 @@ def install_rest_bulk_partitioning() -> None:
     """Partition REST bulk purchases by strategy, contract, stake and account mode."""
 
     global _INSTALLED
-    if _INSTALLED:
-        return
+    already_final = (
+        getattr(TradingBot._purchase_accounts_by_stake, "__name__", "")
+        == "_partitioned_purchase_accounts_by_stake"
+    )
     TradingBot._purchase_accounts_by_stake = _partitioned_purchase_accounts_by_stake
     TradingBot._purchase_stake_group_for_environment = _partitioned_purchase_stake_group_for_environment
     scalable_group_execution._BASE_REST_BULK_PURCHASE = _partitioned_purchase_accounts_by_stake
+    if _INSTALLED and already_final:
+        return
     _INSTALLED = True
     logging.getLogger(__name__).warning(
         "REST_BULK_PARTITIONING_INSTALLED version=%s group_by=strategy,side,role,symbol,contract,barrier,account_type,stake "
