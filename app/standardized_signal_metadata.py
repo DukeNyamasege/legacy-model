@@ -65,11 +65,19 @@ def _install_for(signal_type: type[Any]) -> None:
 
 
 def install_standardized_signal_metadata() -> None:
-    """Permit transient cycle IDs on slotted strategy signal dataclasses."""
+    """Permit transient cycle IDs and activate one shared System signal clock."""
 
     global _INSTALLED
     if _INSTALLED:
         return
     _install_for(DigitSignal)
     _install_for(SignalEvent)
+
+    # Install after Strategy V2 has resolved persisted selections but before the
+    # standardized and guaranteed-delivery wrappers capture AIDR purchase hooks.
+    # This removes the independent per-tick manual candidate generator and makes
+    # the System AIDR gate the sole entry clock for every selectable contract.
+    from app.shared_system_strategy_clock import install_shared_system_strategy_clock
+
+    install_shared_system_strategy_clock()
     _INSTALLED = True
