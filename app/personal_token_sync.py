@@ -11,8 +11,10 @@ import app.api as base_api
 from app.token_store import decrypt_auth_payload, encrypt_auth_payload
 
 
+PersonalApiTokenRequest = base_api.PersonalApiTokenRequest
+
 _INSTALLED = False
-_VERSION = "20260805-linked-account-token-sync-1"
+_VERSION = "20260805-linked-account-token-sync-2"
 _TOKEN_REQUIRED_STATUSES = {
     "credential_error",
     "credential_decrypt_error",
@@ -36,19 +38,24 @@ _TOKEN_SYNC_JS = r'''
 /* FOA_LINKED_ACCOUNT_TOKEN_SYNC: one trade-scoped token, exact account validation. */
 (() => {
   "use strict";
-  const VERSION = "20260805-1";
+  const VERSION = "20260805-2";
+
+  const setText = (node, value) => {
+    if (node && node.textContent !== value) node.textContent = value;
+  };
 
   function applyCopy() {
     const card = document.querySelector(".foa-token-card");
     if (!card) return;
 
-    const description = card.querySelector(".foa-card-head p");
-    if (description) {
-      description.textContent = "One trade-scoped token can authorize linked Demo and Real Options accounts.";
-    }
-
-    const label = card.querySelector("#token-form label > span");
-    if (label) label.textContent = "Deriv trade-scoped API token";
+    setText(
+      card.querySelector(".foa-card-head p"),
+      "One trade-scoped token can authorize linked Demo and Real Options accounts."
+    );
+    setText(
+      card.querySelector("#token-form label > span"),
+      "Deriv trade-scoped API token"
+    );
 
     const input = card.querySelector("#token-form input[name='api_token']");
     if (input) {
@@ -59,7 +66,10 @@ _TOKEN_SYNC_JS = r'''
     const note = card.querySelector(".foa-security-note p");
     if (note) {
       note.id = "foa-token-sync-guidance";
-      note.textContent = "The token is verified against the selected account ID, its trade permission and active Options status. When valid, it is encrypted and synchronized to every Demo or Real account returned by Deriv for that token. Invalid or unrelated tokens are rejected.";
+      setText(
+        note,
+        "The token is verified against the selected account ID, its trade permission and active Options status. When valid, it is encrypted and synchronized to every Demo or Real account returned by Deriv for that token. Invalid or unrelated tokens are rejected."
+      );
     }
 
     card.dataset.linkedAccountTokenSync = VERSION;
@@ -138,9 +148,9 @@ def _provider_accounts_by_id(accounts: Any) -> dict[str, dict[str, Any]]:
     return result
 
 
-def _safe_provider_error(exc: requests.HTTPError) -> tuple[int, str]:
+def _safe_provider_error(exc: requests.HTTPError) -> tuple[int, str, bool]:
     response = exc.response
-    status_code = int(response.status_code) if response is not None else 400
+    provider_status = int(response.status_code) if response is not None else 0
     detail = ""
     if response is not None:
         try:
@@ -152,9 +162,24 @@ def _safe_provider_error(exc: requests.HTTPError) -> tuple[int, str]:
         except Exception:
             detail = str(response.text or "").strip()
     detail = " ".join(detail.split())[:360]
-    if status_code in {401, 403}:
-        return 400, detail or "The token is invalid, expired, or missing trade permission."
-    return 400, detail or "Deriv rejected the token verification request."
+
+    if provider_status in {429} or provider_status >= 500:
+        return (
+            502,
+            detail or "Deriv token verification is temporarily unavailable.",
+            False,
+        )
+    if provider_status in {401, 403}:
+        return (
+            400,
+            detail or "The token is invalid, expired, or missing trade permission.",
+            True,
+        )
+    return (
+        400,
+        detail or "Deriv rejected the token verification request.",
+        True,
+    )
 
 
 def _reject_current_account(account: dict[str, Any], reason: str) -> None:
@@ -215,8 +240,6 @@ def _synced_payload(
 def _install_token_route(app: Any) -> None:
     _remove_route(app, "/me/api-token", "POST")
 
-    PersonalApiTokenRequest = base_api.PersonalApiTokenRequest
-
     @app.post("/me/api-token")
     def save_and_sync_personal_api_token(
         request: Request,
@@ -238,18 +261,26 @@ def _install_token_route(app: Any) -> None:
         try:
             provider_accounts = base_api.load_options_accounts(api_token)
         except requests.HTTPError as exc:
-            status_code, reason = _safe_provider_error(exc)
-            _reject_current_account(account, reason)
-            base_api.REPOSITORY.audit(
-                "PERSONAL_API_TOKEN_REJECTED",
-                "account-dashboard",
-                request.client.host if request.client else "unknown",
-                {
-                    "account_id_masked": account.get("account_id_masked", ""),
-                    "reason": reason,
-                },
+            status_code, reason, reject_credential = _safe_provider_error(exc)
+            if reject_credential:
+                _reject_current_account(account, reason)
+                base_api.REPOSITORY.audit(
+                    "PERSONAL_API_TOKEN_REJECTED",
+                    "account-dashboard",
+                    request.client.host if request.client else "unknown",
+                    {
+                        "account_id_masked": account.get("account_id_masked", ""),
+                        "reason": reason,
+                    },
+                )
+            raise HTTPException(
+                status_code=status_code,
+                detail=(
+                    f"API token rejected: {reason}"
+                    if reject_credential
+                    else f"API token verification unavailable: {reason} No credential was changed."
+                ),
             )
-            raise HTTPException(status_code=status_code, detail=f"API token rejected: {reason}")
         except requests.RequestException as exc:
             raise HTTPException(
                 status_code=502,
@@ -282,7 +313,7 @@ def _install_token_route(app: Any) -> None:
         verified_at = datetime.now(timezone.utc).isoformat()
         verified_ids = sorted(accounts_by_id)
         synced_types: set[str] = set()
-        synced_accounts: list[str] = []
+        synced_account_ids: set[str] = set()
 
         for managed_row in base_api.REPOSITORY.list_managed_accounts():
             payload = _load_managed_payload(managed_row, account)
@@ -323,7 +354,7 @@ def _install_token_route(app: Any) -> None:
                 ),
             )
             synced_types.add(provider_type)
-            synced_accounts.append(base_api.mask_account_id(managed_account_id))
+            synced_account_ids.add(managed_account_id)
             try:
                 base_api.REPOSITORY.update_account_balance(
                     account_id=managed_account_id,
@@ -334,7 +365,7 @@ def _install_token_route(app: Any) -> None:
             except (TypeError, ValueError):
                 pass
 
-        if base_api.mask_account_id(current_account_id) not in synced_accounts:
+        if current_account_id not in synced_account_ids:
             reason = "The selected account could not be synchronized after verification."
             _reject_current_account(account, reason)
             raise HTTPException(status_code=409, detail=reason)
@@ -347,7 +378,7 @@ def _install_token_route(app: Any) -> None:
                 "account_id_masked": base_api.mask_account_id(current_account_id),
                 "provider_account_type": _provider_account_type(current_provider_account),
                 "shared_account_types": sorted(synced_types),
-                "synced_account_count": len(synced_accounts),
+                "synced_account_count": len(synced_account_ids),
                 "trade_scope_verified": True,
             },
         )
@@ -358,7 +389,7 @@ def _install_token_route(app: Any) -> None:
             "account_id": base_api.mask_account_id(current_account_id),
             "provider_account_type": _provider_account_type(current_provider_account),
             "shared_account_types": sorted(synced_types),
-            "synced_account_count": len(synced_accounts),
+            "synced_account_count": len(synced_account_ids),
             "message": (
                 "Token verified and synchronized to every linked Options account "
                 "returned by Deriv."
@@ -397,9 +428,10 @@ def install_personal_token_sync(app: Any) -> None:
     if _INSTALLED:
         return
 
-    # Existing `/me`, lifecycle and settings code resolves these globals at request
-    # time. Extending the blocked statuses makes the token input field reappear for
-    # unreadable, rejected and account-mismatch credentials.
+    # A sibling's stored token is not enough to hide the input field. Each linked
+    # account must receive its own synchronized encrypted copy after provider
+    # verification, while the worker may still reuse the same credential value.
+    base_api.has_personal_trading_api_token = base_api.has_trading_api_token
     base_api.execution_requires_new_token = _requires_api_token
     base_api.execution_token_was_rejected = _token_was_rejected
     _install_token_route(app)
