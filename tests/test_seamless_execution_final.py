@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import unittest
 from pathlib import Path
 
 from app.seamless_execution_runtime import _normalize_bulk_response
@@ -187,3 +188,15 @@ def test_final_installers_are_last_authorities() -> None:
     assert api.index("install_seamless_personal_execution(app)") < api.index(
         "install_final_seamless_personal_execution(app)"
     )
+
+
+def load_tests(
+    _loader: unittest.TestLoader,
+    _tests: unittest.TestSuite,
+    _pattern: str | None,
+) -> unittest.TestSuite:
+    suite = unittest.TestSuite()
+    for name, value in sorted(globals().items()):
+        if name.startswith("test_") and callable(value):
+            suite.addTest(unittest.FunctionTestCase(value, description=name))
+    return suite
