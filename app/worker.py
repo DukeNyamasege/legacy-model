@@ -191,22 +191,24 @@ async def run_worker() -> None:
     # refresh account membership before execution.
     install_guaranteed_signal_delivery()
 
-    # Partition the official Deriv REST bulk-purchase transport by account type,
-    # strategy group, market, contract type, barrier and stake. Every request uses
-    # one contract parameter set, at most 100 accounts, per-account API tokens and
-    # the mandatory 3% registered-app markup route.
-    install_rest_bulk_partitioning()
-
-    # Final financial transport authority. Contract metadata is shared publicly;
-    # purchases are grouped into official REST bulk-purchase partitions. Public WS
-    # remains for ticks/proposals and private streams remain only for settlement.
+    # Install the scalable receipt/missing-reason layer first.
     install_scalable_group_execution()
+
+    # Partition the official Deriv REST bulk-purchase transport by account type,
+    # strategy group, market, contract type, barrier and stake. This is installed
+    # after the scalable layer so it is the final purchase authority while still
+    # feeding exact transport outcomes back into receipt diagnostics.
+    install_rest_bulk_partitioning()
 
     # NORMAL, first recovery and post-virtual execute as fresh role subcycles. A
     # role creates its proposal only when its own REST bulk partition is ready, so
     # a previous role cannot leave it holding an aging signal. Any role/account
     # error remains isolated and cannot stop the global worker.
     install_scalable_group_execution_hardening()
+
+    # Re-apply final purchase authority because role hardening imports late
+    # scalability helpers. This call is idempotent and keeps REST partitions final.
+    install_rest_bulk_partitioning()
 
     install_production_worker_integration()
     install_every_tick_debug_logging()
