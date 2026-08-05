@@ -6,6 +6,7 @@ from fastapi import Request
 
 import app.api as base_api
 from app.custom_martingale import read_account_martingale_settings
+from app.personal_token_sync import install_personal_token_sync
 from app.token_store import decrypt_auth_payload
 
 
@@ -139,6 +140,11 @@ def install_personal_me_session_fix(app: Any) -> None:
         _apply_settled_trade_consistency(payload)
         _apply_custom_martingale_settings(payload, request)
         return payload
+
+    # One verified trade-scoped token is account-owner scoped, not Demo-only or
+    # Real-only. The installer validates the selected account ID and synchronizes
+    # the credential to every linked Options account returned by Deriv.
+    install_personal_token_sync(app)
 
     app.state.personal_me_session_fix_installed = True
     _INSTALLED = True
