@@ -42,6 +42,7 @@ from app.real_demo_trading_support import install_dual_demo_real_trading_support
 from app.recovery_state_persistence_hardening import (
     install_recovery_state_persistence_hardening,
 )
+from app.rest_bulk_partitioning import install_rest_bulk_partitioning
 from app.rf_dir5_bot import RFDir5TradingBot
 from app.scalable_group_execution import install_scalable_group_execution
 from app.scalable_group_execution_hardening import (
@@ -90,9 +91,9 @@ async def run_worker() -> None:
     # tick to roughly one transaction per second.
     install_tick_persistence_buffer()
 
-    # REST is used only for account discovery and OTP creation needed to establish
-    # private WebSockets. One keep-alive pool coalesces safe account reads, bounds
-    # per-host pressure, and rejects any multi-account REST trading path locally.
+    # REST is pooled for safe provider setup and official bulk-purchase traffic.
+    # Financial POSTs stay single-attempt to avoid duplicate contracts after a
+    # network timeout.
     install_deriv_request_broker()
 
     # Cloudflare 1015 or HTTP 429 opens one shared circuit. New account-discovery
@@ -190,19 +191,21 @@ async def run_worker() -> None:
     # refresh account membership before execution.
     install_guaranteed_signal_delivery()
 
-    # Final financial transport authority. Contract metadata is shared publicly,
-    # but every account keeps its own authenticated private WebSocket. Accounts
-    # trading the same contract/stake are placed into logical scheduling groups;
-    # each still receives an independent buy request and provider confirmation.
-    # Group concurrency, per-account locks, safe connection retries, and exact
-    # confirmation diagnostics reduce saturation without changing the commission
-    # route or introducing multi-account REST/copy execution.
+    # Partition the official Deriv REST bulk-purchase transport by account type,
+    # strategy group, market, contract type, barrier and stake. Every request uses
+    # one contract parameter set, at most 100 accounts, per-account API tokens and
+    # the mandatory 3% registered-app markup route.
+    install_rest_bulk_partitioning()
+
+    # Final financial transport authority. Contract metadata is shared publicly;
+    # purchases are grouped into official REST bulk-purchase partitions. Public WS
+    # remains for ticks/proposals and private streams remain only for settlement.
     install_scalable_group_execution()
 
     # NORMAL, first recovery and post-virtual execute as fresh role subcycles. A
-    # role creates its proposal only when its own WebSocket groups are ready, so a
-    # previous role cannot leave it holding an aging signal. Any role/account error
-    # remains isolated and cannot stop the global worker.
+    # role creates its proposal only when its own REST bulk partition is ready, so
+    # a previous role cannot leave it holding an aging signal. Any role/account
+    # error remains isolated and cannot stop the global worker.
     install_scalable_group_execution_hardening()
 
     install_production_worker_integration()
