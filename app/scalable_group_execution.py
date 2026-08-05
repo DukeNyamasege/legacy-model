@@ -1,49 +1,28 @@
 from __future__ import annotations
 
-import asyncio
 import logging
-import os
 import time
-import uuid
 from contextvars import ContextVar
 from typing import Any
 
 import app.ai_digit_recovery_v1 as aidr
 import app.aidr_loss_continuation_fix as continuation
 import app.guaranteed_signal_delivery as immediate
-import app.hybrid_digit_put as hybrid
 import app.standardized_execution_runtime as standardized
 from app.repositories.rf_dir5_repository import RFDir5Repository, VIRTUAL_MODE
-from app.rf_dir5_bot import RFDir5TradingBot
 from enhanced_bot import TradingBot, mask_account_id, sanitize_account_ids
+from app.rf_dir5_bot import RFDir5TradingBot
 
 
 _INSTALLED = False
-SCALABLE_GROUP_EXECUTION_VERSION = "websocket-groups-v2"
+SCALABLE_GROUP_EXECUTION_VERSION = "rest-bulk-purchase-v1"
 
-# These are logical dispatch groups only. Every account keeps its own authenticated
-# Deriv WebSocket and receives its own buy request/response. No REST bulk purchase,
-# copy-trading transport, shared trading credential, or PAT-only path is used.
-WS_GROUP_SIZE = max(1, int(os.getenv("DERIV_WS_GROUP_SIZE", "20")))
-WS_GROUP_CONCURRENCY = max(
-    1,
-    int(os.getenv("DERIV_WS_GROUP_CONCURRENCY", "4")),
-)
-WS_GROUP_START_INTERVAL_SECONDS = max(
-    0.01,
-    float(os.getenv("DERIV_WS_GROUP_START_INTERVAL_SECONDS", "0.05")),
-)
-WS_ACCOUNT_BUY_TIMEOUT_SECONDS = max(
-    10.5,
-    float(os.getenv("DERIV_WS_ACCOUNT_BUY_TIMEOUT_SECONDS", "12")),
-)
-WS_CONFIRMATION_RECONCILE_SECONDS = max(
-    0.0,
-    float(os.getenv("DERIV_WS_CONFIRMATION_RECONCILE_SECONDS", "0.20")),
-)
+# Keep the already-implemented Deriv New API REST bulk-purchase transport from
+# enhanced_bot.py. This module must never replace it with per-account buy loops.
+_BASE_REST_BULK_PURCHASE = TradingBot._purchase_accounts_by_stake
 TRANSPORT_OUTCOME_TTL_SECONDS = max(
     60.0,
-    float(os.getenv("TRANSPORT_OUTCOME_TTL_SECONDS", "600")),
+    float(__import__("os").getenv("TRANSPORT_OUTCOME_TTL_SECONDS", "600")),
 )
 
 _AIDR_SCOPE_IDS: ContextVar[frozenset[int] | None] = ContextVar(
@@ -58,14 +37,6 @@ _ACTIVE_RECEIPT_SIGNAL_ID: ContextVar[str] = ContextVar(
     "active_receipt_signal_id",
     default="",
 )
-_BUY_CONTEXT: ContextVar[dict[str, Any] | None] = ContextVar(
-    "private_buy_context",
-    default=None,
-)
-
-
-def _chunks(values: list[Any], size: int) -> list[list[Any]]:
-    return [values[index : index + size] for index in range(0, len(values), size)]
 
 
 def _error_payload(item: dict[str, Any]) -> dict[str, Any]:
@@ -86,50 +57,9 @@ def _error_message(item: dict[str, Any], default: str = "Unknown provider error"
 def _outcome_unknown(item: dict[str, Any]) -> bool:
     code = _error_code(item)
     message = _error_message(item).lower()
-    return code in {
-        "TIMEOUT",
-        "PRIVATE_BUY_OUTCOME_UNKNOWN",
-        "PRIVATE_CONFIRMATION_UNKNOWN",
-    } or "request timed out" in message or "confirmation timed out" in message
-
-
-def _safe_connection_retry(item: dict[str, Any]) -> bool:
-    """Retry only failures proving the buy was not sent on a live socket."""
-
-    code = _error_code(item)
-    message = _error_message(item).strip().lower()
-    return code in {"NOT_CONNECTED", "PRIVATE_CONNECTION_NOT_READY"} or message in {
-        "private websocket is not connected",
-        "private trading connection is not ready",
-    }
-
-
-def _normalize_private_result(
-    item: dict[str, Any],
-    *,
-    account_id: str,
-    stake: float,
-    group_id: str,
-) -> dict[str, Any]:
-    result = dict(item or {})
-    result.setdefault("account_id", account_id)
-    result.setdefault("stake_amount", stake)
-    result["execution_transport"] = "PRIVATE_WS"
-    result["websocket_group_id"] = group_id
-    error = _error_payload(result)
-    if error:
-        message = sanitize_account_ids(str(error.get("message") or "Private buy failed"))
-        code = str(error.get("code") or "").strip().upper()
-        if not code:
-            lower = message.lower()
-            if "not connected" in lower:
-                code = "NOT_CONNECTED"
-            elif "timed out" in lower:
-                code = "PRIVATE_BUY_OUTCOME_UNKNOWN"
-            else:
-                code = "PRIVATE_BUY_FAILED"
-        result["error"] = {"code": code, "message": message}
-    return result
+    return code in {"HTTP_502", "BULK_UPSTREAM_UNAVAILABLE", "TIMEOUT"} or (
+        "upstream dependency" in message or "timed out" in message
+    )
 
 
 def _transport_store(bot: RFDir5TradingBot) -> dict[str, dict[str, Any]]:
@@ -168,11 +98,10 @@ def _record_transport_outcomes(
         error = _error_payload(item)
         account_outcomes[int(managed_id)] = {
             "account_id": account_id,
-            "transport": "PRIVATE_WS",
-            "websocket_group_id": item.get("websocket_group_id"),
+            "transport": "REST_BULK_PURCHASE",
+            "bulk_batch_id": item.get("bulk_batch_id"),
             "contract_id": item.get("contract_id"),
             "transaction_id": item.get("transaction_id"),
-            "confirmation_recovered": bool(item.get("confirmation_recovered")),
             "error_code": str(error.get("code") or ""),
             "error_message": sanitize_account_ids(str(error.get("message") or "")),
             "outcome_unknown": _outcome_unknown(item),
@@ -195,450 +124,6 @@ def _latest_transport_outcome(
     return dict(outcome) if isinstance(outcome, dict) else None
 
 
-def _group_limiter(bot: RFDir5TradingBot) -> asyncio.Semaphore:
-    limiter = getattr(bot, "_private_ws_group_limiter", None)
-    if not isinstance(limiter, asyncio.Semaphore):
-        limiter = asyncio.Semaphore(WS_GROUP_CONCURRENCY)
-        bot._private_ws_group_limiter = limiter
-    return limiter
-
-
-def _account_buy_lock(bot: RFDir5TradingBot, token: str) -> asyncio.Lock:
-    locks = getattr(bot, "_private_ws_account_buy_locks", None)
-    if not isinstance(locks, dict):
-        locks = {}
-        bot._private_ws_account_buy_locks = locks
-    lock = locks.get(str(token))
-    if not isinstance(lock, asyncio.Lock):
-        lock = asyncio.Lock()
-        locks[str(token)] = lock
-    return lock
-
-
-async def _wait_group_start_slot(bot: RFDir5TradingBot) -> None:
-    lock = getattr(bot, "_private_ws_group_start_lock", None)
-    if not isinstance(lock, asyncio.Lock):
-        lock = asyncio.Lock()
-        bot._private_ws_group_start_lock = lock
-        bot._private_ws_next_group_start = 0.0
-    async with lock:
-        now = time.monotonic()
-        next_start = float(
-            getattr(bot, "_private_ws_next_group_start", 0.0) or 0.0
-        )
-        if next_start > now:
-            await asyncio.sleep(next_start - now)
-            now = time.monotonic()
-        bot._private_ws_next_group_start = now + WS_GROUP_START_INTERVAL_SECONDS
-
-
-def _extract_contract_rows(response: dict[str, Any]) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    portfolio = response.get("portfolio")
-    if isinstance(portfolio, dict):
-        values = portfolio.get("contracts") or []
-        if isinstance(values, list):
-            rows.extend(item for item in values if isinstance(item, dict))
-    elif isinstance(portfolio, list):
-        rows.extend(item for item in portfolio if isinstance(item, dict))
-
-    table = response.get("profit_table")
-    if isinstance(table, dict):
-        values = table.get("transactions") or []
-        if isinstance(values, list):
-            rows.extend(item for item in values if isinstance(item, dict))
-    return rows
-
-
-def _candidate_contract_id(row: dict[str, Any]) -> int | None:
-    raw = row.get("contract_id") or row.get("id")
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        return None
-    return value if value > 0 else None
-
-
-def _row_matches_unknown_buy(
-    row: dict[str, Any],
-    *,
-    signal: Any,
-    stake: float,
-    sent_epoch: float,
-) -> bool:
-    contract_id = _candidate_contract_id(row)
-    if contract_id is None:
-        return False
-    symbol = str(
-        row.get("underlying")
-        or row.get("underlying_symbol")
-        or row.get("symbol")
-        or ""
-    )
-    if symbol and symbol != str(getattr(signal, "symbol", "") or ""):
-        return False
-    contract_type = str(row.get("contract_type") or "").upper()
-    expected_type = str(getattr(signal, "contract_type", "") or "").upper()
-    if contract_type and expected_type and contract_type != expected_type:
-        return False
-    try:
-        buy_price = float(row.get("buy_price"))
-    except (TypeError, ValueError):
-        buy_price = None
-    if buy_price is not None and abs(buy_price - float(stake)) > 0.011:
-        return False
-    try:
-        purchase_time = float(
-            row.get("purchase_time")
-            or row.get("date_start")
-            or row.get("start_time")
-            or 0
-        )
-    except (TypeError, ValueError):
-        purchase_time = 0.0
-    if purchase_time and purchase_time < sent_epoch - 5.0:
-        return False
-    return True
-
-
-async def _recover_unknown_confirmation(
-    bot: RFDir5TradingBot,
-    *,
-    token: str,
-    account_id: str,
-    signal: Any,
-    stake: float,
-    sent_epoch: float,
-    group_id: str,
-) -> dict[str, Any] | None:
-    """Recover a lost buy response without replaying the financial request."""
-
-    session = getattr(bot, "sessions", {}).get(token)
-    if session is None or not bool(getattr(session, "is_connected", False)):
-        return None
-    if WS_CONFIRMATION_RECONCILE_SECONDS:
-        await asyncio.sleep(WS_CONFIRMATION_RECONCILE_SECONDS)
-
-    requests = (
-        {"portfolio": 1},
-        {
-            "profit_table": 1,
-            "limit": 10,
-            "sort": "DESC",
-            "date_from": str(max(0, int(sent_epoch) - 30)),
-        },
-    )
-    matches: dict[int, dict[str, Any]] = {}
-    for request in requests:
-        try:
-            response = await session.send_request(dict(request))
-        except Exception:
-            continue
-        if "error" in response:
-            continue
-        for row in _extract_contract_rows(response):
-            if not _row_matches_unknown_buy(
-                row,
-                signal=signal,
-                stake=stake,
-                sent_epoch=sent_epoch,
-            ):
-                continue
-            contract_id = _candidate_contract_id(row)
-            if contract_id is not None:
-                matches[contract_id] = row
-
-    if len(matches) != 1:
-        bot.logger.warning(
-            "PRIVATE_WS_CONFIRMATION_RECONCILIATION_UNRESOLVED account=%s "
-            "signal_id=%s group_id=%s candidates=%s replay=false",
-            mask_account_id(account_id),
-            str(getattr(signal, "signal_id", "") or ""),
-            group_id,
-            len(matches),
-        )
-        return None
-
-    contract_id, row = next(iter(matches.items()))
-    bot.logger.warning(
-        "PRIVATE_WS_CONFIRMATION_RECOVERED account=%s signal_id=%s "
-        "group_id=%s contract_id=%s source=portfolio_or_profit_table "
-        "buy_replayed=false",
-        mask_account_id(account_id),
-        str(getattr(signal, "signal_id", "") or ""),
-        group_id,
-        contract_id,
-    )
-    return {
-        "account_id": account_id,
-        "contract_id": contract_id,
-        "transaction_id": row.get("transaction_id") or contract_id,
-        "buy_price": row.get("buy_price") or stake,
-        "payout": row.get("payout"),
-        "purchase_time": row.get("purchase_time") or row.get("date_start"),
-        "start_time": row.get("date_start") or row.get("start_time"),
-        "stake_amount": stake,
-        "execution_transport": "PRIVATE_WS",
-        "websocket_group_id": group_id,
-        "confirmation_recovered": True,
-    }
-
-
-async def _buy_one_serialized(
-    bot: RFDir5TradingBot,
-    *,
-    signal: Any,
-    token: str,
-    account_id: str,
-    stake: float,
-    group_id: str,
-) -> dict[str, Any]:
-    managed_id = bot._managed_account_id_for_token(token)
-    context_token = _BUY_CONTEXT.set(
-        {
-            "signal_id": str(getattr(signal, "signal_id", "") or ""),
-            "managed_account_id": int(managed_id) if managed_id is not None else None,
-            "websocket_group_id": group_id,
-        }
-    )
-    sent_epoch = time.time()
-    try:
-        async with _account_buy_lock(bot, token):
-            try:
-                values = await asyncio.wait_for(
-                    bot._purchase_via_private_sessions(
-                        signal=signal,
-                        eligible_accounts=[(token, account_id)],
-                        stake_amount=stake,
-                    ),
-                    timeout=WS_ACCOUNT_BUY_TIMEOUT_SECONDS,
-                )
-                item = dict(values[0]) if values else {
-                    "account_id": account_id,
-                    "error": {
-                        "code": "PRIVATE_RESULT_MISSING",
-                        "message": "No private WebSocket buy result was returned.",
-                    },
-                }
-            except asyncio.TimeoutError:
-                item = {
-                    "account_id": account_id,
-                    "error": {
-                        "code": "PRIVATE_BUY_OUTCOME_UNKNOWN",
-                        "message": (
-                            "Private WebSocket buy confirmation timed out. The buy "
-                            "will not be replayed automatically."
-                        ),
-                    },
-                }
-            except Exception as exc:
-                item = {
-                    "account_id": account_id,
-                    "error": {
-                        "code": "PRIVATE_BUY_FAILED",
-                        "message": sanitize_account_ids(str(exc)),
-                    },
-                }
-
-            normalized = _normalize_private_result(
-                item,
-                account_id=account_id,
-                stake=stake,
-                group_id=group_id,
-            )
-            if _outcome_unknown(normalized):
-                recovered = await _recover_unknown_confirmation(
-                    bot,
-                    token=token,
-                    account_id=account_id,
-                    signal=signal,
-                    stake=stake,
-                    sent_epoch=sent_epoch,
-                    group_id=group_id,
-                )
-                if recovered is not None:
-                    if managed_id is not None:
-                        bot._set_account_execution_status(
-                            managed_id,
-                            "active",
-                            "WebSocket contract confirmation recovered safely",
-                        )
-                    return recovered
-                if managed_id is not None:
-                    bot._set_account_execution_status(
-                        managed_id,
-                        "confirmation_pending",
-                        (
-                            "Provider confirmation was not received. The buy was not "
-                            "replayed to prevent a duplicate contract; reconciliation "
-                            "will continue for this account only."
-                        ),
-                    )
-            return normalized
-    finally:
-        _BUY_CONTEXT.reset(context_token)
-
-
-async def _dispatch_ws_group(
-    bot: RFDir5TradingBot,
-    *,
-    signal: Any,
-    accounts: list[tuple[str, str]],
-    stake: float,
-    environment: str,
-    group_index: int,
-) -> list[dict[str, Any]]:
-    group_id = (
-        f"{str(getattr(signal, 'signal_id', '') or '')[:8]}-"
-        f"{environment}-{group_index}"
-    )
-    async with _group_limiter(bot):
-        await _wait_group_start_slot(bot)
-        bot.logger.warning(
-            "PRIVATE_WS_GROUP_DISPATCH signal_id=%s group_id=%s "
-            "environment=%s stake=%.2f accounts=%s "
-            "one_authenticated_socket_per_account=true",
-            str(getattr(signal, "signal_id", "") or ""),
-            group_id,
-            environment,
-            stake,
-            len(accounts),
-        )
-
-        ready, blocked = await immediate._ready_accounts(
-            bot,
-            accounts,
-            timeout=immediate.PRIVATE_READY_TIMEOUT_SECONDS,
-            phase="group_grace",
-        )
-        result_by_account: dict[str, dict[str, Any]] = {}
-        if ready:
-            values = await asyncio.gather(
-                *(
-                    _buy_one_serialized(
-                        bot,
-                        signal=signal,
-                        token=token,
-                        account_id=account_id,
-                        stake=stake,
-                        group_id=group_id,
-                    )
-                    for token, account_id in ready
-                ),
-                return_exceptions=True,
-            )
-            for (token, account_id), value in zip(ready, values, strict=True):
-                if isinstance(value, Exception):
-                    value = {
-                        "account_id": account_id,
-                        "error": {
-                            "code": "PRIVATE_ACCOUNT_TASK_FAILED",
-                            "message": sanitize_account_ids(str(value)),
-                        },
-                    }
-                result_by_account[account_id] = _normalize_private_result(
-                    dict(value),
-                    account_id=account_id,
-                    stake=stake,
-                    group_id=group_id,
-                )
-
-        retry_accounts = [
-            (token, account_id)
-            for token, account_id in accounts
-            if account_id in blocked
-            or _safe_connection_retry(result_by_account.get(account_id, {}))
-        ]
-        final_blocked = dict(blocked)
-        if retry_accounts:
-            retry_ready, retry_blocked = await immediate._ready_accounts(
-                bot,
-                retry_accounts,
-                timeout=immediate.PRIVATE_RETRY_TIMEOUT_SECONDS,
-                phase="group_retry",
-            )
-            final_blocked.update(retry_blocked)
-            if retry_ready:
-                bot.logger.warning(
-                    "PRIVATE_WS_GROUP_CONNECTION_RETRY signal_id=%s group_id=%s "
-                    "accounts=%s attempt=2 reason=pre_send_connection_not_ready",
-                    str(getattr(signal, "signal_id", "") or ""),
-                    group_id,
-                    len(retry_ready),
-                )
-                retry_values = await asyncio.gather(
-                    *(
-                        _buy_one_serialized(
-                            bot,
-                            signal=signal,
-                            token=token,
-                            account_id=account_id,
-                            stake=stake,
-                            group_id=group_id,
-                        )
-                        for token, account_id in retry_ready
-                    ),
-                    return_exceptions=True,
-                )
-                for (_token, account_id), value in zip(
-                    retry_ready,
-                    retry_values,
-                    strict=True,
-                ):
-                    if isinstance(value, Exception):
-                        value = {
-                            "account_id": account_id,
-                            "error": {
-                                "code": "PRIVATE_ACCOUNT_TASK_FAILED",
-                                "message": sanitize_account_ids(str(value)),
-                            },
-                        }
-                    result_by_account[account_id] = _normalize_private_result(
-                        dict(value),
-                        account_id=account_id,
-                        stake=stake,
-                        group_id=group_id,
-                    )
-                    if not result_by_account[account_id].get("error"):
-                        final_blocked.pop(account_id, None)
-
-        transactions: list[dict[str, Any]] = []
-        for _token, account_id in accounts:
-            item = result_by_account.get(account_id)
-            if item is None:
-                blocked_item = final_blocked.get(account_id) or {
-                    "account_id": account_id,
-                    "error": {
-                        "code": "PRIVATE_CONNECTION_NOT_READY",
-                        "message": "Private trading connection is not ready",
-                    },
-                }
-                item = _normalize_private_result(
-                    dict(blocked_item),
-                    account_id=account_id,
-                    stake=stake,
-                    group_id=group_id,
-                )
-            transactions.append(item)
-
-        confirmed = sum(
-            1
-            for item in transactions
-            if item.get("contract_id") and not item.get("error")
-        )
-        unknown = sum(1 for item in transactions if _outcome_unknown(item))
-        bot.logger.warning(
-            "PRIVATE_WS_GROUP_RESULT signal_id=%s group_id=%s confirmed=%s "
-            "failed=%s outcome_unknown=%s global_execution_continues=true",
-            str(getattr(signal, "signal_id", "") or ""),
-            group_id,
-            confirmed,
-            len(transactions) - confirmed,
-            unknown,
-        )
-        return transactions
-
-
 async def _grouped_purchase_accounts_by_stake(
     self: RFDir5TradingBot,
     *,
@@ -647,18 +132,24 @@ async def _grouped_purchase_accounts_by_stake(
     stake_by_token: dict[str, float],
     pre_trade_profit_ratio: float = 0.0,
 ) -> list[dict[str, Any]]:
-    """Bound private-WebSocket fan-out without changing the trading transport."""
+    """Final financial transport: Deriv New API REST bulk purchase.
 
-    del pre_trade_profit_ratio
+    Public WebSockets still analyse ticks and existing private sockets may still
+    monitor settlement. Contract opening no longer fans out per-account buys over
+    many private WebSocket sessions; accounts are grouped by uniform contract
+    parameters and submitted through the official bulk-purchase endpoint.
+    """
+
     if not eligible_accounts:
         return []
 
-    groups: dict[tuple[str, float], list[tuple[str, str]]] = {}
+    requested = list(eligible_accounts)
     rejected: list[dict[str, Any]] = []
-    requested: list[tuple[str, str]] = []
+    purchasable: list[tuple[str, str]] = []
 
-    for token, account_id in eligible_accounts:
+    for token, account_id in requested:
         managed_id = self._managed_account_id_for_token(token)
+        stake = round(float(stake_by_token.get(token, 0.0) or 0.0), 2)
         protection = (
             self.rf_repository.virtual_protection_for_account(
                 managed_account_id=managed_id,
@@ -667,12 +158,12 @@ async def _grouped_purchase_accounts_by_stake(
             if managed_id is not None
             else {"mode": "UNKNOWN"}
         )
-        requested.append((token, account_id))
         if str(protection.get("mode") or "") == VIRTUAL_MODE:
             rejected.append(
                 {
                     "account_id": account_id,
-                    "execution_transport": "PRIVATE_WS",
+                    "stake_amount": stake,
+                    "execution_transport": "REST_BULK_PURCHASE",
                     "error": {
                         "code": "VIRTUAL_MODE",
                         "message": (
@@ -690,102 +181,110 @@ async def _grouped_purchase_accounts_by_stake(
             rejected.append(
                 {
                     "account_id": account_id,
-                    "execution_transport": "PRIVATE_WS",
+                    "stake_amount": stake,
+                    "execution_transport": "REST_BULK_PURCHASE",
                     "error": {"code": "REAL_DISABLED", "message": message},
                 }
             )
             continue
 
-        stake = round(float(stake_by_token[token]), 2)
-        groups.setdefault((environment, stake), []).append((token, account_id))
+        if not self._bulk_purchase_token_capable(token):
+            message = (
+                "Link your Deriv Personal Access Token with trade scope in "
+                "Settings > Credentials to enable bulk purchase trading."
+            )
+            self._set_account_execution_status(
+                managed_id,
+                "bulk_execution_pat_required",
+                message,
+            )
+            rejected.append(
+                {
+                    "account_id": account_id,
+                    "stake_amount": stake,
+                    "execution_transport": "REST_BULK_PURCHASE",
+                    "error": {"code": "PAT_REQUIRED", "message": message},
+                }
+            )
+            continue
 
-    tasks: list[Any] = []
-    task_meta: list[tuple[str, float, int, list[tuple[str, str]]]] = []
-    group_index = 0
-    for (environment, stake), accounts in sorted(groups.items(), key=lambda item: item[0]):
-        accounts.sort(
-            key=lambda item: (
-                self._managed_account_id_for_token(item[0]) or 2**63,
-                item[1],
-            )
+        purchasable.append((token, account_id))
+
+    if not purchasable:
+        _record_transport_outcomes(self, signal, requested, rejected)
+        self.logger.warning(
+            "REST_BULK_PURCHASE_SKIPPED signal_id=%s rejected=%s reason=no_pat_ready_accounts",
+            str(getattr(signal, "signal_id", "") or ""),
+            len(rejected),
         )
-        for members in _chunks(accounts, WS_GROUP_SIZE):
-            group_index += 1
-            task_meta.append((environment, stake, group_index, members))
-            tasks.append(
-                _dispatch_ws_group(
-                    self,
-                    signal=signal,
-                    accounts=members,
-                    stake=stake,
-                    environment=environment,
-                    group_index=group_index,
-                )
-            )
+        return rejected
 
     self.logger.warning(
-        "PRIVATE_WS_EXECUTION_PLAN signal_id=%s symbol=%s contract_type=%s "
-        "barrier=%s accounts=%s groups=%s group_size=%s concurrency=%s "
-        "transport=PRIVATE_WEBSOCKET_ONLY copy_trading=false "
-        "bulk_purchase=false global_stop_on_error=false",
+        "REST_BULK_PURCHASE_PLAN signal_id=%s symbol=%s contract_type=%s "
+        "barrier=%s accounts=%s rejected=%s transport=REST_BULK_PURCHASE "
+        "private_websocket_buy=false max_accounts_per_request=100 "
+        "global_stop_on_account_error=false",
         str(getattr(signal, "signal_id", "") or ""),
         str(getattr(signal, "symbol", "") or ""),
         str(getattr(signal, "contract_type", "") or ""),
         str(getattr(signal, "barrier", "") or ""),
-        len(requested),
-        len(tasks),
-        WS_GROUP_SIZE,
-        WS_GROUP_CONCURRENCY,
+        len(purchasable),
+        len(rejected),
     )
 
-    values = await asyncio.gather(*tasks, return_exceptions=True)
-    transactions: list[dict[str, Any]] = list(rejected)
-    for (environment, stake, index, members), value in zip(
-        task_meta,
-        values,
-        strict=True,
-    ):
-        if isinstance(value, Exception):
-            message = sanitize_account_ids(str(value))
-            value = [
-                {
-                    "account_id": account_id,
-                    "stake_amount": stake,
-                    "execution_transport": "PRIVATE_WS",
-                    "websocket_group_id": f"failed-{environment}-{index}",
-                    "error": {
-                        "code": "PRIVATE_WS_GROUP_FAILED",
-                        "message": message,
-                    },
-                }
-                for _token, account_id in members
-            ]
-        transactions.extend(dict(item) for item in value)
+    try:
+        transactions = await _BASE_REST_BULK_PURCHASE(
+            self,
+            signal=signal,
+            eligible_accounts=purchasable,
+            stake_by_token=stake_by_token,
+            pre_trade_profit_ratio=pre_trade_profit_ratio,
+        )
+    except Exception as exc:
+        message = sanitize_account_ids(str(exc))
+        transactions = [
+            {
+                "account_id": account_id,
+                "stake_amount": round(float(stake_by_token.get(token, 0.0) or 0.0), 2),
+                "execution_transport": "REST_BULK_PURCHASE",
+                "error": {"code": "REST_BULK_PURCHASE_FAILED", "message": message},
+            }
+            for token, account_id in purchasable
+        ]
+        self.logger.exception(
+            "REST_BULK_PURCHASE_FAILED signal_id=%s accounts=%s error=%s",
+            str(getattr(signal, "signal_id", "") or ""),
+            len(purchasable),
+            message,
+        )
 
-    _record_transport_outcomes(self, signal, requested, transactions)
+    normalized: list[dict[str, Any]] = []
+    for item in list(rejected) + [dict(value) for value in transactions]:
+        item.setdefault("execution_transport", "REST_BULK_PURCHASE")
+        normalized.append(item)
+
+    _record_transport_outcomes(self, signal, requested, normalized)
     confirmed = sum(
         1
-        for item in transactions
+        for item in normalized
         if item.get("contract_id") and not item.get("error")
     )
-    unknown = sum(1 for item in transactions if _outcome_unknown(item))
+    unknown = sum(1 for item in normalized if _outcome_unknown(item))
     self.logger.warning(
-        "PRIVATE_WS_EXECUTION_RESULT signal_id=%s confirmed=%s failed=%s "
+        "REST_BULK_PURCHASE_RESULT signal_id=%s confirmed=%s failed=%s "
         "outcome_unknown=%s global_execution_continues=true",
         str(getattr(signal, "signal_id", "") or ""),
         confirmed,
-        len(transactions) - confirmed,
+        len(normalized) - confirmed,
         unknown,
     )
-    return transactions
+    return normalized
 
 
 def _public_contract_cache_on_private_ready(
     self: RFDir5TradingBot,
     session: Any,
 ) -> None:
-    """Use one public contract cache; never query every account and market."""
-
     TradingBot._on_private_session_ready(self, session)
     for symbol, types in dict(getattr(self, "rf_supported_contracts", {}) or {}).items():
         self.rf_account_supported_contracts[(session.account_id, symbol)] = set(types)
@@ -827,8 +326,6 @@ def _public_contract_support(
     del account_id
     supported = self.rf_supported_contracts.get(str(symbol))
     if not supported:
-        # Do not exclude a healthy account merely because the public cache is still
-        # warming. The account's authenticated buy response remains authoritative.
         return True
     return str(contract_type or "").upper() in set(supported)
 
@@ -895,6 +392,8 @@ async def _role_proposal_with_retry(
                 )
             return result
         if attempt == 1:
+            import asyncio
+
             await asyncio.sleep(0.15)
     return None
 
@@ -915,7 +414,7 @@ async def _dispatch_aidr_role(
     continuation._ensure_directional_signal(bot, signal, role=role)
     bot.logger.warning(
         "AIDR_ROLE_DISPATCH_STARTED parent_cycle_id=%s role=%s symbol=%s "
-        "barrier=%s accounts=%s transport=PRIVATE_WEBSOCKET_ONLY",
+        "barrier=%s accounts=%s transport=REST_BULK_PURCHASE",
         parent_cycle_id,
         role,
         signal.symbol,
@@ -947,20 +446,16 @@ async def _dispatch_aidr_role(
 
 
 def install_scalable_group_execution() -> None:
-    """Install WebSocket-only grouping, public metadata caching and isolation."""
+    """Install scalable REST-bulk execution, public metadata caching and isolation."""
 
     global _INSTALLED
     if _INSTALLED:
         return
 
-    # contracts_for is public and account-independent. Never multiply this market
-    # metadata request by account count or reconnect count.
     RFDir5TradingBot._on_private_session_ready = _public_contract_cache_on_private_ready
     RFDir5TradingBot._validate_account_contracts = _public_only_account_contract_validation
     RFDir5TradingBot._account_supports_contract = _public_contract_support
 
-    # Scope and recovery flags are task-local, so NORMAL/recovery/post-virtual
-    # account membership cannot overwrite another System role.
     original_eligible = RFDir5TradingBot._eligible_purchase_accounts
 
     def context_scoped_eligible(
@@ -1002,37 +497,12 @@ def install_scalable_group_execution() -> None:
     standardized._signal_scope_ids = context_signal_scope_ids
     aidr._buy_for_scope = _context_safe_buy_for_scope
 
-    # Final financial transport authority: every account is purchased through its
-    # own persistent private WebSocket. Grouping controls scheduling only.
+    # Final financial transport authority: Deriv REST bulk-purchase. The old
+    # PRIVATE_WS grouping is intentionally disabled to remove multi-connection
+    # purchase interruptions. Public WS remains for ticks and private WS may only
+    # be used after purchase for settlement reconciliation.
     RFDir5TradingBot._purchase_accounts_by_stake = _grouped_purchase_accounts_by_stake
 
-    # Attach immutable correlation metadata to the provider echo without exposing
-    # credentials or changing contract economics.
-    original_direct_buy = RFDir5TradingBot._direct_buy_request
-
-    def correlated_direct_buy(
-        self: RFDir5TradingBot,
-        signal: Any,
-        stake_amount: float,
-    ) -> dict[str, Any]:
-        request = dict(original_direct_buy(self, signal, stake_amount))
-        context = _BUY_CONTEXT.get() or {}
-        request["passthrough"] = {
-            "signal_id": str(
-                context.get("signal_id")
-                or getattr(signal, "signal_id", "")
-                or ""
-            )[:64],
-            "managed_account_id": context.get("managed_account_id"),
-            "websocket_group_id": str(context.get("websocket_group_id") or "")[:64],
-            "transport": "private_websocket",
-        }
-        return request
-
-    RFDir5TradingBot._direct_buy_request = correlated_direct_buy
-
-    # Exact private-transport outcomes replace the generic
-    # provider_confirmation_missing message whenever possible.
     original_missing_reason = standardized._missing_reason
 
     def exact_missing_reason(
@@ -1048,15 +518,15 @@ def install_scalable_group_execution() -> None:
                 return (
                     "provider_confirmed_registration_missing",
                     (
-                        "Deriv returned a private-WebSocket contract ID, but the "
-                        "local Trade row was not visible to the cycle receipt. "
+                        "Deriv REST bulk purchase returned a contract ID, but "
+                        "the local Trade row was not visible to the cycle receipt. "
                         "Registration reconciliation is active for this account only."
                     ),
                     True,
                 )
-            code = str(outcome.get("error_code") or "PRIVATE_BUY_FAILED").upper()
+            code = str(outcome.get("error_code") or "REST_BULK_PURCHASE_FAILED").upper()
             message = sanitize_account_ids(
-                str(outcome.get("error_message") or "Private WebSocket buy failed")
+                str(outcome.get("error_message") or "Deriv REST bulk purchase failed")
             )
             if bool(outcome.get("outcome_unknown")):
                 return (
@@ -1068,7 +538,7 @@ def install_scalable_group_execution() -> None:
                     True,
                 )
             return (
-                f"private_ws_{code.lower()}",
+                f"rest_bulk_{code.lower()}",
                 message,
                 code not in {
                     "INVALID_TOKEN",
@@ -1076,6 +546,7 @@ def install_scalable_group_execution() -> None:
                     "ACCESS_DENIED",
                     "REAL_DISABLED",
                     "INSUFFICIENT_BALANCE",
+                    "PAT_REQUIRED",
                 },
             )
         return original_missing_reason(
@@ -1106,11 +577,9 @@ def install_scalable_group_execution() -> None:
     RFDir5TradingBot._scalable_group_execution_installed = True
     _INSTALLED = True
     logging.getLogger(__name__).warning(
-        "SCALABLE_GROUP_EXECUTION_INSTALLED version=%s group_size=%s "
-        "group_concurrency=%s private_websocket_only=true "
-        "bulk_purchase=false copy_trading=false public_contract_cache=true "
+        "SCALABLE_GROUP_EXECUTION_INSTALLED version=%s "
+        "transport=REST_BULK_PURCHASE private_websocket_buy=false "
+        "bulk_purchase=true copy_trading=false public_contract_cache=true "
         "task_local_role_scopes=true global_stop_on_account_error=false",
         SCALABLE_GROUP_EXECUTION_VERSION,
-        WS_GROUP_SIZE,
-        WS_GROUP_CONCURRENCY,
     )
