@@ -37,10 +37,10 @@ def _positive_float(name: str, default: float, minimum: float = 0.0) -> float:
     return max(float(minimum), value)
 
 
-def _token_fingerprint(token: str) -> str:
-    if not token:
+def _credential_fingerprint(value: str) -> str:
+    if not value:
         return "public"
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()[:12]
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
 
 
 def _is_rate_limit_html(text: str) -> bool:
@@ -56,9 +56,9 @@ def _is_rate_limit_html(text: str) -> bool:
     )
 
 
-def _request_is_trade(path: str) -> bool:
+def _is_disallowed_multi_account_trade(path: str) -> bool:
     value = str(path or "").lower()
-    return "/contracts/bulk-purchase/" in value
+    return "/trading/v1/options/contracts/bulk-purchase/" in value
 
 
 def _request_is_otp(path: str) -> bool:
@@ -76,7 +76,7 @@ def _request_is_account_list(method: str, path: str) -> bool:
 def _coalesce_key(
     method: str,
     path: str,
-    token: str,
+    credential: str,
     json_data: dict[str, Any] | None,
 ) -> tuple[str, str, str, str] | None:
     if not _request_is_account_list(method, path):
@@ -85,7 +85,7 @@ def _coalesce_key(
     return (
         str(method).upper(),
         str(path),
-        _token_fingerprint(token),
+        _credential_fingerprint(credential),
         hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12],
     )
 
@@ -103,9 +103,9 @@ class _BrokerConfig:
     @classmethod
     def load(cls) -> "_BrokerConfig":
         return cls(
-            connector_limit=_positive_int("DERIV_HTTP_CONNECTOR_LIMIT", 32),
-            limit_per_host=_positive_int("DERIV_HTTP_LIMIT_PER_HOST", 16),
-            request_concurrency=_positive_int("DERIV_HTTP_CONCURRENCY", 16),
+            connector_limit=_positive_int("DERIV_HTTP_CONNECTOR_LIMIT", 24),
+            limit_per_host=_positive_int("DERIV_HTTP_LIMIT_PER_HOST", 8),
+            request_concurrency=_positive_int("DERIV_HTTP_CONCURRENCY", 8),
             total_timeout_seconds=_positive_float(
                 "DERIV_HTTP_TOTAL_TIMEOUT_SECONDS",
                 20.0,
@@ -130,7 +130,7 @@ class _BrokerConfig:
 
 
 class _DerivRequestBroker:
-    """One keep-alive HTTP pool for all Deriv REST traffic in one worker."""
+    """One keep-alive pool for account discovery and private-WS OTP setup."""
 
     def __init__(self) -> None:
         self.config = _BrokerConfig.load()
@@ -183,7 +183,8 @@ class _DerivRequestBroker:
             )
             LOGGER.warning(
                 "DERIV_HTTP_BROKER_READY connector_limit=%s limit_per_host=%s "
-                "request_concurrency=%s keepalive=true account_read_coalescing=true",
+                "request_concurrency=%s keepalive=true account_read_coalescing=true "
+                "financial_execution_transport=PRIVATE_WEBSOCKET_ONLY",
                 self.config.connector_limit,
                 self.config.limit_per_host,
                 self.config.request_concurrency,
@@ -197,8 +198,6 @@ class _DerivRequestBroker:
             await session.close()
 
     def _attempts(self, method: str, path: str) -> int:
-        if _request_is_trade(path):
-            return 1
         if str(method).upper() == "GET":
             return 3
         if _request_is_otp(path):
@@ -226,18 +225,34 @@ class _DerivRequestBroker:
         path: str,
         app_id: str,
         base_url: str,
-        token: str = "",
+        credential: str = "",
         json_data: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        if _is_disallowed_multi_account_trade(path):
+            LOGGER.error(
+                "MULTI_ACCOUNT_REST_TRADE_BLOCKED path=%s "
+                "financial_execution_transport=PRIVATE_WEBSOCKET_ONLY",
+                path,
+            )
+            return {
+                "error": {
+                    "code": "MULTI_ACCOUNT_REST_TRADE_DISABLED",
+                    "message": (
+                        "This worker is configured for account-scoped private "
+                        "WebSocket execution only."
+                    ),
+                }
+            }
+
         self._ensure_loop_primitives()
-        key = _coalesce_key(method, path, token, json_data)
+        key = _coalesce_key(method, path, credential, json_data)
         if key is None:
             return await self._perform(
                 method,
                 path,
                 app_id,
                 base_url,
-                token,
+                credential,
                 json_data,
             )
 
@@ -258,7 +273,7 @@ class _DerivRequestBroker:
                         path,
                         app_id,
                         base_url,
-                        token,
+                        credential,
                         json_data,
                     ),
                     name=f"deriv_http_{key[0]}_{key[2]}",
@@ -285,7 +300,7 @@ class _DerivRequestBroker:
         path: str,
         app_id: str,
         base_url: str,
-        token: str,
+        credential: str,
         json_data: dict[str, Any] | None,
     ) -> dict[str, Any]:
         attempts = self._attempts(method, path)
@@ -301,7 +316,7 @@ class _DerivRequestBroker:
                 path,
                 app_id,
                 base_url,
-                token,
+                credential,
                 json_data,
             )
             if attempt >= attempts or not self._retryable_response(last_response):
@@ -310,14 +325,13 @@ class _DerivRequestBroker:
                 min(2.0, self.config.retry_base_seconds * (2 ** (attempt - 1)))
             )
             LOGGER.warning(
-                "DERIV_HTTP_SAFE_RETRY method=%s path=%s token=%s attempt=%s/%s "
-                "trade_request=%s",
+                "DERIV_HTTP_SAFE_RETRY method=%s path=%s credential=%s "
+                "attempt=%s/%s purpose=account_setup_or_otp",
                 str(method).upper(),
                 path,
-                _token_fingerprint(token),
+                _credential_fingerprint(credential),
                 attempt + 1,
                 attempts,
-                _request_is_trade(path),
             )
         return last_response
 
@@ -327,13 +341,13 @@ class _DerivRequestBroker:
         path: str,
         app_id: str,
         base_url: str,
-        token: str,
+        credential: str,
         json_data: dict[str, Any] | None,
     ) -> dict[str, Any]:
         session = await self._http_session()
         assert self._request_slots is not None
         url = f"{base_url.rstrip('/')}{path}"
-        headers = deriv_headers(app_id, bearer_token=token or "")
+        headers = deriv_headers(app_id, bearer_token=credential or "")
         try:
             async with self._request_slots:
                 async with session.request(
@@ -367,7 +381,7 @@ class _DerivRequestBroker:
                         return {
                             "error": {
                                 "code": "RATE_LIMITED",
-                                "message": "Deriv API rate-limited this VPS; request was delayed",
+                                "message": "Deriv API rate-limited this VPS; backing off",
                             }
                         }
                     return {
@@ -377,30 +391,16 @@ class _DerivRequestBroker:
                         }
                     }
         except asyncio.TimeoutError:
-            code = (
-                "BULK_OUTCOME_UNKNOWN"
-                if _request_is_trade(path)
-                else "REQUEST_TIMEOUT"
-            )
             return {
                 "error": {
-                    "code": code,
-                    "message": (
-                        "Bulk purchase response timed out; automatic replay is disabled"
-                        if _request_is_trade(path)
-                        else "Deriv request timed out"
-                    ),
+                    "code": "REQUEST_TIMEOUT",
+                    "message": "Deriv account setup request timed out",
                 }
             }
         except (aiohttp.ClientError, OSError) as exc:
-            code = (
-                "BULK_OUTCOME_UNKNOWN"
-                if _request_is_trade(path)
-                else "CONNECTION_ERROR"
-            )
             return {
                 "error": {
-                    "code": code,
+                    "code": "CONNECTION_ERROR",
                     "message": sanitize_account_ids(str(exc)),
                 }
             }
@@ -435,7 +435,7 @@ async def _brokered_rest_request(
 
 
 def install_deriv_request_broker() -> None:
-    """Replace per-request HTTP sessions with one bounded keep-alive pool."""
+    """Pool only account/OTP REST traffic; financial execution stays on WS."""
 
     global _INSTALLED
     if _INSTALLED:
@@ -457,5 +457,6 @@ def install_deriv_request_broker() -> None:
     LOGGER.warning(
         "DERIV_REQUEST_BROKER_INSTALLED shared_keepalive=true "
         "account_list_coalescing=true bounded_concurrency=true "
-        "trade_timeout_replay=false",
+        "financial_execution_transport=PRIVATE_WEBSOCKET_ONLY "
+        "multi_account_rest_trade_disabled=true",
     )
