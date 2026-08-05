@@ -15,7 +15,7 @@ from app.rf_dir5_bot import RFDir5TradingBot
 
 
 _INSTALLED = False
-SCALABLE_ROLE_HARDENING_VERSION = "fresh-websocket-role-subcycles-v2"
+SCALABLE_ROLE_HARDENING_VERSION = "fresh-websocket-role-subcycles-v3"
 
 
 async def _fresh_role_subcycle(
@@ -99,13 +99,16 @@ async def _fresh_role_subcycle(
 
 
 async def _fresh_grouped_aidr_arbitrate(bot: RFDir5TradingBot) -> None:
-    """Run every active System role as its own fresh WebSocket subcycle.
+    """Run a bounded rotating System cohort through fresh role subcycles.
 
-    The parent System opportunity chooses one market. Each active role creates a
-    new current proposal immediately before its own private-WebSocket dispatch, so
-    OVER-1, OVER-3 and OVER-4 cannot expire while waiting for another role. Role
-    failures remain account-group scoped and never stop the worker.
+    One parent opportunity chooses one market. A maximum round-robin cohort is
+    selected before provider proposal work, so the platform doesn't keep every
+    configured account WebSocket active or send one signal to the whole account
+    population. Every selected account still uses its own authenticated private
+    WebSocket and retains its own recovery state.
     """
+
+    from app import rotating_execution_cohorts as cohorts
 
     cfg = bot.test2_config.hybrid_strategy
     await asyncio.sleep(float(getattr(cfg, "candidate_window_ms", 75)) / 1000.0)
@@ -120,21 +123,24 @@ async def _fresh_grouped_aidr_arbitrate(bot: RFDir5TradingBot) -> None:
             return
 
         normal, recovery, post_virtual, virtual = aidr._account_recovery_groups(bot)
-        scopes = {
-            continuation.NORMAL_ROLE: set(normal),
-            continuation.FIRST_RECOVERY_ROLE: set(recovery),
-            continuation.POST_VIRTUAL_ROLE: set(post_virtual) | set(virtual),
-        }
+        selection = await cohorts.select_aidr_cycle(
+            bot,
+            normal=set(normal),
+            recovery=set(recovery),
+            post_virtual=set(post_virtual),
+            virtual=set(virtual),
+        )
+        scopes = selection.scopes
         if not any(scopes.values()):
             return
 
-        # Every financial account uses its own private WebSocket. Warm missing
-        # sessions while the shared public trigger proposal is evaluated.
-        all_scope_ids = set().union(*scopes.values())
-        for token, account_id in list(getattr(bot, "valid_clients", []) or []):
-            managed_id = bot._managed_account_id_for_token(token)
-            if managed_id is not None and int(managed_id) in all_scope_ids:
-                grouped.immediate._ensure_session(bot, token, account_id)
+        # Only the selected financial cohort receives active private sessions.
+        # Virtual-only members keep their simulated state without a financial WS.
+        await cohorts.activate_cycle_accounts(
+            bot,
+            selection.financial_ids,
+            strategy="digits/over/system",
+        )
 
         fresh = [
             candidate
@@ -149,45 +155,19 @@ async def _fresh_grouped_aidr_arbitrate(bot: RFDir5TradingBot) -> None:
         if not fresh:
             return
 
-        trigger_results = await asyncio.gather(
-            *(
-                continuation._proposal_ok(
-                    bot,
-                    candidate,
-                    continuation.AIDR_MINIMUM_LIVE_EDGE,
-                )
-                for candidate in fresh
-            ),
-            return_exceptions=True,
-        )
-        qualified: list[tuple[float, Any, Any]] = []
-        for result in trigger_results:
-            if isinstance(result, Exception) or result is None:
-                continue
-            signal, economics = result
-            score = float(signal.validated_edge or 0.0) + 0.05 * float(
-                signal.lower95 or 0.0
-            )
-            qualified.append((score, signal, economics))
-        if not qualified:
+        # The old path requested provider proposals for every fresh market at the
+        # same instant. Rank locally, then test only a few candidates sequentially.
+        trigger_result = await cohorts.select_aidr_trigger(bot, fresh)
+        if trigger_result is None:
             return
-
-        qualified.sort(
-            key=lambda item: (
-                -float(item[0]),
-                -float(getattr(item[1], "weighted_probability", 0.0) or 0.0),
-                str(getattr(item[1], "symbol", "") or ""),
-            )
-        )
-        _score, trigger_signal, _economics = qualified[0]
+        trigger_signal, _economics = trigger_result
         symbol = str(trigger_signal.symbol)
         trigger_role = continuation._candidate_role(trigger_signal)
         parent_cycle_id = str(uuid.uuid4())
         result_by_role: dict[str, str] = {}
 
-        # Role order stays deterministic because registration state is shared, but
-        # the accounts inside each role are dispatched in bounded WebSocket groups.
-        # Each role receives a newly created proposal immediately before transport.
+        # Role order stays deterministic. Each selected role receives a fresh
+        # proposal immediately before its own bounded private-WebSocket dispatch.
         for role in standardized.AIDR_EXECUTION_ORDER:
             scope = scopes[role]
             if not scope:
@@ -234,6 +214,7 @@ async def _fresh_grouped_aidr_arbitrate(bot: RFDir5TradingBot) -> None:
             "trigger_role=%s role_results=%s normal_accounts=%s "
             "first_recovery_accounts=%s post_virtual_accounts=%s "
             "fresh_role_subcycles=true role_scope_context=task_local "
+            "rotating_cohort=true cohort_limit=%s all_accounts_same_signal=false "
             "private_websocket_only=true bulk_purchase=false copy_trading=false "
             "global_stop_on_role_error=false",
             parent_cycle_id,
@@ -243,6 +224,7 @@ async def _fresh_grouped_aidr_arbitrate(bot: RFDir5TradingBot) -> None:
             len(scopes[continuation.NORMAL_ROLE]),
             len(scopes[continuation.FIRST_RECOVERY_ROLE]),
             len(scopes[continuation.POST_VIRTUAL_ROLE]),
+            cohorts.COHORT_SIZE,
         )
 
 
@@ -253,7 +235,7 @@ async def _drain_fresh_aidr(bot: RFDir5TradingBot) -> None:
 
 
 def install_scalable_group_execution_hardening() -> None:
-    """Make fresh private-WebSocket role subcycles the final authority."""
+    """Make rotating private-WebSocket role subcycles the final authority."""
 
     global _INSTALLED
     if _INSTALLED:
@@ -264,23 +246,27 @@ def install_scalable_group_execution_hardening() -> None:
     continuation._recovery_aware_arbitrate = _drain_fresh_aidr
 
     # Install after the final grouped role functions exist. These late imports
-    # avoid circular initialization and make both transport and scale protections
-    # authoritative over every earlier wrapper.
+    # avoid circular initialization and make the scale protections authoritative.
     from app.websocket_hot_path_hardening import (
         install_websocket_hot_path_hardening,
     )
     from app.websocket_hot_path_scalability import (
         install_websocket_hot_path_scalability,
     )
+    from app.rotating_execution_cohorts import (
+        install_rotating_execution_cohorts,
+    )
 
     install_websocket_hot_path_hardening()
     install_websocket_hot_path_scalability()
+    install_rotating_execution_cohorts()
 
     RFDir5TradingBot._scalable_group_execution_hardening_installed = True
     _INSTALLED = True
     logging.getLogger(__name__).warning(
         "SCALABLE_ROLE_HARDENING_INSTALLED version=%s "
         "fresh_role_subcycles=true signal_holding=false "
+        "rotating_cohort=true all_accounts_same_signal=false "
         "private_websocket_only=true bulk_purchase=false copy_trading=false "
         "global_stop_on_role_error=false",
         SCALABLE_ROLE_HARDENING_VERSION,
