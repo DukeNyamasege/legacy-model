@@ -116,11 +116,19 @@ def install_production_worker_integration() -> None:
     from app.bulk_credential_failure_hardening import (
         install_bulk_credential_failure_hardening,
     )
+    from app.tick_sequence_persistence_safety import (
+        install_tick_sequence_persistence_safety,
+    )
 
     install_final_shared_system_strategy_clock()
     install_proposal_execution_recovery()
     install_seamless_execution_runtime()
     install_final_seamless_execution_runtime()
+
+    # Install after every strategy, proposal and transport wrapper. Temporary
+    # live-tick sequence objects are converted to plain integers only during
+    # persistence, then restored for the immediate purchase boundary.
+    install_tick_sequence_persistence_safety()
 
     # Install last so account/token binding failures emitted by the final REST bulk
     # transport are quarantined per account. This deliberately preserves sibling
