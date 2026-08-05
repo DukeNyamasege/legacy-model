@@ -86,14 +86,14 @@ def install_production_worker_integration() -> None:
                 ):
                     continue
                 # Repair status text left by old deployments. The current worker
-                # performs financial execution only through the account's own
-                # authenticated private WebSocket.
+                # performs financial execution through REST bulk purchase and uses
+                # the private WebSocket only for account/session reconciliation.
                 self.repository.set_managed_account_execution_status(
                     int(account.id),
                     "token_required",
                     (
                         "A valid Deriv trade authorization is required to establish "
-                        "this account's private WebSocket trading session."
+                        "this account's trading session."
                     ),
                 )
         except Exception as exc:
@@ -106,5 +106,16 @@ def install_production_worker_integration() -> None:
     TradingBot._notify_dashboard_settlement = notify_dashboard_with_retry
     TradingBot._finish_contract_transport_cleanup = cleanup_then_publish
     TradingBot._load_runtime_accounts = load_accounts_with_current_transport_status
+
+    # This installer runs after scalable execution hardening and final REST bulk
+    # partitioning. Restore the user's intended strategy authority here so those
+    # later wrappers cannot re-enable independent per-tick manual signals or
+    # replace exact strategy-group scopes with barrier-wide account scopes.
+    from app.shared_system_strategy_clock import (
+        install_final_shared_system_strategy_clock,
+    )
+
+    install_final_shared_system_strategy_clock()
+
     TradingBot._production_worker_integration_installed = True
     _INSTALLED = True
