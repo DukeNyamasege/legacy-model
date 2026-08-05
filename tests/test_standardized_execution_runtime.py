@@ -16,6 +16,7 @@ from app.guaranteed_signal_delivery import (
     refresh_signal_for_delivery,
 )
 from app.hybrid_digit_put import DigitSignal
+from app.repositories.rf_dir5_repository import RFDir5Repository
 from app.standardized_execution_runtime import (
     AIDR_EXECUTION_ORDER,
     _queue_key,
@@ -25,7 +26,7 @@ from app.standardized_execution_runtime import (
 )
 from app.standardized_signal_metadata import (
     clear_standardized_cycle_id,
-    install_standardized_signal_metadata,
+    install_signal_metadata_accessors,
     standardized_cycle_id,
 )
 
@@ -63,8 +64,13 @@ def _signal(*, signal_id: str = "signal-1", barrier: str = "1") -> DigitSignal:
 
 
 class SignalMetadataCompatibilityTests(unittest.TestCase):
+    def test_metadata_only_install_does_not_change_candidate_persistence(self) -> None:
+        original = RFDir5Repository.record_signal
+        install_signal_metadata_accessors()
+        self.assertIs(RFDir5Repository.record_signal, original)
+
     def test_slotted_digit_signal_accepts_transient_cycle_id(self) -> None:
-        install_standardized_signal_metadata()
+        install_signal_metadata_accessors()
         signal = _signal()
         signal._standardized_cycle_id = "cycle-123"
         self.assertEqual(signal._standardized_cycle_id, "cycle-123")
@@ -73,7 +79,7 @@ class SignalMetadataCompatibilityTests(unittest.TestCase):
         self.assertEqual(signal._standardized_cycle_id, "")
 
     def test_standardized_signal_refreshes_to_current_tick(self) -> None:
-        install_standardized_signal_metadata()
+        install_signal_metadata_accessors()
         signal = _signal()
         signal.generated_monotonic = time.monotonic()
         signal._standardized_cycle_id = "cycle-refresh"
@@ -92,7 +98,7 @@ class SignalMetadataCompatibilityTests(unittest.TestCase):
         clear_standardized_cycle_id(signal)
 
     def test_recent_signal_tracks_ticks_only_during_short_purchase_window(self) -> None:
-        install_standardized_signal_metadata()
+        install_signal_metadata_accessors()
         signal = _signal(signal_id="recent-qualified")
         signal.generated_monotonic = time.monotonic()
         signal._standardized_cycle_id = "cycle-immediate"
@@ -122,7 +128,7 @@ class SignalMetadataCompatibilityTests(unittest.TestCase):
         clear_standardized_cycle_id(signal)
 
     def test_old_signal_is_rejected_instead_of_held(self) -> None:
-        install_standardized_signal_metadata()
+        install_signal_metadata_accessors()
         signal = _signal(signal_id="expired-qualified")
         signal.generated_monotonic = (
             time.monotonic() - IMMEDIATE_SIGNAL_MAX_AGE_SECONDS - 1.0
