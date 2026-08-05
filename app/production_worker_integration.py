@@ -71,9 +71,6 @@ def install_production_worker_integration() -> None:
             contract_id,
             refresh_balance=refresh_balance,
         )
-        # handle_contract_update publishes once immediately after the committed
-        # settlement. Publish again after the private balance snapshot completes,
-        # so /me and the personal dashboard cannot remain one balance behind.
         await self._notify_dashboard_settlement()
 
     def load_accounts_with_current_transport_status(self: TradingBot):
@@ -85,9 +82,6 @@ def install_production_worker_integration() -> None:
                     != "bulk_execution_pat_required"
                 ):
                     continue
-                # Repair status text left by old deployments. The current worker
-                # performs financial execution through REST bulk purchase and uses
-                # the private WebSocket only for account/session reconciliation.
                 self.repository.set_managed_account_execution_status(
                     int(account.id),
                     "token_required",
@@ -107,10 +101,6 @@ def install_production_worker_integration() -> None:
     TradingBot._finish_contract_transport_cleanup = cleanup_then_publish
     TradingBot._load_runtime_accounts = load_accounts_with_current_transport_status
 
-    # These installers run after scalable execution hardening and final REST bulk
-    # partitioning. Restore the intended shared strategy authority, make the
-    # qualified-role proposal path final, then install response/lifecycle recovery
-    # as the final worker authority.
     from app.shared_system_strategy_clock import (
         install_final_shared_system_strategy_clock,
     )
@@ -120,10 +110,14 @@ def install_production_worker_integration() -> None:
     from app.seamless_execution_runtime import (
         install_seamless_execution_runtime,
     )
+    from app.seamless_execution_final import (
+        install_final_seamless_execution_runtime,
+    )
 
     install_final_shared_system_strategy_clock()
     install_proposal_execution_recovery()
     install_seamless_execution_runtime()
+    install_final_seamless_execution_runtime()
 
     TradingBot._production_worker_integration_installed = True
     _INSTALLED = True
