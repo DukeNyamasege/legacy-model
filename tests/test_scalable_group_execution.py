@@ -6,99 +6,118 @@ from types import SimpleNamespace
 
 import app.deriv_request_broker as request_broker
 import app.scalable_group_execution as grouped
+from app.deriv_bulk_rest_credentials import credential_status_from_execution
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-class WebSocketGroupingHelperTests(unittest.TestCase):
-    def test_chunks_bound_logical_websocket_groups(self) -> None:
-        values = list(range(53))
-        chunks = grouped._chunks(values, 20)
-        self.assertEqual([len(chunk) for chunk in chunks], [20, 20, 13])
-        self.assertTrue(all(len(chunk) <= 20 for chunk in chunks))
-
-    def test_only_pre_send_not_connected_failure_is_safe_to_retry(self) -> None:
+class RestBulkExecutionHelperTests(unittest.IsolatedAsyncioTestCase):
+    def test_transient_bulk_errors_are_outcome_unknown_not_replayed(self) -> None:
         self.assertTrue(
-            grouped._safe_connection_retry(
+            grouped._outcome_unknown(
                 {
                     "error": {
-                        "code": "NOT_CONNECTED",
-                        "message": "Private WebSocket is not connected",
+                        "code": "HTTP_502",
+                        "message": "An upstream dependency was unavailable.",
+                    }
+                }
+            )
+        )
+        self.assertTrue(
+            grouped._outcome_unknown(
+                {
+                    "error": {
+                        "code": "REQUEST_TIMEOUT",
+                        "message": "Bulk purchase request timed out",
                     }
                 }
             )
         )
         self.assertFalse(
-            grouped._safe_connection_retry(
+            grouped._outcome_unknown(
                 {
                     "error": {
-                        "code": "PRIVATE_BUY_OUTCOME_UNKNOWN",
-                        "message": "Private WebSocket buy confirmation timed out",
-                    }
-                }
-            )
-        )
-        self.assertFalse(
-            grouped._safe_connection_retry(
-                {
-                    "error": {
-                        "code": "PRIVATE_BUY_FAILED",
-                        "message": "Connection closed after send",
+                        "code": "PAT_REQUIRED",
+                        "message": "Link your Deriv PAT with trade scope.",
                     }
                 }
             )
         )
 
-    def test_unknown_confirmation_is_never_classified_as_safe_retry(self) -> None:
-        item = {
-            "error": {
-                "code": "PRIVATE_BUY_OUTCOME_UNKNOWN",
-                "message": "Private WebSocket buy confirmation timed out",
-            }
-        }
-        self.assertTrue(grouped._outcome_unknown(item))
-        self.assertFalse(grouped._safe_connection_retry(item))
-
-    def test_recent_matching_contract_can_recover_lost_confirmation(self) -> None:
+    async def test_missing_pat_is_rejected_before_rest_bulk_call(self) -> None:
+        status_updates: list[tuple[int | None, str, str]] = []
+        bot = SimpleNamespace(
+            _managed_account_id_for_token=lambda token: 7,
+            rf_repository=SimpleNamespace(
+                virtual_protection_for_account=lambda **kwargs: {"mode": "NORMAL_MODE"}
+            ),
+            _account_environment_for_token=lambda token: "demo",
+            _real_trading_allowed=lambda: False,
+            _bulk_purchase_token_capable=lambda token: False,
+            _set_account_execution_status=lambda managed_id, status, reason="": status_updates.append(
+                (managed_id, status, reason)
+            ),
+            logger=SimpleNamespace(
+                warning=lambda *args, **kwargs: None,
+                exception=lambda *args, **kwargs: None,
+            ),
+        )
         signal = SimpleNamespace(
+            signal_id="sig-1",
             symbol="1HZ100V",
             contract_type="DIGITOVER",
+            barrier="1",
         )
-        row = {
-            "contract_id": 123,
-            "underlying": "1HZ100V",
-            "contract_type": "DIGITOVER",
-            "buy_price": 0.50,
-            "purchase_time": 1_000,
-        }
-        self.assertTrue(
-            grouped._row_matches_unknown_buy(
-                row,
-                signal=signal,
-                stake=0.50,
-                sent_epoch=999,
-            )
+
+        result = await grouped._grouped_purchase_accounts_by_stake(
+            bot,
+            signal=signal,
+            eligible_accounts=[("runtime-token", "DOT123456")],
+            stake_by_token={"runtime-token": 0.50},
+            pre_trade_profit_ratio=0.90,
         )
-        self.assertFalse(
-            grouped._row_matches_unknown_buy(
-                {**row, "buy_price": 2.00},
-                signal=signal,
-                stake=0.50,
-                sent_epoch=999,
-            )
+
+        self.assertEqual(result[0]["execution_transport"], "REST_BULK_PURCHASE")
+        self.assertEqual(result[0]["error"]["code"], "PAT_REQUIRED")
+        self.assertIn("trade scope", result[0]["error"]["message"])
+        self.assertEqual(status_updates[0][1], "bulk_execution_pat_required")
+
+
+class CredentialStatusTests(unittest.TestCase):
+    def test_connected_pat_hides_credential_input(self) -> None:
+        status = credential_status_from_execution("active", has_token=True)
+        self.assertTrue(status["connected"])
+        self.assertEqual(status["status"], "connected")
+        self.assertEqual(status["label"], "Connected")
+
+    def test_expired_token_message_points_to_settings_credentials(self) -> None:
+        status = credential_status_from_execution(
+            "credential_error",
+            "Deriv API token expired or was rejected",
+            has_token=False,
         )
+        self.assertFalse(status["connected"])
+        self.assertEqual(status["status"], "expired")
+        self.assertIn("Settings > Credentials", status["message"])
+
+    def test_missing_token_prompts_trade_scope_pat(self) -> None:
+        status = credential_status_from_execution("bulk_execution_pat_required")
+        self.assertFalse(status["connected"])
+        self.assertEqual(status["status"], "missing")
+        self.assertIn("Personal Access Token", status["message"])
+        self.assertIn("trade scope", status["message"])
 
 
 class RequestBrokerHelperTests(unittest.TestCase):
-    def test_multi_account_rest_trade_path_is_blocked(self) -> None:
+    def test_official_bulk_purchase_path_is_allowed(self) -> None:
         self.assertTrue(
-            request_broker._is_disallowed_multi_account_trade(
+            request_broker._request_is_bulk_purchase(
                 "/trading/v1/options/contracts/bulk-purchase/demo"
             )
         )
         self.assertFalse(
-            request_broker._is_disallowed_multi_account_trade(
+            request_broker._request_is_bulk_purchase(
                 "/trading/v1/options/accounts/DOT123/otp"
             )
         )
@@ -116,10 +135,17 @@ class RequestBrokerHelperTests(unittest.TestCase):
             "credential",
             None,
         )
+        bulk_key = request_broker._coalesce_key(
+            "POST",
+            "/trading/v1/options/contracts/bulk-purchase/demo",
+            "",
+            {"accounts": []},
+        )
         self.assertIsNotNone(account_key)
         self.assertIsNone(otp_key)
+        self.assertIsNone(bulk_key)
 
-    def test_safe_setup_requests_have_bounded_retries(self) -> None:
+    def test_financial_posts_are_single_attempt_to_avoid_duplicate_contracts(self) -> None:
         broker = request_broker._DerivRequestBroker()
         self.assertGreater(
             broker._attempts("GET", "/trading/v1/options/accounts"),
@@ -132,10 +158,17 @@ class RequestBrokerHelperTests(unittest.TestCase):
             ),
             2,
         )
+        self.assertEqual(
+            broker._attempts(
+                "POST",
+                "/trading/v1/options/contracts/bulk-purchase/demo",
+            ),
+            1,
+        )
 
 
 class DeploymentSourceInvariantTests(unittest.TestCase):
-    def test_worker_installs_final_websocket_authorities_in_order(self) -> None:
+    def test_worker_installs_final_execution_authorities_in_order(self) -> None:
         source = (ROOT / "app" / "worker.py").read_text(encoding="utf-8")
         broker = source.index("install_deriv_request_broker()")
         websocket_guard = source.index("install_websocket_only_execution()")
@@ -169,71 +202,21 @@ class DeploymentSourceInvariantTests(unittest.TestCase):
             source,
         )
 
-    def test_financial_execution_is_private_websocket_only(self) -> None:
+    def test_financial_execution_is_rest_bulk_purchase(self) -> None:
         source = (ROOT / "app" / "scalable_group_execution.py").read_text(
             encoding="utf-8"
         )
-        self.assertIn("PRIVATE_WS_EXECUTION_PLAN", source)
-        self.assertIn("transport=PRIVATE_WEBSOCKET_ONLY", source)
-        self.assertIn("one_authenticated_socket_per_account=true", source)
+        self.assertIn("REST_BULK_PURCHASE_PLAN", source)
+        self.assertIn("transport=REST_BULK_PURCHASE", source)
+        self.assertIn("private_websocket_buy=false", source)
+        self.assertIn("bulk_purchase=true", source)
         self.assertIn("RFDir5TradingBot._purchase_accounts_by_stake", source)
-        self.assertIn("_purchase_via_private_sessions", source)
-        self.assertNotIn("_purchase_stake_group_for_environment", source)
-        self.assertNotIn("BULK_REST", source)
-        self.assertNotIn("_bulk_purchase_token_capable", source)
+        self.assertIn("_BASE_REST_BULK_PURCHASE", source)
+        self.assertIn("_bulk_purchase_token_capable", source)
+        self.assertNotIn("PRIVATE_WS_EXECUTION_PLAN", source)
+        self.assertNotIn("_purchase_via_private_sessions", source)
 
-    def test_websocket_fanout_is_bounded_and_per_account_serialized(self) -> None:
-        source = (ROOT / "app" / "scalable_group_execution.py").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("DERIV_WS_GROUP_SIZE", source)
-        self.assertIn("DERIV_WS_GROUP_CONCURRENCY", source)
-        self.assertIn("DERIV_WS_GROUP_START_INTERVAL_SECONDS", source)
-        self.assertIn("asyncio.Semaphore", source)
-        self.assertIn("_account_buy_lock", source)
-        self.assertIn("_wait_group_start_slot", source)
-        self.assertIn("PRIVATE_WS_GROUP_DISPATCH", source)
-        self.assertIn("PRIVATE_WS_GROUP_RESULT", source)
-
-    def test_unknown_buy_outcomes_are_reconciled_not_replayed(self) -> None:
-        source = (ROOT / "app" / "scalable_group_execution.py").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("PRIVATE_BUY_OUTCOME_UNKNOWN", source)
-        self.assertIn("_recover_unknown_confirmation", source)
-        self.assertIn('"portfolio": 1', source)
-        self.assertIn('"profit_table": 1', source)
-        self.assertIn("buy_replayed=false", source)
-        self.assertIn("will not be replayed automatically", source)
-        self.assertIn("prevent a duplicate contract", source)
-
-    def test_provider_echo_has_safe_request_correlation(self) -> None:
-        source = (ROOT / "app" / "scalable_group_execution.py").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("correlated_direct_buy", source)
-        self.assertIn('request["passthrough"]', source)
-        self.assertIn('"signal_id"', source)
-        self.assertIn('"managed_account_id"', source)
-        self.assertIn('"websocket_group_id"', source)
-        self.assertNotIn('"token"', source)
-
-    def test_request_broker_is_account_setup_only(self) -> None:
-        source = (ROOT / "app" / "deriv_request_broker.py").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("aiohttp.TCPConnector", source)
-        self.assertIn("limit_per_host", source)
-        self.assertIn("keepalive_timeout=30", source)
-        self.assertIn("_coalesce_key", source)
-        self.assertIn("DERIV_ACCOUNT_LIST_CACHE_SECONDS", source)
-        self.assertIn("MULTI_ACCOUNT_REST_TRADE_BLOCKED", source)
-        self.assertIn("MULTI_ACCOUNT_REST_TRADE_DISABLED", source)
-        self.assertIn("PRIVATE_WEBSOCKET_ONLY", source)
-        self.assertIn("enhanced_bot._rest_request = _brokered_rest_request", source)
-        self.assertIn("await _BROKER.close()", source)
-
-    def test_provider_confirmation_diagnostics_preserve_exact_ws_result(self) -> None:
+    def test_provider_confirmation_diagnostics_preserve_exact_rest_result(self) -> None:
         source = (ROOT / "app" / "scalable_group_execution.py").read_text(
             encoding="utf-8"
         )
@@ -242,6 +225,23 @@ class DeploymentSourceInvariantTests(unittest.TestCase):
         self.assertIn("provider_confirmation_unknown", source)
         self.assertIn("standardized._missing_reason = exact_missing_reason", source)
         self.assertIn("_ACTIVE_RECEIPT_SIGNAL_ID", source)
+        self.assertIn("REST_BULK_PURCHASE", source)
+
+    def test_request_broker_allows_bulk_purchase_and_keeps_setup_bounded(self) -> None:
+        source = (ROOT / "app" / "deriv_request_broker.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("aiohttp.TCPConnector", source)
+        self.assertIn("limit_per_host", source)
+        self.assertIn("keepalive_timeout=30", source)
+        self.assertIn("_coalesce_key", source)
+        self.assertIn("DERIV_ACCOUNT_LIST_CACHE_SECONDS", source)
+        self.assertIn("financial_execution_transport=REST_BULK_PURCHASE", source)
+        self.assertIn("official_bulk_purchase_enabled=true", source)
+        self.assertNotIn("MULTI_ACCOUNT_REST_TRADE_BLOCKED", source)
+        self.assertNotIn("MULTI_ACCOUNT_REST_TRADE_DISABLED", source)
+        self.assertIn("enhanced_bot._rest_request = _brokered_rest_request", source)
+        self.assertIn("await _BROKER.close()", source)
 
     def test_system_roles_use_task_local_scopes(self) -> None:
         source = (ROOT / "app" / "scalable_group_execution.py").read_text(
@@ -253,40 +253,15 @@ class DeploymentSourceInvariantTests(unittest.TestCase):
         self.assertIn("task_local_role_scopes=true", source)
         self.assertIn("global_stop_on_account_error=false", source)
 
-    def test_each_system_role_uses_a_fresh_websocket_subcycle(self) -> None:
-        source = (
-            ROOT / "app" / "scalable_group_execution_hardening.py"
-        ).read_text(encoding="utf-8")
-        self.assertIn("for role in standardized.AIDR_EXECUTION_ORDER", source)
-        self.assertIn("AIDR_ROLE_SUBCYCLE_STARTED", source)
-        self.assertIn("fresh_proposal=true", source)
-        self.assertIn("AIDR_ROLE_SUBCYCLE_COMPLETE", source)
-        self.assertIn("signal_created_for_this_subcycle=true", source)
-        self.assertIn("AIDR_ROLE_DISPATCH_RESULT", source)
-        self.assertIn("private_websocket_only=true", source)
-        self.assertNotIn("_bulk_purchase_token_capable", source)
-
-    def test_compose_exposes_only_websocket_group_scaling(self) -> None:
-        source = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
-        self.assertIn("DERIV_WS_GROUP_SIZE", source)
-        self.assertIn("DERIV_WS_GROUP_CONCURRENCY", source)
-        self.assertIn("DERIV_WS_ACCOUNT_BUY_TIMEOUT_SECONDS", source)
-        self.assertNotIn("DERIV_BULK_SHARD_SIZE", source)
-        self.assertNotIn("DERIV_BULK_CONCURRENCY", source)
-
     def test_account_errors_cannot_stop_global_execution(self) -> None:
         grouped_source = (
             ROOT / "app" / "scalable_group_execution.py"
         ).read_text(encoding="utf-8")
-        role_source = (
-            ROOT / "app" / "scalable_group_execution_hardening.py"
-        ).read_text(encoding="utf-8")
-        source = grouped_source + "\n" + role_source
-        self.assertIn("global_execution_continues=true", source)
-        self.assertIn("global_stop_on_error=false", source)
-        self.assertNotIn("repository.set_status(\"STOPPED\")", source)
-        self.assertNotIn("bot.is_running = False", source)
-        self.assertNotIn("self.is_running = False", source)
+        self.assertIn("global_execution_continues=true", grouped_source)
+        self.assertIn("global_stop_on_account_error=false", grouped_source)
+        self.assertNotIn("repository.set_status(\"STOPPED\")", grouped_source)
+        self.assertNotIn("bot.is_running = False", grouped_source)
+        self.assertNotIn("self.is_running = False", grouped_source)
 
 
 if __name__ == "__main__":
