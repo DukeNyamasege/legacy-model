@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 import uuid
 from dataclasses import replace
@@ -8,16 +9,15 @@ from typing import Any
 
 import app.ai_digit_recovery_v1 as aidr
 import app.aidr_loss_continuation_fix as continuation
-import app.hybrid_digit_put as hybrid
 import app.multi_strategy_runtime as multi
 import app.standardized_execution_runtime as standardized
-from app.repositories.rf_dir5_repository import NORMAL_MODE, RECOVERY_PENDING, VIRTUAL_MODE
+from app.repositories.rf_dir5_repository import VIRTUAL_MODE
 from app.rf_dir5_bot import RFDir5TradingBot
 
 
 _INSTALLED = False
-SHARED_CLOCK_VERSION = "aidr-shared-signal-clock-v1"
-_ORIGINAL_BUY_FOR_SCOPE = aidr._buy_for_scope
+_FINAL_INSTALLED = False
+SHARED_CLOCK_VERSION = "aidr-shared-signal-clock-v2"
 
 
 def _all_strategy_accounts(bot: RFDir5TradingBot) -> list[tuple[str, str, int]]:
@@ -96,8 +96,8 @@ def _manual_metrics(
         )
         return multi._digit_statistics(digits, predicate)
 
-    # Rise/Fall receives the same AIDR entry time by explicit user choice. A
-    # neutral probability is retained as metadata; it is not an extra signal gate.
+    # Rise/Fall receives the same AIDR entry time by explicit user choice. The
+    # neutral value is proposal metadata only and is never a second entry gate.
     return {
         "p20": 0.50,
         "p50": 0.50,
@@ -230,6 +230,72 @@ def _notify_group_skip(
     )
 
 
+def _register_provider_verified_contract(
+    bot: RFDir5TradingBot,
+    signal: Any,
+    scope_ids: set[int],
+) -> None:
+    """Treat a successful proposal as authoritative contract verification.
+
+    The old account cache could contain only PUT and incorrectly reject a digit
+    contract after Deriv had already returned a valid proposal for that exact
+    market and contract. A successful provider proposal is stronger evidence than
+    the stale cache, so only that exact symbol/contract pair is promoted.
+    """
+
+    symbol = str(getattr(signal, "symbol", "") or "")
+    contract_type = str(getattr(signal, "contract_type", "") or "").upper()
+    if not symbol or not contract_type:
+        return
+
+    bot.rf_supported_contracts.setdefault(symbol, set()).add(contract_type)
+    verified_accounts = 0
+    wanted = {int(value) for value in scope_ids}
+    for token, account_id in list(getattr(bot, "valid_clients", []) or []):
+        managed_id = bot._managed_account_id_for_token(token)
+        if managed_id is None or int(managed_id) not in wanted:
+            continue
+        bot.rf_account_supported_contracts.setdefault(
+            (str(account_id), symbol),
+            set(),
+        ).add(contract_type)
+        verified_accounts += 1
+
+    bot.logger.info(
+        "SHARED_CLOCK_CONTRACT_VERIFIED_BY_PROPOSAL symbol=%s contract_type=%s "
+        "accounts=%s source=successful_provider_proposal stale_cache_bypass=true",
+        symbol,
+        contract_type,
+        verified_accounts,
+    )
+
+
+async def _exact_scope_buy(
+    bot: RFDir5TradingBot,
+    signal: Any,
+    economics: Any,
+    scope_ids: set[int],
+    *,
+    recovery_enabled: bool,
+) -> None:
+    """Enter the final REST-bulk path without allowing barrier-based rescoping."""
+
+    from app import scalable_group_execution as grouped
+
+    scope = frozenset(int(value) for value in scope_ids)
+    if not scope:
+        bot.repository.mark_signal(signal.signal_id, status="SKIP_NO_SCOPE_ACCOUNTS")
+        return
+
+    scope_token = grouped._AIDR_SCOPE_IDS.set(scope)
+    recovery_token = grouped._AIDR_RECOVERY_ENABLED.set(bool(recovery_enabled))
+    try:
+        await bot._buy_selected_accounts(signal, economics)
+    finally:
+        grouped._AIDR_RECOVERY_ENABLED.reset(recovery_token)
+        grouped._AIDR_SCOPE_IDS.reset(scope_token)
+
+
 async def _shared_clock_buy_for_scope(
     bot: RFDir5TradingBot,
     source: Any,
@@ -292,14 +358,16 @@ async def _shared_clock_buy_for_scope(
     proposal_results = await asyncio.gather(
         *(
             multi._proposal_for(bot, clone, predicted)
-            for _selection, _ids, _delivery_role_value, clone, predicted, _contract in prepared
+            for _selection, _ids, _role, clone, predicted, _contract in prepared
         ),
         return_exceptions=True,
     )
 
-    # Preserve the original System Strategy contract sequence exactly.
+    # Preserve the System Strategy contract sequence exactly: OVER-1 normal,
+    # OVER-3 first recovery, virtual OVER-4 and real OVER-4 full recovery.
     if system_scope:
-        await _ORIGINAL_BUY_FOR_SCOPE(
+        _register_provider_verified_contract(bot, source, system_scope)
+        await _exact_scope_buy(
             bot,
             source,
             source_economics,
@@ -357,6 +425,7 @@ async def _shared_clock_buy_for_scope(
         clone.break_even_probability = break_even
         clone.validated_edge = float(predicted) - break_even
         bot.repository.record_proposal(clone, economics)
+        _register_provider_verified_contract(bot, clone, ids)
         bot.logger.warning(
             "SHARED_SYSTEM_CLOCK_ROUTE source_signal=%s routed_signal=%s "
             "source_role=%s account_role=%s family=%s side=%s symbol=%s "
@@ -373,7 +442,7 @@ async def _shared_clock_buy_for_scope(
             clone.barrier,
             len(ids),
         )
-        await _ORIGINAL_BUY_FOR_SCOPE(
+        await _exact_scope_buy(
             bot,
             clone,
             economics,
@@ -388,33 +457,40 @@ async def _shared_clock_buy_for_scope(
         source_role,
         len(system_scope),
         len(manual_groups),
-        sum(len(ids) for _selection, ids, _delivery_role_value in manual_groups),
+        sum(len(ids) for _selection, ids, _role in manual_groups),
         len(unknown),
     )
 
 
+def _apply_shared_clock_authority() -> None:
+    multi._queue_non_aidr_signals = _disable_parallel_manual_tick_generator
+    aidr._enabled_accounts = _all_strategy_accounts
+    multi._filter_aidr_over_accounts = _all_strategy_accounts
+    aidr._buy_for_scope = _shared_clock_buy_for_scope
+    continuation._buy_for_scope = _shared_clock_buy_for_scope
+    RFDir5TradingBot._shared_system_strategy_clock_installed = True
+    RFDir5TradingBot._shared_system_strategy_clock_version = SHARED_CLOCK_VERSION
+
+
 def install_shared_system_strategy_clock() -> None:
-    """Make AIDR the only entry clock for every selectable contract family."""
+    """Disable the noisy manual generator before execution wrappers are built."""
 
     global _INSTALLED
     if _INSTALLED:
         return
-
-    # Remove the independent per-tick manual signal engine that generated
-    # thousands of superseded candidates. Manual contracts now appear only after
-    # the original System Strategy has passed its role, cadence and live-edge gate.
-    multi._queue_non_aidr_signals = _disable_parallel_manual_tick_generator
-
-    # AIDR must see all enabled accounts so a manual-only deployment still has an
-    # entry clock. Contract choice is partitioned later by _shared_clock_buy_for_scope.
-    aidr._enabled_accounts = _all_strategy_accounts
-    multi._filter_aidr_over_accounts = _all_strategy_accounts
-
-    # Every final AIDR arbitrator calls the module attribute at execution time.
-    # Patch both names for compatibility with any imported legacy path.
-    aidr._buy_for_scope = _shared_clock_buy_for_scope
-    continuation._buy_for_scope = _shared_clock_buy_for_scope
-
-    RFDir5TradingBot._shared_system_strategy_clock_installed = True
-    RFDir5TradingBot._shared_system_strategy_clock_version = SHARED_CLOCK_VERSION
+    _apply_shared_clock_authority()
     _INSTALLED = True
+
+
+def install_final_shared_system_strategy_clock() -> None:
+    """Restore shared-clock authority after scalable REST wrappers install."""
+
+    global _FINAL_INSTALLED
+    _apply_shared_clock_authority()
+    _FINAL_INSTALLED = True
+    logging.getLogger(__name__).warning(
+        "SHARED_SYSTEM_STRATEGY_CLOCK_FINAL version=%s entry_gate=system_aidr "
+        "manual_tick_generator=false exact_account_scope=true "
+        "proposal_verified_contract_cache=true transport=REST_BULK_PURCHASE",
+        SHARED_CLOCK_VERSION,
+    )
