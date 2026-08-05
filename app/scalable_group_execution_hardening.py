@@ -263,6 +263,14 @@ def install_scalable_group_execution_hardening() -> None:
     hybrid._arbitrate_digits = _drain_fresh_aidr
     continuation._recovery_aware_arbitrate = _drain_fresh_aidr
 
+    # Install after the final grouped role functions exist. This late import avoids
+    # circular initialization and makes the hot-path protections authoritative.
+    from app.websocket_hot_path_hardening import (
+        install_websocket_hot_path_hardening,
+    )
+
+    install_websocket_hot_path_hardening()
+
     RFDir5TradingBot._scalable_group_execution_hardening_installed = True
     _INSTALLED = True
     logging.getLogger(__name__).warning(
