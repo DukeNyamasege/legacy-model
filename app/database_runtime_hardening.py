@@ -73,15 +73,15 @@ def install_database_runtime_hardening(app: Any) -> None:
             },
         )
 
-    # This is the final installer called by app.api_v3. Reinstall the personal
-    # signal outcome route and then replace its noisy UI/filter with the final
-    # actionable-only side-rail implementation.
+    # Reinstall the final account alert route, replace its noisy UI/filter, then
+    # make seamless stop/rejoin, strategy switching, market persistence and
+    # non-destructive personal history reset the final API authorities.
     from app.final_execution_alert_api import install_final_execution_alert_api
-    from app.execution_alert_refinement import (
-        install_execution_alert_refinement,
-    )
+    from app.execution_alert_refinement import install_execution_alert_refinement
+    from app.seamless_personal_execution import install_seamless_personal_execution
 
     install_final_execution_alert_api(app)
     install_execution_alert_refinement(app)
+    install_seamless_personal_execution(app)
 
     _INSTALLED = True
