@@ -48,11 +48,18 @@ class BulkCredentialFailureTests(unittest.TestCase):
             )
         )
 
-    def test_only_enabled_undecryptable_rows_are_quarantined(self) -> None:
+    def test_only_enabled_unsafe_rows_are_quarantined(self) -> None:
         rows = [
             SimpleNamespace(id=1, enabled=True, token_secret="bad-enabled"),
             SimpleNamespace(id=2, enabled=False, token_secret="bad-disabled"),
             SimpleNamespace(id=3, enabled=True, token_secret="good-enabled"),
+            SimpleNamespace(
+                id=4,
+                enabled=True,
+                token_secret="good-binding-failure",
+                execution_status="error",
+                execution_status_reason="Token or account validation failed for account DOT***750",
+            ),
         ]
         repository = _Repository(rows)
         bot = SimpleNamespace(
@@ -72,12 +79,18 @@ class BulkCredentialFailureTests(unittest.TestCase):
         ):
             count = quarantine_undecryptable_enabled_accounts(bot)
 
-        self.assertEqual(count, 1)
-        self.assertEqual(len(repository.quarantined), 1)
-        account_id, status, reason = repository.quarantined[0]
-        self.assertEqual(account_id, 1)
-        self.assertEqual(status, "credential_decrypt_error")
-        self.assertIn("Reconnect this account", reason)
+        self.assertEqual(count, 2)
+        self.assertEqual(len(repository.quarantined), 2)
+        quarantined = {
+            account_id: (status, reason)
+            for account_id, status, reason in repository.quarantined
+        }
+        self.assertEqual(quarantined[1][0], "credential_decrypt_error")
+        self.assertIn("Reconnect this account", quarantined[1][1])
+        self.assertEqual(quarantined[4][0], "invalid_account")
+        self.assertIn("selected account", quarantined[4][1])
+        self.assertNotIn(2, quarantined)
+        self.assertNotIn(3, quarantined)
 
     def test_production_installs_quarantine_after_final_bulk_transport(self) -> None:
         source = (ROOT / "app" / "production_worker_integration.py").read_text(
