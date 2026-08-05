@@ -26,6 +26,15 @@ def test_manual_per_tick_generator_is_disabled() -> None:
     assert "SKIP_NEWER_SAME_ACCOUNT_GROUP_SIGNAL" not in source
 
 
+def test_legacy_rf_put_ghost_candidates_are_not_persisted() -> None:
+    source = _clock_source()
+
+    assert "_suppress_legacy_rf_candidate" in source
+    assert "RFDir5Repository.record_signal = _suppress_legacy_rf_candidate" in source
+    assert "CREATED_NOT_CONSUMED noise" in source
+    assert "legacy_rf_candidate_persistence=false" in source
+
+
 def test_every_strategy_uses_aidr_account_clock_and_contract_routing() -> None:
     source = _clock_source()
 
