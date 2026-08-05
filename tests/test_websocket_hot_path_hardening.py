@@ -7,6 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "app" / "websocket_hot_path_hardening.py"
+SCALABILITY = ROOT / "app" / "websocket_hot_path_scalability.py"
 ROLE_HARDENING = ROOT / "app" / "scalable_group_execution_hardening.py"
 
 
@@ -14,8 +15,10 @@ class WebSocketHotPathSourceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.source = SOURCE.read_text(encoding="utf-8")
+        cls.scalability = SCALABILITY.read_text(encoding="utf-8")
         cls.role_hardening = ROLE_HARDENING.read_text(encoding="utf-8")
         ast.parse(cls.source)
+        ast.parse(cls.scalability)
         ast.parse(cls.role_hardening)
 
     def test_public_reader_is_isolated_from_tick_processing(self) -> None:
@@ -68,13 +71,36 @@ class WebSocketHotPathSourceTests(unittest.TestCase):
         )[1].split("def _schedule_group_cache_refresh", 1)[0]
         self.assertNotIn("contracts_for", cache_function)
 
+    def test_account_role_snapshot_is_batched_for_large_populations(self) -> None:
+        self.assertIn("_load_account_recovery_groups_batched", self.scalability)
+        self.assertEqual(self.scalability.count("session.scalars("), 2)
+        self.assertIn("sql_queries=2", self.scalability)
+        self.assertIn("n_plus_one=false", self.scalability)
+        loader = self.scalability.split(
+            "def _load_account_recovery_groups_batched", 1
+        )[1].split("def _schedule_batched_group_cache_refresh", 1)[0]
+        self.assertNotIn("runtime_preference(", loader)
+
+    def test_model_training_runs_outside_event_loop(self) -> None:
+        self.assertIn("_install_background_model_training", self.scalability)
+        self.assertIn("hot._HOT_EXECUTOR.submit(drain)", self.scalability)
+        self.assertIn("model_training_off_loop=true", self.scalability)
+
     def test_role_hardening_installs_hot_path_last(self) -> None:
         self.assertIn(
             "from app.websocket_hot_path_hardening import (",
             self.role_hardening,
         )
         self.assertIn(
+            "from app.websocket_hot_path_scalability import (",
+            self.role_hardening,
+        )
+        self.assertIn(
             "install_websocket_hot_path_hardening()",
+            self.role_hardening,
+        )
+        self.assertIn(
+            "install_websocket_hot_path_scalability()",
             self.role_hardening,
         )
         self.assertGreater(
@@ -82,6 +108,10 @@ class WebSocketHotPathSourceTests(unittest.TestCase):
             self.role_hardening.index(
                 "standardized._standardized_aidr_arbitrate = "
             ),
+        )
+        self.assertGreater(
+            self.role_hardening.index("install_websocket_hot_path_scalability()"),
+            self.role_hardening.index("install_websocket_hot_path_hardening()"),
         )
 
 
