@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 
@@ -18,8 +19,25 @@ def test_readiness_audit_never_prints_raw_tokens() -> None:
     assert "candidate_status_counts" in source
     assert "latest_bulk_batches" in source
     assert "BLOCKER=" in source
-    assert "print(api_token)" not in source
-    assert "print(effective_token)" not in source
+
+    # Inspect real print() arguments instead of using substring matching. The old
+    # check incorrectly treated `_fingerprint(effective_token)` as though the raw
+    # token itself were passed directly to print().
+    tree = ast.parse(source)
+    directly_printed_names: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not isinstance(node.func, ast.Name) or node.func.id != "print":
+            continue
+        directly_printed_names.update(
+            argument.id
+            for argument in node.args
+            if isinstance(argument, ast.Name)
+        )
+
+    assert "api_token" not in directly_printed_names
+    assert "effective_token" not in directly_printed_names
 
 
 def test_personal_dashboard_heals_only_stale_non_rejected_token_status() -> None:
