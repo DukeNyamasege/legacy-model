@@ -3,11 +3,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from contextlib import suppress
 from typing import Any
 
 import app.guaranteed_signal_delivery as immediate
-import app.hybrid_digit_put as hybrid
 import app.standardized_execution_runtime as standardized
 from app.rf_dir5_bot import RFDir5TradingBot
 from app.strategy.decision_engine import parse_proposal_economics
@@ -15,7 +15,7 @@ from enhanced_bot import sanitize_account_ids
 
 
 _INSTALLED = False
-VERSION = "aidr-qualified-proposal-recovery-v1"
+VERSION = "aidr-qualified-proposal-recovery-v2"
 PROPOSAL_TIMEOUT_SECONDS = 6.0
 BARRIER_CONTRACTS = {
     "DIGITOVER",
@@ -52,10 +52,10 @@ async def _raw_public_request(
     bot: RFDir5TradingBot,
     request: dict[str, Any],
 ) -> dict[str, Any]:
-    """Use the live public socket directly while its reader resolves req_id futures.
+    """Use the existing public socket and its req_id response dispatcher.
 
-    This bypasses a broken proposal-wrapper chain only. It does not open another
-    WebSocket and it never sends a financial buy request.
+    This bypasses the broken post-qualification proposal wrapper only. It opens no
+    additional WebSocket and never sends a financial buy request.
     """
 
     client = bot.public_client
@@ -112,14 +112,16 @@ async def _qualified_provider_proposal(
     bot: RFDir5TradingBot,
     signal: Any,
 ) -> tuple[Any, Any] | None:
-    """Create economics only after AIDR has qualified an executable role."""
+    """Create a fresh proposal only after AIDR selected an executable role."""
 
     signal_id = str(getattr(signal, "signal_id", "") or "")
     symbol = str(getattr(signal, "symbol", "") or "")
     barrier = str(getattr(signal, "barrier", "") or "")
+    requested_monotonic = time.monotonic()
     try:
         request = _proposal_request(bot, signal)
         response = await _raw_public_request(bot, request)
+        received_monotonic = time.monotonic()
         error = response.get("error") if isinstance(response, dict) else None
         if isinstance(error, dict):
             code = str(error.get("code") or "PROPOSAL_FAILED").upper()
@@ -147,10 +149,8 @@ async def _qualified_provider_proposal(
             predicted_probability=float(
                 getattr(signal, "weighted_probability", 0.0) or 0.0
             ),
-            requested_monotonic=float(
-                getattr(signal, "generated_monotonic", 0.0) or 0.0
-            ),
-            received_monotonic=__import__("time").monotonic(),
+            requested_monotonic=requested_monotonic,
+            received_monotonic=received_monotonic,
             app_markup_percentage=float(
                 getattr(bot, "app_markup_percentage", 0.0) or 0.0
             ),
@@ -194,15 +194,17 @@ def install_proposal_execution_recovery() -> None:
     """Make the direct public proposal path final for qualified AIDR roles."""
 
     global _INSTALLED
+    if _INSTALLED:
+        return
+    # Only the fresh role-subcycle path is replaced. The ordinary AIDR scanner and
+    # its live-edge checks keep their existing proposal implementation and cadence.
     immediate._provider_proposal = _qualified_provider_proposal
-    # Compatibility: any direct AIDR proposal call receives the same hardened path.
-    hybrid._digit_proposal = _qualified_provider_proposal
     RFDir5TradingBot._proposal_execution_recovery_installed = True
     RFDir5TradingBot._proposal_execution_recovery_version = VERSION
     _INSTALLED = True
     LOGGER.warning(
         "PROPOSAL_EXECUTION_RECOVERY_INSTALLED version=%s "
-        "qualified_roles_only=true raw_public_socket=true extra_socket=false "
-        "financial_buy=false exact_exception_logging=true",
+        "qualified_roles_only=true scanner_unchanged=true raw_public_socket=true "
+        "extra_socket=false financial_buy=false exact_exception_logging=true",
         VERSION,
     )
