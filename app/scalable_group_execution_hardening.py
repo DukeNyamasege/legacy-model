@@ -259,10 +259,14 @@ def install_scalable_group_execution_hardening() -> None:
     from app.rotating_execution_cohorts import (
         install_rotating_execution_cohorts,
     )
+    from app.proposal_relay_runtime import (
+        install_proposal_relay_runtime,
+    )
 
     install_websocket_hot_path_hardening()
     install_websocket_hot_path_scalability()
     install_rotating_execution_cohorts()
+    install_proposal_relay_runtime()
 
     RFDir5TradingBot._scalable_group_execution_hardening_installed = True
     _INSTALLED = True
@@ -270,7 +274,7 @@ def install_scalable_group_execution_hardening() -> None:
         "SCALABLE_ROLE_HARDENING_INSTALLED version=%s "
         "fresh_role_subcycles=true signal_holding=false "
         "rotating_cohort=true stale_cycle_activation=false "
-        "all_accounts_same_signal=false "
+        "proposal_relay_sockets=2 all_accounts_same_signal=false "
         "private_websocket_only=true bulk_purchase=false copy_trading=false "
         "global_stop_on_role_error=false",
         SCALABLE_ROLE_HARDENING_VERSION,
