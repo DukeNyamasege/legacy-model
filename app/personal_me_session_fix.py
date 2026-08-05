@@ -6,9 +6,11 @@ from fastapi import Request
 
 import app.api as base_api
 from app.custom_martingale import read_account_martingale_settings
+from app.token_store import decrypt_auth_payload
 
 
 _INSTALLED = False
+_STALE_TOKEN_STATUSES = {"token_required", "bulk_execution_pat_required"}
 
 
 def _remove_route(app: Any, path: str, method: str) -> None:
@@ -67,6 +69,50 @@ def _apply_custom_martingale_settings(
     )
 
 
+def _reconcile_stale_token_status(request: Request) -> None:
+    """Heal a stale token-required badge when encrypted token data still exists.
+
+    The API previously calculated ``has_trading_api_token`` as token-present AND
+    status-not-token-required. A status written before a worker restart could
+    therefore hide a valid stored token indefinitely. Only generic stale statuses
+    are healed here; explicit expired, invalid or rejected states remain blocked.
+    """
+
+    account = base_api.get_current_account(request)
+    if not account:
+        return
+    status = str(account.get("execution_status") or "").strip().lower()
+    reason = str(account.get("execution_status_reason") or "").strip()
+    if status not in _STALE_TOKEN_STATUSES:
+        return
+    if base_api.execution_token_was_rejected(status, reason):
+        return
+
+    row = base_api.REPOSITORY.managed_account(int(account["id"]))
+    if not row:
+        return
+    try:
+        stored = decrypt_auth_payload(
+            row["token_secret"],
+            base_api.CONFIG.deriv.token_encryption_key,
+        )
+    except Exception:
+        return
+    if not base_api.has_personal_trading_api_token(stored):
+        return
+
+    enabled = bool(row.get("enabled", False))
+    base_api.REPOSITORY.set_managed_account_execution_status(
+        int(account["id"]),
+        "connecting" if enabled else "disabled",
+        (
+            "Stored Deriv API token detected; runtime validation pending"
+            if enabled
+            else "Stored Deriv API token detected; auto trading is disabled"
+        ),
+    )
+
+
 def install_personal_me_session_fix(app: Any) -> None:
     """Install the final `/me` route with a real FastAPI Request parameter.
 
@@ -86,6 +132,7 @@ def install_personal_me_session_fix(app: Any) -> None:
 
     @app.get("/me")
     def personal_me_session_fixed(request: Request) -> dict[str, Any]:
+        _reconcile_stale_token_status(request)
         payload = base_api.get_me(request)
         if not payload.get("authenticated"):
             return payload
