@@ -45,11 +45,6 @@ jobs:
 
       - name: Create CI-only Compose environment file
         run: |
-          # docker-compose.yml intentionally loads the private VPS .env file at
-          # runtime. GitHub Actions must never receive that file, but Compose
-          # validation still requires the declared env_file path to exist. An
-          # empty, permission-restricted CI file is sufficient because required
-          # interpolation values come from this job's safe test environment.
           umask 077
           : > .env
           test -f .env
@@ -74,6 +69,33 @@ jobs:
           node --check dashboard/realtime-mode-hardening.js
           node --check dashboard/custom-martingale.js
 
+      - name: Identify settlement state polluter
+        run: |
+          target="test_rf_dir5.RFRepositoryTests.test_realized_settlement_calibrates_one_canonical_signal_once"
+          for module in \
+            tests.test_multi_strategy \
+            tests.test_multi_strategy_concurrency \
+            tests.test_strategy_v2 \
+            tests.test_standardized_execution_runtime \
+            tests.test_scalable_group_execution \
+            tests.test_rotating_execution_cohorts \
+            tests.test_provider_connection_resilience \
+            tests.test_websocket_hot_path_hardening \
+            tests.test_per_account_virtual_runtime \
+            tests.test_strategy_settlement_integrity \
+            tests.test_websocket_execution_hardening \
+            tests.test_generated_multi_strategy_js \
+            tests.test_performance_hardening \
+            tests.test_generated_request_broker_js \
+            test_strategy_logic
+          do
+            echo "SETTLEMENT_POLLUTER_CHECK module=$module"
+            if ! python -m unittest -q "$module" "$target"; then
+              echo "SETTLEMENT_POLLUTER_FOUND module=$module"
+              exit 1
+            fi
+          done
+
       - name: Run focused release tests
         run: |
           python -m unittest -q tests.test_stop_history_and_mobile_ui
@@ -83,7 +105,6 @@ jobs:
           python -m unittest -q tests.test_performance_hardening tests.test_generated_request_broker_js
           python -m unittest -q test_custom_martingale.py
           python -m unittest -q test_aidr_recovery_v2.py tests.test_aidr_virtual_soft_gate tests.test_independent_websocket_execution tests.test_private_websocket_credentials
-          python -m unittest -q test_rf_dir5.RFRepositoryTests.test_realized_settlement_calibrates_one_canonical_signal_once
           sh scripts/run_legacy_release_tests.sh
 
       - name: Build API image
