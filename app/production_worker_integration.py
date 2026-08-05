@@ -113,11 +113,19 @@ def install_production_worker_integration() -> None:
     from app.seamless_execution_final import (
         install_final_seamless_execution_runtime,
     )
+    from app.bulk_credential_failure_hardening import (
+        install_bulk_credential_failure_hardening,
+    )
 
     install_final_shared_system_strategy_clock()
     install_proposal_execution_recovery()
     install_seamless_execution_runtime()
     install_final_seamless_execution_runtime()
+
+    # Install last so account/token binding failures emitted by the final REST bulk
+    # transport are quarantined per account. This deliberately preserves sibling
+    # PATs and keeps healthy accounts trading.
+    install_bulk_credential_failure_hardening()
 
     TradingBot._production_worker_integration_installed = True
     _INSTALLED = True
