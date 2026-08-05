@@ -7,16 +7,19 @@ from fastapi.responses import Response
 from app.dashboard_stability_fix import _remove_route
 
 _INSTALLED = False
-UI_VERSION = "20260803-1"
+UI_VERSION = "20260805-signal-alerts-1"
 
 
-def _headers(media_type: str) -> dict[str, str]:
-    return {
+def _headers(media_type: str, *, signal_alerts: bool = False) -> dict[str, str]:
+    headers = {
         "Cache-Control": "no-store, max-age=0",
         "Pragma": "no-cache",
         "X-FOA-UI-Version": UI_VERSION,
         "Content-Type": media_type,
     }
+    if signal_alerts:
+        headers["X-FOA-Signal-Alerts"] = "1"
+    return headers
 
 
 def install_head_request_compat(app: Any) -> None:
@@ -45,7 +48,10 @@ def install_head_request_compat(app: Any) -> None:
 
     @app.head("/ui/dashboard-v2.js", include_in_schema=False)
     def dashboard_v2_head() -> Response:
-        return Response(content=b"", headers=_headers("application/javascript"))
+        return Response(
+            content=b"",
+            headers=_headers("application/javascript", signal_alerts=True),
+        )
 
     @app.head("/ui/dashboard-actions-v2.js", include_in_schema=False)
     def dashboard_actions_v2_head() -> Response:
@@ -57,7 +63,10 @@ def install_head_request_compat(app: Any) -> None:
 
     @app.head("/ui/simplified-dashboard.js", include_in_schema=False)
     def simplified_dashboard_head() -> Response:
-        return Response(content=b"", headers=_headers("application/javascript"))
+        return Response(
+            content=b"",
+            headers=_headers("application/javascript", signal_alerts=True),
+        )
 
     @app.head("/health", include_in_schema=False)
     def health_head() -> Response:
