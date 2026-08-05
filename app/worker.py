@@ -88,9 +88,9 @@ async def run_worker() -> None:
     # tick to roughly one transaction per second.
     install_tick_persistence_buffer()
 
-    # All worker REST traffic shares one keep-alive pool with bounded per-host
-    # concurrency. Identical account-list reads are coalesced, safe reads/OTP calls
-    # receive bounded retries, and trade requests are never blindly replayed.
+    # REST is used only for account discovery and OTP creation needed to establish
+    # private WebSockets. One keep-alive pool coalesces safe account reads, bounds
+    # per-host pressure, and rejects any multi-account REST trading path locally.
     install_deriv_request_broker()
 
     install_dashboard_actual_trade_fallback()
@@ -178,17 +178,19 @@ async def run_worker() -> None:
     # refresh account membership before execution.
     install_guaranteed_signal_delivery()
 
-    # Install after every routing and transport wrapper. Contract metadata now
-    # comes from one public cache rather than account-by-market requests. Identical
-    # PAT contracts use official bulk shards of at most 100 accounts; OAuth members
-    # retain bounded private WebSocket groups. System role scopes are task-local,
-    # and exact provider outcomes replace generic missing confirmations.
+    # Final financial transport authority. Contract metadata is shared publicly,
+    # but every account keeps its own authenticated private WebSocket. Accounts
+    # trading the same contract/stake are placed into logical scheduling groups;
+    # each still receives an independent buy request and provider confirmation.
+    # Group concurrency, per-account locks, safe connection retries, and exact
+    # confirmation diagnostics reduce saturation without changing the commission
+    # route or introducing multi-account REST/copy execution.
     install_scalable_group_execution()
 
-    # The final System authority creates a fresh proposal only when each role's own
-    # grouped subcycle is ready. NORMAL, first recovery and post-virtual roles are
-    # attempted independently without retaining an aging signal or allowing one
-    # role/account error to stop the worker.
+    # NORMAL, first recovery and post-virtual execute as fresh role subcycles. A
+    # role creates its proposal only when its own WebSocket groups are ready, so a
+    # previous role cannot leave it holding an aging signal. Any role/account error
+    # remains isolated and cannot stop the global worker.
     install_scalable_group_execution_hardening()
 
     install_production_worker_integration()
