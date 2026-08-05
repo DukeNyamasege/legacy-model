@@ -11,6 +11,7 @@ import app.scalable_group_execution as scalable_group_execution
 import enhanced_bot
 from app.deriv.http import mask_app_id
 from app.repositories.rf_dir5_repository import VIRTUAL_MODE
+from app.rf_dir5_bot import RFDir5TradingBot
 from enhanced_bot import (
     CandidateSignal,
     TradingBot,
@@ -601,18 +602,20 @@ def install_rest_bulk_partitioning() -> None:
 
     global _INSTALLED
     already_final = (
-        getattr(TradingBot._purchase_accounts_by_stake, "__name__", "")
+        getattr(RFDir5TradingBot._purchase_accounts_by_stake, "__name__", "")
         == "_partitioned_purchase_accounts_by_stake"
     )
     TradingBot._purchase_accounts_by_stake = _partitioned_purchase_accounts_by_stake
     TradingBot._purchase_stake_group_for_environment = _partitioned_purchase_stake_group_for_environment
+    RFDir5TradingBot._purchase_accounts_by_stake = _partitioned_purchase_accounts_by_stake
+    RFDir5TradingBot._purchase_stake_group_for_environment = _partitioned_purchase_stake_group_for_environment
     scalable_group_execution._BASE_REST_BULK_PURCHASE = _partitioned_purchase_accounts_by_stake
     if _INSTALLED and already_final:
         return
     _INSTALLED = True
     logging.getLogger(__name__).warning(
         "REST_BULK_PARTITIONING_INSTALLED version=%s group_by=strategy,side,role,symbol,contract,barrier,account_type,stake "
-        "max_accounts_per_request=%s required_app_markup_percentage=%.2f token_language=api_token",
+        "max_accounts_per_request=%s required_app_markup_percentage=%.2f token_language=api_token final_class=RFDir5TradingBot",
         REST_BULK_PARTITIONING_VERSION,
         MAX_BULK_ACCOUNTS_PER_REQUEST,
         REQUIRED_APP_MARKUP_PERCENTAGE,
