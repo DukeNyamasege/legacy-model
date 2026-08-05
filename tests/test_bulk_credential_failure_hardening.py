@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.bulk_credential_failure_hardening import (
+    _worker_encryption_key,
     is_token_account_binding_failure,
     quarantine_undecryptable_enabled_accounts,
 )
@@ -47,6 +48,23 @@ class BulkCredentialFailureTests(unittest.TestCase):
                 "Provider request timed out",
             )
         )
+
+    def test_configured_encryption_key_is_used_when_bot_has_no_direct_attribute(self) -> None:
+        bot = SimpleNamespace(
+            test2_config=SimpleNamespace(
+                deriv=SimpleNamespace(token_encryption_key="configured-key")
+            )
+        )
+        self.assertEqual(_worker_encryption_key(bot), "configured-key")
+
+    def test_direct_worker_encryption_key_remains_supported(self) -> None:
+        bot = SimpleNamespace(
+            encryption_key="direct-key",
+            test2_config=SimpleNamespace(
+                deriv=SimpleNamespace(token_encryption_key="configured-key")
+            ),
+        )
+        self.assertEqual(_worker_encryption_key(bot), "direct-key")
 
     def test_only_enabled_unsafe_rows_are_quarantined(self) -> None:
         rows = [
@@ -99,9 +117,11 @@ class BulkCredentialFailureTests(unittest.TestCase):
         final_runtime = source.index("install_final_seamless_execution_runtime()")
         credential_guard = source.index("install_bulk_credential_failure_hardening()")
         self.assertLess(final_runtime, credential_guard)
-        self.assertIn("shared_credentials_preserved=true", (
+        hardening = (
             ROOT / "app" / "bulk_credential_failure_hardening.py"
-        ).read_text(encoding="utf-8"))
+        ).read_text(encoding="utf-8")
+        self.assertIn("shared_credentials_preserved=true", hardening)
+        self.assertIn("token_encryption_key", hardening)
 
     def test_readiness_audit_does_not_make_disabled_history_a_global_blocker(self) -> None:
         source = (
