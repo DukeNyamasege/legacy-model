@@ -41,11 +41,11 @@ def is_token_account_binding_failure(status: str, reason: str) -> bool:
 
 
 def quarantine_undecryptable_enabled_accounts(bot: Any) -> int:
-    """Disable only enabled rows that cannot be opened with the active key.
+    """Disable unsafe enabled credential rows before runtime account loading.
 
-    Disabled historical rows are preserved as-is. No token, encrypted payload or
-    exception text is logged. A user can repair the isolated account by reconnecting
-    it, which writes a fresh encrypted credential under the current worker key.
+    This covers both credentials that cannot be decrypted and token/account binding
+    rejections persisted by a previous worker. Disabled historical rows are kept
+    unchanged. No token, encrypted payload or exception text is logged.
     """
 
     quarantined = 0
@@ -56,6 +56,25 @@ def quarantine_undecryptable_enabled_accounts(bot: Any) -> int:
     for row in list(bot.repository.list_managed_accounts()):
         if not bool(getattr(row, "enabled", False)):
             continue
+
+        if is_token_account_binding_failure(
+            str(getattr(row, "execution_status", "") or ""),
+            str(getattr(row, "execution_status_reason", "") or ""),
+        ):
+            bot.repository.quarantine_managed_account(
+                int(row.id),
+                "invalid_account",
+                _ACCOUNT_BINDING_REASON,
+            )
+            quarantined += 1
+            bot.logger.warning(
+                "ACCOUNT_BULK_CREDENTIAL_QUARANTINED managed_id=%s "
+                "source=persisted_status token_removed=false "
+                "shared_credentials_preserved=true global_execution_continues=true",
+                int(row.id),
+            )
+            continue
+
         try:
             payload = decrypt_auth_payload(row.token_secret, encryption_key)
             if not isinstance(payload, dict):
@@ -114,7 +133,7 @@ def install_bulk_credential_failure_hardening() -> None:
         quarantined = quarantine_undecryptable_enabled_accounts(self)
         if quarantined:
             self.logger.warning(
-                "UNDECRYPTABLE_ACCOUNT_QUARANTINE_COMPLETE accounts=%s "
+                "UNSAFE_ACCOUNT_CREDENTIAL_QUARANTINE_COMPLETE accounts=%s "
                 "credentials_preserved=true global_execution_continues=true",
                 quarantined,
             )
