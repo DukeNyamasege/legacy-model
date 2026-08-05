@@ -2,6 +2,9 @@
   "use strict";
 
   const $ = id => document.getElementById(id);
+  const REQUIRED_PAT_MESSAGE = "Action required: Link your Deriv Personal Access Token with trade scope in Settings > Credentials to enable bulk purchase trading.";
+  const INVALID_PAT_MESSAGE = "Your Deriv token has expired or is invalid. Go to Settings > Credentials and add a new trade-scope token.";
+
   const api = async (path, options = {}) => {
     const response = await fetch(path, {
       credentials: "same-origin",
@@ -118,6 +121,15 @@
     if (node && node.textContent !== value) node.textContent = value;
   }
 
+  function tokenNoticeFrom(me, reason) {
+    const status = String(me?.execution_status || "").trim().toLowerCase();
+    const invalid = Boolean(me?.trading_api_token_invalid) || status === "credential_error";
+    const missing = Boolean(me?.requires_api_token) || status === "token_required" || status === "bulk_execution_pat_required";
+    if (invalid) return reason || INVALID_PAT_MESSAGE;
+    if (missing || !Boolean(me?.has_trading_api_token)) return reason || REQUIRED_PAT_MESSAGE;
+    return "";
+  }
+
   function render(me) {
     state = me;
     const controls = ensureControls();
@@ -126,14 +138,20 @@
     const status = String(me.execution_status || "inactive").trim().toLowerCase();
     const lifecycle = lifecycleFrom(me);
     const reason = String(me.execution_status_reason || "").trim();
-    const hasToken = Boolean(me.has_trading_api_token) && !Boolean(me.trading_api_token_invalid);
+    const tokenNotice = tokenNoticeFrom(me, reason);
+    const hasToken = !tokenNotice;
     const modeLabel = String(me.account_type || "account").toUpperCase();
 
     controls.primary.style.display = "inline-flex";
     controls.primary.dataset.lifecycle = lifecycle;
     controls.pauseResume.dataset.lifecycle = lifecycle;
-    controls.primary.disabled = busy || (lifecycle === "stopped" && !hasToken);
-    controls.pauseResume.disabled = busy || (lifecycle === "paused" && !hasToken);
+    controls.primary.disabled = busy || !hasToken || (lifecycle === "stopped" && !hasToken);
+    controls.pauseResume.disabled = busy || !hasToken || (lifecycle === "paused" && !hasToken);
+
+    if (tokenNotice) {
+      controls.notice.style.display = "block";
+      setText(controls.notice, tokenNotice);
+    }
 
     if (lifecycle === "running") {
       setText(controls.primary, busy ? "Stopping…" : "Stop Auto Trading");
@@ -148,8 +166,8 @@
       controls.pauseResume.dataset.action = "pause";
 
       const informative = Boolean(reason && !["active", "connecting", "validating"].includes(status));
-      controls.notice.style.display = informative ? "block" : "none";
-      if (informative) setText(controls.notice, reason);
+      controls.notice.style.display = tokenNotice || informative ? "block" : "none";
+      if (!tokenNotice && informative) setText(controls.notice, reason);
     } else if (lifecycle === "paused") {
       setText(controls.primary, busy ? "Stopping…" : "Stop Auto Trading");
       controls.primary.classList.remove("join");
@@ -163,10 +181,12 @@
       controls.pauseResume.dataset.action = "resume";
 
       controls.notice.style.display = "block";
-      setText(
-        controls.notice,
-        reason || `${modeLabel} trading is paused. Resume continues this same account mode; Stop clears recovery and starts fresh next time.`
-      );
+      if (!tokenNotice) {
+        setText(
+          controls.notice,
+          reason || `${modeLabel} trading is paused. Resume continues this same account mode; Stop clears recovery and starts fresh next time.`
+        );
+      }
     } else {
       setText(controls.primary, busy ? "Starting…" : "Start Auto Trade");
       controls.primary.classList.remove("stop");
@@ -174,17 +194,19 @@
       controls.primary.dataset.action = "start";
       controls.pauseResume.style.display = "none";
       controls.notice.style.display = "block";
-      setText(
-        controls.notice,
-        reason || `${modeLabel} trading is not started. It will not execute until you press Start Auto Trade on this account mode.`
-      );
+      if (!tokenNotice) {
+        setText(
+          controls.notice,
+          reason || `${modeLabel} trading is not started. It will not execute until you press Start Auto Trade on this account mode.`
+        );
+      }
     }
 
-    controls.primary.title = !hasToken && lifecycle === "stopped"
-      ? "Fix the trading API token in Settings before starting."
+    controls.primary.title = tokenNotice
+      ? "Link your Deriv Personal Access Token with trade scope in Settings before trading."
       : "";
-    controls.pauseResume.title = !hasToken && lifecycle === "paused"
-      ? "Fix the trading API token in Settings before resuming."
+    controls.pauseResume.title = tokenNotice
+      ? "Link your Deriv Personal Access Token with trade scope in Settings before trading."
       : "";
   }
 
