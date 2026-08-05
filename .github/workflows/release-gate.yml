@@ -83,6 +83,7 @@ jobs:
           python -m unittest -q tests.test_performance_hardening tests.test_generated_request_broker_js
           python -m unittest -q test_custom_martingale.py
           python -m unittest -q test_aidr_recovery_v2.py tests.test_aidr_virtual_soft_gate tests.test_independent_websocket_execution tests.test_private_websocket_credentials
+          python -m unittest -q test_rf_dir5.RFRepositoryTests.test_realized_settlement_calibrates_one_canonical_signal_once
           sh scripts/run_legacy_release_tests.sh
 
       - name: Build API image
