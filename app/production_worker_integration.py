@@ -113,11 +113,17 @@ def install_production_worker_integration() -> None:
     from app.seamless_execution_final import (
         install_final_seamless_execution_runtime,
     )
+    from app.bulk_response_member_reconciliation import (
+        install_bulk_response_member_reconciliation,
+    )
     from app.bulk_credential_failure_hardening import (
         install_bulk_credential_failure_hardening,
     )
     from app.tick_sequence_persistence_safety import (
         install_tick_sequence_persistence_safety,
+    )
+    from app.final_multi_strategy_execution import (
+        install_final_multi_strategy_execution,
     )
 
     install_final_shared_system_strategy_clock()
@@ -125,15 +131,25 @@ def install_production_worker_integration() -> None:
     install_seamless_execution_runtime()
     install_final_seamless_execution_runtime()
 
+    # Provider bulk responses can use lists or account-keyed mappings. Normalize
+    # every successful member and explicit member error before missing-account
+    # diagnostics run. Unknown outcomes are never retried blindly.
+    install_bulk_response_member_reconciliation()
+
     # Install after every strategy, proposal and transport wrapper. Temporary
     # live-tick sequence objects are converted to plain integers only during
     # persistence, then restored for the immediate purchase boundary.
     install_tick_sequence_persistence_safety()
 
-    # Install last so account/token binding failures emitted by the final REST bulk
-    # transport are quarantined per account. This deliberately preserves sibling
-    # PATs and keeps healthy accounts trading.
+    # Account/token binding failures emitted by the final REST bulk transport are
+    # quarantined per account. Sibling credentials remain available to valid
+    # linked demo and real accounts.
     install_bulk_credential_failure_hardening()
+
+    # Final execution authority: the System purchase uses its already-qualified
+    # proposal immediately while all manual contract proposals run independently.
+    # One manual group can fail without delaying System or cancelling other groups.
+    install_final_multi_strategy_execution()
 
     TradingBot._production_worker_integration_installed = True
     _INSTALLED = True
