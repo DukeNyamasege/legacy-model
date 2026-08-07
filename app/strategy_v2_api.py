@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 import app.api as base_api
+from app.custom_strategy_v1 import read_custom_strategy
 from app.final_public_controls import (
     STOPPED_STATUSES,
     _clear_account_runtime_preferences,
@@ -54,7 +55,7 @@ def _open_trade_count(session: Any, managed_account_id: int) -> int:
 
 
 def install_strategy_v2_api(app: Any) -> None:
-    """Make the four-family strategy selector the final account API authority."""
+    """Make the strategy selector the final account API authority."""
 
     global _INSTALLED
     if _INSTALLED:
@@ -97,6 +98,19 @@ def install_strategy_v2_api(app: Any) -> None:
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        account = _current_account_payload(request)
+        managed_id = int(account["id"])
+        if requested.family == "custom":
+            config = read_custom_strategy(base_api.DATABASE, managed_id)
+            if not bool(config.get("configured")):
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Configure and save the Custom Strategy Builder first. "
+                        "A Custom account cannot start without at least one pattern condition."
+                    ),
+                )
 
         with base_api.DATABASE.session() as session:
             row = _load_managed_account(session, request, for_update=True)
