@@ -128,6 +128,9 @@ def install_production_worker_integration() -> None:
     from app.manual_martingale_v2 import (
         install_manual_martingale_v2_worker,
     )
+    from app.manual_martingale_v2_hardening import (
+        install_manual_martingale_v2_hardening,
+    )
 
     install_final_shared_system_strategy_clock()
     install_proposal_execution_recovery()
@@ -158,6 +161,11 @@ def install_production_worker_integration() -> None:
     # recovery untouched. This last wrapper changes only manual strategy recovery
     # sizing: exact System Martingale, user multiplier, or 1-3 split debt parts.
     install_manual_martingale_v2_worker()
+
+    # Split recovery is allowed below the user's normal base stake, down to the
+    # Deriv minimum. Otherwise a $1 base stake divided three ways would still buy
+    # three $1 recovery contracts and defeat the lower-risk purpose of splitting.
+    install_manual_martingale_v2_hardening()
 
     TradingBot._production_worker_integration_installed = True
     _INSTALLED = True
