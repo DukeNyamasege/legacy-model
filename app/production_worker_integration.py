@@ -38,7 +38,7 @@ def install_production_worker_integration() -> None:
                 async with aiohttp.ClientSession(timeout=timeout) as client:
                     async with client.post(
                         url,
-                        headers={"X-API-Key": api_key,
+                        headers={"X-API-Key": api_key},
                     ) as response:
                         if response.status < 400:
                             if attempt > 1:
