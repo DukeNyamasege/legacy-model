@@ -20,16 +20,20 @@ from enhanced_bot import (
 
 LOGGER = logging.getLogger(__name__)
 _INSTALLED = False
-PROPOSAL_RELAY_VERSION = "two-socket-proposal-relay-v1"
+PROPOSAL_RELAY_VERSION = "two-socket-proposal-relay-v2"
 
 RELAY_COUNT = max(1, int(os.getenv("DERIV_PROPOSAL_RELAY_COUNT", "2")))
+PUBLIC_PROPOSAL_PRIMARY_TIMEOUT_SECONDS = max(
+    0.75,
+    float(os.getenv("DERIV_PUBLIC_PROPOSAL_PRIMARY_TIMEOUT_SECONDS", "2.5")),
+)
 RELAY_READY_TIMEOUT_SECONDS = max(
-    2.0,
-    float(os.getenv("DERIV_PROPOSAL_RELAY_READY_TIMEOUT_SECONDS", "10")),
+    1.0,
+    float(os.getenv("DERIV_PROPOSAL_RELAY_READY_TIMEOUT_SECONDS", "2.5")),
 )
 RELAY_REQUEST_TIMEOUT_SECONDS = max(
-    2.0,
-    float(os.getenv("DERIV_PROPOSAL_RELAY_REQUEST_TIMEOUT_SECONDS", "6")),
+    1.0,
+    float(os.getenv("DERIV_PROPOSAL_RELAY_REQUEST_TIMEOUT_SECONDS", "2.5")),
 )
 RELAY_WARM_RETRIES = max(
     1,
@@ -212,10 +216,12 @@ def _proposal_error_is_relayable(response: dict[str, Any]) -> bool:
     code = _proposal_error_code(response)
     if code in {
         "PUBLIC_PROPOSAL_TIMEOUT",
+        "PUBLIC_PROPOSAL_SEND_FAILED",
         "PROPOSAL_ROUTES_UNAVAILABLE",
         "NOT_CONNECTED",
         "PUBLIC_CONNECTION_LOST",
         "TIMEOUT",
+        "ERROR",
     }:
         return True
     error = response.get("error")
@@ -224,7 +230,48 @@ def _proposal_error_is_relayable(response: dict[str, Any]) -> bool:
         if isinstance(error, dict)
         else ""
     )
-    return "timed out" in message or "not connected" in message
+    return any(
+        marker in message
+        for marker in (
+            "timed out",
+            "not connected",
+            "connection closed",
+            "connection lost",
+            "closed without",
+        )
+    )
+
+
+async def _primary_proposal_request(
+    self: PublicMarketDataClient,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Bound only proposal latency; market-data/control requests remain unchanged."""
+
+    original = _ORIGINAL_PUBLIC_SEND_REQUEST
+    if original is None:
+        raise RuntimeError("Public proposal transport is not installed")
+    try:
+        return await asyncio.wait_for(
+            original(self, dict(payload)),
+            timeout=PUBLIC_PROPOSAL_PRIMARY_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        return {
+            "error": {
+                "code": "PUBLIC_PROPOSAL_TIMEOUT",
+                "message": (
+                    "The public proposal path exceeded the fast execution deadline"
+                ),
+            }
+        }
+    except Exception as exc:
+        return {
+            "error": {
+                "code": "PUBLIC_PROPOSAL_SEND_FAILED",
+                "message": sanitize_account_ids(str(exc)),
+            }
+        }
 
 
 async def _proposal_with_on_demand_relay(
@@ -236,18 +283,24 @@ async def _proposal_with_on_demand_relay(
         raise RuntimeError("Public proposal transport is not installed")
 
     payload = dict(request)
-    response = await original(self, dict(payload))
-    if not payload.get("proposal") or "error" not in response:
+    if not payload.get("proposal"):
+        return await original(self, dict(payload))
+
+    response = await _primary_proposal_request(self, payload)
+    if "error" not in response:
         return response
     if not _proposal_error_is_relayable(response):
         return response
 
+    public_error = _proposal_error_code(response) or "unknown"
+    started = asyncio.get_running_loop().time()
     sessions = await ensure_proposal_relays(self.bot)
     if not sessions:
         self.bot.logger.warning(
             "PROPOSAL_RELAY_UNAVAILABLE public_error=%s "
-            "financial_requests=0",
-            _proposal_error_code(response) or "unknown",
+            "primary_timeout_seconds=%.2f financial_requests=0",
+            public_error,
+            PUBLIC_PROPOSAL_PRIMARY_TIMEOUT_SECONDS,
         )
         return response
 
@@ -274,18 +327,20 @@ async def _proposal_with_on_demand_relay(
             continue
         self.bot.logger.warning(
             "PROPOSAL_RELAY_RECOVERED account=%s symbol=%s "
-            "public_error=%s financial_requests=0 buy_sent=false",
+            "public_error=%s elapsed_ms=%.1f financial_requests=0 buy_sent=false",
             mask_account_id(getattr(session, "account_id", "")),
             payload.get("underlying_symbol") or payload.get("symbol") or "unknown",
-            _proposal_error_code(response) or "unknown",
+            public_error,
+            (asyncio.get_running_loop().time() - started) * 1000.0,
         )
         return relay_response
 
     self.bot.logger.warning(
         "PROPOSAL_RELAY_EXHAUSTED relays=%s public_error=%s "
-        "financial_requests=0 buy_sent=false",
+        "elapsed_ms=%.1f financial_requests=0 buy_sent=false",
         len(sessions[:RELAY_COUNT]),
-        _proposal_error_code(response) or "unknown",
+        public_error,
+        (asyncio.get_running_loop().time() - started) * 1000.0,
     )
     return response
 
@@ -332,7 +387,13 @@ def install_proposal_relay_runtime() -> None:
     LOGGER.warning(
         "PROPOSAL_RELAY_RUNTIME_INSTALLED version=%s relays=%s "
         "proposal_only=true direct_buy_parameters=true "
-        "financial_requests=0 persistent_private_sockets_for_all_accounts=false",
+        "primary_timeout_seconds=%.2f relay_ready_timeout_seconds=%.2f "
+        "relay_request_timeout_seconds=%.2f "
+        "send_failures_relayable=true financial_requests=0 "
+        "persistent_private_sockets_for_all_accounts=false",
         PROPOSAL_RELAY_VERSION,
         RELAY_COUNT,
+        PUBLIC_PROPOSAL_PRIMARY_TIMEOUT_SECONDS,
+        RELAY_READY_TIMEOUT_SECONDS,
+        RELAY_REQUEST_TIMEOUT_SECONDS,
     )
