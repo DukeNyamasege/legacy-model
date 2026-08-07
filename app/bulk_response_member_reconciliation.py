@@ -8,7 +8,7 @@ import app.seamless_execution_runtime as seamless
 
 
 _INSTALLED = False
-_VERSION = "bulk-member-reconciliation-v2"
+_VERSION = "bulk-member-reconciliation-v3"
 _SUCCESS_KEYS = (
     "transactions",
     "results",
@@ -19,6 +19,14 @@ _SUCCESS_KEYS = (
     "items",
 )
 _FAILURE_KEYS = ("errors", "failures")
+_CANONICAL_SUCCESS_KEYS = (
+    "transactions",
+    "results",
+    "contracts",
+    "purchases",
+    "items",
+)
+_SUCCESS_ALIAS_KEYS = ("successes", "members")
 
 
 def _account_member(account_id: Any, value: Any, *, failure: bool) -> dict[str, Any] | None:
@@ -45,6 +53,35 @@ def _mapping_to_members(value: dict[str, Any], *, failure: bool) -> list[dict[st
     return members
 
 
+def _promote_success_aliases(output: dict[str, Any]) -> list[str]:
+    """Promote provider success aliases to a container the core normalizer reads.
+
+    Deriv bulk responses have appeared with success members under ``successes`` or
+    ``members``. The seamless normalizer intentionally accepts only the canonical
+    transaction/result/contract/purchase/item containers. If no canonical success
+    container is populated, copy the alias members to ``transactions`` so a real
+    provider purchase cannot be reported as BULK_MEMBER_MISSING merely because of
+    response shape. Existing canonical data always wins, and this function never
+    manufactures a contract or retries a financial request.
+    """
+
+    if any(isinstance(output.get(key), list) and output.get(key) for key in _CANONICAL_SUCCESS_KEYS):
+        return []
+
+    promoted: list[dict[str, Any]] = []
+    markers: list[str] = []
+    for key in _SUCCESS_ALIAS_KEYS:
+        value = output.get(key)
+        if not isinstance(value, list) or not value:
+            continue
+        promoted.extend(dict(item) for item in value if isinstance(item, dict))
+        markers.append(f"{key}:promoted_to_transactions")
+
+    if promoted:
+        output["transactions"] = promoted
+    return markers
+
+
 def _canonicalize_container(container: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     output = dict(container)
     converted: list[str] = []
@@ -64,6 +101,7 @@ def _canonicalize_container(container: dict[str, Any]) -> tuple[dict[str, Any], 
         elif isinstance(value, tuple):
             output[key] = list(value)
             converted.append(f"{key}:tuple")
+    converted.extend(_promote_success_aliases(output))
     return output, converted
 
 
@@ -146,7 +184,7 @@ def install_bulk_response_member_reconciliation() -> None:
     if not _INSTALLED:
         logging.getLogger(__name__).warning(
             "BULK_RESPONSE_MEMBER_RECONCILIATION_INSTALLED version=%s "
-            "account_keyed_successes=true account_keyed_errors=true "
+            "account_keyed_successes=true success_aliases=true account_keyed_errors=true "
             "blind_retry=false credentials_logged=false",
             _VERSION,
         )
