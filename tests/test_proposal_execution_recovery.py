@@ -5,23 +5,42 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PROPOSAL_PATH = ROOT / "app" / "proposal_execution_recovery.py"
+RELAY_PATH = ROOT / "app" / "proposal_relay_runtime.py"
 WORKER_PATH = ROOT / "app" / "production_worker_integration.py"
 ALERT_PATH = ROOT / "app" / "execution_alert_refinement.py"
 API_FINAL_PATH = ROOT / "app" / "database_runtime_hardening.py"
 
 
-def test_qualified_proposal_uses_existing_public_socket_without_extra_connection() -> None:
+def test_qualified_proposal_uses_final_relay_aware_public_transport() -> None:
     source = PROPOSAL_PATH.read_text(encoding="utf-8")
 
-    assert "_raw_public_request" in source
-    assert 'payload["req_id"] = request_id' in source
-    assert "client.pending_requests[request_id] = future" in source
-    assert "await websocket.send(json.dumps(payload))" in source
-    assert "PROPOSAL_TIMEOUT_SECONDS" in source
-    assert "AIDR_QUALIFIED_PROPOSAL_READY" in source
-    assert "purchase_next=true" in source
+    assert "_resilient_public_request" in source
+    assert "await client.send_request(dict(request))" in source
+    assert "shared_relay_transport=true" in source
+    assert "direct_websocket_bypass=false" in source
+    assert "client.pending_requests" not in source
+    assert "websocket.send" not in source
+    assert "client.ws" not in source
     assert "websockets.connect" not in source
     assert '"buy"' not in source
+    assert "AIDR_QUALIFIED_PROPOSAL_READY" in source
+    assert "purchase_next=true" in source
+
+
+def test_proposal_relay_has_fast_primary_deadline_and_handles_send_failures() -> None:
+    source = RELAY_PATH.read_text(encoding="utf-8")
+
+    assert 'PROPOSAL_RELAY_VERSION = "two-socket-proposal-relay-v2"' in source
+    assert "PUBLIC_PROPOSAL_PRIMARY_TIMEOUT_SECONDS" in source
+    assert '"2.5"' in source
+    assert "await asyncio.wait_for(" in source
+    assert "_primary_proposal_request" in source
+    assert '"PUBLIC_PROPOSAL_SEND_FAILED"' in source
+    assert '"ERROR"' in source
+    assert "_proposal_error_is_relayable" in source
+    assert "PROPOSAL_RELAY_RECOVERED" in source
+    assert "send_failures_relayable=true" in source
+    assert "financial_requests=0" in source
 
 
 def test_proposal_failure_logs_exact_exception_and_is_installed_last() -> None:
