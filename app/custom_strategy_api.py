@@ -79,12 +79,36 @@ def _open_count(session: Any, managed_account_id: int) -> int:
     return actual + virtual
 
 
+def _install_custom_alert_matching() -> None:
+    # The persisted account strategy has contract_type=CUSTOM while a qualified
+    # custom candidate correctly persists its real financial contract (CALL, PUT,
+    # DIGITEVEN, etc.). Match by the explicit CUSTOM-V1 trigger instead of trying
+    # to compare those intentionally different contract labels.
+    import app.final_execution_alert_api as final_alert
+
+    current = final_alert._matches_strategy
+    if getattr(current, "_custom_strategy_matching", False):
+        return
+
+    def matches_with_custom(signal: Any, selection: Any) -> bool:
+        if str(getattr(selection, "family", "") or "") == "custom":
+            return str(getattr(signal, "trigger_name", "") or "").upper().startswith(
+                "CUSTOM-V1-"
+            )
+        return bool(current(signal, selection))
+
+    matches_with_custom._custom_strategy_matching = True  # type: ignore[attr-defined]
+    final_alert._matches_strategy = matches_with_custom
+
+
 def install_custom_strategy_api(app: Any) -> None:
     """Install the account-scoped Custom Strategy Builder API."""
 
     global _INSTALLED
     if _INSTALLED:
         return
+
+    _install_custom_alert_matching()
 
     for path, method in (
         ("/me/custom-strategy", "GET"),
