@@ -75,14 +75,18 @@ class StrategyV2PreferenceTests(unittest.TestCase):
         self.assertEqual(_decode_payload(parity).contract_type, "DIGITEVEN")
         self.assertEqual(_decode_payload(manual_over).prediction, 3)
 
-    def test_catalog_has_four_clear_options(self) -> None:
+    def test_catalog_has_five_clear_options(self) -> None:
         payload = strategy_catalog_payload()
         self.assertEqual(
             set(payload["families"]),
-            {"system", "digits", "parity", "direction"},
+            {"system", "digits", "parity", "direction", "custom"},
         )
         self.assertTrue(payload["families"]["digits"]["prediction_required"])
-        self.assertIn("two-loss", payload["switching_rule"])
+        self.assertEqual(
+            payload["families"]["custom"]["sides"]["custom"]["contract_type"],
+            "CUSTOM",
+        )
+        self.assertIn("shared account-level protection", payload["switching_rule"])
 
 
 class StrategyV2SourceContractTests(unittest.TestCase):
