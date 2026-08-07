@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from app.bulk_credential_failure_hardening import (
     _worker_encryption_key,
+    is_permanent_token_failure,
     is_token_account_binding_failure,
     quarantine_undecryptable_enabled_accounts,
 )
@@ -49,6 +50,18 @@ class BulkCredentialFailureTests(unittest.TestCase):
             )
         )
 
+    def test_persisted_invalid_token_is_non_retryable(self) -> None:
+        self.assertTrue(is_permanent_token_failure("error", "InvalidToken"))
+        self.assertTrue(
+            is_permanent_token_failure(
+                "credential_error",
+                "Invalid or expired token",
+            )
+        )
+        self.assertFalse(
+            is_permanent_token_failure("error", "Provider request timed out")
+        )
+
     def test_configured_encryption_key_is_used_when_bot_has_no_direct_attribute(self) -> None:
         bot = SimpleNamespace(
             test2_config=SimpleNamespace(
@@ -78,6 +91,20 @@ class BulkCredentialFailureTests(unittest.TestCase):
                 execution_status="error",
                 execution_status_reason="Token or account validation failed for account DOT***750",
             ),
+            SimpleNamespace(
+                id=5,
+                enabled=True,
+                token_secret="legacy-invalid-token",
+                execution_status="error",
+                execution_status_reason="InvalidToken",
+            ),
+            SimpleNamespace(
+                id=6,
+                enabled=True,
+                token_secret="empty-payload",
+                execution_status="connecting",
+                execution_status_reason="",
+            ),
         ]
         repository = _Repository(rows)
         bot = SimpleNamespace(
@@ -89,7 +116,13 @@ class BulkCredentialFailureTests(unittest.TestCase):
         def decrypt(value, _key):
             if value.startswith("bad"):
                 raise ValueError("invalid encrypted payload")
-            return {"auth_type": "pat", "account_id": "DOT123"}
+            if value == "empty-payload":
+                return {"auth_type": "pat", "account_id": "DOT999"}
+            return {
+                "auth_type": "pat",
+                "account_id": "DOT123",
+                "pat_token": "test-trade-token",
+            }
 
         with patch(
             "app.bulk_credential_failure_hardening.decrypt_auth_payload",
@@ -97,8 +130,8 @@ class BulkCredentialFailureTests(unittest.TestCase):
         ):
             count = quarantine_undecryptable_enabled_accounts(bot)
 
-        self.assertEqual(count, 2)
-        self.assertEqual(len(repository.quarantined), 2)
+        self.assertEqual(count, 4)
+        self.assertEqual(len(repository.quarantined), 4)
         quarantined = {
             account_id: (status, reason)
             for account_id, status, reason in repository.quarantined
@@ -107,6 +140,10 @@ class BulkCredentialFailureTests(unittest.TestCase):
         self.assertIn("Reconnect this account", quarantined[1][1])
         self.assertEqual(quarantined[4][0], "invalid_account")
         self.assertIn("selected account", quarantined[4][1])
+        self.assertEqual(quarantined[5][0], "token_required")
+        self.assertIn("invalid or expired", quarantined[5][1])
+        self.assertEqual(quarantined[6][0], "token_required")
+        self.assertIn("no usable trade authorization", quarantined[6][1])
         self.assertNotIn(2, quarantined)
         self.assertNotIn(3, quarantined)
 
@@ -122,6 +159,10 @@ class BulkCredentialFailureTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("shared_credentials_preserved=true", hardening)
         self.assertIn("token_encryption_key", hardening)
+        self.assertIn("private_websocket_credential_from_payload", hardening)
+        self.assertIn("is_permanent_credential_error", hardening)
+        self.assertIn("source=persisted_invalid_token", hardening)
+        self.assertIn("source=missing_trade_authorization", hardening)
 
     def test_readiness_audit_does_not_make_disabled_history_a_global_blocker(self) -> None:
         source = (
