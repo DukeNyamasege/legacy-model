@@ -80,6 +80,7 @@ def install_database_runtime_hardening(app: Any) -> None:
     from app.manual_martingale_v2_api import install_manual_martingale_v2_final_api
     from app.custom_strategy_api import install_custom_strategy_api
     from app.trading_controls_final_ui import install_trading_controls_final_ui
+    from app.custom_strategy_final_ui import install_custom_strategy_final_ui
 
     install_final_execution_alert_api(app)
     install_execution_alert_refinement(app)
@@ -95,9 +96,10 @@ def install_database_runtime_hardening(app: Any) -> None:
     # account's custom family. It shares the same stopped/open-contract edit guard.
     install_custom_strategy_api(app)
 
-    # Serve the final dashboard script last so Wins/Losses KPI cards, manual
-    # Martingale controls and Custom Strategy Builder cannot be overwritten by an
-    # older UI compositor.
     install_trading_controls_final_ui(app)
+
+    # Final compositor: retain all Trades KPIs and manual Martingale controls, then
+    # append the Custom Strategy Builder so no older dashboard layer can hide it.
+    install_custom_strategy_final_ui(app)
 
     _INSTALLED = True
