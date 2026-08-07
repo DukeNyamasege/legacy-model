@@ -3,7 +3,12 @@ from __future__ import annotations
 from typing import Any
 
 from app.token_store import decrypt_auth_payload
-from enhanced_bot import TradingBot, sanitize_account_ids
+from enhanced_bot import (
+    TradingBot,
+    is_permanent_credential_error,
+    private_websocket_credential_from_payload,
+    sanitize_account_ids,
+)
 
 
 _INSTALLED = False
@@ -21,6 +26,14 @@ _ACCOUNT_BINDING_REASON = (
     "Deriv rejected this API token for the selected account. Reconnect this account "
     "or replace its trade-scoped API token in Settings > Credentials."
 )
+_PERMANENT_TOKEN_REASON = (
+    "The stored Deriv authorization is invalid or expired. Reconnect this account "
+    "or replace its trade-scoped API token in Settings > Credentials."
+)
+_MISSING_TRADE_CREDENTIAL_REASON = (
+    "The stored credential has no usable trade authorization. Reconnect this account "
+    "in Settings > Credentials and provide a valid trade-scoped authorization."
+)
 
 
 def is_token_account_binding_failure(status: str, reason: str) -> bool:
@@ -29,7 +42,7 @@ def is_token_account_binding_failure(status: str, reason: str) -> bool:
     Deriv returns ``BadInputRequest`` for this case instead of ``InvalidToken``.
     Treating it as a generic transient error makes the same account retry every
     qualifying cycle. Treating it as ``credential_error`` is also unsafe because
-    that legacy status removes the PAT from every sibling account that shares it.
+    that legacy status can remove a PAT from every sibling account that shares it.
     The correct action is therefore to isolate only the requested managed account.
     """
 
@@ -38,6 +51,28 @@ def is_token_account_binding_failure(status: str, reason: str) -> bool:
         return False
     normalized_reason = " ".join(str(reason or "").lower().split())
     return any(marker in normalized_reason for marker in _BINDING_FAILURE_MARKERS)
+
+
+def is_permanent_token_failure(status: str, reason: str) -> bool:
+    """Recognize persisted InvalidToken/expired-token rows as non-retryable."""
+
+    normalized_status = str(status or "").strip().lower()
+    if normalized_status not in {
+        "error",
+        "credential_error",
+        "reconnecting",
+        "token_required",
+    }:
+        return False
+    evidence = str(reason or "").strip()
+    if not evidence:
+        return False
+    return is_permanent_credential_error(
+        {
+            "code": evidence,
+            "message": evidence,
+        }
+    )
 
 
 def _worker_encryption_key(bot: Any) -> str:
@@ -52,8 +87,9 @@ def _worker_encryption_key(bot: Any) -> str:
 def quarantine_undecryptable_enabled_accounts(bot: Any) -> int:
     """Disable unsafe enabled credential rows before runtime account loading.
 
-    This covers both credentials that cannot be decrypted and token/account binding
-    rejections persisted by a previous worker. Disabled historical rows are kept
+    This covers credentials that cannot be decrypted, persisted provider token
+    rejections, token/account binding failures, and decrypted payloads that no
+    longer contain a usable trade authorization. Disabled historical rows are kept
     unchanged. No token, encrypted payload or exception text is logged.
     """
 
@@ -72,10 +108,9 @@ def quarantine_undecryptable_enabled_accounts(bot: Any) -> int:
             continue
 
         managed_id = int(row.id)
-        if is_token_account_binding_failure(
-            str(getattr(row, "execution_status", "") or ""),
-            str(getattr(row, "execution_status_reason", "") or ""),
-        ):
+        status = str(getattr(row, "execution_status", "") or "")
+        reason = str(getattr(row, "execution_status_reason", "") or "")
+        if is_token_account_binding_failure(status, reason):
             bot.repository.quarantine_managed_account(
                 managed_id,
                 "invalid_account",
@@ -85,6 +120,21 @@ def quarantine_undecryptable_enabled_accounts(bot: Any) -> int:
             bot.logger.warning(
                 "ACCOUNT_BULK_CREDENTIAL_QUARANTINED managed_id=%s "
                 "source=persisted_status token_removed=false "
+                "shared_credentials_preserved=true global_execution_continues=true",
+                managed_id,
+            )
+            continue
+
+        if is_permanent_token_failure(status, reason):
+            bot.repository.quarantine_managed_account(
+                managed_id,
+                "token_required",
+                _PERMANENT_TOKEN_REASON,
+            )
+            quarantined[managed_id] = ("token_required", _PERMANENT_TOKEN_REASON)
+            bot.logger.warning(
+                "ACCOUNT_TRADING_CREDENTIAL_QUARANTINED managed_id=%s "
+                "source=persisted_invalid_token token_removed=false "
                 "shared_credentials_preserved=true global_execution_continues=true",
                 managed_id,
             )
@@ -107,6 +157,30 @@ def quarantine_undecryptable_enabled_accounts(bot: Any) -> int:
             bot.logger.warning(
                 "ACCOUNT_CREDENTIAL_DECRYPT_QUARANTINED managed_id=%s "
                 "credential_preserved=true global_execution_continues=true",
+                managed_id,
+            )
+            continue
+
+        # Successful decryption alone is not enough. Empty legacy payloads and
+        # OAuth credentials without trade scope previously remained enabled and
+        # later appeared as anonymous InvalidToken rows in the execution audit.
+        usable_trade_credential = str(
+            private_websocket_credential_from_payload(payload) or ""
+        ).strip()
+        if not usable_trade_credential:
+            bot.repository.quarantine_managed_account(
+                managed_id,
+                "token_required",
+                _MISSING_TRADE_CREDENTIAL_REASON,
+            )
+            quarantined[managed_id] = (
+                "token_required",
+                _MISSING_TRADE_CREDENTIAL_REASON,
+            )
+            bot.logger.warning(
+                "ACCOUNT_TRADING_CREDENTIAL_QUARANTINED managed_id=%s "
+                "source=missing_trade_authorization token_removed=false "
+                "shared_credentials_preserved=true global_execution_continues=true",
                 managed_id,
             )
 
@@ -155,6 +229,22 @@ def install_bulk_credential_failure_hardening() -> None:
             self.logger.warning(
                 "ACCOUNT_BULK_CREDENTIAL_QUARANTINED managed_id=%s "
                 "reason=token_account_binding_rejected token_removed=false "
+                "shared_credentials_preserved=true global_execution_continues=true",
+                int(managed_account_id),
+            )
+            return
+        if managed_account_id is not None and is_permanent_token_failure(
+            status,
+            reason,
+        ):
+            self.repository.quarantine_managed_account(
+                int(managed_account_id),
+                "token_required",
+                _PERMANENT_TOKEN_REASON,
+            )
+            self.logger.warning(
+                "ACCOUNT_TRADING_CREDENTIAL_QUARANTINED managed_id=%s "
+                "source=live_invalid_token token_removed=false "
                 "shared_credentials_preserved=true global_execution_continues=true",
                 int(managed_account_id),
             )
