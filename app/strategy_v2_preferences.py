@@ -7,7 +7,7 @@ from typing import Any
 from app.models import RuntimePreference, utc_now
 
 STRATEGY_KEY_PREFIX = "account_strategy:v1:"
-STRATEGY_VERSION = "multi-strategy-v2"
+STRATEGY_VERSION = "multi-strategy-v3"
 DEFAULT_FAMILY = "system"
 DEFAULT_SIDE = "system"
 
@@ -97,6 +97,25 @@ STRATEGY_CATALOG: dict[str, dict[str, Any]] = {
             },
         },
     },
+    "custom": {
+        "label": "Custom Strategy",
+        "description": (
+            "Build your own market pattern. Select one, several, or all supported "
+            "markets; choose one exact contract; then require every configured "
+            "recent-digit or tick-direction condition to match before execution."
+        ),
+        "sides": {
+            "custom": {
+                "label": "Custom Pattern",
+                "contract_type": "CUSTOM",
+                "normal_rule": "User-defined AND pattern on selected markets",
+                "recovery_rule": (
+                    "The same custom contract waits for the next matching pattern; "
+                    "manual System, Multiplier, or Split Martingale may size recovery."
+                ),
+            }
+        },
+    },
 }
 
 
@@ -147,7 +166,7 @@ def normalize_strategy(
     family_meta = STRATEGY_CATALOG.get(normalized_family)
     if family_meta is None:
         raise ValueError(
-            "Unsupported strategy family; choose system, digits, parity, or direction"
+            "Unsupported strategy family; choose system, digits, parity, direction, or custom"
         )
     side_meta = family_meta["sides"].get(normalized_side)
     if side_meta is None:
@@ -190,7 +209,7 @@ def strategy_catalog_payload() -> dict[str, Any]:
         "families": STRATEGY_CATALOG,
         "switching_rule": (
             "Stop AutoTrade and wait for open contracts to settle before changing strategy. "
-            "Every strategy enters virtual protection after the shared two-loss sequence."
+            "Every strategy uses the shared account-level protection lifecycle."
         ),
     }
 
@@ -208,7 +227,7 @@ def _decode_payload(raw: str) -> StrategySelectionV2:
         prediction = payload.get("prediction")
         # The former default was stored as digits/over without a barrier. Treat
         # that legacy value as the newly explicit System Strategy.
-        if version != STRATEGY_VERSION and family == "digits" and side == "over" and prediction is None:
+        if version not in {STRATEGY_VERSION, "multi-strategy-v2"} and family == "digits" and side == "over" and prediction is None:
             return default_strategy()
         return normalize_strategy(family, side, prediction)
     except (TypeError, ValueError, json.JSONDecodeError):
@@ -257,7 +276,7 @@ def write_strategy(
 
 
 def install_strategy_v2_preferences() -> None:
-    """Make v2 preferences authoritative for API and worker compatibility layers."""
+    """Make v3 preferences authoritative for API and worker compatibility layers."""
     import app.strategy_preferences as legacy
 
     legacy.STRATEGY_CATALOG = STRATEGY_CATALOG
