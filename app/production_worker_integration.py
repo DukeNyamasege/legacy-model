@@ -125,6 +125,9 @@ def install_production_worker_integration() -> None:
     from app.final_multi_strategy_execution import (
         install_final_multi_strategy_execution,
     )
+    from app.manual_martingale_v2 import (
+        install_manual_martingale_v2_worker,
+    )
 
     install_final_shared_system_strategy_clock()
     install_proposal_execution_recovery()
@@ -150,6 +153,11 @@ def install_production_worker_integration() -> None:
     # proposal immediately while all manual contract proposals run independently.
     # One manual group can fail without delaying System or cancelling other groups.
     install_final_multi_strategy_execution()
+
+    # Keep the System Strategy's strict OVER-1/OVER-3/virtual-OVER-4/real-OVER-4
+    # recovery untouched. This last wrapper changes only manual strategy recovery
+    # sizing: exact System Martingale, user multiplier, or 1-3 split debt parts.
+    install_manual_martingale_v2_worker()
 
     TradingBot._production_worker_integration_installed = True
     _INSTALLED = True
