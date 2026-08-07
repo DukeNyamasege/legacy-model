@@ -38,7 +38,7 @@ def install_production_worker_integration() -> None:
                 async with aiohttp.ClientSession(timeout=timeout) as client:
                     async with client.post(
                         url,
-                        headers={"X-API-Key": api_key},
+                        headers={"X-API-Key": api_key,
                     ) as response:
                         if response.status < 400:
                             if attempt > 1:
@@ -132,6 +132,9 @@ def install_production_worker_integration() -> None:
         install_manual_martingale_v2_hardening,
     )
     from app.custom_strategy_runtime import install_custom_strategy_runtime
+    from app.custom_strategy_aidr_isolation import (
+        install_custom_strategy_aidr_isolation,
+    )
 
     install_final_shared_system_strategy_clock()
     install_proposal_execution_recovery()
@@ -174,6 +177,10 @@ def install_production_worker_integration() -> None:
     # account lifecycle, exact-scope REST transport, virtual protection and manual
     # Martingale stake policy without ever receiving a System AIDR signal.
     install_custom_strategy_runtime()
+
+    # Custom-only accounts do not keep the System AIDR scanner active. Preset
+    # manual strategies still share AIDR timing exactly as before.
+    install_custom_strategy_aidr_isolation()
 
     TradingBot._production_worker_integration_installed = True
     _INSTALLED = True
