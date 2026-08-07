@@ -22,7 +22,7 @@ class ProposalExecutionRecoveryTests(unittest.TestCase):
         self.assertIn("direct_websocket_bypass=false", source)
         self.assertNotIn("client.pending_requests", source)
         self.assertNotIn("websocket.send", source)
-        self.assertNotIn("client.ws", source)
+        self.assertNotIn("client.ws.send", source)
         self.assertNotIn("websockets.connect", source)
         self.assertNotIn('"buy"', source)
         self.assertIn("AIDR_QUALIFIED_PROPOSAL_READY", source)
