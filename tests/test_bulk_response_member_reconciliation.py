@@ -77,6 +77,61 @@ class BulkResponseMemberReconciliationTests(unittest.TestCase):
             {"DOT111", "DOT222"},
         )
 
+    def test_data_successes_list_is_promoted_to_transactions(self) -> None:
+        response = {
+            "data": {
+                "successes": [
+                    {"account_id": "DOT111", "contractId": "1001", "transactionId": "2001"},
+                    {"account_id": "DOT222", "contractId": "1002", "transactionId": "2002"},
+                ]
+            }
+        }
+        normalized = _reconciled_normalize_bulk_response(response, self.request)
+        transactions = normalized["data"]["transactions"]
+        self.assertEqual(
+            {(item["account_id"], str(item["contract_id"])) for item in transactions},
+            {("DOT111", "1001"), ("DOT222", "1002")},
+        )
+        self.assertEqual(normalized["errors"], [])
+
+    def test_data_members_mapping_is_promoted_without_losing_account_identity(self) -> None:
+        response = {
+            "data": {
+                "members": {
+                    "DOT111": {"contractId": "1001", "transactionId": "2001"},
+                    "DOT222": {"contractId": "1002", "transactionId": "2002"},
+                }
+            }
+        }
+        canonical, shapes = _canonicalize_response(response)
+        self.assertIn("data.members:mapping", shapes)
+        self.assertIn("data.members:promoted_to_transactions", shapes)
+        normalized = _reconciled_normalize_bulk_response(response, self.request)
+        transactions = normalized["data"]["transactions"]
+        self.assertEqual(
+            {(item["account_id"], str(item["contract_id"])) for item in transactions},
+            {("DOT111", "1001"), ("DOT222", "1002")},
+        )
+
+    def test_canonical_transactions_win_over_success_aliases(self) -> None:
+        response = {
+            "data": {
+                "transactions": [
+                    {"account_id": "DOT111", "contract_id": "1001"},
+                    {"account_id": "DOT222", "contract_id": "1002"},
+                ],
+                "successes": [
+                    {"account_id": "DOT111", "contract_id": "duplicate"},
+                ],
+            }
+        }
+        canonical, shapes = _canonicalize_response(response)
+        self.assertNotIn("data.successes:promoted_to_transactions", shapes)
+        self.assertEqual(
+            [str(item["contract_id"]) for item in canonical["data"]["transactions"]],
+            ["1001", "1002"],
+        )
+
     def test_installer_is_after_seamless_normalizer(self) -> None:
         source = PRODUCTION.read_text(encoding="utf-8")
         self.assertIn("install_bulk_response_member_reconciliation", source)
@@ -89,6 +144,7 @@ class BulkResponseMemberReconciliationTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("credentials_logged=false", module_source)
         self.assertIn("duplicate_retry=false", module_source)
+        self.assertIn("success_aliases=true", module_source)
 
 
 if __name__ == "__main__":
