@@ -131,6 +131,7 @@ def install_production_worker_integration() -> None:
     from app.manual_martingale_v2_hardening import (
         install_manual_martingale_v2_hardening,
     )
+    from app.custom_strategy_runtime import install_custom_strategy_runtime
 
     install_final_shared_system_strategy_clock()
     install_proposal_execution_recovery()
@@ -166,6 +167,13 @@ def install_production_worker_integration() -> None:
     # Deriv minimum. Otherwise a $1 base stake divided three ways would still buy
     # three $1 recovery contracts and defeat the lower-risk purpose of splitting.
     install_manual_martingale_v2_hardening()
+
+    # Custom Strategy is a separate entry authority. It scans the already-shared
+    # ten market streams silently and creates a candidate only when every user
+    # condition is true. Install it last so custom entries still inherit the final
+    # account lifecycle, exact-scope REST transport, virtual protection and manual
+    # Martingale stake policy without ever receiving a System AIDR signal.
+    install_custom_strategy_runtime()
 
     TradingBot._production_worker_integration_installed = True
     _INSTALLED = True
