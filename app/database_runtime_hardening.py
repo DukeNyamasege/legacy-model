@@ -77,10 +77,21 @@ def install_database_runtime_hardening(app: Any) -> None:
     from app.seamless_personal_execution_final import (
         install_final_seamless_personal_execution,
     )
+    from app.manual_martingale_v2 import install_manual_martingale_v2_api
+    from app.trading_controls_final_ui import install_trading_controls_final_ui
 
     install_final_execution_alert_api(app)
     install_execution_alert_refinement(app)
     install_seamless_personal_execution(app)
     install_final_seamless_personal_execution(app)
+
+    # Final personal recovery controls are deliberately installed after every
+    # lifecycle/compatibility layer. The System Strategy remains locked to its
+    # native AIDR recovery while manual families receive their own policy API.
+    install_manual_martingale_v2_api(app)
+
+    # Serve the final dashboard script last so Wins/Losses KPI cards and the
+    # manual Martingale selector cannot be overwritten by an older UI compositor.
+    install_trading_controls_final_ui(app)
 
     _INSTALLED = True
