@@ -78,6 +78,7 @@ jobs:
           python -m unittest -q tests.test_final_multi_strategy_execution
           python -m unittest -q tests.test_bulk_response_member_reconciliation
           python -m unittest -q tests.test_proposal_execution_recovery
+          python -m unittest -q tests.test_manual_martingale_v2
           python -m unittest -q tests.test_multi_strategy tests.test_multi_strategy_concurrency tests.test_strategy_v2 tests.test_standardized_execution_runtime tests.test_per_account_virtual_runtime
           python -m unittest -q tests.test_websocket_execution_hardening
           python -m unittest -q tests.test_performance_hardening tests.test_generated_request_broker_js
