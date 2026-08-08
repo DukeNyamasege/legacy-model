@@ -9,8 +9,11 @@ from sqlalchemy import func, select
 import app.api as base_api
 from app.custom_strategy_v1 import (
     COMPARATORS,
+    DEFAULT_DURATION_TICKS,
     MAX_CONDITIONS,
+    MAX_DURATION_TICKS,
     MAX_WINDOW,
+    MIN_DURATION_TICKS,
     SUPPORTED_MARKETS,
     TRADE_TYPES,
     describe_custom_strategy,
@@ -46,6 +49,11 @@ class CustomStrategyRequest(BaseModel):
     markets: list[str] = Field(default_factory=list)
     trade_type: str
     prediction: int | None = Field(default=None, ge=0, le=9)
+    duration_ticks: int = Field(
+        default=DEFAULT_DURATION_TICKS,
+        ge=MIN_DURATION_TICKS,
+        le=MAX_DURATION_TICKS,
+    )
     conditions: list[CustomConditionRequest] = Field(
         min_length=1,
         max_length=MAX_CONDITIONS,
@@ -82,8 +90,8 @@ def _open_count(session: Any, managed_account_id: int) -> int:
 def _install_custom_alert_matching() -> None:
     # The persisted account strategy has contract_type=CUSTOM while a qualified
     # custom candidate correctly persists its real financial contract (CALL, PUT,
-    # DIGITEVEN, etc.). Match by the explicit CUSTOM-V1 trigger instead of trying
-    # to compare those intentionally different contract labels.
+    # DIGITEVEN, etc.). Match by the explicit Custom trigger instead of trying to
+    # compare those intentionally different contract labels.
     import app.final_execution_alert_api as final_alert
 
     current = final_alert._matches_strategy
@@ -92,9 +100,8 @@ def _install_custom_alert_matching() -> None:
 
     def matches_with_custom(signal: Any, selection: Any) -> bool:
         if str(getattr(selection, "family", "") or "") == "custom":
-            return str(getattr(signal, "trigger_name", "") or "").upper().startswith(
-                "CUSTOM-V1-"
-            )
+            trigger = str(getattr(signal, "trigger_name", "") or "").upper()
+            return trigger.startswith(("CUSTOM-V1-", "CUSTOM-V2-"))
         return bool(current(signal, selection))
 
     matches_with_custom._custom_strategy_matching = True  # type: ignore[attr-defined]
@@ -159,6 +166,12 @@ def install_custom_strategy_api(app: Any) -> None:
                     "digit_compare",
                     "direction",
                 ],
+                "duration": {
+                    "unit": "ticks",
+                    "minimum": MIN_DURATION_TICKS,
+                    "maximum": MAX_DURATION_TICKS,
+                    "default": DEFAULT_DURATION_TICKS,
+                },
                 "maximum_window": MAX_WINDOW,
                 "maximum_conditions": MAX_CONDITIONS,
                 "condition_join": "AND",
@@ -175,6 +188,7 @@ def install_custom_strategy_api(app: Any) -> None:
             "markets": body.markets,
             "trade_type": body.trade_type,
             "prediction": body.prediction,
+            "duration_ticks": body.duration_ticks,
             "conditions": [item.model_dump() for item in body.conditions],
             "match": body.match,
         }
@@ -238,6 +252,7 @@ def install_custom_strategy_api(app: Any) -> None:
                     "markets": config["markets"],
                     "trade_type": config["trade_type"],
                     "prediction": config["prediction"],
+                    "duration_ticks": config["duration_ticks"],
                     "condition_count": len(config["conditions"]),
                     "condition_join": "AND",
                     "recovery_state_reset": True,
@@ -258,11 +273,12 @@ def install_custom_strategy_api(app: Any) -> None:
             "recovery_reset": True,
             "history_preserved": True,
             "message": (
-                "Custom Strategy saved. Press Start to scan the selected markets "
-                "continuously; no candidate is created until every condition matches."
+                f"Custom Strategy saved with {config['duration_ticks']}-tick contract "
+                "duration. Press Start to scan the selected markets continuously; "
+                "no candidate is created until every condition matches."
             ),
         }
 
     app.state.custom_strategy_api_installed = True
-    app.state.custom_strategy_api_version = "20260807-custom-v1"
+    app.state.custom_strategy_api_version = "20260808-custom-v2"
     _INSTALLED = True
