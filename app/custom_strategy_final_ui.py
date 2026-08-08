@@ -10,14 +10,14 @@ from app.trading_controls_final_ui import _script as base_script
 
 
 _INSTALLED = False
-UI_VERSION = "20260808-custom-strategy-duration-v2"
+UI_VERSION = "20260808-custom-strategy-builder-card-v3"
 
 _CUSTOM_JS = r'''
 
-/* FOA_CUSTOM_STRATEGY_BUILDER_V2 */
+/* FOA_CUSTOM_STRATEGY_BUILDER_V3 */
 (() => {
   "use strict";
-  const VERSION = "20260808-2";
+  const VERSION = "20260808-3";
   let payload = null;
   let draft = null;
   let loading = false;
@@ -30,6 +30,8 @@ _CUSTOM_JS = r'''
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+
+  const clamp = (value, minimum, maximum) => Math.max(minimum, Math.min(maximum, Number(value)));
 
   async function api(url, options = {}) {
     const response = await fetch(url, {
@@ -49,23 +51,34 @@ _CUSTOM_JS = r'''
     const style = document.createElement("style");
     style.id = "foa-custom-strategy-style";
     style.textContent = `
-      #foa-custom-strategy-builder{margin-top:14px;border:1px solid #d8e2f4;border-radius:14px;background:#fff;padding:16px;box-shadow:0 8px 22px rgba(15,23,42,.04)}
-      .foa-custom-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px}
-      .foa-custom-head h3{margin:0;color:#10213f;font-size:16px}.foa-custom-head p{margin:4px 0 0;color:#62718b;font-size:12px;line-height:1.45}
-      .foa-custom-badge{font-size:11px;font-weight:800;padding:5px 9px;border-radius:999px;background:#eef4ff;color:#1d5bd8;white-space:nowrap}
-      .foa-custom-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.foa-custom-field{display:flex;flex-direction:column;gap:6px}
-      .foa-custom-field label,.foa-custom-label{font-size:11px;font-weight:800;color:#31415f;text-transform:uppercase;letter-spacing:.035em}
-      #foa-custom-strategy-builder select,#foa-custom-strategy-builder input{width:100%;box-sizing:border-box;border:1px solid #cad6ea;border-radius:9px;background:#fff;padding:9px 10px;color:#14213d;font-size:13px}
-      .foa-duration-help{font-size:10px;color:#728199;line-height:1.35;margin-top:-1px}
-      .foa-custom-markets{grid-column:1/-1;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px;margin-top:1px}
-      .foa-custom-market{display:flex;align-items:center;gap:6px;border:1px solid #dbe5f3;border-radius:8px;padding:7px 8px;font-size:11px;color:#34435e;background:#f9fbff}.foa-custom-market input{width:auto!important;margin:0}
-      .foa-custom-conditions{grid-column:1/-1;display:flex;flex-direction:column;gap:8px}.foa-custom-condition{display:grid;grid-template-columns:1.5fr .65fr 1.2fr auto;gap:7px;align-items:end;border:1px solid #e0e7f1;border-radius:10px;padding:9px;background:#fbfcff}
-      .foa-custom-and{text-align:center;color:#6d7b91;font-size:10px;font-weight:900;letter-spacing:.08em}.foa-custom-remove{border:1px solid #efb7bd;background:#fff4f5;color:#c52e3b;border-radius:8px;padding:9px 10px;font-weight:800;cursor:pointer}
-      .foa-custom-actions{grid-column:1/-1;display:flex;gap:8px;align-items:center;flex-wrap:wrap}.foa-custom-add,.foa-custom-save{border:0;border-radius:9px;padding:9px 12px;font-size:12px;font-weight:800;cursor:pointer}.foa-custom-add{background:#eef4ff;color:#225ec8}.foa-custom-save{background:#1268f3;color:#fff}
-      .foa-custom-preview{grid-column:1/-1;border:1px solid #d7e4f6;border-radius:10px;background:#f5f9ff;padding:10px 12px;color:#27415f;font-size:12px;line-height:1.5}.foa-custom-status{font-size:11px;color:#66758c}.foa-custom-status.error{color:#c62838}.foa-custom-status.ok{color:#18864b}
-      #foa-custom-strategy-builder [disabled]{opacity:.55;cursor:not-allowed}.foa-custom-note{grid-column:1/-1;color:#69778d;font-size:11px;line-height:1.45;padding:9px 10px;border-radius:9px;background:#fafcff;border:1px solid #edf1f7}
-      @media(max-width:1000px){.foa-custom-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-      @media(max-width:760px){.foa-custom-grid{grid-template-columns:1fr}.foa-custom-markets{grid-template-columns:repeat(2,minmax(0,1fr))}.foa-custom-condition{grid-template-columns:1fr 90px}.foa-custom-condition .foa-custom-detail{grid-column:1/-1}.foa-custom-remove{grid-column:2}}
+      #foa-custom-strategy-builder{margin-top:16px;border:1px solid var(--line,#dce5f1);border-radius:18px;background:var(--card,#fff);overflow:hidden;box-shadow:0 18px 48px rgba(15,23,42,.07);color:var(--ink,#172033)}
+      .foa-cs-hero{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:19px 20px;background:linear-gradient(135deg,rgba(37,99,235,.10),rgba(124,58,237,.05) 52%,transparent);border-bottom:1px solid var(--line,#dce5f1)}
+      .foa-cs-kicker{display:flex;align-items:center;gap:7px;margin-bottom:5px;font-size:9px;font-weight:900;letter-spacing:.13em;text-transform:uppercase;color:var(--blue,#2563eb)}
+      .foa-cs-dot{width:7px;height:7px;border-radius:50%;background:var(--blue,#2563eb);box-shadow:0 0 0 4px rgba(37,99,235,.10)}
+      .foa-cs-hero h2{margin:0;font-size:18px;line-height:1.25;color:var(--ink,#172033)}.foa-cs-hero p{max-width:700px;margin:6px 0 0;font-size:10.5px;line-height:1.55;color:var(--muted,#64748b)}
+      .foa-cs-badge{flex:none;padding:7px 10px;border:1px solid var(--line,#dce5f1);border-radius:999px;background:var(--card,#fff);font-size:9px;font-weight:900;color:var(--muted,#64748b);white-space:nowrap}.foa-cs-badge.active{border-color:rgba(34,197,94,.35);background:rgba(34,197,94,.08);color:#16834a}
+      .foa-cs-body{padding:16px;display:grid;gap:12px}
+      .foa-cs-section{border:1px solid var(--line,#dce5f1);border-radius:15px;background:var(--card,#fff);padding:14px}
+      .foa-cs-section-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}.foa-cs-section-title{display:flex;align-items:flex-start;gap:10px}.foa-cs-step{display:grid;place-items:center;width:26px;height:26px;border-radius:9px;background:rgba(37,99,235,.09);color:var(--blue,#2563eb);font-size:10px;font-weight:900;flex:none}.foa-cs-section h3{margin:1px 0 2px;font-size:12px}.foa-cs-section p{margin:0;color:var(--muted,#64748b);font-size:9.5px;line-height:1.45}
+      .foa-cs-mini{font-size:9px;font-weight:800;color:var(--muted,#64748b);white-space:nowrap}
+      .foa-cs-segment{display:inline-grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:4px;padding:4px;border:1px solid var(--line,#dce5f1);border-radius:11px;background:rgba(148,163,184,.07)}
+      .foa-cs-segment button{min-height:34px;padding:0 13px;border:0;border-radius:8px;background:transparent;color:var(--muted,#64748b);font-size:9.5px;font-weight:850;cursor:pointer}.foa-cs-segment button.active{background:var(--card,#fff);color:var(--blue,#2563eb);box-shadow:0 2px 8px rgba(15,23,42,.08)}
+      .foa-cs-market-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px;margin-top:10px}.foa-cs-market{position:relative;display:flex;align-items:center;gap:8px;min-height:42px;padding:7px 9px;border:1px solid var(--line,#dce5f1);border-radius:10px;background:rgba(148,163,184,.035);cursor:pointer}.foa-cs-market.selected{border-color:rgba(37,99,235,.45);background:rgba(37,99,235,.06)}.foa-cs-market input{position:absolute;opacity:0;pointer-events:none}.foa-cs-check{display:grid;place-items:center;width:16px;height:16px;border:1px solid #bac8dc;border-radius:5px;font-size:10px;color:transparent;flex:none}.foa-cs-market.selected .foa-cs-check{border-color:var(--blue,#2563eb);background:var(--blue,#2563eb);color:#fff}.foa-cs-market b{display:block;font-size:9.5px}.foa-cs-market small{display:block;margin-top:2px;font-size:8px;color:var(--muted,#64748b)}
+      .foa-cs-contract-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:7px}.foa-cs-trade{min-height:64px;border:1px solid var(--line,#dce5f1);border-radius:11px;background:rgba(148,163,184,.035);color:var(--ink,#172033);cursor:pointer;padding:9px 7px;text-align:left}.foa-cs-trade strong{display:block;font-size:10px}.foa-cs-trade small{display:block;margin-top:4px;font-size:8px;color:var(--muted,#64748b);line-height:1.35}.foa-cs-trade.active{border-color:rgba(37,99,235,.55);background:rgba(37,99,235,.07);box-shadow:0 0 0 2px rgba(37,99,235,.06)}
+      .foa-cs-contract-settings{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}.foa-cs-control{display:flex;flex-direction:column;gap:6px}.foa-cs-control label,.foa-cs-label{font-size:8.5px;font-weight:900;letter-spacing:.06em;text-transform:uppercase;color:var(--muted,#64748b)}
+      #foa-custom-strategy-builder input[type=number],#foa-custom-strategy-builder select{width:100%;height:38px;box-sizing:border-box;border:1px solid var(--line,#dce5f1);border-radius:9px;background:var(--card,#fff);color:var(--ink,#172033);padding:0 10px;font-size:10.5px;font-weight:750;outline:none}.foa-cs-control input:focus,.foa-cs-control select:focus{border-color:var(--blue,#2563eb);box-shadow:0 0 0 3px rgba(37,99,235,.08)}
+      .foa-cs-help{font-size:8.5px;color:var(--muted,#64748b);line-height:1.4}.foa-cs-quick{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}.foa-cs-quick button{min-width:35px;min-height:28px;border:1px solid var(--line,#dce5f1);border-radius:8px;background:var(--card,#fff);color:var(--muted,#64748b);font-size:8.5px;font-weight:850;cursor:pointer}.foa-cs-quick button.active{border-color:var(--blue,#2563eb);background:rgba(37,99,235,.07);color:var(--blue,#2563eb)}
+      .foa-cs-prediction-grid{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}.foa-cs-prediction-grid button{width:31px;height:31px;border:1px solid var(--line,#dce5f1);border-radius:50%;background:var(--card,#fff);color:var(--ink,#172033);font-size:9px;font-weight:900;cursor:pointer}.foa-cs-prediction-grid button.active{border-color:var(--blue,#2563eb);background:var(--blue,#2563eb);color:#fff}
+      .foa-cs-condition-list{display:grid;gap:8px}.foa-cs-condition{position:relative;display:grid;grid-template-columns:31px 1.35fr .55fr 1.2fr 32px;gap:8px;align-items:end;padding:10px;border:1px solid var(--line,#dce5f1);border-radius:12px;background:rgba(148,163,184,.025)}.foa-cs-condition-no{display:grid;place-items:center;width:27px;height:27px;margin-bottom:5px;border-radius:8px;background:rgba(37,99,235,.08);color:var(--blue,#2563eb);font-size:9px;font-weight:900}.foa-cs-remove{height:34px;border:1px solid rgba(239,68,68,.24);border-radius:8px;background:rgba(239,68,68,.05);color:#c93745;font-weight:900;cursor:pointer}.foa-cs-and{display:flex;align-items:center;justify-content:center;gap:8px;height:15px;color:var(--muted,#64748b);font-size:8px;font-weight:900;letter-spacing:.12em}.foa-cs-and:before,.foa-cs-and:after{content:"";height:1px;flex:1;background:var(--line,#dce5f1)}
+      .foa-cs-add{margin-top:9px;min-height:34px;padding:0 12px;border:1px dashed rgba(37,99,235,.45);border-radius:9px;background:rgba(37,99,235,.04);color:var(--blue,#2563eb);font-size:9px;font-weight:900;cursor:pointer}
+      .foa-cs-recovery-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.foa-cs-recovery{position:relative;min-height:100px;padding:12px;border:1px solid var(--line,#dce5f1);border-radius:12px;background:rgba(148,163,184,.025);cursor:pointer}.foa-cs-recovery input{position:absolute;opacity:0;pointer-events:none}.foa-cs-recovery strong{display:block;font-size:10px}.foa-cs-recovery small{display:block;margin-top:5px;color:var(--muted,#64748b);font-size:8.5px;line-height:1.45}.foa-cs-recovery.active{border-color:rgba(37,99,235,.5);background:rgba(37,99,235,.065);box-shadow:0 0 0 2px rgba(37,99,235,.05)}.foa-cs-recovery-tag{display:inline-block;margin-bottom:8px;padding:4px 6px;border-radius:6px;background:rgba(37,99,235,.09);color:var(--blue,#2563eb);font-size:7.5px;font-weight:900;letter-spacing:.05em}
+      .foa-cs-recovery-detail{display:grid;grid-template-columns:minmax(0,1fr) 240px;gap:12px;align-items:center;margin-top:9px;padding:10px 11px;border:1px solid var(--line,#dce5f1);border-radius:10px;background:rgba(37,99,235,.035)}.foa-cs-recovery-detail[hidden]{display:none!important}.foa-cs-recovery-detail b{font-size:9.5px}.foa-cs-recovery-detail p{margin:3px 0 0;font-size:8.5px;color:var(--muted,#64748b);line-height:1.45}
+      .foa-cs-preview{padding:12px 13px;border:1px solid rgba(37,99,235,.22);border-radius:12px;background:linear-gradient(135deg,rgba(37,99,235,.065),rgba(124,58,237,.035));font-size:9.5px;line-height:1.55;color:var(--ink,#172033)}.foa-cs-preview b{display:block;margin-bottom:4px;font-size:8px;letter-spacing:.08em;text-transform:uppercase;color:var(--blue,#2563eb)}
+      .foa-cs-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-top:1px solid var(--line,#dce5f1);background:rgba(148,163,184,.025)}.foa-cs-status{font-size:8.8px;color:var(--muted,#64748b);line-height:1.45}.foa-cs-status.ok{color:#16834a}.foa-cs-status.error{color:#c93745}.foa-cs-save{min-width:142px;min-height:40px;padding:0 16px;border:0;border-radius:10px;background:linear-gradient(135deg,var(--blue,#2563eb),#4f46e5);color:#fff;font-size:10px;font-weight:900;cursor:pointer;box-shadow:0 8px 18px rgba(37,99,235,.20)}
+      #foa-custom-strategy-builder button:disabled,#foa-custom-strategy-builder input:disabled,#foa-custom-strategy-builder select:disabled{opacity:.48;cursor:not-allowed}
+      @media(max-width:1100px){.foa-cs-market-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.foa-cs-contract-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+      @media(max-width:780px){.foa-cs-hero{padding:15px}.foa-cs-body{padding:10px}.foa-cs-market-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.foa-cs-contract-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.foa-cs-contract-settings,.foa-cs-recovery-grid,.foa-cs-recovery-detail{grid-template-columns:1fr}.foa-cs-condition{grid-template-columns:28px 1fr 82px 32px}.foa-cs-condition .foa-cs-detail{grid-column:2/5}.foa-cs-footer{align-items:stretch;flex-direction:column}.foa-cs-save{width:100%}}
+      @media(max-width:480px){.foa-cs-market-grid{grid-template-columns:1fr}.foa-cs-condition{grid-template-columns:26px 1fr 32px}.foa-cs-condition .foa-cs-window{grid-column:2}.foa-cs-condition .foa-cs-detail{grid-column:2/4}.foa-cs-remove{grid-column:3;grid-row:1}.foa-cs-section{padding:11px}.foa-cs-segment{display:grid;grid-auto-flow:row;grid-template-columns:1fr 1fr;width:100%}}
     `;
     document.head.appendChild(style);
   }
@@ -82,8 +95,25 @@ _CUSTOM_JS = r'''
     return node;
   }
 
+  function marketLabel(symbol) {
+    const value = String(symbol || "");
+    const match1s = value.match(/^1HZ(\d+)V$/);
+    if (match1s) return [`Volatility ${match1s[1]} (1s)`, value];
+    const matchNormal = value.match(/^R_(\d+)$/);
+    if (matchNormal) return [`Volatility ${matchNormal[1]}`, value];
+    return [value, value];
+  }
+
   function defaultDuration() {
     return Number(payload?.supported?.duration?.default || 1);
+  }
+
+  function defaultMartingale() {
+    return {
+      mode: "system",
+      multiplier: Number(payload?.supported?.martingale?.default_multiplier || 2),
+      split_count: Number(payload?.supported?.martingale?.default_split_count || 2),
+    };
   }
 
   function defaultDraft() {
@@ -95,22 +125,41 @@ _CUSTOM_JS = r'''
       duration_ticks: defaultDuration(),
       conditions: [{ kind: "digit_parity", window: 3, parity: "odd" }],
       match: "all",
+      martingale: defaultMartingale(),
     };
+  }
+
+  function hydrateDraft() {
+    const value = payload?.config?.configured ? structuredClone(payload.config) : defaultDraft();
+    value.duration_ticks = Number.isFinite(Number(value.duration_ticks)) ? Number(value.duration_ticks) : defaultDuration();
+    value.martingale = {
+      ...defaultMartingale(),
+      ...(payload?.martingale || {}),
+      ...(value.martingale || {}),
+    };
+    return value;
   }
 
   function conditionText(item) {
     const n = Number(item.window || 1);
-    if (item.kind === "digit_parity") return `last ${n} digit(s) are ${item.parity || "odd"}`;
-    if (item.kind === "digit_compare") return `last ${n} digit(s) are ${item.operator || ">="} ${Number(item.value ?? 4)}`;
-    return `last ${n} tick direction(s) are ${item.direction || "rise"}`;
+    if (item.kind === "digit_parity") return `last ${n} digit${n === 1 ? "" : "s"} ${n === 1 ? "is" : "are"} ${String(item.parity || "odd").toUpperCase()}`;
+    if (item.kind === "digit_compare") return `last ${n} digit${n === 1 ? "" : "s"} ${n === 1 ? "is" : "are"} ${item.operator || ">="} ${Number(item.value ?? 4)}`;
+    return `last ${n} tick direction${n === 1 ? "" : "s"} ${n === 1 ? "is" : "are"} ${String(item.direction || "rise").toUpperCase()}`;
+  }
+
+  function recoveryText() {
+    const settings = draft?.martingale || defaultMartingale();
+    if (settings.mode === "multiplier") return `CUSTOM MULTIPLIER ×${Number(settings.multiplier || 2).toFixed(2)}`;
+    if (settings.mode === "split") return `SPLIT RECOVERY · ${Number(settings.split_count || 2)} PART${Number(settings.split_count || 2) === 1 ? "" : "S"}`;
+    return "SYSTEM MARTINGALE · FULL RECOVERY";
   }
 
   function previewText() {
     if (!draft) return "";
-    const target = `${String(draft.trade_type || "even").toUpperCase()}${["over","under"].includes(draft.trade_type) ? ` ${draft.prediction ?? 2}` : ""}`;
-    const markets = draft.market_mode === "all" ? "ALL MARKETS" : (draft.markets || []).join(", ") || "NO MARKET SELECTED";
+    const target = `${String(draft.trade_type || "even").toUpperCase()}${["over","under"].includes(draft.trade_type) ? ` ${draft.prediction ?? (draft.trade_type === "under" ? 7 : 2)}` : ""}`;
+    const markets = draft.market_mode === "all" ? "ALL 10 MARKETS" : (draft.markets || []).join(", ") || "NO MARKET SELECTED";
     const duration = Math.max(1, Number(draft.duration_ticks || 1));
-    return `IF ${(draft.conditions || []).map(conditionText).join(" AND ")} THEN BUY ${target} ON ${markets} FOR ${duration} ${duration === 1 ? "TICK" : "TICKS"}`;
+    return `IF ${(draft.conditions || []).map(conditionText).join(" AND ")} → BUY ${target} ON ${markets} FOR ${duration} ${duration === 1 ? "TICK" : "TICKS"} · RECOVERY: ${recoveryText()}`;
   }
 
   function detailHtml(item, index, editable) {
@@ -125,12 +174,52 @@ _CUSTOM_JS = r'''
     return `<select data-field="direction" data-index="${index}" ${disabled}><option value="rise" ${item.direction !== "fall" ? "selected" : ""}>Rise</option><option value="fall" ${item.direction === "fall" ? "selected" : ""}>Fall</option></select>`;
   }
 
+  function predictionHtml(editable) {
+    if (!["over", "under"].includes(draft.trade_type)) return "";
+    const isUnder = draft.trade_type === "under";
+    const minimum = isUnder ? 1 : 0;
+    const maximum = isUnder ? 9 : 8;
+    const current = clamp(draft.prediction ?? (isUnder ? 7 : 2), minimum, maximum);
+    const disabled = editable ? "" : "disabled";
+    const digits = Array.from({ length: maximum - minimum + 1 }, (_, index) => minimum + index);
+    return `
+      <div class="foa-cs-control">
+        <label>${isUnder ? "Under" : "Over"} prediction / barrier</label>
+        <input id="foa-custom-prediction" type="number" min="${minimum}" max="${maximum}" step="1" value="${current}" ${disabled}>
+        <div class="foa-cs-prediction-grid">${digits.map(value => `<button type="button" data-prediction="${value}" class="${Number(current) === value ? "active" : ""}" ${disabled}>${value}</button>`).join("")}</div>
+      </div>
+    `;
+  }
+
+  function recoveryDetailHtml(editable) {
+    const settings = draft.martingale || defaultMartingale();
+    const disabled = editable ? "" : "disabled";
+    const multiplierMeta = payload?.supported?.martingale || {};
+    const minMultiplier = Number(multiplierMeta.minimum_multiplier || 1.10);
+    const maxMultiplier = Number(multiplierMeta.maximum_multiplier || 10);
+    return `
+      <div class="foa-cs-recovery-detail" id="foa-cs-multiplier-detail" ${settings.mode === "multiplier" ? "" : "hidden"}>
+        <div><b>Custom multiplier</b><p>After a real loss, size the next qualifying custom-pattern recovery from the base stake using your multiplier. A win returns this multiplier cycle to base stake.</p></div>
+        <div class="foa-cs-control"><input id="foa-cs-multiplier" type="number" min="${minMultiplier}" max="${maxMultiplier}" step="0.10" value="${Number(settings.multiplier || 2).toFixed(2)}" ${disabled}><div class="foa-cs-quick">${[1.5,2,2.5,3].map(value => `<button type="button" data-multiplier="${value}" class="${Number(settings.multiplier || 2) === value ? "active" : ""}" ${disabled}>×${value}</button>`).join("")}</div></div>
+      </div>
+      <div class="foa-cs-recovery-detail" id="foa-cs-split-detail" ${settings.mode === "split" ? "" : "hidden"}>
+        <div><b>Split exact-debt recovery</b><p>Divide the real remaining debt across the selected number of successful recovery parts. Failed parts still enter virtual protection and do not consume a successful part.</p></div>
+        <div><div class="foa-cs-label">Successful recovery parts</div><div class="foa-cs-quick">${[1,2,3].map(value => `<button type="button" data-split-count="${value}" class="${Number(settings.split_count || 2) === value ? "active" : ""}" ${disabled}>${value} part${value === 1 ? "" : "s"}</button>`).join("")}</div></div>
+      </div>
+    `;
+  }
+
+  function syncExternalMartingalePanel() {
+    const panel = document.getElementById("foa-manual-martingale-v2");
+    if (!panel) return;
+    panel.style.display = (Boolean(payload?.active) || dirty) ? "none" : "";
+  }
+
   function render() {
     ensureStyle();
     const node = host();
     if (!node || !payload) return;
-    if (!draft) draft = payload.config?.configured ? structuredClone(payload.config) : defaultDraft();
-    if (!Number.isFinite(Number(draft.duration_ticks))) draft.duration_ticks = defaultDuration();
+    if (!draft) draft = hydrateDraft();
 
     const editable = Boolean(payload.editable);
     const active = Boolean(payload.active);
@@ -138,36 +227,68 @@ _CUSTOM_JS = r'''
     const types = payload.supported?.trade_types || [];
     const durationMeta = payload.supported?.duration || { minimum: 1, maximum: 100, default: 1 };
     const disabled = editable ? "" : "disabled";
-    const needsPrediction = ["over", "under"].includes(draft.trade_type);
     const selected = new Set(draft.markets || []);
+    const martingale = draft.martingale || defaultMartingale();
     const conditions = (draft.conditions || []).map((item, index) => `
-      ${index ? '<div class="foa-custom-and">AND</div>' : ''}
-      <div class="foa-custom-condition">
-        <div class="foa-custom-field"><label>Condition</label><select data-field="kind" data-index="${index}" ${disabled}>
-          <option value="digit_parity" ${item.kind === "digit_parity" ? "selected" : ""}>Last N digits are Even/Odd</option>
-          <option value="digit_compare" ${item.kind === "digit_compare" ? "selected" : ""}>Last N digits compare to a digit</option>
-          <option value="direction" ${item.kind === "direction" ? "selected" : ""}>Last N tick directions are Rise/Fall</option>
+      ${index ? '<div class="foa-cs-and">AND</div>' : ''}
+      <div class="foa-cs-condition">
+        <div class="foa-cs-condition-no">${index + 1}</div>
+        <div class="foa-cs-control"><label>Pattern</label><select data-field="kind" data-index="${index}" ${disabled}>
+          <option value="digit_parity" ${item.kind === "digit_parity" ? "selected" : ""}>Digits are Even / Odd</option>
+          <option value="digit_compare" ${item.kind === "digit_compare" ? "selected" : ""}>Digits compare to value</option>
+          <option value="direction" ${item.kind === "direction" ? "selected" : ""}>Tick direction Rise / Fall</option>
         </select></div>
-        <div class="foa-custom-field"><label>Last N</label><input type="number" min="1" max="100" step="1" data-field="window" data-index="${index}" value="${Number(item.window || 1)}" ${disabled}></div>
-        <div class="foa-custom-field foa-custom-detail"><label>Rule</label>${detailHtml(item, index, editable)}</div>
-        <button type="button" class="foa-custom-remove" data-remove="${index}" ${disabled}>×</button>
+        <div class="foa-cs-control foa-cs-window"><label>Last N</label><input type="number" min="1" max="100" step="1" data-field="window" data-index="${index}" value="${Number(item.window || 1)}" ${disabled}></div>
+        <div class="foa-cs-control foa-cs-detail"><label>Must be</label>${detailHtml(item, index, editable)}</div>
+        <button type="button" class="foa-cs-remove" data-remove="${index}" title="Remove condition" ${disabled || (draft.conditions || []).length <= 1 ? "disabled" : ""}>×</button>
       </div>
     `).join("");
 
     node.innerHTML = `
-      <div class="foa-custom-head"><div><h3>Custom Strategy Builder</h3><p>Scan continuously and stay silent until every pattern condition matches. A System signal never triggers this strategy.</p></div><span class="foa-custom-badge">${active ? "ACTIVE CUSTOM" : "CUSTOM OPTION"}</span></div>
-      <div class="foa-custom-grid">
-        <div class="foa-custom-field"><label>Market scope</label><select id="foa-custom-market-mode" ${disabled}><option value="all" ${draft.market_mode === "all" ? "selected" : ""}>All Markets</option><option value="selected" ${draft.market_mode === "selected" ? "selected" : ""}>Select Markets</option></select></div>
-        <div class="foa-custom-field"><label>Trade type</label><select id="foa-custom-trade-type" ${disabled}>${types.map(item => `<option value="${esc(item.value)}" ${draft.trade_type === item.value ? "selected" : ""}>${esc(item.label)}</option>`).join("")}</select></div>
-        <div class="foa-custom-field"><label>Contract duration (ticks)</label><input id="foa-custom-duration" type="number" inputmode="numeric" min="${Number(durationMeta.minimum || 1)}" max="${Number(durationMeta.maximum || 100)}" step="1" value="${Number(draft.duration_ticks || durationMeta.default || 1)}" ${disabled}><span class="foa-duration-help">How many ticks the purchased or virtual contract remains open after entry.</span></div>
-        <div class="foa-custom-markets">${markets.map(symbol => `<label class="foa-custom-market"><input type="checkbox" data-market="${esc(symbol)}" ${selected.has(symbol) ? "checked" : ""} ${disabled || draft.market_mode === "all" ? "disabled" : ""}>${esc(symbol)}</label>`).join("")}</div>
-        <div class="foa-custom-field" id="foa-custom-prediction-wrap" style="${needsPrediction ? "" : "display:none"}"><label>${draft.trade_type === "under" ? "Under" : "Over"} prediction</label><input id="foa-custom-prediction" type="number" min="${draft.trade_type === "under" ? 1 : 0}" max="${draft.trade_type === "under" ? 9 : 8}" step="1" value="${Number(draft.prediction ?? (draft.trade_type === "under" ? 7 : 2))}" ${disabled}></div>
-        <div class="foa-custom-note"><b>Last N</b> is the pattern lookback used to decide when to enter. <b>Contract duration</b> is separate: it decides how many ticks the contract runs after the entry is purchased. Conditions use AND. Example: last 6 digits are Odd <b>AND</b> last 3 digits are ≥ 4.</div>
-        <div class="foa-custom-conditions"><div class="foa-custom-label">Pattern conditions</div>${conditions}</div>
-        <div class="foa-custom-actions"><button type="button" class="foa-custom-add" id="foa-custom-add-condition" ${disabled || (draft.conditions || []).length >= 12 ? "disabled" : ""}>+ Add condition</button><button type="button" class="foa-custom-save" id="foa-custom-save" ${disabled || saving ? "disabled" : ""}>${saving ? "Saving…" : "Save & Select Custom Strategy"}</button><span class="foa-custom-status" id="foa-custom-status">${editable ? "Stop state confirmed — configuration is editable." : `Stop AutoTrade and settle open contracts to edit. Open contracts: ${Number(payload.open_contracts || 0)}.`}</span></div>
-        <div class="foa-custom-preview"><b>Rule preview:</b> ${esc(previewText())}</div>
+      <div class="foa-cs-hero">
+        <div><div class="foa-cs-kicker"><span class="foa-cs-dot"></span>Custom execution strategy</div><h2>Build your own trading pattern</h2><p>Choose where to trade, the exact contract to purchase, what the market must do before entry, how many ticks the contract runs, and how losses are recovered. The bot executes only this saved rule for a Custom Strategy account.</p></div>
+        <span class="foa-cs-badge ${active ? "active" : ""}">${active ? "ACTIVE STRATEGY" : "STRATEGY BUILDER"}</span>
       </div>
+      <div class="foa-cs-body">
+        <section class="foa-cs-section">
+          <div class="foa-cs-section-head"><div class="foa-cs-section-title"><span class="foa-cs-step">1</span><div><h3>Choose markets</h3><p>Trade all supported markets or select one, two, three, or any combination.</p></div></div><span class="foa-cs-mini">${draft.market_mode === "all" ? "10 markets" : `${selected.size} selected`}</span></div>
+          <div class="foa-cs-segment"><button type="button" data-market-mode="all" class="${draft.market_mode === "all" ? "active" : ""}" ${disabled}>All Markets</button><button type="button" data-market-mode="selected" class="${draft.market_mode === "selected" ? "active" : ""}" ${disabled}>Choose Markets</button></div>
+          <div class="foa-cs-market-grid">${markets.map(symbol => { const [label, code] = marketLabel(symbol); const checked = selected.has(symbol); return `<label class="foa-cs-market ${checked ? "selected" : ""}"><input type="checkbox" data-market="${esc(symbol)}" ${checked ? "checked" : ""} ${disabled || draft.market_mode === "all" ? "disabled" : ""}><span class="foa-cs-check">✓</span><span><b>${esc(label)}</b><small>${esc(code)}</small></span></label>`; }).join("")}</div>
+        </section>
+
+        <section class="foa-cs-section">
+          <div class="foa-cs-section-head"><div class="foa-cs-section-title"><span class="foa-cs-step">2</span><div><h3>Choose contract</h3><p>Select one exact trade type. Over and Under also expose the prediction/barrier.</p></div></div><span class="foa-cs-mini">${esc(String(draft.trade_type || "even").toUpperCase())}</span></div>
+          <div class="foa-cs-contract-grid">${types.map(item => {
+            const descriptions = { even:"Last digit is even", odd:"Last digit is odd", over:"Last digit is over barrier", under:"Last digit is under barrier", rise:"Exit above entry", fall:"Exit below entry" };
+            return `<button type="button" class="foa-cs-trade ${draft.trade_type === item.value ? "active" : ""}" data-trade-type="${esc(item.value)}" ${disabled}><strong>${esc(item.label)}</strong><small>${esc(descriptions[item.value] || item.contract_type || "")}</small></button>`;
+          }).join("")}</div>
+          <div class="foa-cs-contract-settings">
+            ${predictionHtml(editable)}
+            <div class="foa-cs-control"><label>Contract duration (ticks)</label><input id="foa-custom-duration" type="number" inputmode="numeric" min="${Number(durationMeta.minimum || 1)}" max="${Number(durationMeta.maximum || 100)}" step="1" value="${Number(draft.duration_ticks || durationMeta.default || 1)}" ${disabled}><span class="foa-cs-help">This is how long the purchased/virtual contract runs after entry. It is separate from Last N pattern lookback.</span><div class="foa-cs-quick">${[1,2,3,5,10].map(value => `<button type="button" data-duration="${value}" class="${Number(draft.duration_ticks) === value ? "active" : ""}" ${disabled}>${value}t</button>`).join("")}</div></div>
+          </div>
+        </section>
+
+        <section class="foa-cs-section">
+          <div class="foa-cs-section-head"><div class="foa-cs-section-title"><span class="foa-cs-step">3</span><div><h3>Define entry pattern</h3><p>Every condition is joined with AND. Scanning remains silent until all conditions are true on a selected market.</p></div></div><span class="foa-cs-mini">${(draft.conditions || []).length}/12 conditions</span></div>
+          <div class="foa-cs-condition-list">${conditions}</div>
+          <button type="button" class="foa-cs-add" id="foa-custom-add-condition" ${disabled || (draft.conditions || []).length >= 12 ? "disabled" : ""}>＋ Add another AND condition</button>
+        </section>
+
+        <section class="foa-cs-section">
+          <div class="foa-cs-section-head"><div class="foa-cs-section-title"><span class="foa-cs-step">4</span><div><h3>Choose recovery / Martingale</h3><p>This recovery policy belongs to this Custom Strategy. Recovery still waits for your custom entry pattern to qualify again.</p></div></div><span class="foa-cs-mini">${esc(recoveryText())}</span></div>
+          <div class="foa-cs-recovery-grid">
+            <label class="foa-cs-recovery ${martingale.mode === "system" ? "active" : ""}"><input type="radio" name="foa-custom-mm" value="system" ${martingale.mode === "system" ? "checked" : ""} ${disabled}><span class="foa-cs-recovery-tag">FULL</span><strong>System Martingale</strong><small>Target the full remaining real debt on the next qualifying real recovery entry using the existing exact-debt calculation. Virtual protection remains active after failed recovery.</small></label>
+            <label class="foa-cs-recovery ${martingale.mode === "multiplier" ? "active" : ""}"><input type="radio" name="foa-custom-mm" value="multiplier" ${martingale.mode === "multiplier" ? "checked" : ""} ${disabled}><span class="foa-cs-recovery-tag">CUSTOM</span><strong>Custom Multiplier</strong><small>Choose your own stake multiplier such as ×1.5, ×2 or ×3 for the next qualifying recovery trade.</small></label>
+            <label class="foa-cs-recovery ${martingale.mode === "split" ? "active" : ""}"><input type="radio" name="foa-custom-mm" value="split" ${martingale.mode === "split" ? "checked" : ""} ${disabled}><span class="foa-cs-recovery-tag">SPLIT</span><strong>Split Recovery</strong><small>Spread the actual remaining debt across 1, 2 or 3 successful recovery parts instead of one larger recovery trade.</small></label>
+          </div>
+          ${recoveryDetailHtml(editable)}
+        </section>
+
+        <div class="foa-cs-preview"><b>Bot execution rule</b>${esc(previewText())}</div>
+      </div>
+      <div class="foa-cs-footer"><span class="foa-cs-status" id="foa-custom-status">${editable ? "Configuration is editable. Saving selects Custom Strategy; press Start afterward to begin scanning." : `Stop AutoTrade and settle all open contracts before editing. Open contracts: ${Number(payload.open_contracts || 0)}.`}</span><button type="button" class="foa-cs-save" id="foa-custom-save" data-legacy-label="Save & Select Custom Strategy" ${disabled || saving ? "disabled" : ""}>${saving ? "Saving…" : "Save Strategy"}</button></div>
     `;
+    syncExternalMartingalePanel();
   }
 
   function markDirty() { dirty = true; }
@@ -180,7 +301,7 @@ _CUSTOM_JS = r'''
     try {
       payload = await api(`/me/custom-strategy?ts=${Date.now()}`);
       if (!dirty || force) {
-        draft = payload.config?.configured ? structuredClone(payload.config) : defaultDraft();
+        draft = hydrateDraft();
         dirty = false;
       }
       render();
@@ -198,19 +319,18 @@ _CUSTOM_JS = r'''
     else item.direction = "rise";
   }
 
+  function chooseTradeType(value) {
+    draft.trade_type = value;
+    if (value === "under") draft.prediction = 7;
+    else if (value === "over") draft.prediction = 2;
+    else draft.prediction = null;
+    markDirty(); render();
+  }
+
   document.addEventListener("change", event => {
     const root = event.target.closest("#foa-custom-strategy-builder");
     if (!root || !draft) return;
     const target = event.target;
-    if (target.id === "foa-custom-market-mode") {
-      draft.market_mode = target.value;
-      markDirty(); render(); return;
-    }
-    if (target.id === "foa-custom-trade-type") {
-      draft.trade_type = target.value;
-      draft.prediction = target.value === "under" ? 7 : target.value === "over" ? 2 : null;
-      markDirty(); render(); return;
-    }
     if (target.id === "foa-custom-duration") {
       draft.duration_ticks = Number(target.value);
       markDirty(); render(); return;
@@ -223,6 +343,14 @@ _CUSTOM_JS = r'''
       const values = new Set(draft.markets || []);
       if (target.checked) values.add(target.dataset.market); else values.delete(target.dataset.market);
       draft.markets = [...values]; markDirty(); render(); return;
+    }
+    if (target.name === "foa-custom-mm") {
+      draft.martingale.mode = target.value;
+      markDirty(); render(); return;
+    }
+    if (target.id === "foa-cs-multiplier") {
+      draft.martingale.multiplier = Number(target.value);
+      markDirty(); render(); return;
     }
     const index = Number(target.dataset.index);
     const field = target.dataset.field;
@@ -238,6 +366,45 @@ _CUSTOM_JS = r'''
   document.addEventListener("click", async event => {
     const root = event.target.closest("#foa-custom-strategy-builder");
     if (!root || !draft) return;
+
+    const marketMode = event.target.closest("[data-market-mode]");
+    if (marketMode) {
+      draft.market_mode = marketMode.dataset.marketMode;
+      markDirty(); render(); return;
+    }
+    const tradeType = event.target.closest("[data-trade-type]");
+    if (tradeType) { chooseTradeType(tradeType.dataset.tradeType); return; }
+    const duration = event.target.closest("[data-duration]");
+    if (duration) {
+      draft.duration_ticks = Number(duration.dataset.duration);
+      markDirty(); render(); return;
+    }
+    const prediction = event.target.closest("[data-prediction]");
+    if (prediction) {
+      draft.prediction = Number(prediction.dataset.prediction);
+      markDirty(); render(); return;
+    }
+    const multiplier = event.target.closest("[data-multiplier]");
+    if (multiplier) {
+      draft.martingale.mode = "multiplier";
+      draft.martingale.multiplier = Number(multiplier.dataset.multiplier);
+      markDirty(); render(); return;
+    }
+    const split = event.target.closest("[data-split-count]");
+    if (split) {
+      draft.martingale.mode = "split";
+      draft.martingale.split_count = Number(split.dataset.splitCount);
+      markDirty(); render(); return;
+    }
+    const recovery = event.target.closest(".foa-cs-recovery");
+    if (recovery) {
+      const input = recovery.querySelector('input[name="foa-custom-mm"]');
+      if (input && !input.disabled) {
+        draft.martingale.mode = input.value;
+        markDirty(); render();
+      }
+      return;
+    }
     const remove = event.target.closest("[data-remove]");
     if (remove) {
       const index = Number(remove.dataset.remove);
@@ -249,19 +416,35 @@ _CUSTOM_JS = r'''
       markDirty(); render(); return;
     }
     if (!event.target.closest("#foa-custom-save") || saving) return;
+
+    if (draft.market_mode === "selected" && !(draft.markets || []).length) {
+      const status = document.getElementById("foa-custom-status");
+      if (status) { status.textContent = "Select at least one market or choose All Markets."; status.className = "foa-cs-status error"; }
+      return;
+    }
+
     saving = true; render();
     try {
-      const result = await api("/me/custom-strategy", { method: "POST", body: JSON.stringify(draft) });
+      const result = await api("/me/custom-strategy", {
+        method: "POST",
+        body: JSON.stringify({ ...draft, martingale: draft.martingale }),
+      });
       dirty = false;
-      payload = { ...payload, active: true, config: result.config, selection: result.selection };
-      draft = structuredClone(result.config);
+      payload = {
+        ...payload,
+        active: true,
+        config: result.config,
+        martingale: result.martingale,
+        selection: result.selection,
+      };
+      draft = hydrateDraft();
       render();
       const status = document.getElementById("foa-custom-status");
-      if (status) { status.textContent = result.message || "Custom Strategy saved."; status.className = "foa-custom-status ok"; }
+      if (status) { status.textContent = result.message || "Custom Strategy saved."; status.className = "foa-cs-status ok"; }
       window.setTimeout(() => load(true), 700);
     } catch (error) {
       const status = document.getElementById("foa-custom-status");
-      if (status) { status.textContent = String(error.message || error); status.className = "foa-custom-status error"; }
+      if (status) { status.textContent = String(error.message || error); status.className = "foa-cs-status error"; }
     } finally {
       saving = false;
       render();
@@ -281,6 +464,7 @@ _CUSTOM_JS = r'''
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot, { once: true });
   else boot();
+  window.FOA_CUSTOM_STRATEGY_BUILDER_V3 = VERSION;
   window.FOA_CUSTOM_STRATEGY_BUILDER_V2 = VERSION;
   window.FOA_CUSTOM_STRATEGY_BUILDER_V1 = VERSION;
 })();
@@ -289,7 +473,7 @@ _CUSTOM_JS = r'''
 
 def _script(*, compatibility: bool = False) -> str:
     source = base_script(compatibility=compatibility)
-    if "FOA_CUSTOM_STRATEGY_BUILDER_V2" not in source:
+    if "FOA_CUSTOM_STRATEGY_BUILDER_V3" not in source:
         source += _CUSTOM_JS
     return source
 
@@ -297,7 +481,8 @@ def _script(*, compatibility: bool = False) -> str:
 def _headers() -> dict[str, str]:
     return {
         **base_headers(),
-        "X-FOA-Custom-Strategy": "v2",
+        "X-FOA-Custom-Strategy": "v3",
+        "X-FOA-Custom-Strategy-Card": "complete-builder-v1",
         "X-FOA-UI-Version": UI_VERSION,
     }
 
