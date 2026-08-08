@@ -135,6 +135,9 @@ def install_production_worker_integration() -> None:
     from app.custom_strategy_aidr_isolation import (
         install_custom_strategy_aidr_isolation,
     )
+    from app.historical_unresolved_contract_quarantine import (
+        install_historical_unresolved_contract_quarantine,
+    )
 
     install_final_shared_system_strategy_clock()
     install_proposal_execution_recovery()
@@ -155,6 +158,11 @@ def install_production_worker_integration() -> None:
     # quarantined per account. Sibling credentials remain available to valid
     # linked demo and real accounts.
     install_bulk_credential_failure_hardening()
+
+    # Historical tick contracts that are still unsettled long after their maximum
+    # possible lifetime are accounting/reconciliation records, not live financial
+    # work. Preserve them for manual review but remove them from runtime locks.
+    install_historical_unresolved_contract_quarantine()
 
     # Final execution authority: the System purchase uses its already-qualified
     # proposal immediately while all manual contract proposals run independently.
