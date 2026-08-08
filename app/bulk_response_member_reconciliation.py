@@ -8,7 +8,7 @@ import app.seamless_execution_runtime as seamless
 
 
 _INSTALLED = False
-_VERSION = "bulk-member-reconciliation-v3"
+_VERSION = "bulk-member-reconciliation-v4"
 _SUCCESS_KEYS = (
     "transactions",
     "results",
@@ -126,6 +126,95 @@ def _requested_accounts(request_body: dict[str, Any] | None) -> list[str]:
     ]
 
 
+def _transaction_members(
+    response: dict[str, Any],
+) -> tuple[list[dict[str, Any]] | None, str]:
+    """Return the authoritative complete transaction member array when available."""
+
+    data = response.get("data")
+    if isinstance(data, dict) and isinstance(data.get("transactions"), list):
+        return data["transactions"], "data.transactions"
+    if isinstance(response.get("transactions"), list):
+        return response["transactions"], "transactions"
+    return None, ""
+
+
+def _positionally_correlate_transaction_members(
+    response: dict[str, Any],
+    request_body: dict[str, Any] | None,
+) -> tuple[dict[str, Any], list[str]]:
+    """Attach account identity to a complete Deriv transaction array safely.
+
+    The current Bulk Purchase contract reports one transaction member per request
+    account; a member can be either a successful purchase or that account's error.
+    Some provider shapes omit ``account_id`` from those members. Correlate by the
+    original request position only when the transaction cardinality exactly equals
+    the request cardinality and every explicit identity (if present) already agrees
+    with its request position. Any conflict or partial response remains untouched.
+
+    This function never creates a contract, changes an error, or retries a purchase.
+    """
+
+    requested = _requested_accounts(request_body)
+    if not requested or len(set(requested)) != len(requested):
+        return response, []
+
+    members, container_name = _transaction_members(response)
+    if members is None or len(members) != len(requested):
+        return response, []
+    if any(not isinstance(item, dict) for item in members):
+        return response, []
+
+    explicit = 0
+    for index, item in enumerate(members):
+        account = seamless._account_id(item)
+        if not account:
+            continue
+        explicit += 1
+        if account != requested[index]:
+            logging.getLogger(__name__).warning(
+                "BULK_RESPONSE_POSITIONAL_CORRELATION_SKIPPED requested=%s members=%s "
+                "container=%s reason=explicit_position_conflict explicit=%s "
+                "assigned=0 safe=true duplicate_retry=false credentials_logged=false",
+                len(requested),
+                len(members),
+                container_name,
+                explicit,
+            )
+            return response, []
+
+    assigned = 0
+    correlated: list[dict[str, Any]] = []
+    for index, raw in enumerate(members):
+        item = dict(raw)
+        if not seamless._account_id(item):
+            item["account_id"] = requested[index]
+            assigned += 1
+        correlated.append(item)
+
+    if not assigned:
+        return response, []
+
+    output = dict(response)
+    if container_name == "data.transactions":
+        data = dict(output.get("data") or {})
+        data["transactions"] = correlated
+        output["data"] = data
+    else:
+        output["transactions"] = correlated
+
+    logging.getLogger(__name__).warning(
+        "BULK_RESPONSE_POSITIONAL_CORRELATION requested=%s members=%s container=%s "
+        "explicit=%s assigned=%s safe=true duplicate_retry=false credentials_logged=false",
+        len(requested),
+        len(correlated),
+        container_name,
+        explicit,
+        assigned,
+    )
+    return output, [f"{container_name}:request_position_account_id"]
+
+
 def _accounted_accounts(response: dict[str, Any]) -> set[str]:
     accounted: set[str] = set()
     data = response.get("data")
@@ -150,6 +239,11 @@ def _reconciled_normalize_bulk_response(
     if not isinstance(response, dict):
         return response
     canonical, shapes = _canonicalize_response(response)
+    canonical, positional_shapes = _positionally_correlate_transaction_members(
+        canonical,
+        request_body,
+    )
+    shapes.extend(positional_shapes)
     normalized = _ORIGINAL_NORMALIZER(canonical, request_body)
     if not isinstance(normalized, dict) or isinstance(normalized.get("error"), dict):
         return normalized
@@ -185,6 +279,7 @@ def install_bulk_response_member_reconciliation() -> None:
         logging.getLogger(__name__).warning(
             "BULK_RESPONSE_MEMBER_RECONCILIATION_INSTALLED version=%s "
             "account_keyed_successes=true success_aliases=true account_keyed_errors=true "
+            "positional_transaction_members=safe_exact_cardinality "
             "blind_retry=false credentials_logged=false",
             _VERSION,
         )
