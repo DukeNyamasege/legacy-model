@@ -10,14 +10,14 @@ from app.trading_controls_final_ui import _script as base_script
 
 
 _INSTALLED = False
-UI_VERSION = "20260807-custom-strategy-v1"
+UI_VERSION = "20260808-custom-strategy-duration-v2"
 
 _CUSTOM_JS = r'''
 
-/* FOA_CUSTOM_STRATEGY_BUILDER_V1 */
+/* FOA_CUSTOM_STRATEGY_BUILDER_V2 */
 (() => {
   "use strict";
-  const VERSION = "20260807-1";
+  const VERSION = "20260808-2";
   let payload = null;
   let draft = null;
   let loading = false;
@@ -53,16 +53,18 @@ _CUSTOM_JS = r'''
       .foa-custom-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px}
       .foa-custom-head h3{margin:0;color:#10213f;font-size:16px}.foa-custom-head p{margin:4px 0 0;color:#62718b;font-size:12px;line-height:1.45}
       .foa-custom-badge{font-size:11px;font-weight:800;padding:5px 9px;border-radius:999px;background:#eef4ff;color:#1d5bd8;white-space:nowrap}
-      .foa-custom-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.foa-custom-field{display:flex;flex-direction:column;gap:6px}
+      .foa-custom-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.foa-custom-field{display:flex;flex-direction:column;gap:6px}
       .foa-custom-field label,.foa-custom-label{font-size:11px;font-weight:800;color:#31415f;text-transform:uppercase;letter-spacing:.035em}
       #foa-custom-strategy-builder select,#foa-custom-strategy-builder input{width:100%;box-sizing:border-box;border:1px solid #cad6ea;border-radius:9px;background:#fff;padding:9px 10px;color:#14213d;font-size:13px}
+      .foa-duration-help{font-size:10px;color:#728199;line-height:1.35;margin-top:-1px}
       .foa-custom-markets{grid-column:1/-1;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px;margin-top:1px}
       .foa-custom-market{display:flex;align-items:center;gap:6px;border:1px solid #dbe5f3;border-radius:8px;padding:7px 8px;font-size:11px;color:#34435e;background:#f9fbff}.foa-custom-market input{width:auto!important;margin:0}
       .foa-custom-conditions{grid-column:1/-1;display:flex;flex-direction:column;gap:8px}.foa-custom-condition{display:grid;grid-template-columns:1.5fr .65fr 1.2fr auto;gap:7px;align-items:end;border:1px solid #e0e7f1;border-radius:10px;padding:9px;background:#fbfcff}
       .foa-custom-and{text-align:center;color:#6d7b91;font-size:10px;font-weight:900;letter-spacing:.08em}.foa-custom-remove{border:1px solid #efb7bd;background:#fff4f5;color:#c52e3b;border-radius:8px;padding:9px 10px;font-weight:800;cursor:pointer}
       .foa-custom-actions{grid-column:1/-1;display:flex;gap:8px;align-items:center;flex-wrap:wrap}.foa-custom-add,.foa-custom-save{border:0;border-radius:9px;padding:9px 12px;font-size:12px;font-weight:800;cursor:pointer}.foa-custom-add{background:#eef4ff;color:#225ec8}.foa-custom-save{background:#1268f3;color:#fff}
       .foa-custom-preview{grid-column:1/-1;border:1px solid #d7e4f6;border-radius:10px;background:#f5f9ff;padding:10px 12px;color:#27415f;font-size:12px;line-height:1.5}.foa-custom-status{font-size:11px;color:#66758c}.foa-custom-status.error{color:#c62838}.foa-custom-status.ok{color:#18864b}
-      #foa-custom-strategy-builder [disabled]{opacity:.55;cursor:not-allowed}.foa-custom-note{grid-column:1/-1;color:#69778d;font-size:11px;line-height:1.45}
+      #foa-custom-strategy-builder [disabled]{opacity:.55;cursor:not-allowed}.foa-custom-note{grid-column:1/-1;color:#69778d;font-size:11px;line-height:1.45;padding:9px 10px;border-radius:9px;background:#fafcff;border:1px solid #edf1f7}
+      @media(max-width:1000px){.foa-custom-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
       @media(max-width:760px){.foa-custom-grid{grid-template-columns:1fr}.foa-custom-markets{grid-template-columns:repeat(2,minmax(0,1fr))}.foa-custom-condition{grid-template-columns:1fr 90px}.foa-custom-condition .foa-custom-detail{grid-column:1/-1}.foa-custom-remove{grid-column:2}}
     `;
     document.head.appendChild(style);
@@ -80,12 +82,17 @@ _CUSTOM_JS = r'''
     return node;
   }
 
+  function defaultDuration() {
+    return Number(payload?.supported?.duration?.default || 1);
+  }
+
   function defaultDraft() {
     return {
       market_mode: "all",
       markets: [],
       trade_type: "even",
       prediction: null,
+      duration_ticks: defaultDuration(),
       conditions: [{ kind: "digit_parity", window: 3, parity: "odd" }],
       match: "all",
     };
@@ -102,7 +109,8 @@ _CUSTOM_JS = r'''
     if (!draft) return "";
     const target = `${String(draft.trade_type || "even").toUpperCase()}${["over","under"].includes(draft.trade_type) ? ` ${draft.prediction ?? 2}` : ""}`;
     const markets = draft.market_mode === "all" ? "ALL MARKETS" : (draft.markets || []).join(", ") || "NO MARKET SELECTED";
-    return `IF ${(draft.conditions || []).map(conditionText).join(" AND ")} THEN BUY ${target} ON ${markets}`;
+    const duration = Math.max(1, Number(draft.duration_ticks || 1));
+    return `IF ${(draft.conditions || []).map(conditionText).join(" AND ")} THEN BUY ${target} ON ${markets} FOR ${duration} ${duration === 1 ? "TICK" : "TICKS"}`;
   }
 
   function detailHtml(item, index, editable) {
@@ -122,10 +130,13 @@ _CUSTOM_JS = r'''
     const node = host();
     if (!node || !payload) return;
     if (!draft) draft = payload.config?.configured ? structuredClone(payload.config) : defaultDraft();
+    if (!Number.isFinite(Number(draft.duration_ticks))) draft.duration_ticks = defaultDuration();
+
     const editable = Boolean(payload.editable);
     const active = Boolean(payload.active);
     const markets = payload.supported?.markets || [];
     const types = payload.supported?.trade_types || [];
+    const durationMeta = payload.supported?.duration || { minimum: 1, maximum: 100, default: 1 };
     const disabled = editable ? "" : "disabled";
     const needsPrediction = ["over", "under"].includes(draft.trade_type);
     const selected = new Set(draft.markets || []);
@@ -148,9 +159,10 @@ _CUSTOM_JS = r'''
       <div class="foa-custom-grid">
         <div class="foa-custom-field"><label>Market scope</label><select id="foa-custom-market-mode" ${disabled}><option value="all" ${draft.market_mode === "all" ? "selected" : ""}>All Markets</option><option value="selected" ${draft.market_mode === "selected" ? "selected" : ""}>Select Markets</option></select></div>
         <div class="foa-custom-field"><label>Trade type</label><select id="foa-custom-trade-type" ${disabled}>${types.map(item => `<option value="${esc(item.value)}" ${draft.trade_type === item.value ? "selected" : ""}>${esc(item.label)}</option>`).join("")}</select></div>
+        <div class="foa-custom-field"><label>Contract duration (ticks)</label><input id="foa-custom-duration" type="number" inputmode="numeric" min="${Number(durationMeta.minimum || 1)}" max="${Number(durationMeta.maximum || 100)}" step="1" value="${Number(draft.duration_ticks || durationMeta.default || 1)}" ${disabled}><span class="foa-duration-help">How many ticks the purchased or virtual contract remains open after entry.</span></div>
         <div class="foa-custom-markets">${markets.map(symbol => `<label class="foa-custom-market"><input type="checkbox" data-market="${esc(symbol)}" ${selected.has(symbol) ? "checked" : ""} ${disabled || draft.market_mode === "all" ? "disabled" : ""}>${esc(symbol)}</label>`).join("")}</div>
         <div class="foa-custom-field" id="foa-custom-prediction-wrap" style="${needsPrediction ? "" : "display:none"}"><label>${draft.trade_type === "under" ? "Under" : "Over"} prediction</label><input id="foa-custom-prediction" type="number" min="${draft.trade_type === "under" ? 1 : 0}" max="${draft.trade_type === "under" ? 9 : 8}" step="1" value="${Number(draft.prediction ?? (draft.trade_type === "under" ? 7 : 2))}" ${disabled}></div>
-        <div class="foa-custom-note">Conditions use AND. Example: last 6 digits are Odd <b>AND</b> last 3 digits are ≥ 4. Direction means every one of the last N movements is Rise or Fall.</div>
+        <div class="foa-custom-note"><b>Last N</b> is the pattern lookback used to decide when to enter. <b>Contract duration</b> is separate: it decides how many ticks the contract runs after the entry is purchased. Conditions use AND. Example: last 6 digits are Odd <b>AND</b> last 3 digits are ≥ 4.</div>
         <div class="foa-custom-conditions"><div class="foa-custom-label">Pattern conditions</div>${conditions}</div>
         <div class="foa-custom-actions"><button type="button" class="foa-custom-add" id="foa-custom-add-condition" ${disabled || (draft.conditions || []).length >= 12 ? "disabled" : ""}>+ Add condition</button><button type="button" class="foa-custom-save" id="foa-custom-save" ${disabled || saving ? "disabled" : ""}>${saving ? "Saving…" : "Save & Select Custom Strategy"}</button><span class="foa-custom-status" id="foa-custom-status">${editable ? "Stop state confirmed — configuration is editable." : `Stop AutoTrade and settle open contracts to edit. Open contracts: ${Number(payload.open_contracts || 0)}.`}</span></div>
         <div class="foa-custom-preview"><b>Rule preview:</b> ${esc(previewText())}</div>
@@ -197,6 +209,10 @@ _CUSTOM_JS = r'''
     if (target.id === "foa-custom-trade-type") {
       draft.trade_type = target.value;
       draft.prediction = target.value === "under" ? 7 : target.value === "over" ? 2 : null;
+      markDirty(); render(); return;
+    }
+    if (target.id === "foa-custom-duration") {
+      draft.duration_ticks = Number(target.value);
       markDirty(); render(); return;
     }
     if (target.id === "foa-custom-prediction") {
@@ -265,6 +281,7 @@ _CUSTOM_JS = r'''
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot, { once: true });
   else boot();
+  window.FOA_CUSTOM_STRATEGY_BUILDER_V2 = VERSION;
   window.FOA_CUSTOM_STRATEGY_BUILDER_V1 = VERSION;
 })();
 '''
@@ -272,7 +289,7 @@ _CUSTOM_JS = r'''
 
 def _script(*, compatibility: bool = False) -> str:
     source = base_script(compatibility=compatibility)
-    if "FOA_CUSTOM_STRATEGY_BUILDER_V1" not in source:
+    if "FOA_CUSTOM_STRATEGY_BUILDER_V2" not in source:
         source += _CUSTOM_JS
     return source
 
@@ -280,7 +297,7 @@ def _script(*, compatibility: bool = False) -> str:
 def _headers() -> dict[str, str]:
     return {
         **base_headers(),
-        "X-FOA-Custom-Strategy": "v1",
+        "X-FOA-Custom-Strategy": "v2",
         "X-FOA-UI-Version": UI_VERSION,
     }
 
