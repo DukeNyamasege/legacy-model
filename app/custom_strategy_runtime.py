@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import time
+from dataclasses import replace
 from typing import Any
 
 from sqlalchemy import select
@@ -22,6 +23,7 @@ from app.custom_strategy_v1 import (
     normalize_custom_strategy,
 )
 from app.models import RuntimePreference
+from app.repositories.test2_repository import Test2Repository
 from app.rf_dir5_bot import RFDir5TradingBot
 from app.strategy_v2_runtime import _ensure_parent_signal
 
@@ -29,10 +31,103 @@ from app.strategy_v2_runtime import _ensure_parent_signal
 _INSTALLED = False
 LOGGER = logging.getLogger(__name__)
 CACHE_TTL_SECONDS = 0.75
+_CUSTOM_SIGNAL_DURATIONS: dict[str, int] = {}
 
 
 def _config_key(managed_id: int) -> str:
     return f"{PREFERENCE_PREFIX}{int(managed_id)}"
+
+
+def _is_custom_signal(signal: Any) -> bool:
+    trigger = str(getattr(signal, "trigger_name", "") or "").upper()
+    return trigger.startswith(("CUSTOM-V1-", "CUSTOM-V2-"))
+
+
+def _signal_duration(signal: Any) -> int:
+    try:
+        return max(1, int(getattr(signal, "duration_ticks", 1) or 1))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _install_custom_duration_transport() -> None:
+    """Keep user-selected tick duration intact at every financial boundary.
+
+    The older core bot stores a one-tick global default on ``self.duration``.
+    Custom Strategy is signal-scoped, so only Custom signals override that legacy
+    fallback. System and preset-manual strategies continue through the exact
+    existing implementation unchanged.
+    """
+
+    import app.rest_bulk_partitioning as rest_bulk
+
+    current_parameters = RFDir5TradingBot._contract_parameters
+    if not getattr(current_parameters, "_custom_duration_aware", False):
+        def custom_duration_parameters(
+            self: RFDir5TradingBot,
+            signal: Any,
+            stake_amount: float,
+            *,
+            symbol_key: str,
+        ) -> dict[str, Any]:
+            parameters = dict(
+                current_parameters(
+                    self,
+                    signal,
+                    stake_amount,
+                    symbol_key=symbol_key,
+                )
+            )
+            if _is_custom_signal(signal):
+                parameters["duration"] = _signal_duration(signal)
+                parameters["duration_unit"] = "t"
+            return parameters
+
+        custom_duration_parameters._custom_duration_aware = True  # type: ignore[attr-defined]
+        RFDir5TradingBot._contract_parameters = custom_duration_parameters
+
+    current_partition = rest_bulk._partition_key
+    if not getattr(current_partition, "_custom_duration_aware", False):
+        def custom_duration_partition(
+            bot: RFDir5TradingBot,
+            signal: Any,
+            *,
+            token: str,
+            stake: float,
+        ) -> Any:
+            key = current_partition(
+                bot,
+                signal,
+                token=token,
+                stake=stake,
+            )
+            if not _is_custom_signal(signal):
+                return key
+            return replace(
+                key,
+                duration=_signal_duration(signal),
+                duration_unit="t",
+            )
+
+        custom_duration_partition._custom_duration_aware = True  # type: ignore[attr-defined]
+        rest_bulk._partition_key = custom_duration_partition
+
+    current_register = Test2Repository.register_purchase
+    if not getattr(current_register, "_custom_duration_aware", False):
+        def custom_duration_register(
+            self: Test2Repository,
+            *args: Any,
+            **kwargs: Any,
+        ) -> Any:
+            signal_id = str(kwargs.get("signal_id") or "")
+            duration = _CUSTOM_SIGNAL_DURATIONS.get(signal_id)
+            if duration is not None:
+                kwargs["contract_duration"] = int(duration)
+                kwargs["contract_duration_unit"] = "t"
+            return current_register(self, *args, **kwargs)
+
+        custom_duration_register._custom_duration_aware = True  # type: ignore[attr-defined]
+        Test2Repository.register_purchase = custom_duration_register
 
 
 def _custom_routes(bot: RFDir5TradingBot) -> list[Any]:
@@ -143,6 +238,10 @@ async def _execute_custom_group(
     ids = {int(value) for value in managed_ids}
     if not ids:
         return
+    duration_ticks = _signal_duration(signal)
+    # Keep a short-lived duration mapping through synchronous trade registration.
+    # It repairs legacy register_purchase callers that otherwise write self.duration.
+    _CUSTOM_SIGNAL_DURATIONS[str(signal.signal_id)] = duration_ticks
     try:
         predicted = nominal_probability(config)
         economics = await multi._proposal_for(bot, signal, predicted)
@@ -153,10 +252,11 @@ async def _execute_custom_group(
             )
             bot.logger.warning(
                 "CUSTOM_STRATEGY_PROPOSAL_FAILED signal_id=%s symbol=%s trade_type=%s "
-                "accounts=%s purchase_sent=false",
+                "duration_ticks=%s accounts=%s purchase_sent=false",
                 signal.signal_id,
                 signal.symbol,
                 config["trade_type"],
+                duration_ticks,
                 len(ids),
             )
             return
@@ -175,7 +275,7 @@ async def _execute_custom_group(
 
         bot.logger.warning(
             "CUSTOM_STRATEGY_SIGNAL_QUALIFIED signal_id=%s symbol=%s trade_type=%s "
-            "contract_type=%s barrier=%s conditions=%s accounts=%s "
+            "contract_type=%s barrier=%s duration_ticks=%s conditions=%s accounts=%s "
             "entry_gate=user_custom_pattern condition_join=AND edge_gate=false "
             "system_strategy_affected=false",
             signal.signal_id,
@@ -183,6 +283,7 @@ async def _execute_custom_group(
             config["trade_type"],
             signal.contract_type,
             signal.barrier or "-",
+            duration_ticks,
             len(config["conditions"]),
             len(ids),
         )
@@ -205,14 +306,16 @@ async def _execute_custom_group(
             pass
         bot.logger.exception(
             "CUSTOM_STRATEGY_EXECUTION_FAILED signal_id=%s symbol=%s trade_type=%s "
-            "accounts=%s error_type=%s system_strategy_affected=false",
+            "duration_ticks=%s accounts=%s error_type=%s system_strategy_affected=false",
             signal.signal_id,
             signal.symbol,
             config.get("trade_type", "unknown"),
+            duration_ticks,
             len(ids),
             type(exc).__name__,
         )
     finally:
+        _CUSTOM_SIGNAL_DURATIONS.pop(str(signal.signal_id), None)
         inflight = getattr(bot, "_custom_strategy_inflight_ids", set())
         for managed_id in ids:
             inflight.discard(managed_id)
@@ -345,6 +448,7 @@ def install_custom_strategy_runtime() -> None:
         return
 
     _exclude_custom_from_shared_aidr()
+    _install_custom_duration_transport()
     original_init = RFDir5TradingBot.__init__
     original_on_tick = RFDir5TradingBot._on_tick
 
@@ -359,8 +463,8 @@ def install_custom_strategy_runtime() -> None:
         self.logger.warning(
             "CUSTOM_STRATEGY_RUNTIME_ACTIVE version=%s markets=%s "
             "trade_types=rise,fall,even,odd,over,under condition_join=AND "
-            "silent_scanning=true independent_from_system_aidr=true "
-            "manual_martingale_compatible=true",
+            "duration=user_selected_ticks silent_scanning=true "
+            "independent_from_system_aidr=true manual_martingale_compatible=true",
             VERSION,
             10,
         )
