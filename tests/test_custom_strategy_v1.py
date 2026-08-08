@@ -9,6 +9,9 @@ import tempfile
 import unittest
 
 from app.custom_strategy_v1 import (
+    DEFAULT_DURATION_TICKS,
+    MAX_DURATION_TICKS,
+    MIN_DURATION_TICKS,
     SUPPORTED_MARKETS,
     contract_for_config,
     describe_custom_strategy,
@@ -28,6 +31,7 @@ def config(**overrides):
         "markets": [],
         "trade_type": "even",
         "prediction": None,
+        "duration_ticks": DEFAULT_DURATION_TICKS,
         "conditions": [{"kind": "digit_parity", "window": 3, "parity": "odd"}],
         "match": "all",
     }
@@ -121,12 +125,40 @@ class CustomStrategyPatternTests(unittest.TestCase):
                 custom = config(trade_type=trade_type, prediction=prediction)
                 self.assertEqual(contract_for_config(custom), expected)
 
-    def test_preview_matches_compound_user_rule(self) -> None:
+    def test_contract_duration_is_user_configurable_and_separate_from_lookback(self) -> None:
+        custom = config(
+            duration_ticks=7,
+            conditions=[{"kind": "digit_parity", "window": 3, "parity": "odd"}],
+        )
+        self.assertEqual(custom["duration_ticks"], 7)
+        self.assertEqual(custom["conditions"][0]["window"], 3)
+
+    def test_legacy_custom_config_defaults_to_one_tick(self) -> None:
+        legacy = normalize_custom_strategy({
+            "market_mode": "all",
+            "markets": [],
+            "trade_type": "even",
+            "prediction": None,
+            "conditions": [{"kind": "digit_parity", "window": 3, "parity": "odd"}],
+            "match": "all",
+        })
+        self.assertEqual(legacy["duration_ticks"], DEFAULT_DURATION_TICKS)
+
+    def test_contract_duration_range_is_validated(self) -> None:
+        self.assertEqual(config(duration_ticks=MIN_DURATION_TICKS)["duration_ticks"], MIN_DURATION_TICKS)
+        self.assertEqual(config(duration_ticks=MAX_DURATION_TICKS)["duration_ticks"], MAX_DURATION_TICKS)
+        with self.assertRaises(ValueError):
+            config(duration_ticks=MIN_DURATION_TICKS - 1)
+        with self.assertRaises(ValueError):
+            config(duration_ticks=MAX_DURATION_TICKS + 1)
+
+    def test_preview_matches_compound_user_rule_and_duration(self) -> None:
         custom = config(
             market_mode="selected",
             markets=["1HZ100V", "R_25"],
             trade_type="over",
             prediction=2,
+            duration_ticks=5,
             conditions=[
                 {"kind": "digit_parity", "window": 6, "parity": "odd"},
                 {"kind": "digit_compare", "window": 3, "operator": ">=", "value": 4},
@@ -137,6 +169,7 @@ class CustomStrategyPatternTests(unittest.TestCase):
         self.assertIn("AND", preview)
         self.assertIn("BUY Over 2", preview)
         self.assertIn("1HZ100V", preview)
+        self.assertIn("for 5 ticks", preview)
 
 
 class CustomStrategyIntegrationTests(unittest.TestCase):
@@ -153,10 +186,23 @@ class CustomStrategyIntegrationTests(unittest.TestCase):
         self.assertIn("entry_gate=user_custom_pattern", runtime)
         self.assertIn("edge_gate=false", runtime)
 
+    def test_custom_duration_reaches_purchase_and_trade_registration(self) -> None:
+        runtime = (ROOT / "app" / "custom_strategy_runtime.py").read_text(encoding="utf-8")
+        strategy = (ROOT / "app" / "custom_strategy_v1.py").read_text(encoding="utf-8")
+        virtual = (ROOT / "app" / "repositories" / "rf_dir5_repository.py").read_text(encoding="utf-8")
+        self.assertIn('duration_ticks=int(normalized["duration_ticks"])', strategy)
+        self.assertIn('parameters["duration"] = _signal_duration(signal)', runtime)
+        self.assertIn('duration=_signal_duration(signal)', runtime)
+        self.assertIn('kwargs["contract_duration"] = int(duration)', runtime)
+        self.assertIn("duration=int(signal.duration_ticks)", virtual)
+        self.assertIn("exit_tick_sequence=int(signal.tick_sequence) + int(signal.duration_ticks)", virtual)
+
     def test_custom_api_is_module_annotated_and_final_ui_is_last(self) -> None:
         api = (ROOT / "app" / "custom_strategy_api.py").read_text(encoding="utf-8")
         hardening = (ROOT / "app" / "database_runtime_hardening.py").read_text(encoding="utf-8")
         self.assertIn("class CustomStrategyRequest(BaseModel):", api)
+        self.assertIn("duration_ticks: int = Field(", api)
+        self.assertIn('"duration_ticks": body.duration_ticks', api)
         self.assertIn('family="custom"', api)
         self.assertLess(
             hardening.index("install_custom_strategy_api(app)"),
@@ -173,14 +219,17 @@ class CustomStrategyIntegrationTests(unittest.TestCase):
             "All Markets",
             "Select Markets",
             "Trade type",
+            "Contract duration (ticks)",
             "Last N digits are Even/Odd",
             "Last N digits compare to a digit",
             "Last N tick directions are Rise/Fall",
             "Save & Select Custom Strategy",
         ):
             self.assertIn(label, source)
+        self.assertIn("Last N</b> is the pattern lookback", source)
+        self.assertIn("FOR ${duration}", source)
         self.assertIn("AND", source)
-        self.assertIn("FOA_CUSTOM_STRATEGY_BUILDER_V1", source)
+        self.assertIn("FOA_CUSTOM_STRATEGY_BUILDER_V2", source)
 
     def test_custom_builder_javascript_has_valid_syntax(self) -> None:
         node = shutil.which("node")
