@@ -236,9 +236,13 @@ class CustomStrategyIntegrationTests(unittest.TestCase):
             "Bot execution rule",
         ):
             self.assertIn(label, source)
-        for trade_type in ("even", "odd", "over", "under", "rise", "fall"):
-            self.assertIn(f'data-trade-type=\\"${{esc(item.value)}}', source)
-            self.assertIn(trade_type, source)
+        self.assertIn("data-trade-type", source)
+        self.assertIn('even:"Last digit is even"', source)
+        self.assertIn('odd:"Last digit is odd"', source)
+        self.assertIn('over:"Last digit is over barrier"', source)
+        self.assertIn('under:"Last digit is under barrier"', source)
+        self.assertIn('rise:"Exit above entry"', source)
+        self.assertIn('fall:"Exit below entry"', source)
         self.assertIn("data-market-mode", source)
         self.assertIn("data-market=", source)
         self.assertIn("data-prediction", source)
