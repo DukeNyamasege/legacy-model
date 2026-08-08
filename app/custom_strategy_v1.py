@@ -11,7 +11,7 @@ from app.hybrid_digit_put import DigitSignal
 from app.models import RuntimePreference, utc_now
 
 
-VERSION = "custom-strategy-v1"
+VERSION = "custom-strategy-v2"
 PREFERENCE_PREFIX = "custom_strategy:v1:"
 SUPPORTED_MARKETS = (
     "1HZ100V",
@@ -37,6 +37,9 @@ COMPARATORS = ("<", "<=", "==", "!=", ">=", ">")
 CONDITION_KINDS = ("digit_parity", "digit_compare", "direction")
 MAX_CONDITIONS = 12
 MAX_WINDOW = 100
+MIN_DURATION_TICKS = 1
+MAX_DURATION_TICKS = 100
+DEFAULT_DURATION_TICKS = 1
 
 
 def _key(managed_account_id: int) -> str:
@@ -51,6 +54,7 @@ def default_custom_strategy() -> dict[str, Any]:
         "markets": [],
         "trade_type": "even",
         "prediction": None,
+        "duration_ticks": DEFAULT_DURATION_TICKS,
         "conditions": [],
         "match": "all",
     }
@@ -63,6 +67,19 @@ def _window(value: Any) -> int:
         raise ValueError("Condition window must be a whole number") from exc
     if not 1 <= result <= MAX_WINDOW:
         raise ValueError(f"Condition window must be between 1 and {MAX_WINDOW}")
+    return result
+
+
+def _duration_ticks(value: Any) -> int:
+    try:
+        result = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Contract duration must be a whole number of ticks") from exc
+    if not MIN_DURATION_TICKS <= result <= MAX_DURATION_TICKS:
+        raise ValueError(
+            f"Contract duration must be between {MIN_DURATION_TICKS} and "
+            f"{MAX_DURATION_TICKS} ticks"
+        )
     return result
 
 
@@ -144,6 +161,12 @@ def normalize_custom_strategy(raw: Any) -> dict[str, Any]:
         if trade_type == "under" and prediction < 1:
             raise ValueError("Under prediction must be between 1 and 9")
 
+    # Contract duration is separate from every condition's lookback window.
+    # Existing V1 configurations remain valid and default to one tick.
+    duration_ticks = _duration_ticks(
+        source.get("duration_ticks", DEFAULT_DURATION_TICKS)
+    )
+
     conditions_raw = source.get("conditions") or []
     if not isinstance(conditions_raw, list):
         raise ValueError("Conditions must be a list")
@@ -153,12 +176,11 @@ def normalize_custom_strategy(raw: Any) -> dict[str, Any]:
         )
     conditions = [normalize_condition(item) for item in conditions_raw]
 
-    # V1 intentionally uses AND only. It mirrors the requested examples where a
-    # second condition further narrows the first pattern and avoids hidden OR
-    # precedence in a financial execution rule.
+    # Custom Strategy intentionally uses AND only. It mirrors the requested
+    # examples where each additional condition further narrows the entry pattern.
     match = str(source.get("match") or "all").strip().lower()
     if match not in {"all", "and"}:
-        raise ValueError("Custom Strategy V1 combines conditions with AND")
+        raise ValueError("Custom Strategy combines conditions with AND")
 
     return {
         "version": VERSION,
@@ -167,6 +189,7 @@ def normalize_custom_strategy(raw: Any) -> dict[str, Any]:
         "markets": markets,
         "trade_type": trade_type,
         "prediction": prediction,
+        "duration_ticks": duration_ticks,
         "conditions": conditions,
         "match": "all",
     }
@@ -347,7 +370,7 @@ def build_custom_signal(
         symbol=str(symbol),
         direction=direction,
         contract_type=contract_type,
-        duration_ticks=1,
+        duration_ticks=int(normalized["duration_ticks"]),
         reference_entry_quote=quote,
         quality_score=10,
         signal_tick_epoch=epoch,
@@ -357,7 +380,7 @@ def build_custom_signal(
         connection_session_id=bot.connection_session_id,
         tick_sequence=int(market.tick_sequence),
         barrier=barrier,
-        trigger_name=f"CUSTOM-V1-{fingerprint[:8].upper()}",
+        trigger_name=f"CUSTOM-V2-{fingerprint[:8].upper()}",
         trigger_digits=trigger_digits,
         signal_last_digit=int(trigger_digits[-1]),
         p100=probability,
@@ -395,4 +418,6 @@ def describe_custom_strategy(config: dict[str, Any]) -> str:
         if normalized["market_mode"] == "all"
         else ", ".join(normalized["markets"])
     )
-    return f"IF {conditions} THEN BUY {trade} on {markets}"
+    duration = int(normalized["duration_ticks"])
+    unit = "tick" if duration == 1 else "ticks"
+    return f"IF {conditions} THEN BUY {trade} on {markets} for {duration} {unit}"
