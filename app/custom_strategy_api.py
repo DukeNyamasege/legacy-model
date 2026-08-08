@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from fastapi import HTTPException, Request
@@ -28,7 +29,16 @@ from app.final_public_controls import (
     _remove_route,
     _reset_risk_state,
 )
-from app.models import Trade, VirtualTrade, utc_now
+from app.manual_martingale_v2 import (
+    DEFAULT_MULTIPLIER,
+    DEFAULT_SPLIT_COUNT,
+    MAX_MULTIPLIER,
+    PREFERENCE_PREFIX as MANUAL_MARTINGALE_PREFIX,
+    SPLIT_REMAINING_PREFIX,
+    normalize_manual_martingale_settings,
+    read_manual_martingale_settings,
+)
+from app.models import RuntimePreference, Trade, VirtualTrade, utc_now
 from app.strategy_v2_preferences import read_strategy, write_strategy
 
 
@@ -42,6 +52,16 @@ class CustomConditionRequest(BaseModel):
     operator: str | None = None
     value: int | None = Field(default=None, ge=0, le=9)
     direction: str | None = None
+
+
+class CustomMartingaleRequest(BaseModel):
+    mode: str = Field(default="system", pattern="^(system|multiplier|split)$")
+    multiplier: float = Field(
+        default=DEFAULT_MULTIPLIER,
+        ge=1.10,
+        le=MAX_MULTIPLIER,
+    )
+    split_count: int = Field(default=DEFAULT_SPLIT_COUNT, ge=1, le=3)
 
 
 class CustomStrategyRequest(BaseModel):
@@ -59,6 +79,7 @@ class CustomStrategyRequest(BaseModel):
         max_length=MAX_CONDITIONS,
     )
     match: str = "all"
+    martingale: CustomMartingaleRequest | None = None
 
 
 def _open_count(session: Any, managed_account_id: int) -> int:
@@ -85,6 +106,47 @@ def _open_count(session: Any, managed_account_id: int) -> int:
         or 0
     )
     return actual + virtual
+
+
+def _write_runtime_preference(
+    session: Any,
+    key: str,
+    value: str,
+) -> None:
+    row = session.get(RuntimePreference, str(key))
+    if row is None:
+        session.add(
+            RuntimePreference(
+                preference_key=str(key),
+                preference_value=str(value),
+            )
+        )
+        return
+    row.preference_value = str(value)
+    row.updated_at = utc_now()
+
+
+def _write_custom_martingale(
+    session: Any,
+    managed_id: int,
+    raw: dict[str, Any],
+) -> dict[str, Any]:
+    """Persist Custom Strategy recovery in the same DB transaction as its rule."""
+
+    settings = normalize_manual_martingale_settings(raw)
+    _write_runtime_preference(
+        session,
+        f"{MANUAL_MARTINGALE_PREFIX}{int(managed_id)}",
+        json.dumps(settings, sort_keys=True, separators=(",", ":")),
+    )
+    # A newly saved strategy always begins with a fresh recovery plan. Historical
+    # trades remain intact; only the in-progress split counter is reset.
+    _write_runtime_preference(
+        session,
+        f"{SPLIT_REMAINING_PREFIX}{int(managed_id)}",
+        "0",
+    )
+    return settings
 
 
 def _install_custom_alert_matching() -> None:
@@ -129,6 +191,7 @@ def install_custom_strategy_api(app: Any) -> None:
         managed_id = int(account["id"])
         selection = read_strategy(base_api.DATABASE, managed_id)
         config = read_custom_strategy(base_api.DATABASE, managed_id)
+        martingale = read_manual_martingale_settings(base_api.REPOSITORY, managed_id)
         with base_api.DATABASE.session() as session:
             row = _load_managed_account(session, request)
             status = str(row.execution_status or "inactive").strip().lower()
@@ -149,6 +212,7 @@ def install_custom_strategy_api(app: Any) -> None:
             "open_contracts": open_count,
             "selection": selection.to_dict(),
             "config": config,
+            "martingale": martingale,
             "preview": preview,
             "supported": {
                 "markets": list(SUPPORTED_MARKETS),
@@ -171,6 +235,15 @@ def install_custom_strategy_api(app: Any) -> None:
                     "minimum": MIN_DURATION_TICKS,
                     "maximum": MAX_DURATION_TICKS,
                     "default": DEFAULT_DURATION_TICKS,
+                },
+                "martingale": {
+                    "modes": ["system", "multiplier", "split"],
+                    "default_multiplier": DEFAULT_MULTIPLIER,
+                    "minimum_multiplier": 1.10,
+                    "maximum_multiplier": MAX_MULTIPLIER,
+                    "default_split_count": DEFAULT_SPLIT_COUNT,
+                    "minimum_split_count": 1,
+                    "maximum_split_count": 3,
                 },
                 "maximum_window": MAX_WINDOW,
                 "maximum_conditions": MAX_CONDITIONS,
@@ -216,6 +289,10 @@ def install_custom_strategy_api(app: Any) -> None:
                 )
 
             previous = read_strategy(base_api.DATABASE, managed_id)
+            previous_martingale = read_manual_martingale_settings(
+                base_api.REPOSITORY,
+                managed_id,
+            )
             try:
                 config = write_custom_strategy(session, managed_id, payload)
             except ValueError as exc:
@@ -223,6 +300,23 @@ def install_custom_strategy_api(app: Any) -> None:
 
             _reset_risk_state(session, managed_id)
             _clear_account_runtime_preferences(session, managed_id)
+            martingale = (
+                _write_custom_martingale(
+                    session,
+                    managed_id,
+                    body.martingale.model_dump(),
+                )
+                if body.martingale is not None
+                else previous_martingale
+            )
+            # Even when the caller uses an older UI without the nested Martingale
+            # object, reset any stale split progress while preserving its policy.
+            if body.martingale is None:
+                _write_runtime_preference(
+                    session,
+                    f"{SPLIT_REMAINING_PREFIX}{managed_id}",
+                    "0",
+                )
             selection = write_strategy(
                 session,
                 managed_id,
@@ -255,6 +349,9 @@ def install_custom_strategy_api(app: Any) -> None:
                     "duration_ticks": config["duration_ticks"],
                     "condition_count": len(config["conditions"]),
                     "condition_join": "AND",
+                    "martingale_mode": martingale["mode"],
+                    "martingale_multiplier": martingale["multiplier"],
+                    "martingale_split_count": martingale["split_count"],
                     "recovery_state_reset": True,
                     "history_preserved": True,
                 },
@@ -268,17 +365,19 @@ def install_custom_strategy_api(app: Any) -> None:
             "success": True,
             "selection": selection.to_dict(),
             "config": config,
+            "martingale": martingale,
             "preview": preview,
             "lifecycle": "stopped",
             "recovery_reset": True,
             "history_preserved": True,
             "message": (
                 f"Custom Strategy saved with {config['duration_ticks']}-tick contract "
-                "duration. Press Start to scan the selected markets continuously; "
-                "no candidate is created until every condition matches."
+                f"duration and {martingale['mode']} recovery. Press Start to scan the "
+                "selected markets continuously; no candidate is created until every "
+                "condition matches."
             ),
         }
 
     app.state.custom_strategy_api_installed = True
-    app.state.custom_strategy_api_version = "20260808-custom-v2"
+    app.state.custom_strategy_api_version = "20260808-custom-card-v3"
     _INSTALLED = True
