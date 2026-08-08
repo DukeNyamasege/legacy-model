@@ -197,12 +197,18 @@ class CustomStrategyIntegrationTests(unittest.TestCase):
         self.assertIn("duration=int(signal.duration_ticks)", virtual)
         self.assertIn("exit_tick_sequence=int(signal.tick_sequence) + int(signal.duration_ticks)", virtual)
 
-    def test_custom_api_is_module_annotated_and_final_ui_is_last(self) -> None:
+    def test_custom_api_is_module_annotated_and_saves_martingale_with_strategy(self) -> None:
         api = (ROOT / "app" / "custom_strategy_api.py").read_text(encoding="utf-8")
         hardening = (ROOT / "app" / "database_runtime_hardening.py").read_text(encoding="utf-8")
         self.assertIn("class CustomStrategyRequest(BaseModel):", api)
+        self.assertIn("class CustomMartingaleRequest(BaseModel):", api)
+        self.assertIn("martingale: CustomMartingaleRequest | None = None", api)
         self.assertIn("duration_ticks: int = Field(", api)
         self.assertIn('"duration_ticks": body.duration_ticks', api)
+        self.assertIn("_write_custom_martingale(", api)
+        self.assertIn("MANUAL_MARTINGALE_PREFIX", api)
+        self.assertIn("SPLIT_REMAINING_PREFIX", api)
+        self.assertIn('"martingale": martingale', api)
         self.assertIn('family="custom"', api)
         self.assertLess(
             hardening.index("install_custom_strategy_api(app)"),
@@ -213,23 +219,40 @@ class CustomStrategyIntegrationTests(unittest.TestCase):
             hardening.index("install_custom_strategy_final_ui(app)"),
         )
 
-    def test_builder_contains_requested_controls(self) -> None:
+    def test_builder_is_one_complete_strategy_card(self) -> None:
         source = (ROOT / "app" / "custom_strategy_final_ui.py").read_text(encoding="utf-8")
         for label in (
+            "Choose markets",
             "All Markets",
-            "Select Markets",
-            "Trade type",
+            "Choose Markets",
+            "Choose contract",
+            "Define entry pattern",
             "Contract duration (ticks)",
-            "Last N digits are Even/Odd",
-            "Last N digits compare to a digit",
-            "Last N tick directions are Rise/Fall",
-            "Save & Select Custom Strategy",
+            "Choose recovery / Martingale",
+            "System Martingale",
+            "Custom Multiplier",
+            "Split Recovery",
+            "Save Strategy",
+            "Bot execution rule",
         ):
             self.assertIn(label, source)
-        self.assertIn("Last N</b> is the pattern lookback", source)
-        self.assertIn("FOR ${duration}", source)
+        for trade_type in ("even", "odd", "over", "under", "rise", "fall"):
+            self.assertIn(f'data-trade-type=\\"${{esc(item.value)}}', source)
+            self.assertIn(trade_type, source)
+        self.assertIn("data-market-mode", source)
+        self.assertIn("data-market=", source)
+        self.assertIn("data-prediction", source)
+        self.assertIn("data-duration", source)
+        self.assertIn("data-multiplier", source)
+        self.assertIn("data-split-count", source)
         self.assertIn("AND", source)
-        self.assertIn("FOA_CUSTOM_STRATEGY_BUILDER_V2", source)
+        self.assertIn("FOA_CUSTOM_STRATEGY_BUILDER_V3", source)
+        self.assertIn('"X-FOA-Custom-Strategy-Card": "complete-builder-v1"', source)
+
+    def test_custom_card_hides_duplicate_manual_panel_when_custom_is_active(self) -> None:
+        source = (ROOT / "app" / "custom_strategy_final_ui.py").read_text(encoding="utf-8")
+        self.assertIn('document.getElementById("foa-manual-martingale-v2")', source)
+        self.assertIn('Boolean(payload?.active) || dirty', source)
 
     def test_custom_builder_javascript_has_valid_syntax(self) -> None:
         node = shutil.which("node")
