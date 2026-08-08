@@ -81,6 +81,9 @@ def install_database_runtime_hardening(app: Any) -> None:
     from app.custom_strategy_api import install_custom_strategy_api
     from app.trading_controls_final_ui import install_trading_controls_final_ui
     from app.custom_strategy_final_ui import install_custom_strategy_final_ui
+    from app.custom_strategy_card_visibility_fix import (
+        install_custom_strategy_card_visibility_fix,
+    )
 
     install_final_execution_alert_api(app)
     install_execution_alert_refinement(app)
@@ -98,8 +101,12 @@ def install_database_runtime_hardening(app: Any) -> None:
 
     install_trading_controls_final_ui(app)
 
-    # Final compositor: retain all Trades KPIs and manual Martingale controls, then
-    # append the Custom Strategy Builder so no older dashboard layer can hide it.
+    # Build the complete Custom Strategy card after the older dashboard layers.
     install_custom_strategy_final_ui(app)
+
+    # Visibility compositor is deliberately absolute last. It preserves the full
+    # builder but supplies a hidden strategy anchor when that selector mounts late,
+    # and exposes a visible API/loading state instead of silently showing no card.
+    install_custom_strategy_card_visibility_fix(app)
 
     _INSTALLED = True
