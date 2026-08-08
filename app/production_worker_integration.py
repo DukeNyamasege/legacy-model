@@ -138,15 +138,19 @@ def install_production_worker_integration() -> None:
     from app.historical_unresolved_contract_quarantine import (
         install_historical_unresolved_contract_quarantine,
     )
+    from app.credential_quarantine_runtime_guard import (
+        install_credential_quarantine_runtime_guard,
+    )
 
     install_final_shared_system_strategy_clock()
     install_proposal_execution_recovery()
     install_seamless_execution_runtime()
     install_final_seamless_execution_runtime()
 
-    # Provider bulk responses can use lists or account-keyed mappings. Normalize
-    # every successful member and explicit member error before missing-account
-    # diagnostics run. Unknown outcomes are never retried blindly.
+    # Provider bulk responses can use lists or account-keyed mappings and can wrap
+    # a purchase/error in nested transaction/buy/result/data/response objects.
+    # Normalize only explicit contract identifiers and explicit errors. Ambiguous
+    # members are recorded as unresolved and never retried blindly.
     install_bulk_response_member_reconciliation()
 
     # Install after every strategy, proposal and transport wrapper. Temporary
@@ -189,6 +193,12 @@ def install_production_worker_integration() -> None:
     # Custom-only accounts do not keep the System AIDR scanner active. Preset
     # manual strategies still share AIDR timing exactly as before.
     install_custom_strategy_aidr_isolation()
+
+    # Absolute last credential boundary. The ordinary account-loader guard handles
+    # normal refreshes; this final sweep runs immediately before provider account
+    # validation so a stale enabled InvalidToken/undecryptable row cannot leak into
+    # OTP discovery or financial execution because of startup wrapper ordering.
+    install_credential_quarantine_runtime_guard()
 
     TradingBot._production_worker_integration_installed = True
     _INSTALLED = True
