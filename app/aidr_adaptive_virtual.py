@@ -97,13 +97,12 @@ def record_post_virtual_recovery_loss(
     *,
     debt: float,
 ) -> dict[str, Any]:
-    """Increase protection after V-win -> real recovery loss repeats."""
+    """Increase protection after the account reaches the 3-loss trap threshold."""
 
     state = _read_state(repo, int(managed_account_id))
-    debt_pressure = 1 if float(debt or 0.0) >= 8.0 else 0
     state["trap_score"] = min(
         MAX_TRAP_SCORE,
-        int(state["trap_score"]) + 1 + debt_pressure,
+        int(state["trap_score"]) + 1,
     )
     state["post_virtual_recovery_losses"] = int(
         state["post_virtual_recovery_losses"]
@@ -119,10 +118,9 @@ def record_post_virtual_recovery_loss_in_session(
     debt: float,
 ) -> dict[str, Any]:
     state = _read_state_from_session(session, int(managed_account_id))
-    debt_pressure = 1 if float(debt or 0.0) >= 8.0 else 0
     state["trap_score"] = min(
         MAX_TRAP_SCORE,
-        int(state["trap_score"]) + 1 + debt_pressure,
+        int(state["trap_score"]) + 1,
     )
     state["post_virtual_recovery_losses"] = int(
         state["post_virtual_recovery_losses"]
@@ -145,8 +143,9 @@ def adaptive_virtual_wins_required(
     """Return account-specific confirmation wins for virtual OVER-4.
 
     The normal path remains one virtual win. If an account keeps losing the real
-    post-virtual recovery, it has entered the alternating trap, so we require
-    stronger virtual evidence before risking money again.
+    post-virtual recovery until 3 consecutive real losses are recorded, the guard
+    marks an alternating trap and requires stronger virtual evidence before
+    risking money again.
     """
 
     return adaptive_virtual_wins_required_for_state(
@@ -162,8 +161,11 @@ def adaptive_virtual_wins_required_for_state(
     default_wins: int = 1,
     recovery_debt: float = 0.0,
 ) -> int:
+    score = int((trap_state or {}).get("trap_score") or 0)
+    del recovery_debt
     base = max(1, int(default_wins or 1))
-    # A virtual confirmation remains mandatory, but trap history must not turn
-    # it into an unbounded waiting period while an account is recovering.
-    del trap_state, recovery_debt
+    if score >= 3:
+        return max(base, 3)
+    if score >= 1:
+        return max(base, 2)
     return base

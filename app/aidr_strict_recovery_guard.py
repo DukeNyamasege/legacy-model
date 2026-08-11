@@ -504,17 +504,10 @@ def install_aidr_strict_recovery_guard() -> None:
                             }
                         )
                     else:
-                        if int(previous.get("split_remaining") or 0) > 0:
-                            trap = record_post_virtual_recovery_loss_in_session(
-                                session,
-                                managed_account_id,
-                                debt=debt,
-                            )
-                        else:
-                            trap = adaptive_trap_state(
-                                _runtime_base(self),
-                                managed_account_id,
-                            )
+                        trap = adaptive_trap_state(
+                            _runtime_base(self),
+                            managed_account_id,
+                        )
                         required = adaptive_virtual_wins_required_for_state(
                             trap,
                             default_wins=VIRTUAL_WINS_REQUIRED,
@@ -549,7 +542,10 @@ def install_aidr_strict_recovery_guard() -> None:
                 state = session.get(AccountRiskState, managed_account_id, with_for_update=True)
                 if state is not None:
                     trap: dict[str, Any] | None = None
-                    if int(previous.get("split_remaining") or 0) > 0:
+                    if (
+                        int(previous.get("split_remaining") or 0) > 0
+                        and int(state.consecutive_losses or 0) >= 3
+                    ):
                         trap = record_post_virtual_recovery_loss_in_session(
                             session,
                             managed_account_id,

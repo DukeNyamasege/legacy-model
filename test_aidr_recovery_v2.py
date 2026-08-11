@@ -49,7 +49,7 @@ class AIDRRecoveryV2Tests(unittest.TestCase):
         )
         self.assertEqual(adaptive_trap_state(repo, 42)["trap_score"], 0)
 
-    def test_virtual_confirmation_stays_at_one_win_after_alternating_trap(self) -> None:
+    def test_adaptive_virtual_confirmation_tightens_after_three_loss_trap(self) -> None:
         repo = SimpleNamespace(values={})
         repo.runtime_preference = lambda key: repo.values.get(key, "")
         repo.set_runtime_preference = lambda key, value: repo.values.__setitem__(key, value)
@@ -57,12 +57,17 @@ class AIDRRecoveryV2Tests(unittest.TestCase):
         record_post_virtual_recovery_loss(repo, 42, debt=4.0)
         self.assertEqual(
             adaptive_virtual_wins_required(repo, 42, default_wins=1, recovery_debt=4.0),
-            1,
+            2,
         )
         record_post_virtual_recovery_loss(repo, 42, debt=8.0)
         self.assertEqual(
             adaptive_virtual_wins_required(repo, 42, default_wins=1, recovery_debt=8.0),
-            1,
+            2,
+        )
+        record_post_virtual_recovery_loss(repo, 42, debt=12.0)
+        self.assertEqual(
+            adaptive_virtual_wins_required(repo, 42, default_wins=1, recovery_debt=12.0),
+            3,
         )
         reset_adaptive_trap(repo, 42)
         self.assertEqual(
@@ -70,7 +75,7 @@ class AIDRRecoveryV2Tests(unittest.TestCase):
             1,
         )
 
-    def test_virtual_confirmation_stays_at_one_win_with_large_debt(self) -> None:
+    def test_adaptive_virtual_confirmation_does_not_tighten_on_debt_alone(self) -> None:
         repo = SimpleNamespace(values={})
         repo.runtime_preference = lambda key: repo.values.get(key, "")
         repo.set_runtime_preference = lambda key, value: repo.values.__setitem__(key, value)
