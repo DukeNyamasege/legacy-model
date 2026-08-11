@@ -370,7 +370,7 @@ def install_custom_martingale_api() -> None:
 
         stake_amount = round(float(body.stake_amount), 2)
         take_profit = round(float(body.take_profit), 2)
-        stop_loss = round(float(body.stop_loss), 2)
+        stop_loss = round(abs(float(body.stop_loss)), 2)
         if not 0.35 <= stake_amount <= 1_000_000:
             raise HTTPException(
                 status_code=400,

@@ -88,6 +88,7 @@ class DashboardMetricsTests(unittest.TestCase):
         script = Path("dashboard/dashboard-v2.js").read_text(encoding="utf-8")
         actions = Path("dashboard/dashboard-actions-v2.js").read_text(encoding="utf-8")
         stylesheet = Path("dashboard/dashboard-v2.css").read_text(encoding="utf-8")
+        settings_route = Path("app/settings_persistence_fix.py").read_text(encoding="utf-8")
 
         self.assertIn("<title>Custom Strategy Builder</title>", html)
         self.assertIn('src="/ui/dashboard-v2.js"', html)
@@ -116,9 +117,15 @@ class DashboardMetricsTests(unittest.TestCase):
         self.assertIn("virtualHook.exitAfterConsecutiveWins", script)
         self.assertIn("Enter after losses", script)
         self.assertIn("Leave after consecutive wins", script)
+        self.assertIn("Stop Loss is entered as a positive amount", script)
+        self.assertIn("limitNotifier", script)
+        self.assertIn("TP hit", script)
+        self.assertIn("SL hit", script)
+        self.assertIn("data-dismiss-limit-notice", script)
         self.assertNotIn("Enter after runs", script)
         self.assertNotIn("Leave after wins", script)
         self.assertNotIn("Rising ticks", script)
+        self.assertNotIn("Last digits count", script)
         self.assertNotIn("Uses consecutive prices", script)
         self.assertIn("data-reset-strategy", script)
         self.assertIn("data-clear-local-trades", script)
@@ -129,6 +136,8 @@ class DashboardMetricsTests(unittest.TestCase):
         self.assertIn(".trades-control-panel", stylesheet)
         self.assertIn(".session-actions-panel", stylesheet)
         self.assertIn(".toggle-row", stylesheet)
+        self.assertIn(".limit-notifier.tp", stylesheet)
+        self.assertIn(".limit-notifier.sl", stylesheet)
         for removed in (
             "Global Dashboard",
             "Higher/Lower",
@@ -154,6 +163,7 @@ class DashboardMetricsTests(unittest.TestCase):
         self.assertNotIn("new MutationObserver", actions)
         self.assertNotIn("location.reload", actions)
         self.assertNotIn("setInterval", actions)
+        self.assertIn("abs(float(body.stop_loss))", settings_route)
 
     def test_builder_dashboard_css_supports_light_dark_and_mobile(self) -> None:
         html = Path("dashboard/index.html").read_text(encoding="utf-8")

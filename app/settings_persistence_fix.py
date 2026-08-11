@@ -90,7 +90,7 @@ def install_settings_persistence_fix(app: Any) -> None:
             maximum=1_000_000.0,
         )
         stop_loss = _validate_money(
-            body.stop_loss,
+            abs(float(body.stop_loss)),
             name="Stop loss",
             minimum=0.0,
             maximum=1_000_000.0,

@@ -2065,7 +2065,7 @@ def update_personal_trading_settings(
     if stake_amount > 1_000_000:
         raise HTTPException(status_code=400, detail="Stake amount is too large.")
     take_profit = round(float(body.take_profit), 2)
-    stop_loss = round(float(body.stop_loss), 2)
+    stop_loss = round(abs(float(body.stop_loss)), 2)
     if take_profit < 0 or stop_loss < 0:
         raise HTTPException(
             status_code=400,

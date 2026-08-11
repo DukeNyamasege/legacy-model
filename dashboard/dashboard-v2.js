@@ -68,6 +68,7 @@
     legacyBuilder: "foa-builder-draft-v1",
     tradeReset: "foa-trade-session-reset-v1",
     lastGood: "foa-builder-last-good-snapshot-v1",
+    limitDismissed: "foa-limit-notice-dismissed-v1",
   };
 
   const MARKETS = [
@@ -182,7 +183,7 @@
     money: {
       stake: 0.5,
       takeProfit: 10,
-      stopLoss: -10,
+      stopLoss: 10,
       martingale: 1.2,
       ticks: 1,
     },
@@ -434,7 +435,7 @@
     draft.reanalyze.wins = Math.max(1, Math.min(50, Number(draft.reanalyze.wins || 1)));
     draft.money.stake = Math.max(0.35, Number(draft.money.stake || 0.5));
     draft.money.takeProfit = Math.max(0, Number(draft.money.takeProfit || 0));
-    draft.money.stopLoss = Number(draft.money.stopLoss || 0);
+    draft.money.stopLoss = Math.max(0, Math.abs(Number(draft.money.stopLoss || 0)));
     draft.money.martingale = Math.max(1.1, Math.min(10, Number(draft.money.martingale || 1.2)));
     draft.money.ticks = Math.max(1, Math.min(100, Math.round(Number(draft.money.ticks || 1))));
     draft.virtualHook.enabled = draft.virtualHook.enabled !== false;
@@ -543,6 +544,50 @@
     return `<div class="notice error credential-notice"><span>${esc(message)}</span><button type="button" data-view="settings">Go to Settings</button></div>`;
   }
 
+  function limitNoticeData() {
+    if (!authenticated()) return null;
+    const status = String(S.life?.execution_status || S.me?.execution_status || "").toLowerCase();
+    if (status !== "take_profit" && status !== "stop_loss") return null;
+    const currency = S.me?.currency || "USD";
+    const serverProfit = Number(S.me?.stats?.profit);
+    const localProfit = personalMetrics().profit;
+    const rawProfit = Number.isFinite(serverProfit) ? serverProfit : localProfit;
+    const configuredLimit = Number(
+      status === "take_profit"
+        ? S.me?.settings?.take_profit
+        : S.me?.settings?.stop_loss
+    );
+    const amount = status === "take_profit"
+      ? Math.abs(rawProfit || configuredLimit || 0)
+      : -Math.abs(rawProfit || configuredLimit || 0);
+    const account = S.me?.account_id_masked || S.me?.account_id || "account";
+    const key = `${K.limitDismissed}:${selectedMode()}:${account}:${status}:${amount.toFixed(2)}`;
+    if (storageGet(key) === "1") return null;
+    const isTp = status === "take_profit";
+    return {
+      key,
+      tone: isTp ? "tp" : "sl",
+      title: isTp ? "TP hit" : "SL hit",
+      label: isTp ? "Amount made" : "Amount stopped",
+      amount: money(amount, currency),
+      message: S.life?.reason || S.me?.execution_status_reason || (
+        isTp
+          ? "Take profit reached. This account is protected."
+          : "Stop loss reached. This account is protected."
+      ),
+    };
+  }
+
+  function limitNotifier() {
+    const notice = limitNoticeData();
+    if (!notice) return "";
+    return `<aside class="limit-notifier ${notice.tone}" role="status" aria-live="polite">
+      <div class="limit-icon">OK</div>
+      <div><strong>${esc(notice.title)}</strong><span>${esc(notice.label)}: ${esc(notice.amount)}</span><small>${esc(notice.message)}</small></div>
+      <button type="button" data-dismiss-limit-notice="${esc(notice.key)}">OK</button>
+    </aside>`;
+  }
+
   function devPreviewNotice() {
     if (!S.me?.local_dev_preview) return "";
     return `<div class="notice dev-notice">Development preview is active. UI configuration is allowed locally, but authenticated Deriv trading remains disabled on the server.</div>`;
@@ -584,8 +629,7 @@
     if (!S.me?.settings || S.builderHydratedFromServer || S.builderDirty || isEditingDashboard()) return;
     S.builder.money.stake = Number(S.me.settings.stake_amount ?? S.builder.money.stake);
     S.builder.money.takeProfit = Number(S.me.settings.take_profit ?? S.builder.money.takeProfit);
-    const stopLoss = Number(S.me.settings.stop_loss ?? Math.abs(S.builder.money.stopLoss));
-    S.builder.money.stopLoss = stopLoss ? -Math.abs(stopLoss) : 0;
+    S.builder.money.stopLoss = Math.abs(Number(S.me.settings.stop_loss ?? S.builder.money.stopLoss));
     S.builderHydratedFromServer = true;
     saveDraft();
   }
@@ -643,8 +687,7 @@
     if (S.me?.settings) {
       next.money.stake = Number(S.me.settings.stake_amount ?? next.money.stake);
       next.money.takeProfit = Number(S.me.settings.take_profit ?? next.money.takeProfit);
-      const stopLoss = Number(S.me.settings.stop_loss ?? Math.abs(next.money.stopLoss));
-      next.money.stopLoss = stopLoss ? -Math.abs(stopLoss) : 0;
+      next.money.stopLoss = Math.abs(Number(S.me.settings.stop_loss ?? next.money.stopLoss));
     }
     S.builder = normalizeBuilder(next);
     S.builderHydratedFromServer = true;
@@ -846,7 +889,6 @@
     return `<div class="rule-card digit-rule">
       <div class="rule-title"><span>9</span><strong>Last Digit Rule</strong></div>
       <label class="field"><span>Check last N digits</span><input data-builder="lastRule.window" type="number" min="1" max="1000" step="1" value="${esc(rule.window)}"></label>
-      <label class="field"><span>Using</span><select data-builder="lastRule.target"><option value="last_digits">Last digits count</option></select></label>
       <label class="field wide"><span>Comparison</span><select data-builder="lastRule.operator">${comparisonOptions(rule.operator)}</select></label>
       ${allSame ? "" : `<label class="field"><span>Value</span><input data-builder="lastRule.value" type="number" min="0" max="9" step="1" value="${esc(rule.value)}"></label>`}
     </div>`;
@@ -948,11 +990,11 @@
       <div class="money-grid">
         <label class="field"><span>Stake</span><input data-builder="money.stake" type="number" min="0.35" step="0.01" value="${esc(moneyRule.stake)}"></label>
         <label class="field"><span>Take Profit (TP)</span><input data-builder="money.takeProfit" type="number" min="0" step="0.01" value="${esc(moneyRule.takeProfit)}"></label>
-        <label class="field"><span>Stop Loss (SL)</span><input data-builder="money.stopLoss" type="number" step="0.01" value="${esc(moneyRule.stopLoss)}"></label>
+        <label class="field"><span>Stop Loss (SL)</span><input data-builder="money.stopLoss" type="number" min="0" step="0.01" value="${esc(moneyRule.stopLoss)}"></label>
         <label class="field"><span>Martingale</span><input data-builder="money.martingale" type="number" min="1.1" max="10" step="0.01" value="${esc(moneyRule.martingale)}"></label>
         <label class="field"><span>Ticks</span><input data-builder="money.ticks" type="number" min="1" max="100" step="1" value="${esc(moneyRule.ticks)}"></label>
       </div>
-      <p class="builder-hint">Ticks is the contract duration used during execution.</p>
+      <p class="builder-hint">Stop Loss is entered as a positive amount; 10 means stop at -10. Ticks is the contract duration.</p>
     </section>`;
   }
 
@@ -1170,7 +1212,7 @@
     setTheme(S.theme);
     const app = document.querySelector("#foa-simple-app");
     if (!app) return;
-    app.innerHTML = `<div class="builder-shell">${header()}${devPreviewNotice()}${credentialNotice()}${S.error ? `<div class="notice error">${esc(S.error)}</div>` : ""}${S.notice ? `<div class="notice success">${esc(S.notice)}</div>` : ""}<main>${body()}</main></div>${loader()}`;
+    app.innerHTML = `<div class="builder-shell">${header()}${devPreviewNotice()}${credentialNotice()}${S.error ? `<div class="notice error">${esc(S.error)}</div>` : ""}${S.notice ? `<div class="notice success">${esc(S.notice)}</div>` : ""}<main>${body()}</main></div>${limitNotifier()}${loader()}`;
     bind(app);
   }
 
@@ -1354,6 +1396,12 @@
     });
     root.querySelector("[data-save-builder]")?.addEventListener("click", () => {
       mutate(saveBuilderToServer, "Custom Strategy Builder saved.", "Saving builder...");
+    });
+    root.querySelectorAll("[data-dismiss-limit-notice]").forEach((button) => {
+      button.onclick = () => {
+        storageSet(button.dataset.dismissLimitNotice, "1");
+        render();
+      };
     });
     root.querySelector("[data-reset-strategy]")?.addEventListener("click", () => {
       if (!window.confirm("Reset this strategy? Your current builder configuration will be cleared.")) return;
