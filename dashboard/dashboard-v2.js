@@ -295,7 +295,7 @@
     builderDirty: false,
     busy: false,
     mutating: false,
-    booting: true,
+    booting: !BOOT_SESSION?.authenticated,
     pendingRender: false,
     renderTimer: null,
     loaderText: "Opening builder...",

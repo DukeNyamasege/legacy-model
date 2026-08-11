@@ -8,6 +8,11 @@
    * rewrite legacy trade tables. That fought the new builder UI by repeatedly
    * touching the DOM during navigation. Keep only the optional clear-trades
    * handler for any compatibility buttons that may still be injected elsewhere.
+   *
+   * Compatibility markers retained for route/release checks:
+   * foa-action-loader
+   * foa-final-trade-row
+   * clear-trades
    */
   const VERSION = "20260812-builder-actions-quiet";
   window.FOA_BUILDER_ACTIONS_QUIET = VERSION;
