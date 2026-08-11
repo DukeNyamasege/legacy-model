@@ -7,7 +7,7 @@ import time
 from dataclasses import replace
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 import app.final_multi_strategy_execution as final_multi
 import app.multi_strategy_runtime as multi
@@ -22,7 +22,7 @@ from app.custom_strategy_v1 import (
     nominal_probability,
     normalize_custom_strategy,
 )
-from app.models import RuntimePreference
+from app.models import CandidateSignalRecord, RuntimePreference, Trade
 from app.repositories.test2_repository import Test2Repository
 from app.rf_dir5_bot import RFDir5TradingBot
 from app.strategy_v2_runtime import _ensure_parent_signal
@@ -193,6 +193,211 @@ def _digits(market: Any) -> list[int]:
     return values
 
 
+def _reanalyze_due(config: dict[str, Any], state: dict[str, Any]) -> bool:
+    rule = config.get("reanalyze") or {}
+    mode = str(rule.get("mode") or "after_every_trade")
+    wins = int(state.get("wins") or 0)
+    losses = int(state.get("losses") or 0)
+    if mode == "after_every_trade":
+        return wins + losses >= 1
+    if mode == "after_loss":
+        return losses >= int(rule.get("losses") or 1)
+    if mode == "after_win":
+        return wins >= int(rule.get("wins") or 1)
+    return losses >= int(rule.get("losses") or 1) or wins >= int(rule.get("wins") or 1)
+
+
+def _custom_state(
+    bot: RFDir5TradingBot,
+    managed_id: int,
+    fingerprint: str,
+) -> dict[str, Any]:
+    states: dict[int, dict[str, Any]] = getattr(
+        bot,
+        "_custom_strategy_reanalysis_state",
+        {},
+    )
+    bot._custom_strategy_reanalysis_state = states
+    state = states.get(int(managed_id))
+    if state is None or state.get("fingerprint") != fingerprint:
+        state = {
+            "fingerprint": fingerprint,
+            "initialized": False,
+            "last_trade_id": 0,
+            "wins": 0,
+            "losses": 0,
+            "needs_analysis": True,
+            "open": False,
+            "reason": "initial_analysis_required",
+        }
+        states[int(managed_id)] = state
+    return state
+
+
+def _sync_reanalysis_state(
+    bot: RFDir5TradingBot,
+    *,
+    routes: list[Any],
+    configs: dict[int, dict[str, Any]],
+) -> None:
+    managed_ids = sorted({int(route.managed_id) for route in routes if int(route.managed_id) in configs})
+    if not managed_ids:
+        return
+
+    states: dict[int, dict[str, Any]] = getattr(
+        bot,
+        "_custom_strategy_reanalysis_state",
+        {},
+    )
+    bot._custom_strategy_reanalysis_state = states
+    for managed_id in managed_ids:
+        config = configs.get(managed_id)
+        if not config:
+            continue
+        _custom_state(bot, managed_id, custom_strategy_fingerprint(config))
+
+    uninitialized_ids = [
+        managed_id
+        for managed_id in managed_ids
+        if not bool(states.get(managed_id, {}).get("initialized"))
+    ]
+    initialized_ids = [
+        managed_id
+        for managed_id in managed_ids
+        if bool(states.get(managed_id, {}).get("initialized"))
+    ]
+    minimum_trade_id = min(
+        [int(states[managed_id].get("last_trade_id") or 0) for managed_id in initialized_ids],
+        default=0,
+    )
+
+    with bot.repository.database.session() as session:
+        initial_max_rows = []
+        if uninitialized_ids:
+            initial_max_rows = session.execute(
+                select(Trade.managed_account_id, func.max(Trade.id))
+                .join(
+                    CandidateSignalRecord,
+                    CandidateSignalRecord.signal_id == Trade.signal_id,
+                )
+                .where(
+                    Trade.managed_account_id.in_(uninitialized_ids),
+                    Trade.settlement_time.is_not(None),
+                    CandidateSignalRecord.trigger_name.like("CUSTOM-V%"),
+                )
+                .group_by(Trade.managed_account_id)
+            ).all()
+        rows = []
+        if initialized_ids:
+            rows = session.execute(
+                select(Trade.managed_account_id, Trade.id, Trade.outcome)
+                .join(
+                    CandidateSignalRecord,
+                    CandidateSignalRecord.signal_id == Trade.signal_id,
+                )
+                .where(
+                    Trade.managed_account_id.in_(initialized_ids),
+                    Trade.id > minimum_trade_id,
+                    Trade.settlement_time.is_not(None),
+                    CandidateSignalRecord.trigger_name.like("CUSTOM-V%"),
+                )
+                .order_by(Trade.id.asc())
+            ).all()
+        open_ids = {
+            int(value)
+            for value in session.scalars(
+                select(Trade.managed_account_id)
+                .join(
+                    CandidateSignalRecord,
+                    CandidateSignalRecord.signal_id == Trade.signal_id,
+                )
+                .where(
+                    Trade.managed_account_id.in_(managed_ids),
+                    Trade.settlement_time.is_(None),
+                    CandidateSignalRecord.trigger_name.like("CUSTOM-V%"),
+                )
+                .distinct()
+            ).all()
+            if value is not None
+        }
+
+    initial_max_by_account = {
+        int(managed_id): int(max_id or 0)
+        for managed_id, max_id in initial_max_rows
+        if managed_id is not None
+    }
+    rows_by_account: dict[int, list[tuple[int, str]]] = {}
+    for managed_id, trade_id, outcome in rows:
+        if managed_id is None:
+            continue
+        account_id = int(managed_id)
+        rows_by_account.setdefault(account_id, []).append(
+            (int(trade_id), str(outcome or "").upper())
+        )
+
+    for managed_id in managed_ids:
+        config = configs.get(managed_id)
+        state = states.get(managed_id)
+        if not config or state is None:
+            continue
+        state["open"] = managed_id in open_ids
+        if not bool(state.get("initialized")):
+            state["last_trade_id"] = initial_max_by_account.get(managed_id, 0)
+            state["initialized"] = True
+            continue
+        for trade_id, outcome in rows_by_account.get(managed_id, []):
+            if trade_id <= int(state.get("last_trade_id") or 0):
+                continue
+            state["last_trade_id"] = trade_id
+            if outcome == "WIN":
+                state["wins"] = int(state.get("wins") or 0) + 1
+            elif outcome == "LOSS":
+                state["losses"] = int(state.get("losses") or 0) + 1
+            if _reanalyze_due(config, state):
+                state["needs_analysis"] = True
+                state["reason"] = "reanalyze_trigger_reached"
+
+
+def _account_ready_for_signal(
+    bot: RFDir5TradingBot,
+    *,
+    managed_id: int,
+    config: dict[str, Any],
+    symbol: str,
+    qualifies: bool,
+) -> bool:
+    del symbol
+    fingerprint = custom_strategy_fingerprint(config)
+    state = _custom_state(bot, int(managed_id), fingerprint)
+    if bool(state.get("open")):
+        return False
+    if bool(state.get("needs_analysis")):
+        if not qualifies:
+            return False
+        state["needs_analysis"] = False
+        state["wins"] = 0
+        state["losses"] = 0
+        state["reason"] = "analysis_confirmed"
+        return True
+    return True
+
+
+def _set_custom_open(
+    bot: RFDir5TradingBot,
+    managed_ids: set[int],
+    open_value: bool,
+) -> None:
+    states: dict[int, dict[str, Any]] = getattr(
+        bot,
+        "_custom_strategy_reanalysis_state",
+        {},
+    )
+    for managed_id in {int(value) for value in managed_ids}:
+        state = states.get(managed_id)
+        if state is not None:
+            state["open"] = bool(open_value)
+
+
 def _group_matches(
     bot: RFDir5TradingBot,
     *,
@@ -223,8 +428,19 @@ def _group_matches(
             qualifies = evaluate_custom_strategy(config, digits=digits, quotes=quotes)
         except (TypeError, ValueError):
             qualifies = False
-        if qualifies:
-            matched.append((config, ids))
+        ready_ids = {
+            int(managed_id)
+            for managed_id in ids
+            if _account_ready_for_signal(
+                bot,
+                managed_id=int(managed_id),
+                config=config,
+                symbol=symbol,
+                qualifies=qualifies,
+            )
+        }
+        if ready_ids:
+            matched.append((config, ready_ids))
     return matched
 
 
@@ -287,12 +503,14 @@ async def _execute_custom_group(
             len(config["conditions"]),
             len(ids),
         )
+        _set_custom_open(bot, ids, True)
         await shared._exact_scope_buy(
             bot,
             signal,
             economics,
             ids,
             recovery_enabled=True,
+            virtual_protection_enabled=bool(config.get("virtual_hook_enabled", True)),
         )
     except asyncio.CancelledError:
         raise
@@ -336,6 +554,7 @@ def _schedule_matches(bot: RFDir5TradingBot, tick_data: dict[str, Any]) -> None:
     configs = _load_configs(bot, routes)
     if not configs:
         return
+    _sync_reanalysis_state(bot, routes=routes, configs=configs)
 
     matches = _group_matches(
         bot,
@@ -460,10 +679,12 @@ def install_custom_strategy_runtime() -> None:
         self._custom_strategy_inflight_ids: set[int] = set()
         self._custom_strategy_tasks: set[asyncio.Task[Any]] = set()
         self._custom_strategy_seen_ticks: set[tuple[str, int, str]] = set()
+        self._custom_strategy_reanalysis_state: dict[int, dict[str, Any]] = {}
         self.logger.warning(
             "CUSTOM_STRATEGY_RUNTIME_ACTIVE version=%s markets=%s "
             "trade_types=rise,fall,even,odd,over,under condition_join=AND "
             "duration=user_selected_ticks silent_scanning=true "
+            "reanalyze=initial_analysis_then_configured_continuation "
             "independent_from_system_aidr=true manual_martingale_compatible=true",
             VERSION,
             10,

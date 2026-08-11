@@ -66,7 +66,9 @@ class CustomStrategyPatternTests(unittest.TestCase):
             ("!=", [1, 2, 3], True),
             (">=", [4, 7, 9], True),
             (">", [5, 7, 9], True),
+            ("all_same", [7, 7, 7], True),
             (">=", [4, 3, 9], False),
+            ("all_same", [7, 7, 8], False),
         ):
             with self.subTest(operator=operator):
                 custom = config(conditions=[{
@@ -79,6 +81,18 @@ class CustomStrategyPatternTests(unittest.TestCase):
                     evaluate_custom_strategy(custom, digits=digits, quotes=[1, 2]),
                     expected,
                 )
+
+    def test_virtual_hook_settings_are_user_configurable(self) -> None:
+        custom = config(
+            virtual_hook={
+                "enabled": True,
+                "enter_after_runs": 4,
+                "exit_after_wins": 3,
+            }
+        )
+        self.assertTrue(custom["virtual_hook_enabled"])
+        self.assertEqual(custom["virtual_hook"]["enter_after_runs"], 4)
+        self.assertEqual(custom["virtual_hook"]["exit_after_wins"], 3)
 
     def test_compound_conditions_are_and(self) -> None:
         custom = config(
@@ -106,9 +120,27 @@ class CustomStrategyPatternTests(unittest.TestCase):
     def test_direction_uses_last_n_movements(self) -> None:
         rise = config(conditions=[{"kind": "direction", "window": 3, "direction": "rise"}])
         fall = config(conditions=[{"kind": "direction", "window": 2, "direction": "fall"}])
+        flat = config(conditions=[{"kind": "direction", "window": 2, "direction": "no_move"}])
         self.assertTrue(evaluate_custom_strategy(rise, digits=[1], quotes=[10, 11, 12, 13]))
         self.assertFalse(evaluate_custom_strategy(rise, digits=[1], quotes=[10, 11, 10, 13]))
         self.assertTrue(evaluate_custom_strategy(fall, digits=[1], quotes=[10, 9, 8]))
+        self.assertTrue(evaluate_custom_strategy(flat, digits=[1], quotes=[10, 10, 10]))
+        self.assertFalse(evaluate_custom_strategy(flat, digits=[1], quotes=[10, 10, 10.01]))
+
+    def test_legacy_higher_lower_migrates_to_rise_fall(self) -> None:
+        self.assertEqual(config(trade_type="higher")["trade_type"], "rise")
+        self.assertEqual(config(trade_type="lower")["trade_type"], "fall")
+
+    def test_percentage_can_count_no_move_ticks(self) -> None:
+        flat = config(conditions=[{
+            "kind": "percentage",
+            "window": 3,
+            "target": "no_move",
+            "operator": ">=",
+            "threshold": 66,
+        }])
+        self.assertTrue(evaluate_custom_strategy(flat, digits=[1], quotes=[10, 10, 10, 10.2]))
+        self.assertFalse(evaluate_custom_strategy(flat, digits=[1], quotes=[10, 10.1, 10.2, 10.3]))
 
     def test_individual_trade_types_map_to_exact_contracts(self) -> None:
         expectations = {
@@ -183,6 +215,9 @@ class CustomStrategyIntegrationTests(unittest.TestCase):
         self.assertIn("_exclude_custom_from_shared_aidr", runtime)
         self.assertIn('family", "") or "") == "custom"', runtime)
         self.assertIn("silent_scanning=true", runtime)
+        self.assertIn("reanalyze=initial_analysis_then_configured_continuation", runtime)
+        self.assertIn("_sync_reanalysis_state", runtime)
+        self.assertIn("_reanalyze_due", runtime)
         self.assertIn("entry_gate=user_custom_pattern", runtime)
         self.assertIn("edge_gate=false", runtime)
 
@@ -203,6 +238,12 @@ class CustomStrategyIntegrationTests(unittest.TestCase):
         self.assertIn("class CustomStrategyRequest(BaseModel):", api)
         self.assertIn("class CustomMartingaleRequest(BaseModel):", api)
         self.assertIn("martingale: CustomMartingaleRequest | None = None", api)
+        self.assertIn("virtual_hook_enabled: bool = True", api)
+        self.assertIn("class CustomVirtualHookRequest(BaseModel):", api)
+        self.assertIn("virtual_hook: CustomVirtualHookRequest | None = None", api)
+        self.assertIn('"virtual_hook_enabled": bool(body.virtual_hook_enabled)', api)
+        self.assertIn('"virtual_hook": (', api)
+        self.assertIn('"tick_directions": ["rising", "falling", "no_move"]', api)
         self.assertIn("duration_ticks: int = Field(", api)
         self.assertIn('"duration_ticks": body.duration_ticks', api)
         self.assertIn("_write_custom_martingale(", api)

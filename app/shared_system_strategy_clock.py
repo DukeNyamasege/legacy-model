@@ -291,6 +291,7 @@ async def _exact_scope_buy(
     scope_ids: set[int],
     *,
     recovery_enabled: bool,
+    virtual_protection_enabled: bool = True,
 ) -> None:
     """Enter the final REST-bulk path without allowing barrier-based rescoping."""
 
@@ -303,9 +304,13 @@ async def _exact_scope_buy(
 
     scope_token = grouped._AIDR_SCOPE_IDS.set(scope)
     recovery_token = grouped._AIDR_RECOVERY_ENABLED.set(bool(recovery_enabled))
+    virtual_token = grouped._AIDR_VIRTUAL_PROTECTION_ENABLED.set(
+        bool(virtual_protection_enabled)
+    )
     try:
         await bot._buy_selected_accounts(signal, economics)
     finally:
+        grouped._AIDR_VIRTUAL_PROTECTION_ENABLED.reset(virtual_token)
         grouped._AIDR_RECOVERY_ENABLED.reset(recovery_token)
         grouped._AIDR_SCOPE_IDS.reset(scope_token)
 

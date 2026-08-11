@@ -33,6 +33,10 @@ _AIDR_RECOVERY_ENABLED: ContextVar[bool | None] = ContextVar(
     "aidr_recovery_enabled",
     default=None,
 )
+_AIDR_VIRTUAL_PROTECTION_ENABLED: ContextVar[bool | None] = ContextVar(
+    "aidr_virtual_protection_enabled",
+    default=None,
+)
 _ACTIVE_RECEIPT_SIGNAL_ID: ContextVar[str] = ContextVar(
     "active_receipt_signal_id",
     default="",
@@ -508,6 +512,9 @@ def install_scalable_group_execution() -> None:
         override = _AIDR_RECOVERY_ENABLED.get()
         if override is not None:
             kwargs["recovery_enabled"] = bool(override)
+        virtual_override = _AIDR_VIRTUAL_PROTECTION_ENABLED.get()
+        if virtual_override is not None:
+            kwargs["virtual_protection_enabled"] = bool(virtual_override)
         return original_plan_stake(self, **kwargs)
 
     RFDir5Repository.plan_stake = context_recovery_plan

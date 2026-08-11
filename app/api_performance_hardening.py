@@ -268,7 +268,7 @@ def _build_current_account(session_hash_value: str) -> dict[str, Any] | None:
 def _fast_current_account(request: Request) -> dict[str, Any] | None:
     session_token = str(request.cookies.get(base_api.CLIENT_SESSION_COOKIE, "") or "")
     if not session_token:
-        return None
+        return _local_dev_current_account(request)
     session_hash_value = base_api.session_hash(session_token)
     now = time.monotonic()
     with _SESSION_LOCK:
@@ -276,11 +276,26 @@ def _fast_current_account(request: Request) -> dict[str, Any] | None:
         if cached and now < cached[0]:
             return copy.deepcopy(cached[1])
     account = _build_current_account(session_hash_value)
+    if account is None:
+        account = _local_dev_current_account(request)
     with _SESSION_LOCK:
         _SESSION_CACHE[session_hash_value] = (
             now + _SESSION_CACHE_TTL_SECONDS,
             copy.deepcopy(account),
         )
+    return account
+
+
+def _local_dev_current_account(request: Request) -> dict[str, Any] | None:
+    account = base_api.local_dev_preview_account(request)
+    if not account:
+        return None
+    account.setdefault("managed_account_id", int(account.get("id") or 0))
+    account.setdefault(
+        "account_generation",
+        f"local-preview:{account.get('account_type', 'demo')}",
+    )
+    account.setdefault("trading_api_token_invalid", False)
     return account
 
 
@@ -805,9 +820,20 @@ def install_api_performance_hardening(app: Any) -> None:
             request.cookies.get(base_api.CLIENT_SESSION_COOKIE, "") or ""
         )
         current = current_account_fast(request)
+        target_type = base_api.normalize_account_type(body.account_type)
+        if current and current.get("local_dev_preview") and base_api.local_dev_auth_allowed(request):
+            response = base_api.JSONResponse({"success": True, "account_type": target_type})
+            response.set_cookie(
+                key=base_api.LOCAL_DEV_ACCOUNT_TYPE_COOKIE,
+                value=target_type,
+                httponly=False,
+                secure=False,
+                samesite="lax",
+                max_age=86400,
+            )
+            return response
         if not session_token or not current:
             raise HTTPException(status_code=401, detail="Not authenticated")
-        target_type = base_api.normalize_account_type(body.account_type)
         index = _identity_index(force=True)
         selected = index.get("by_managed_id", {}).get(int(current["id"])) or {}
         identity = str(selected.get("identity") or "")

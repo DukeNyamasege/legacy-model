@@ -34,7 +34,7 @@ def _standalone_dashboard_html() -> str:
   <meta name="color-scheme" content="dark light">
   <meta name="theme-color" content="#071120">
   <meta name="robots" content="noindex,nofollow,noarchive,nosnippet">
-  <title>Father of Automation</title>
+  <title>Custom Strategy Builder</title>
   <link rel="stylesheet" href="/ui/dashboard-v2.css?v={UI_VERSION}">
   <style>
     html,body{{margin:0;min-height:100%;background:#071120;color:#f8fafc;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}}
@@ -45,7 +45,7 @@ def _standalone_dashboard_html() -> str:
   </style>
 </head>
 <body>
-  <div id="foa-bootstrap"><div><i aria-hidden="true"></i><strong>Father of Automation</strong><span>Opening dashboard…</span></div></div>
+  <div id="foa-bootstrap"><div><i aria-hidden="true"></i><strong>Custom Strategy Builder</strong><span>Opening builder…</span></div></div>
   <noscript>This dashboard requires JavaScript.</noscript>
   <!-- compatibility marker: /ui/simplified-dashboard.js -->
   <script src="/ui/dashboard-v2.js?v={UI_VERSION}" defer></script>

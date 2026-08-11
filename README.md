@@ -395,3 +395,19 @@ issuing five separate ledger queries. Fresh WebSocket snapshots also prevent the
 - Use HTTPS for the public dashboard and OAuth callback.
 - Review logs for worker lease, tick silence, reconnect, purchase, and settlement errors.
 - The health endpoint verifies database access and worker heartbeat; readiness also reports stale or missing worker state.
+
+## Local UI Preview
+
+For localhost-only UI work, enable the explicit preview login instead of routing
+Deriv OAuth back to your machine:
+
+```powershell
+$env:LOCAL_DEV_AUTH_BYPASS="true"
+$env:DERIV_TRADING_ENABLED="false"
+$env:DATABASE_URL="sqlite:///data/test2-local.db"
+.\.venv\Scripts\python.exe -m uvicorn app.api_v3:app --host 127.0.0.1 --port 8080 --reload
+```
+
+Then open `http://127.0.0.1:8080/`. The dashboard behaves like a logged-in user
+for design work, including the demo/real switch, but it has no real token and
+cannot join live execution.

@@ -8,6 +8,11 @@ from decimal import Decimal
 from typing import Any, Iterable
 
 from app.hybrid_digit_put import DigitSignal
+from app.custom_strategy_virtual_hook import (
+    DEFAULT_VIRTUAL_ENTER_AFTER_RUNS,
+    DEFAULT_VIRTUAL_EXIT_AFTER_WINS,
+    normalize_virtual_hook_settings,
+)
 from app.models import RuntimePreference, utc_now
 
 
@@ -30,13 +35,16 @@ TRADE_TYPES: dict[str, dict[str, Any]] = {
     "odd": {"label": "Odd", "contract_type": "DIGITODD"},
     "over": {"label": "Over", "contract_type": "DIGITOVER"},
     "under": {"label": "Under", "contract_type": "DIGITUNDER"},
+    "matches": {"label": "Matches", "contract_type": "DIGITMATCH"},
+    "differs": {"label": "Differs", "contract_type": "DIGITDIFF"},
     "rise": {"label": "Rise", "contract_type": "CALL"},
     "fall": {"label": "Fall", "contract_type": "PUT"},
 }
-COMPARATORS = ("<", "<=", "==", "!=", ">=", ">")
-CONDITION_KINDS = ("digit_parity", "digit_compare", "direction")
+COMPARATORS = ("<", "<=", "==", "!=", ">=", ">", "all_same")
+NUMERIC_COMPARATORS = ("<", "<=", "==", "!=", ">=", ">")
+CONDITION_KINDS = ("digit_parity", "digit_compare", "direction", "percentage")
 MAX_CONDITIONS = 12
-MAX_WINDOW = 100
+MAX_WINDOW = 1000
 MIN_DURATION_TICKS = 1
 MAX_DURATION_TICKS = 100
 DEFAULT_DURATION_TICKS = 1
@@ -57,6 +65,17 @@ def default_custom_strategy() -> dict[str, Any]:
         "duration_ticks": DEFAULT_DURATION_TICKS,
         "conditions": [],
         "match": "all",
+        "reanalyze": {
+            "mode": "after_every_trade",
+            "losses": 1,
+            "wins": 1,
+        },
+        "virtual_hook_enabled": True,
+        "virtual_hook": {
+            "enabled": True,
+            "enter_after_runs": DEFAULT_VIRTUAL_ENTER_AFTER_RUNS,
+            "exit_after_wins": DEFAULT_VIRTUAL_EXIT_AFTER_WINS,
+        },
     }
 
 
@@ -93,13 +112,54 @@ def _digit(value: Any, *, label: str) -> int:
     return result
 
 
+def _threshold(value: Any) -> float:
+    try:
+        result = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Percentage threshold must be a number") from exc
+    if not 0 <= result <= 100:
+        raise ValueError("Percentage threshold must be between 0 and 100")
+    return round(result, 4)
+
+
+def _normalize_reanalyze(raw: Any) -> dict[str, Any]:
+    source = raw if isinstance(raw, dict) else {}
+    mode = str(source.get("mode") or "after_every_trade").strip().lower()
+    if mode not in {"after_every_trade", "after_loss", "after_win", "custom"}:
+        mode = "after_every_trade"
+    try:
+        losses = int(source.get("losses", 1))
+    except (TypeError, ValueError):
+        losses = 1
+    try:
+        wins = int(source.get("wins", 1))
+    except (TypeError, ValueError):
+        wins = 1
+    return {
+        "mode": mode,
+        "losses": max(1, min(50, losses)),
+        "wins": max(1, min(50, wins)),
+    }
+
+
+def _normalize_direction(value: Any) -> str:
+    raw = str(value or "").strip().lower().replace(" ", "_")
+    if raw in {"rise", "rising", "up"}:
+        return "rising"
+    if raw in {"fall", "falling", "down"}:
+        return "falling"
+    if raw in {"no_move", "nomove", "flat", "same", "equal"}:
+        return "no_move"
+    raise ValueError("Tick direction must be Rising, Falling, or No Move")
+
+
 def normalize_condition(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise ValueError("Every custom strategy condition must be an object")
     kind = str(raw.get("kind") or "").strip().lower()
     if kind not in CONDITION_KINDS:
         raise ValueError(
-            "Condition type must be digit_parity, digit_compare, or direction"
+            "Condition type must be digit_parity, digit_compare, direction, or percentage"
         )
     window = _window(raw.get("window"))
     if kind == "digit_parity":
@@ -111,26 +171,48 @@ def normalize_condition(raw: Any) -> dict[str, Any]:
         operator = str(raw.get("operator") or "").strip()
         if operator not in COMPARATORS:
             raise ValueError(
-                "Digit comparator must be one of <, <=, ==, !=, >=, >"
+                "Digit comparator must be one of <, <=, ==, !=, >=, >, all_same"
             )
-        value = _digit(raw.get("value"), label="Comparator value")
+        value = 0 if operator == "all_same" else _digit(raw.get("value"), label="Comparator value")
         return {
             "kind": kind,
             "window": window,
             "operator": operator,
             "value": value,
         }
-    direction = str(raw.get("direction") or "").strip().lower()
-    if direction not in {"rise", "fall"}:
-        raise ValueError("Tick direction must be rise or fall")
+    if kind == "percentage":
+        target = str(raw.get("target") or "").strip().lower()
+        if target not in {"even", "odd", "over", "under", "digit", "rise", "fall", "no_move"}:
+            raise ValueError(
+                "Percentage target must be even, odd, over, under, digit, rise, fall, or no_move"
+            )
+        operator = str(raw.get("operator") or "").strip()
+        if operator not in NUMERIC_COMPARATORS:
+            raise ValueError(
+                "Percentage comparator must be one of <, <=, ==, !=, >=, >"
+            )
+        value = None
+        if target in {"over", "under", "digit"}:
+            value = _digit(raw.get("value"), label="Percentage target digit")
+        return {
+            "kind": kind,
+            "window": window,
+            "target": target,
+            "operator": operator,
+            "threshold": _threshold(raw.get("threshold")),
+            "value": value,
+        }
+    direction = _normalize_direction(raw.get("direction"))
     return {"kind": kind, "window": window, "direction": direction}
 
 
 def normalize_custom_strategy(raw: Any) -> dict[str, Any]:
     source = raw if isinstance(raw, dict) else {}
     market_mode = str(source.get("market_mode") or "all").strip().lower()
-    if market_mode not in {"all", "selected"}:
-        raise ValueError("Market mode must be all or selected")
+    if market_mode == "one":
+        market_mode = "single"
+    if market_mode not in {"all", "selected", "single"}:
+        raise ValueError("Market mode must be all, selected, or single")
 
     requested_markets = source.get("markets") or []
     if isinstance(requested_markets, str):
@@ -144,17 +226,25 @@ def normalize_custom_strategy(raw: Any) -> dict[str, Any]:
             raise ValueError(f"Unsupported custom strategy market: {symbol or '-'}")
         if symbol not in markets:
             markets.append(symbol)
-    if market_mode == "selected" and not markets:
+    if market_mode in {"selected", "single"} and not markets:
         raise ValueError("Select at least one market or choose All Markets")
+    if market_mode == "single":
+        markets = markets[:1]
     if market_mode == "all":
         markets = []
 
     trade_type = str(source.get("trade_type") or "").strip().lower()
+    if trade_type == "higher":
+        trade_type = "rise"
+    elif trade_type == "lower":
+        trade_type = "fall"
     if trade_type not in TRADE_TYPES:
-        raise ValueError("Trade type must be rise, fall, even, odd, over, or under")
+        raise ValueError(
+            "Trade type must be rise, fall, even, odd, over, under, matches, or differs"
+        )
 
     prediction: int | None = None
-    if trade_type in {"over", "under"}:
+    if trade_type in {"over", "under", "matches", "differs"}:
         prediction = _digit(source.get("prediction"), label="Prediction")
         if trade_type == "over" and prediction > 8:
             raise ValueError("Over prediction must be between 0 and 8")
@@ -175,6 +265,7 @@ def normalize_custom_strategy(raw: Any) -> dict[str, Any]:
             f"Custom Strategy requires between 1 and {MAX_CONDITIONS} conditions"
         )
     conditions = [normalize_condition(item) for item in conditions_raw]
+    virtual_hook = normalize_virtual_hook_settings(source)
 
     # Custom Strategy intentionally uses AND only. It mirrors the requested
     # examples where each additional condition further narrows the entry pattern.
@@ -192,6 +283,13 @@ def normalize_custom_strategy(raw: Any) -> dict[str, Any]:
         "duration_ticks": duration_ticks,
         "conditions": conditions,
         "match": "all",
+        "reanalyze": _normalize_reanalyze(source.get("reanalyze")),
+        "virtual_hook_enabled": bool(virtual_hook.enabled),
+        "virtual_hook": {
+            "enabled": bool(virtual_hook.enabled),
+            "enter_after_runs": int(virtual_hook.enter_after_runs),
+            "exit_after_wins": int(virtual_hook.exit_after_wins),
+        },
     }
 
 
@@ -264,6 +362,22 @@ def _compare(value: int, operator: str, target: int) -> bool:
     return False
 
 
+def _compare_float(value: float, operator: str, target: float) -> bool:
+    if operator == "<":
+        return value < target
+    if operator == "<=":
+        return value <= target
+    if operator == "==":
+        return abs(value - target) < 0.000001
+    if operator == "!=":
+        return abs(value - target) >= 0.000001
+    if operator == ">=":
+        return value >= target
+    if operator == ">":
+        return value > target
+    return False
+
+
 def condition_matches(
     condition: dict[str, Any],
     *,
@@ -286,6 +400,9 @@ def condition_matches(
         if len(digits) < window:
             return False
         operator = str(condition.get("operator") or "")
+        if operator == "all_same":
+            sample = digits[-window:]
+            return bool(sample) and all(int(digit) == int(sample[0]) for digit in sample)
         target = int(condition.get("value"))
         return all(_compare(int(digit), operator, target) for digit in digits[-window:])
 
@@ -295,9 +412,53 @@ def condition_matches(
             return False
         sample = quotes[-(window + 1) :]
         moves = [later - earlier for earlier, later in zip(sample[:-1], sample[1:])]
-        if str(condition.get("direction") or "") == "rise":
+        direction = str(condition.get("direction") or "")
+        if direction in {"rise", "rising"}:
             return all(move > 0 for move in moves)
-        return all(move < 0 for move in moves)
+        if direction in {"fall", "falling"}:
+            return all(move < 0 for move in moves)
+        return all(move == 0 for move in moves)
+
+    if kind == "percentage":
+        target = str(condition.get("target") or "")
+        operator = str(condition.get("operator") or "")
+        threshold = float(condition.get("threshold") or 0.0)
+        matches = 0
+        total = 0
+        if target in {"rise", "fall", "no_move"}:
+            if len(quotes) < window + 1:
+                return False
+            sample = quotes[-(window + 1) :]
+            moves = [later - earlier for earlier, later in zip(sample[:-1], sample[1:])]
+            total = len(moves)
+            if target == "rise":
+                matches = sum(1 for move in moves if move > 0)
+            elif target == "fall":
+                matches = sum(1 for move in moves if move < 0)
+            else:
+                matches = sum(1 for move in moves if move == 0)
+        else:
+            if len(digits) < window:
+                return False
+            sample_digits = digits[-window:]
+            total = len(sample_digits)
+            if target == "even":
+                matches = sum(1 for digit in sample_digits if digit % 2 == 0)
+            elif target == "odd":
+                matches = sum(1 for digit in sample_digits if digit % 2 == 1)
+            elif target == "over":
+                value = int(condition.get("value"))
+                matches = sum(1 for digit in sample_digits if digit > value)
+            elif target == "under":
+                value = int(condition.get("value"))
+                matches = sum(1 for digit in sample_digits if digit < value)
+            elif target == "digit":
+                value = int(condition.get("value"))
+                matches = sum(1 for digit in sample_digits if digit == value)
+        if total <= 0:
+            return False
+        percentage = matches * 100.0 / total
+        return _compare_float(percentage, operator, threshold)
 
     return False
 
@@ -329,8 +490,14 @@ def contract_for_config(config: dict[str, Any]) -> tuple[str, str, str]:
         direction = f"OVER_{prediction}"
     elif trade_type == "under":
         direction = f"UNDER_{prediction}"
+    elif trade_type == "matches":
+        direction = f"MATCHES_{prediction}"
+    elif trade_type == "differs":
+        direction = f"DIFFERS_{prediction}"
     else:
         direction = trade_type.upper()
+    if trade_type in {"matches", "differs"}:
+        barrier = str(prediction)
     return contract_type, direction, barrier
 
 
@@ -342,6 +509,10 @@ def nominal_probability(config: dict[str, Any]) -> float:
         return max(0.01, min(0.99, (9 - int(prediction)) / 10.0))
     if trade_type == "under":
         return max(0.01, min(0.99, int(prediction) / 10.0))
+    if trade_type == "matches":
+        return 0.10
+    if trade_type == "differs":
+        return 0.90
     return 0.50
 
 
@@ -397,13 +568,27 @@ def describe_condition(condition: dict[str, Any]) -> str:
     if normalized["kind"] == "digit_parity":
         return f"last {window} digit(s) are {str(normalized['parity']).title()}"
     if normalized["kind"] == "digit_compare":
+        if normalized["operator"] == "all_same":
+            return f"last {window} digit(s) are all same"
         return (
             f"last {window} digit(s) are {normalized['operator']} "
             f"{normalized['value']}"
         )
+    if normalized["kind"] == "percentage":
+        target = str(normalized["target"])
+        value = normalized.get("value")
+        label = target
+        if target in {"over", "under"}:
+            label = f"{target} {value}"
+        elif target == "digit":
+            label = f"digit {value}"
+        return (
+            f"{label} percentage over last {window} tick(s) is "
+            f"{normalized['operator']} {normalized['threshold']}%"
+        )
     return (
         f"last {window} tick direction(s) are "
-        f"{str(normalized['direction']).title()}"
+        f"{str(normalized['direction']).replace('_', ' ').title()}"
     )
 
 

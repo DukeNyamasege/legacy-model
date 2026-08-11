@@ -23,6 +23,7 @@ from app.aidr_adaptive_virtual import (
     adaptive_trap_state,
     adaptive_virtual_wins_required,
 )
+from app.custom_strategy_virtual_hook import virtual_hook_settings_from_session
 from app.recovery import calculate_recovery_stake, ceil_cents
 from app.strategy.rise_fall_strategy import SignalEvent, shadow_outcome
 
@@ -999,10 +1000,18 @@ class RFDir5Repository:
                 trade.recovery_debt_change = 0.0
                 trade.settled_at = now
                 state.virtual_observation_count += 1
+                hook = virtual_hook_settings_from_session(
+                    session,
+                    int(trade.managed_account_id),
+                )
                 required_virtual_wins = adaptive_virtual_wins_required(
                     self.base,
                     int(trade.managed_account_id),
-                    default_wins=base_required_virtual_wins,
+                    default_wins=(
+                        hook.exit_after_wins
+                        if hook.enabled
+                        else base_required_virtual_wins
+                    ),
                     recovery_debt=float(state.recovery_loss_debt or 0.0),
                 )
                 consecutive_virtual_wins = (

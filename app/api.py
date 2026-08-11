@@ -93,8 +93,12 @@ DASHBOARD_REFRESH_EVENT: asyncio.Event | None = None
 OAUTH_STATE_COOKIE = "deriv_oauth_state"
 OAUTH_VERIFIER_COOKIE = "deriv_oauth_code_verifier"
 CLIENT_SESSION_COOKIE = "client_session"
+LOCAL_DEV_ACCOUNT_TYPE_COOKIE = "local_dev_account_type"
 CLIENT_SESSION_DAYS = int(os.getenv("CLIENT_SESSION_DAYS", "30"))
 FIXED_STAKE_AMOUNT = 0.50
+LOCAL_DEV_ACCOUNT_ID = "VRTLOCALDEV"
+LOCAL_DEV_ACCOUNT_LABEL = "Local Preview VRT***DEV"
+LOCAL_DEV_HOSTS = {"127.0.0.1", "localhost", "::1", "testclient", "testserver"}
 LOGGER = logging.getLogger("legacy_model.api")
 
 
@@ -300,6 +304,32 @@ def load_options_accounts(access_token: str) -> list[dict]:
     response.raise_for_status()
     payload = response.json()
     return payload.get("data", [])
+
+
+def deriv_token_verification_detail(exc: requests.HTTPError) -> tuple[int, str]:
+    response = exc.response
+    status_code = int(response.status_code if response is not None else 400)
+    raw = response.text if response is not None else str(exc)
+    message = raw
+    code = ""
+    try:
+        payload = response.json() if response is not None else {}
+        errors = payload.get("errors") if isinstance(payload, dict) else None
+        if isinstance(errors, list) and errors:
+            first = errors[0] if isinstance(errors[0], dict) else {}
+            message = str(first.get("message") or message)
+            code = str(first.get("code") or "")
+    except Exception:
+        pass
+
+    normalized = f"{code} {message}".lower()
+    if status_code == 401 or "invalidtoken" in normalized or "invalid token" in normalized:
+        return 400, "Deriv rejected this token as invalid, expired, or revoked."
+    if status_code == 403 or "scope" in normalized or "forbidden" in normalized:
+        return 400, "This Deriv token is missing the required trade scope."
+    if "unauthorized" in normalized or "authorization" in normalized:
+        return 400, "Deriv authorization failed for this token."
+    return 400, f"API token verification failed: {message}"
 
 
 def trading_api_token_from_payload(payload: dict) -> str:
@@ -1130,6 +1160,8 @@ def refresh_account_snapshot(
 
 
 def _refresh_personal_account_snapshot(account: dict) -> dict | None:
+    if account.get("local_dev_preview"):
+        return None
     account_id = str(account.get("account_id", "")).strip()
     try:
         try:
@@ -1189,7 +1221,7 @@ frontend_origins = [
         "FRONTEND_ORIGINS",
         (
             "http://127.0.0.1:8080,http://localhost:8080,"
-            "https://derivadmin.site,https://legacymodel.netlify.app"
+            "https://derivadmin.site"
         ),
     ).split(",")
     if origin.strip()
@@ -1663,19 +1695,122 @@ def oauth_callback(
     response.delete_cookie(OAUTH_VERIFIER_COOKIE)
     return response
 
+def _env_truthy(name: str) -> bool:
+    return str(os.getenv(name, "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _hostname_only(value: str) -> str:
+    host = str(value or "").strip().lower()
+    if not host:
+        return ""
+    if host.startswith("[") and "]" in host:
+        return host[1 : host.index("]")]
+    return host.split(":", 1)[0]
+
+
+def local_dev_auth_allowed(request: Request) -> bool:
+    """Allow UI-only login preview only from an explicit localhost dev server."""
+    if not (
+        _env_truthy("LOCAL_DEV_AUTH_BYPASS")
+        or _env_truthy("FOA_LOCAL_DEV_AUTH")
+    ):
+        return False
+    client_host = _hostname_only(getattr(getattr(request, "client", None), "host", ""))
+    headers = getattr(request, "headers", {}) or {}
+    request_host = _hostname_only(headers.get("host", ""))
+    if request_host and request_host not in LOCAL_DEV_HOSTS:
+        return False
+    return client_host in LOCAL_DEV_HOSTS or not client_host
+
+
+def local_dev_preview_account(request: Request) -> dict | None:
+    if not local_dev_auth_allowed(request):
+        return None
+    label = LOCAL_DEV_ACCOUNT_LABEL
+    row_id = 0
+    if has_encryption_key(CONFIG.deriv.token_encryption_key):
+        account_type = normalize_account_type(
+            request.cookies.get(LOCAL_DEV_ACCOUNT_TYPE_COOKIE)
+            or os.getenv("LOCAL_DEV_ACCOUNT_TYPE", "demo")
+        )
+        payload = {
+            "auth_type": "local_preview",
+            "account_id": LOCAL_DEV_ACCOUNT_ID,
+            "account_type": account_type,
+        }
+        token_secret = encrypt_auth_payload(payload, CONFIG.deriv.token_encryption_key)
+        existing = next(
+            (
+                row
+                for row in REPOSITORY.list_managed_accounts()
+                if str(row.label or "") == label
+            ),
+            None,
+        )
+        if existing is None:
+            created = REPOSITORY.add_managed_account(
+                label=label,
+                token_secret=token_secret,
+                enabled=False,
+            )
+            row_id = int(created["id"])
+        else:
+            row_id = int(existing.id)
+            REPOSITORY.update_managed_account(
+                row_id,
+                label=label,
+                token_secret=token_secret,
+                enabled=False,
+            )
+        REPOSITORY.set_managed_account_execution_status(
+            row_id,
+            "stopped",
+            "Local UI preview is stopped; OAuth and trading are disabled.",
+        )
+        REPOSITORY.update_account_balance(
+            account_id=LOCAL_DEV_ACCOUNT_ID,
+            balance=float(os.getenv("LOCAL_DEV_PREVIEW_BALANCE", "10000")),
+            currency="USD",
+            status="local-preview",
+        )
+    account_type = normalize_account_type(
+        request.cookies.get(LOCAL_DEV_ACCOUNT_TYPE_COOKIE)
+        or os.getenv("LOCAL_DEV_ACCOUNT_TYPE", "demo")
+    )
+    return {
+        "id": row_id,
+        "account_id": LOCAL_DEV_ACCOUNT_ID,
+        "account_id_masked": mask_account_id(LOCAL_DEV_ACCOUNT_ID),
+        "account_type": account_type,
+        "available_account_types": ["demo", "real"],
+        "label": label,
+        "enabled": False,
+        "stake_amount": FIXED_STAKE_AMOUNT,
+        "take_profit": 0.0,
+        "stop_loss": 0.0,
+        "martingale_enabled": True,
+        "execution_status": "stopped",
+        "execution_status_reason": "Local UI preview is stopped; OAuth and trading are disabled.",
+        "has_trading_api_token": False,
+        "requires_api_token": True,
+        "created_at": datetime.now(timezone.utc),
+        "local_dev_preview": True,
+    }
+
+
 def get_current_account(request: Request) -> dict | None:
     session_token = request.cookies.get(CLIENT_SESSION_COOKIE)
     if not session_token:
-        return None
+        return local_dev_preview_account(request)
     account = REPOSITORY.client_session_account(session_hash(session_token))
     if account:
         try:
             stored = decrypt_auth_payload(account["token_secret"], CONFIG.deriv.token_encryption_key)
         except Exception:
-            return None
+            return local_dev_preview_account(request)
         account_id = str(stored.get("account_id", "")).strip()
         if not account_id:
-            return None
+            return local_dev_preview_account(request)
         requires_token = execution_requires_new_token(account.get("execution_status"))
         token_invalid = execution_token_was_rejected(
             account.get("execution_status"), account.get("execution_status_reason")
@@ -1746,7 +1881,7 @@ def get_current_account(request: Request) -> dict | None:
                 }
     except Exception:
         pass
-    return None
+    return local_dev_preview_account(request)
 
 class AutoTradeRequest(BaseModel):
     enabled: bool
@@ -1796,6 +1931,7 @@ def get_me(request: Request) -> dict:
             "profit": personal["profit"],
         },
         "virtual_protection": personal.get("virtual_protection", {}),
+        "local_dev_preview": bool(account.get("local_dev_preview", False)),
     }
 
 
@@ -1803,6 +1939,18 @@ def get_me(request: Request) -> dict:
 def switch_personal_account(request: Request, body: PersonalAccountSwitchRequest) -> dict:
     session_token = request.cookies.get(CLIENT_SESSION_COOKIE)
     account = get_current_account(request)
+    target_type = normalize_account_type(body.account_type)
+    if account and account.get("local_dev_preview") and local_dev_auth_allowed(request):
+        response = JSONResponse({"success": True, "account_type": target_type})
+        response.set_cookie(
+            key=LOCAL_DEV_ACCOUNT_TYPE_COOKIE,
+            value=target_type,
+            httponly=False,
+            secure=False,
+            samesite="lax",
+            max_age=86400,
+        )
+        return response
     if not account or not session_token:
         raise HTTPException(status_code=401, detail="Not authenticated")
     row = REPOSITORY.managed_account(int(account["id"]))
@@ -1815,7 +1963,6 @@ def switch_personal_account(request: Request, body: PersonalAccountSwitchRequest
         )
     except Exception:
         raise HTTPException(status_code=409, detail="Current account credential is unreadable")
-    target_type = normalize_account_type(body.account_type)
     target_row, _target_payload = find_linked_account_for_type(current_payload, target_type)
     if target_row is None:
         raise HTTPException(
@@ -1982,8 +2129,8 @@ def save_personal_api_token(request: Request, body: PersonalApiTokenRequest) -> 
     try:
         accounts = load_options_accounts(api_token)
     except requests.HTTPError as exc:
-        detail = exc.response.text if exc.response is not None else str(exc)
-        raise HTTPException(status_code=400, detail=f"API token verification failed: {detail}")
+        status_code, detail = deriv_token_verification_detail(exc)
+        raise HTTPException(status_code=status_code, detail=detail)
     except requests.RequestException as exc:
         raise HTTPException(status_code=400, detail=f"API token verification failed: {exc}")
 
@@ -2109,6 +2256,7 @@ def logout(request: Request) -> JSONResponse:
     response.delete_cookie(CLIENT_SESSION_COOKIE, domain=session_cookie_domain())
     for stale_domain in ("derivadmin.site", ".derivadmin.site", "www.derivadmin.site"):
         response.delete_cookie(CLIENT_SESSION_COOKIE, domain=stale_domain)
+    response.delete_cookie(LOCAL_DEV_ACCOUNT_TYPE_COOKIE)
     return response
 
 

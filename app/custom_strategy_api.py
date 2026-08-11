@@ -52,6 +52,8 @@ class CustomConditionRequest(BaseModel):
     operator: str | None = None
     value: int | None = Field(default=None, ge=0, le=9)
     direction: str | None = None
+    target: str | None = None
+    threshold: float | None = Field(default=None, ge=0, le=100)
 
 
 class CustomMartingaleRequest(BaseModel):
@@ -62,6 +64,12 @@ class CustomMartingaleRequest(BaseModel):
         le=MAX_MULTIPLIER,
     )
     split_count: int = Field(default=DEFAULT_SPLIT_COUNT, ge=1, le=3)
+
+
+class CustomVirtualHookRequest(BaseModel):
+    enabled: bool = True
+    enter_after_runs: int = Field(default=2, ge=1, le=50)
+    exit_after_wins: int = Field(default=1, ge=1, le=50)
 
 
 class CustomStrategyRequest(BaseModel):
@@ -79,6 +87,9 @@ class CustomStrategyRequest(BaseModel):
         max_length=MAX_CONDITIONS,
     )
     match: str = "all"
+    reanalyze: dict[str, Any] | None = None
+    virtual_hook_enabled: bool = True
+    virtual_hook: CustomVirtualHookRequest | None = None
     martingale: CustomMartingaleRequest | None = None
 
 
@@ -216,6 +227,7 @@ def install_custom_strategy_api(app: Any) -> None:
             "preview": preview,
             "supported": {
                 "markets": list(SUPPORTED_MARKETS),
+                "market_modes": ["single", "selected", "all"],
                 "trade_types": [
                     {
                         "value": value,
@@ -225,11 +237,17 @@ def install_custom_strategy_api(app: Any) -> None:
                     for value, meta in TRADE_TYPES.items()
                 ],
                 "comparators": list(COMPARATORS),
+                "digit_comparators": list(COMPARATORS),
+                "percentage_comparators": [
+                    item for item in COMPARATORS if item != "all_same"
+                ],
                 "condition_types": [
                     "digit_parity",
                     "digit_compare",
                     "direction",
+                    "percentage",
                 ],
+                "tick_directions": ["rising", "falling", "no_move"],
                 "duration": {
                     "unit": "ticks",
                     "minimum": MIN_DURATION_TICKS,
@@ -264,6 +282,13 @@ def install_custom_strategy_api(app: Any) -> None:
             "duration_ticks": body.duration_ticks,
             "conditions": [item.model_dump() for item in body.conditions],
             "match": body.match,
+            "reanalyze": body.reanalyze or {},
+            "virtual_hook_enabled": bool(body.virtual_hook_enabled),
+            "virtual_hook": (
+                body.virtual_hook.model_dump()
+                if body.virtual_hook is not None
+                else {"enabled": bool(body.virtual_hook_enabled)}
+            ),
         }
 
         with base_api.DATABASE.session() as session:

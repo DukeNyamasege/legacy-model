@@ -83,12 +83,50 @@ class DashboardMetricsTests(unittest.TestCase):
             self.assertFalse(api.schedule_personal_account_refresh(account))
         submit.assert_called_once_with(api._refresh_personal_account_snapshot, account)
 
-    def test_dashboard_contract_table_is_compact_and_has_no_repeated_copy(self) -> None:
+    def test_dashboard_shell_is_builder_first_and_has_no_legacy_panels(self) -> None:
         html = Path("dashboard/index.html").read_text(encoding="utf-8")
-        for heading in ("Market", "Contract type", "Stake", "Payout", "Outcome"):
-            self.assertIn(f"<th>{heading}</th>", html)
+        script = Path("dashboard/dashboard-v2.js").read_text(encoding="utf-8")
+        actions = Path("dashboard/dashboard-actions-v2.js").read_text(encoding="utf-8")
+        stylesheet = Path("dashboard/dashboard-v2.css").read_text(encoding="utf-8")
+
+        self.assertIn("<title>Custom Strategy Builder</title>", html)
+        self.assertIn('src="/ui/dashboard-v2.js"', html)
+        self.assertIn("Custom Strategy Builder", script)
+        self.assertIn("Last Digit", script)
+        self.assertIn("Percentage", script)
+        self.assertIn("Combined", script)
+        self.assertIn("One Market", script)
+        self.assertIn("Selected Markets", script)
+        self.assertIn("All Markets", script)
+        self.assertIn("Deriv API token with trade scope", script)
+        self.assertIn("tradingStatusPanel", script)
+        self.assertIn("credentialState", script)
+        self.assertIn("credentialNotice", script)
+        self.assertIn("data-market-select", script)
+        self.assertIn("data-market-remove", script)
+        self.assertIn("All Markets</option>", script)
+        self.assertIn("normalizeMarketMode", script)
+        self.assertIn("BUILDER_SCHEMA_VERSION = 3", script)
+        self.assertIn("migrateBuilderDraft", script)
+        self.assertIn("All same", script)
+        self.assertIn("tickDirectionRule", script)
+        self.assertIn("Last Tick Direction", script)
+        self.assertIn("Virtual Hook", script)
+        self.assertIn("virtualHook.enterAfterRuns", script)
+        self.assertIn("virtualHook.exitAfterWins", script)
+        self.assertNotIn("Uses consecutive prices", script)
+        self.assertIn("data-reset-strategy", script)
+        self.assertIn("data-clear-local-trades", script)
+        self.assertIn("hydrateBuilderMoneyFromAccount", script)
+        self.assertIn("S.builderHydratedFromServer || S.builderDirty || isEditingDashboard()", script)
+        self.assertIn(".strategy-builder-card", stylesheet)
+        self.assertIn(".field select option", stylesheet)
+        self.assertIn(".trades-control-panel", stylesheet)
+        self.assertIn(".session-actions-panel", stylesheet)
+        self.assertIn(".toggle-row", stylesheet)
         for removed in (
             "Global Dashboard",
+            "Higher/Lower",
             "Your stake and limits apply only to your account.",
             "Your latest 50 contracts when signed in",
             "No contracts yet.",
@@ -97,34 +135,84 @@ class DashboardMetricsTests(unittest.TestCase):
             'id="copy-gap"',
             "Copy trade gap",
             "<th>Contract ID</th>",
+            "System Strategy",
+            "Old bot modes",
         ):
             self.assertNotIn(removed, html)
-        self.assertIn('id="smart-loader"', html)
-        self.assertIn('id="personal-execution-alert"', html)
-        self.assertIn("metrics/summary?mode=", html)
-        self.assertIn("metrics/recent-trades?limit=50", html)
-        self.assertIn('id="personal-settings-toggle"', html)
-        self.assertIn('aria-controls="personal-settings-content"', html)
-        self.assertIn('id="personal-settings-content"', html)
-        self.assertIn('id="active-traders"', html)
-        self.assertIn("<span>Trading Now</span>", html)
-        self.assertNotIn('api("/settings/accounts").catch', html)
-        self.assertIn("refresh({ showLoader: false, blocking: false })", html)
+            self.assertNotIn(removed, script)
+        self.assertIn("/me/custom-strategy", script)
+        self.assertIn("/me/api-token", script)
+        self.assertIn("/me/trades/today", script)
+        self.assertIn("const blocking = force || S.booting || S.mutating", script)
+        self.assertIn("renderWhenIdle", script)
+        self.assertIn("refresh(false, \"Refreshing dashboard...\"), 15000", script)
+        self.assertNotIn("new MutationObserver", actions)
+        self.assertNotIn("location.reload", actions)
+        self.assertNotIn("setInterval", actions)
 
-    def test_mobile_dashboard_keeps_key_stake_metrics_visible_and_css_balanced(self) -> None:
+    def test_builder_dashboard_css_supports_light_dark_and_mobile(self) -> None:
         html = Path("dashboard/index.html").read_text(encoding="utf-8")
-        stylesheet = html.split("<style>", 1)[1].split("</style>", 1)[0]
+        stylesheet = Path("dashboard/dashboard-v2.css").read_text(encoding="utf-8")
+        inline = html.split("<style>", 1)[1].split("</style>", 1)[0]
         self.assertEqual(stylesheet.count("{"), stylesheet.count("}"))
-        self.assertIn('class="gbs-metric-foot martingale-foot"', html)
-        self.assertIn('id="model-maximum-stake"', html)
-        self.assertIn('class="gbs-metric-foot fixed-foot"', html)
+        self.assertEqual(inline.count("{"), inline.count("}"))
+        self.assertIn('#foa-simple-app[data-theme="light"]', stylesheet)
+        self.assertIn(".theme-toggle", stylesheet)
+        self.assertIn(".builder-stats", stylesheet)
+        self.assertIn(".money-grid", stylesheet)
+        self.assertIn("@media (max-width: 760px)", stylesheet)
         mobile = stylesheet.split("@media (max-width: 760px)", 1)[1]
-        self.assertIn(
-            ".gbs-pnl-pair {\n        grid-template-columns: repeat(2, minmax(0, 1fr));",
-            mobile,
+        self.assertIn(".builder-stats,", mobile)
+        self.assertIn(".trade-row", mobile)
+
+    def test_custom_builder_percentage_and_digit_contracts_are_executable(self) -> None:
+        from app.custom_strategy_v1 import (
+            contract_for_config,
+            evaluate_custom_strategy,
+            normalize_custom_strategy,
         )
-        self.assertIn(".gbs-metric-foot .gbs-stake-detail { font-size: .88rem; }", mobile)
-        self.assertNotIn(".gbs-stake-detail { display: none", mobile)
+
+        config = normalize_custom_strategy(
+            {
+                "market_mode": "single",
+                "markets": ["R_10", "R_25"],
+                "trade_type": "matches",
+                "prediction": 7,
+                "duration_ticks": 2,
+                "conditions": [
+                    {
+                        "kind": "percentage",
+                        "window": 5,
+                        "target": "even",
+                        "operator": ">=",
+                        "threshold": 60,
+                    }
+                ],
+                "reanalyze": {"mode": "custom", "losses": 2, "wins": 3},
+            }
+        )
+
+        self.assertEqual(config["market_mode"], "single")
+        self.assertEqual(config["markets"], ["R_10"])
+        self.assertEqual(config["reanalyze"]["mode"], "custom")
+        self.assertEqual(
+            contract_for_config(config),
+            ("DIGITMATCH", "MATCHES_7", "7"),
+        )
+        self.assertTrue(
+            evaluate_custom_strategy(
+                config,
+                digits=[1, 2, 4, 6, 8],
+                quotes=[],
+            )
+        )
+        self.assertFalse(
+            evaluate_custom_strategy(
+                config,
+                digits=[1, 3, 5, 7, 8],
+                quotes=[],
+            )
+        )
 
     def test_real_execution_requires_explicit_server_acknowledgement(self) -> None:
         bot = object.__new__(enhanced_bot.TradingBot)
@@ -497,13 +585,18 @@ class DashboardMetricsTests(unittest.TestCase):
         )
         configured_cross_site = SimpleNamespace(
             headers={
-                "origin": "https://legacymodel.netlify.app",
+                "origin": "https://configured.example",
                 "sec-fetch-site": "cross-site",
             }
         )
 
         api.enforce_mutation_origin(allowed)
-        api.enforce_mutation_origin(configured_cross_site)
+        with patch.object(
+            api,
+            "frontend_origins",
+            [*api.frontend_origins, "https://configured.example"],
+        ):
+            api.enforce_mutation_origin(configured_cross_site)
         with self.assertRaises(api.HTTPException) as context:
             api.enforce_mutation_origin(blocked)
 
@@ -682,8 +775,8 @@ class DashboardMetricsTests(unittest.TestCase):
         self.assertTrue(api.DASHBOARD_SUMMARY_CACHE["demo"]["dirty"])
 
     def test_frontend_keeps_a_local_last_good_snapshot(self) -> None:
-        dashboard = (Path(__file__).parent / "dashboard" / "index.html").read_text()
-        self.assertIn("legacy-dashboard-last-good-snapshot-v1", dashboard)
+        dashboard = (Path(__file__).parent / "dashboard" / "dashboard-v2.js").read_text()
+        self.assertIn("foa-builder-last-good-snapshot-v1", dashboard)
         self.assertIn("function showRefreshDelayed", dashboard)
         self.assertIn("if (showRefreshDelayed(message)) return;", dashboard)
         self.assertIn("LIVE REFRESH DELAYED", dashboard)
@@ -711,6 +804,78 @@ class DashboardMetricsTests(unittest.TestCase):
             )
         )
 
+    def test_local_dev_auth_preview_requires_explicit_localhost_flag(self) -> None:
+        import app.api as api
+
+        local_request = SimpleNamespace(
+            cookies={},
+            headers={"host": "127.0.0.1:8080"},
+            client=SimpleNamespace(host="127.0.0.1"),
+        )
+        remote_request = SimpleNamespace(
+            cookies={},
+            headers={"host": "derivadmin.site"},
+            client=SimpleNamespace(host="203.0.113.10"),
+        )
+
+        with patch.dict(os.environ, {"LOCAL_DEV_AUTH_BYPASS": "false"}, clear=False):
+            self.assertFalse(api.local_dev_auth_allowed(local_request))
+
+        with patch.dict(os.environ, {"LOCAL_DEV_AUTH_BYPASS": "true"}, clear=False):
+            self.assertTrue(api.local_dev_auth_allowed(local_request))
+            self.assertFalse(api.local_dev_auth_allowed(remote_request))
+
+    def test_local_dev_auth_returns_ui_only_preview_account(self) -> None:
+        import app.api as api
+
+        request = SimpleNamespace(
+            cookies={},
+            headers={"host": "localhost:8080"},
+            client=SimpleNamespace(host="127.0.0.1"),
+        )
+
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "LOCAL_DEV_AUTH_BYPASS": "true",
+                    "LOCAL_DEV_ACCOUNT_TYPE": "real",
+                },
+                clear=False,
+            ),
+            patch.object(api, "has_encryption_key", return_value=False),
+        ):
+            account = api.get_current_account(request)
+
+        self.assertIsNotNone(account)
+        assert account is not None
+        self.assertTrue(account["local_dev_preview"])
+        self.assertEqual(account["account_type"], "real")
+        self.assertEqual(account["available_account_types"], ["demo", "real"])
+        self.assertFalse(account["enabled"])
+        self.assertFalse(account["has_trading_api_token"])
+        self.assertTrue(account["requires_api_token"])
+
+    def test_local_dev_account_switch_sets_preview_cookie(self) -> None:
+        import app.api as api
+
+        request = SimpleNamespace(
+            cookies={},
+            headers={"host": "localhost:8080"},
+            client=SimpleNamespace(host="127.0.0.1"),
+        )
+
+        with (
+            patch.dict(os.environ, {"LOCAL_DEV_AUTH_BYPASS": "true"}, clear=False),
+            patch.object(api, "has_encryption_key", return_value=False),
+        ):
+            response = api.switch_personal_account(
+                request,
+                api.PersonalAccountSwitchRequest(account_type="real"),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("local_dev_account_type=real", response.headers["set-cookie"])
 
 class CopyTradeAuditTests(unittest.TestCase):
     @staticmethod
