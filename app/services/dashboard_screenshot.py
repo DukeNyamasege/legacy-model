@@ -8,8 +8,8 @@ from app.config import TelegramSettings
 DESKTOP_VIEWPORT = {"width": 1440, "height": 980}
 
 # This promise is a real event listener (with a MutationObserver fallback), not
-# a fixed sleep.  It resolves only after the dashboard has explicitly completed
-# a successful live-data render and all required statistics contain final text.
+# a fixed sleep. It resolves only after the builder dashboard has completed a
+# successful live-data render and the Telegram capture region is stable.
 WAIT_FOR_DASHBOARD_READY = r"""
 ({ selector, timeoutMs }) => new Promise((resolve, reject) => {
     const deadline = Date.now() + timeoutMs;
@@ -32,27 +32,26 @@ WAIT_FOR_DASHBOARD_READY = r"""
             || document.readyState !== "complete") return false;
         const loader = document.getElementById("smart-loader");
         if (loader?.classList.contains("active")) return false;
-        const required = [
-            "registered-traders", "active-traders", "model-trades-today",
-            "open-model-trades", "model-pl-martingale", "model-maximum-stake",
-            "model-pl-fixed", "model-flat-stake", "total-trades", "total-wins",
-            "total-losses", "win-rate", "session-clock"
+        const requiredSelectors = [
+            ".builder-header",
+            ".builder-stats",
+            ".strategy-builder-card",
+            ".builder-recent-trades",
         ];
-        return required.every(id => {
-            const text = document.getElementById(id)?.textContent?.trim();
-            return text && !/loading|connecting|unavailable|--:--|^—$/i.test(text);
+        return requiredSelectors.every(item => {
+            const text = captureRoot.querySelector(item)?.textContent?.trim();
+            return text && !/loading|connecting|unavailable|opening builder|please wait|^--$/i.test(text);
         });
     };
     const check = () => {
         if (!ready()) return;
-        // Stop observing before the quiet window. The countdown clock updates
-        // every second forever and must not keep postponing an otherwise fully
-        // rendered capture.
+        // Stop observing before the quiet window. Frequent dashboard updates
+        // should not keep postponing an otherwise fully rendered capture.
         observer?.disconnect();
         window.removeEventListener("dashboard:snapshot-ready", scheduleCheck);
         clearTimeout(stabilityTimer);
-        // Require a quiet render window so a websocket update cannot be caught
-        // halfway through updating related figures.
+        // Require a quiet render window so websocket/polling updates cannot be
+        // caught halfway through updating related figures.
         stabilityTimer = setTimeout(() => {
             if (!ready()) {
                 observer?.observe(document.documentElement, {

@@ -58,6 +58,12 @@ from app.strategy.over2_strategy import (
 )
 from app.strategy.signal_detector import CandidateSignal, Over2SignalDetector
 from app.token_store import decrypt_auth_payload, decrypt_token, encrypt_auth_payload
+from app.account_mode_execution_lock import (
+    SETTLEMENT_ONLY_STATUS,
+    account_allows_new_execution,
+    account_lifecycle_from_row,
+)
+from app.models import Trade, VirtualTrade
 
 try:
     from cryptography.fernet import Fernet
@@ -1642,6 +1648,9 @@ class TradingBot:
         if managed_accounts:
             shared_tokens_by_identity: Dict[str, str] = {}
             for row in managed_accounts:
+                lifecycle = account_lifecycle_from_row(row)
+                if lifecycle not in {"starting", "running"}:
+                    continue
                 try:
                     payload = decrypt_auth_payload(row.token_secret, self.encryption_key)
                 except Exception:
@@ -1652,7 +1661,20 @@ class TradingBot:
                     shared_tokens_by_identity.setdefault(identity, token)
 
             for row in managed_accounts:
-                if not row.enabled:
+                lifecycle = account_lifecycle_from_row(row)
+                if lifecycle == "settlement":
+                    open_actual, open_virtual = self._managed_account_open_contract_counts(
+                        int(row.id)
+                    )
+                    if not open_actual and not open_virtual:
+                        self.repository.update_managed_account(int(row.id), enabled=False)
+                        self._set_account_execution_status(
+                            int(row.id),
+                            "stopped",
+                            "Settlement completed; Start Auto Trading is required for new execution",
+                        )
+                        continue
+                elif not account_allows_new_execution(row):
                     if str(row.execution_status) not in {
                         "take_profit",
                         "stop_loss",
@@ -1660,11 +1682,19 @@ class TradingBot:
                         "duplicate",
                         "insufficient_balance",
                         "invalid_account",
+                        "manual_pause",
+                        "stopped",
+                        "disabled",
+                        "inactive",
+                        "token_required",
+                        "bulk_execution_pat_required",
+                        "contract_unavailable",
+                        "purchase_registration_error",
                     }:
                         self._set_account_execution_status(
                             int(row.id),
-                            "disabled",
-                            "Auto trading is disabled",
+                            "stopped",
+                            "Auto trading is stopped; press Start Auto Trading to execute",
                         )
                     continue
                 if str(row.execution_status) == "credential_error":
@@ -1784,6 +1814,7 @@ class TradingBot:
                         "martingale_enabled": bool(
                             getattr(row, "martingale_enabled", True)
                         ),
+                        "settlement_only": lifecycle == "settlement",
                     },
                 )
             if tokens:
@@ -1802,6 +1833,26 @@ class TradingBot:
             return [], {}
 
         return tokens, profiles
+
+    def _managed_account_open_contract_counts(self, managed_account_id: int) -> tuple[int, int]:
+        with self.repository.database.session() as session:
+            actual = int(
+                session.query(Trade)
+                .filter(
+                    Trade.managed_account_id == int(managed_account_id),
+                    Trade.settlement_time.is_(None),
+                )
+                .count()
+            )
+            virtual = int(
+                session.query(VirtualTrade)
+                .filter(
+                    VirtualTrade.managed_account_id == int(managed_account_id),
+                    VirtualTrade.result == "OPEN",
+                )
+                .count()
+            )
+        return actual, virtual
 
     def _persist_hmm_metadata(self, market: MarketRuntime | None = None) -> None:
         market = market or self.market_states[self.symbol]
@@ -3150,11 +3201,30 @@ class TradingBot:
         self.valid_clients = valid
         if not self.valid_clients:
             self.logger.warning(
-                "No valid Options %s accounts are currently enabled; worker will keep watching.",
+                "No valid Options %s accounts are active; trading engine is idle until Start Auto Trading.",
                 self.environment,
             )
             return
         self._sync_running_status_after_validation()
+
+    async def _wait_for_active_execution_account(self) -> bool:
+        refresh_interval = max(5, int(os.getenv("ACCOUNT_REFRESH_INTERVAL_SECONDS", "10")))
+        self.repository.set_status("IDLE", "NO_ACTIVE_TRADING_ACCOUNTS")
+        self.logger.info(
+            "ACCOUNT_EXECUTION_IDLE reason=no_active_auto_trading_accounts "
+            "action=waiting_for_start interval_seconds=%s",
+            refresh_interval,
+        )
+        while self.is_running and not self.valid_clients:
+            await asyncio.sleep(refresh_interval)
+            try:
+                await self.validate_accounts()
+            except Exception as exc:
+                self.logger.warning("Account idle refresh failed: %s", exc)
+                continue
+            self._managed_accounts_revision = self.repository.managed_accounts_revision()
+            self._runtime_mode_cache = self.repository.runtime_mode()
+        return bool(self.valid_clients)
 
     def _sync_running_status_after_validation(self) -> None:
         status, pause_reason = self.repository.control_state()
@@ -4917,6 +4987,13 @@ class TradingBot:
                 refresh_timer = 0
                 try:
                     await self._refresh_runtime_accounts_if_needed()
+                    if not self.valid_clients:
+                        self.repository.set_status("IDLE", "NO_ACTIVE_TRADING_ACCOUNTS")
+                        self.logger.info(
+                            "ACCOUNT_EXECUTION_IDLE reason=all_accounts_stopped "
+                            "action=stopping_public_stream"
+                        )
+                        return
                 except Exception as exc:
                     self.logger.warning("Account refresh failed: %s", exc)
             await asyncio.sleep(self.watchdog_poll_interval_seconds)
@@ -4982,6 +5059,10 @@ class TradingBot:
 
                 # Validate and retrieve account IDs REST-side
                 await self.validate_accounts()
+                if not self.valid_clients:
+                    if not await self._wait_for_active_execution_account():
+                        should_retry = False
+                        continue
                 account_scope = hashlib.sha256(
                     ",".join(
                         sorted(account_id for _, account_id in self.valid_clients)

@@ -310,11 +310,13 @@ class AIDRRecoveryV2Tests(unittest.TestCase):
         self.assertEqual(_selected_role(bot, qualified), NORMAL_ROLE)
 
     def test_one_loss_always_gets_first_recovery_before_virtual_mode(self) -> None:
+        hook = SimpleNamespace(enabled=True, enter_after_losses=2)
         self.assertFalse(
             _debt_requires_virtual(
                 debt=10.0,
                 consecutive_losses=1,
                 split_remaining=0,
+                virtual_hook=hook,
             )
         )
         self.assertTrue(
@@ -322,6 +324,7 @@ class AIDRRecoveryV2Tests(unittest.TestCase):
                 debt=10.0,
                 consecutive_losses=2,
                 split_remaining=0,
+                virtual_hook=hook,
             )
         )
 

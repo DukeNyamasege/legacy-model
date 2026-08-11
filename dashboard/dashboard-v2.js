@@ -24,6 +24,7 @@
 
   const VERSION = "20260812-builder-refinement-3";
   const BUILDER_SCHEMA_VERSION = 3;
+  const RISK_DISCLOSURE_URL = "https://deriv.com/terms-and-conditions/risk-disclosure";
   window.FOA_ACCOUNT_ID_BADGE = VERSION;
   window.FOA_CUSTOM_STRATEGY_BUILDER_V3 = VERSION;
   window.FOA_CUSTOM_STRATEGY_BUILDER_V2 = VERSION;
@@ -300,6 +301,7 @@
     loaderText: "Opening builder...",
     error: "",
     notice: "",
+    riskOpen: false,
   };
 
   const authenticated = () => Boolean(S.me && S.me.authenticated);
@@ -797,9 +799,24 @@
           <button type="button" data-theme-value="dark" class="${S.theme === "dark" ? "active" : ""}">Dark</button>
           <button type="button" data-theme-value="light" class="${S.theme === "light" ? "active" : ""}">Light</button>
         </div>
+        <button type="button" id="risk-disclaimer-toggle" class="ghost-button risk-button" aria-controls="risk-disclaimer-panel" aria-expanded="${S.riskOpen ? "true" : "false"}">Risk Disclaimer</button>
         ${ready ? `<span class="account-pill">${esc(selectedMode())} ${esc(S.me?.account_id || S.me?.account_id_masked || "Account")}</span><button class="ghost-button" id="logout">Logout</button>` : `<a class="primary-link" href="/oauth/start">Login with Deriv</a>`}
       </div>
     </header>`;
+  }
+
+  function riskDisclaimerPanel() {
+    if (!S.riskOpen) return "";
+    return `<aside id="risk-disclaimer-panel" class="risk-disclaimer-panel" role="dialog" aria-modal="false" aria-labelledby="risk-disclaimer-title">
+      <div>
+        <button type="button" id="risk-disclaimer-close" aria-label="Close risk disclaimer">x</button>
+        <span class="eyebrow">Official Risk Disclaimer</span>
+        <h2 id="risk-disclaimer-title">Automated trading involves financial risk.</h2>
+        <p>Trading derivatives can result in the loss of your capital. Past results, virtual observations, recovery calculations, and displayed statistics do not guarantee future profit.</p>
+        <p>Users remain responsible for their account settings, tokens, stake size, take-profit, stop-loss, and all trading outcomes.</p>
+        <a href="${RISK_DISCLOSURE_URL}" target="_blank" rel="noopener noreferrer">Read Deriv's official risk disclosure</a>
+      </div>
+    </aside>`;
   }
 
   function modeToggle() {
@@ -1205,15 +1222,35 @@
 
   function loader() {
     const show = S.booting || S.busy || S.mutating;
-    return `<div class="builder-loader ${show ? "show" : ""}"><div><i></i><strong>${esc(S.loaderText || "Loading...")}</strong><span>Please wait while the dashboard updates.</span></div></div>`;
+    return `<div id="smart-loader" class="builder-loader ${show ? "show active" : ""}"><div><i></i><strong>${esc(S.loaderText || "Loading...")}</strong><span>Please wait while the dashboard updates.</span></div></div>`;
+  }
+
+  function updateSnapshotState() {
+    const snapshot = document.querySelector("#global-dashboard-snapshot");
+    if (!snapshot) return;
+    const loading = S.booting || S.busy || S.mutating;
+    if (S.error && !loading) {
+      snapshot.dataset.snapshotReady = "false";
+      snapshot.dataset.snapshotState = "error";
+      return;
+    }
+    if (loading) {
+      snapshot.dataset.snapshotReady = "false";
+      snapshot.dataset.snapshotState = "loading";
+      return;
+    }
+    snapshot.dataset.snapshotReady = "true";
+    snapshot.dataset.snapshotState = "ready";
+    window.dispatchEvent(new CustomEvent("dashboard:snapshot-ready"));
   }
 
   function render() {
     setTheme(S.theme);
     const app = document.querySelector("#foa-simple-app");
     if (!app) return;
-    app.innerHTML = `<div class="builder-shell">${header()}${devPreviewNotice()}${credentialNotice()}${S.error ? `<div class="notice error">${esc(S.error)}</div>` : ""}${S.notice ? `<div class="notice success">${esc(S.notice)}</div>` : ""}<main>${body()}</main></div>${limitNotifier()}${loader()}`;
+    app.innerHTML = `<div id="global-dashboard-snapshot" data-snapshot-state="loading" data-snapshot-ready="false"><div id="telegram-dashboard-snapshot" class="builder-shell">${header()}${devPreviewNotice()}${credentialNotice()}${S.error ? `<div class="notice error">${esc(S.error)}</div>` : ""}${S.notice ? `<div class="notice success">${esc(S.notice)}</div>` : ""}<main>${body()}</main></div></div>${riskDisclaimerPanel()}${limitNotifier()}${loader()}`;
     bind(app);
+    updateSnapshotState();
   }
 
   function switchView(view) {
@@ -1302,6 +1339,14 @@
   }
 
   function bind(root) {
+    root.querySelector("#risk-disclaimer-toggle")?.addEventListener("click", () => {
+      S.riskOpen = !S.riskOpen;
+      render();
+    });
+    root.querySelector("#risk-disclaimer-close")?.addEventListener("click", () => {
+      S.riskOpen = false;
+      render();
+    });
     root.querySelectorAll("[data-view]").forEach((button) => {
       button.onclick = () => switchView(button.dataset.view);
     });
@@ -1526,6 +1571,12 @@
     render();
     refresh(true, "Opening builder...");
     window.setInterval(() => refresh(false, "Refreshing dashboard..."), 15000);
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && S.riskOpen) {
+        S.riskOpen = false;
+        render();
+      }
+    });
   }
 
   document.readyState === "loading"

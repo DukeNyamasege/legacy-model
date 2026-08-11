@@ -158,14 +158,42 @@ class RFDir5Repository:
             "next_action": "Trading normally",
         }
 
+    def _required_virtual_wins(
+        self,
+        managed_account_id: int,
+        *,
+        recovery_debt: float = 0.0,
+        default_wins: int = 1,
+        session: Any | None = None,
+    ) -> int:
+        configured_virtual_wins = 1
+        try:
+            if session is not None:
+                hook = virtual_hook_settings_from_session(session, managed_account_id)
+            else:
+                with self.database.session() as lookup_session:
+                    hook = virtual_hook_settings_from_session(
+                        lookup_session,
+                        managed_account_id,
+                    )
+            configured_virtual_wins = (
+                int(hook.exit_after_consecutive_wins) if hook.enabled else 1
+            )
+        except Exception:
+            configured_virtual_wins = 1
+        return adaptive_virtual_wins_required(
+            self.base,
+            int(managed_account_id),
+            default_wins=max(1, int(default_wins or 1), configured_virtual_wins),
+            recovery_debt=float(recovery_debt or 0.0),
+        )
+
     def _protection_payload(self, state: AccountRiskState | None) -> dict[str, Any]:
         if state is None:
             return self._default_virtual_state()
         trap = adaptive_trap_state(self.base, int(state.managed_account_id))
-        virtual_wins_required = adaptive_virtual_wins_required(
-            self.base,
+        virtual_wins_required = self._required_virtual_wins(
             int(state.managed_account_id),
-            default_wins=1,
             recovery_debt=float(state.recovery_loss_debt or 0.0),
         )
         mode = self._mode_label(state)
@@ -1000,19 +1028,11 @@ class RFDir5Repository:
                 trade.recovery_debt_change = 0.0
                 trade.settled_at = now
                 state.virtual_observation_count += 1
-                hook = virtual_hook_settings_from_session(
-                    session,
+                required_virtual_wins = self._required_virtual_wins(
                     int(trade.managed_account_id),
-                )
-                required_virtual_wins = adaptive_virtual_wins_required(
-                    self.base,
-                    int(trade.managed_account_id),
-                    default_wins=(
-                        hook.exit_after_consecutive_wins
-                        if hook.enabled
-                        else base_required_virtual_wins
-                    ),
                     recovery_debt=float(state.recovery_loss_debt or 0.0),
+                    default_wins=base_required_virtual_wins,
+                    session=session,
                 )
                 consecutive_virtual_wins = (
                     int(state.virtual_win_count or 0) + 1

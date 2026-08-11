@@ -5,6 +5,10 @@ from typing import Any
 from app.oauth_client import refresh_access_token, token_is_expiring
 from app.token_store import decrypt_auth_payload, encrypt_auth_payload
 from enhanced_bot import TradingBot, normalize_account_type, mask_account_id
+from app.account_mode_execution_lock import (
+    account_allows_new_execution,
+    account_lifecycle_from_row,
+)
 
 _INSTALLED = False
 _ORIGINAL_LOAD_RUNTIME_ACCOUNTS = None
@@ -14,7 +18,8 @@ def _refresh_enabled_oauth_rows(bot: TradingBot) -> None:
     """Refresh each enabled row's own OAuth credential before runtime loading."""
 
     for row in bot.repository.list_managed_accounts():
-        if not bool(row.enabled):
+        lifecycle = account_lifecycle_from_row(row)
+        if not account_allows_new_execution(row) and lifecycle != "settlement":
             continue
         try:
             payload = decrypt_auth_payload(row.token_secret, bot.encryption_key)
@@ -90,7 +95,8 @@ def _account_scoped_runtime_accounts(self: TradingBot):
         except (TypeError, ValueError):
             continue
         row = self.repository.managed_account(managed_id_int)
-        if not row or not bool(row.get("enabled")):
+        lifecycle = account_lifecycle_from_row(row) if row else "missing"
+        if not row or (not account_allows_new_execution(row) and lifecycle != "settlement"):
             continue
         try:
             payload = decrypt_auth_payload(row["token_secret"], self.encryption_key)

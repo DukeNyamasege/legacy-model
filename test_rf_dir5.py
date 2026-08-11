@@ -416,7 +416,7 @@ class RiseFallContractTests(unittest.TestCase):
         client._send_text.assert_awaited_once()
 
     def test_dashboard_exposes_capture_boundary_after_live_metrics_render(self) -> None:
-        dashboard = (Path(__file__).parent / "dashboard" / "index.html").read_text(
+        dashboard = (Path(__file__).parent / "dashboard" / "dashboard-v2.js").read_text(
             encoding="utf-8"
         )
         self.assertIn('id="global-dashboard-snapshot"', dashboard)
@@ -444,7 +444,8 @@ class RiseFallContractTests(unittest.TestCase):
         self.assertIn('dashboard:snapshot-ready', WAIT_FOR_DASHBOARD_READY)
         self.assertIn('dataset.snapshotState !== "ready"', WAIT_FOR_DASHBOARD_READY)
         self.assertIn('loader?.classList.contains("active")', WAIT_FOR_DASHBOARD_READY)
-        self.assertIn('"model-maximum-stake"', WAIT_FOR_DASHBOARD_READY)
+        self.assertIn('".strategy-builder-card"', WAIT_FOR_DASHBOARD_READY)
+        self.assertIn('".builder-recent-trades"', WAIT_FOR_DASHBOARD_READY)
 
     def test_public_simulator_and_viewer_reset_are_wired_safely(self) -> None:
         api_source = (Path(__file__).parent / "app" / "api.py").read_text(
@@ -456,20 +457,19 @@ class RiseFallContractTests(unittest.TestCase):
         self.assertNotIn("require_control_auth", endpoint)
         self.assertIn('min(1000.0, max(0.50', endpoint)
 
-        dashboard = (Path(__file__).parent / "dashboard" / "index.html").read_text(
+        index = (Path(__file__).parent / "dashboard" / "index.html").read_text(
             encoding="utf-8"
         )
-        self.assertIn('id="model-maximum-stake"', dashboard)
-        self.assertIn('id="model-flat-stake"', dashboard)
-        self.assertIn("model_data_version", dashboard)
-        self.assertIn("resetSimulationToViewerDefault();", dashboard)
-        self.assertIn("me.settings?.stake_amount ?? 0.50", dashboard)
-        self.assertIn("Math.min(1000, value)", dashboard)
-        self.assertIn(
-            '$("risk-longest-win-streak").textContent = number(baseToday.longest_win_streak || 0);',
-            dashboard,
+        dashboard = (Path(__file__).parent / "dashboard" / "dashboard-v2.js").read_text(
+            encoding="utf-8"
         )
-        self.assertNotIn("allTime.longest_loss_streak", dashboard)
+        self.assertIn("/ui/dashboard-v2.js", index)
+        self.assertIn("Custom Strategy Builder", index)
+        self.assertIn("S.me.settings.stake_amount", dashboard)
+        self.assertIn("Math.min(1000", dashboard)
+        self.assertIn("data-clear-local-trades", dashboard)
+        self.assertIn("Local trade session cleared", dashboard)
+        self.assertNotIn("resetSimulationToViewerDefault();", dashboard)
 
     def test_canonical_write_occurs_only_after_registered_contracts(self) -> None:
         source = (Path(__file__).parent / "app" / "rf_dir5_bot.py").read_text(
@@ -486,7 +486,7 @@ class RiseFallContractTests(unittest.TestCase):
         self.assertIn("is_virtual=False", purchase_flow[canonical_write:])
 
     def test_dashboard_has_accessible_official_risk_disclaimer(self) -> None:
-        dashboard = (Path(__file__).parent / "dashboard" / "index.html").read_text(
+        dashboard = (Path(__file__).parent / "dashboard" / "dashboard-v2.js").read_text(
             encoding="utf-8"
         )
         self.assertIn('id="risk-disclaimer-toggle"', dashboard)

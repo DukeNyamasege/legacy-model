@@ -17,6 +17,8 @@ STOPPED_LIKE_STATUSES = {
     "real_disabled",
 }
 
+SETTLEMENT_ONLY_STATUS = "settlement_only"
+
 PAUSED_LIKE_STATUSES = {
     "manual_pause",
     "take_profit",
@@ -31,6 +33,13 @@ PAUSED_LIKE_STATUSES = {
     "purchase_registration_error",
 }
 
+STARTING_LIKE_STATUSES = {
+    "starting",
+    "validating",
+    "connecting",
+    "reconnecting",
+}
+
 AUTO_PROMOTION_STATUSES = {
     "validating",
     "connecting",
@@ -42,14 +51,40 @@ AUTO_PROMOTION_STATUSES = {
 }
 
 
+def _row_value(row: Any, key: str, default: Any = None) -> Any:
+    if isinstance(row, dict):
+        return row.get(key, default)
+    return getattr(row, key, default)
+
+
 def account_lifecycle_from_row(row: Any) -> str:
-    status = str(getattr(row, "execution_status", "inactive") or "inactive").strip().lower()
-    enabled = bool(getattr(row, "enabled", False))
+    status = str(_row_value(row, "execution_status", "inactive") or "inactive").strip().lower()
+    enabled = bool(_row_value(row, "enabled", False))
+    if status == SETTLEMENT_ONLY_STATUS:
+        return "settlement"
     if status in STOPPED_LIKE_STATUSES:
         return "stopped"
     if not enabled or status in PAUSED_LIKE_STATUSES:
         return "paused"
+    if status in STARTING_LIKE_STATUSES:
+        return "starting"
     return "running"
+
+
+def account_allows_new_execution(row: Any) -> bool:
+    """True only after the trader explicitly pressed Start/Resume.
+
+    Logged-in or linked accounts are not execution accounts by default. The
+    per-account lifecycle is:
+
+        STOPPED -> STARTING -> RUNNING -> STOPPING -> STOPPED
+
+    ``settlement_only`` is intentionally excluded: it may keep a private stream
+    alive just long enough to finish already-open contracts, but it must never
+    enter proposal or purchase scopes.
+    """
+
+    return account_lifecycle_from_row(row) in {"starting", "running"}
 
 
 def _manual_locking_set_status(original_set_status):
@@ -74,12 +109,16 @@ def _manual_locking_set_status(original_set_status):
             # back to active. Stopped/paused status alone is now enough to block
             # automatic promotion; only the explicit Start/Resume route can move
             # the account forward.
-            if current_lifecycle in {"stopped", "paused"} and status in AUTO_PROMOTION_STATUSES:
-                if current_lifecycle == "stopped":
+            if current_lifecycle in {"stopped", "paused", "settlement"} and status in AUTO_PROMOTION_STATUSES:
+                if current_lifecycle in {"stopped", "settlement"}:
                     row.enabled = False
                 row.execution_status = current_status[:30]
                 if not row.execution_status_reason:
-                    if current_lifecycle == "stopped":
+                    if current_lifecycle == "settlement":
+                        row.execution_status_reason = (
+                            "Existing contracts are settling; Start is required for new execution"
+                        )[:160]
+                    elif current_lifecycle == "stopped":
                         row.execution_status_reason = (
                             "Auto trading has been stopped for this account mode"
                         )[:160]
@@ -107,14 +146,14 @@ def _manual_start_set_enabled(original_update_account, original_set_status):
                 self,
                 int(account_id),
                 "connecting",
-                "Auto trading started manually for this account mode",
+                "Auto trading starting manually for this account mode",
             )
         else:
             original_set_status(
                 self,
                 int(account_id),
-                "manual_pause",
-                "Auto trading paused manually for this account mode",
+                "stopped",
+                "Auto trading stopped manually for this account mode",
             )
         return result
     return set_enabled
