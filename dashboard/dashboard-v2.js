@@ -95,8 +95,8 @@
   const NUMERIC_COMPARISONS = COMPARISONS.filter((item) => item.value !== "all_same");
 
   const TICK_DIRECTIONS = [
-    { value: "rising", label: "Rising" },
-    { value: "falling", label: "Falling" },
+    { value: "rising", label: "Up ticks" },
+    { value: "falling", label: "Down ticks" },
     { value: "no_move", label: "No Move" },
   ];
 
@@ -188,8 +188,8 @@
     },
     virtualHook: {
       enabled: true,
-      enterAfterRuns: 2,
-      exitAfterWins: 1,
+      enterAfterLosses: 2,
+      exitAfterConsecutiveWins: 1,
     },
   };
 
@@ -438,8 +438,16 @@
     draft.money.martingale = Math.max(1.1, Math.min(10, Number(draft.money.martingale || 1.2)));
     draft.money.ticks = Math.max(1, Math.min(100, Math.round(Number(draft.money.ticks || 1))));
     draft.virtualHook.enabled = draft.virtualHook.enabled !== false;
-    draft.virtualHook.enterAfterRuns = Math.max(1, Math.min(50, Math.round(Number(draft.virtualHook.enterAfterRuns || 2))));
-    draft.virtualHook.exitAfterWins = Math.max(1, Math.min(50, Math.round(Number(draft.virtualHook.exitAfterWins || 1))));
+    if (draft.virtualHook.enterAfterLosses === undefined && draft.virtualHook.enterAfterRuns !== undefined) {
+      draft.virtualHook.enterAfterLosses = draft.virtualHook.enterAfterRuns;
+    }
+    if (draft.virtualHook.exitAfterConsecutiveWins === undefined && draft.virtualHook.exitAfterWins !== undefined) {
+      draft.virtualHook.exitAfterConsecutiveWins = draft.virtualHook.exitAfterWins;
+    }
+    draft.virtualHook.enterAfterLosses = Math.max(1, Math.min(50, Math.round(Number(draft.virtualHook.enterAfterLosses || 2))));
+    draft.virtualHook.exitAfterConsecutiveWins = Math.max(1, Math.min(50, Math.round(Number(draft.virtualHook.exitAfterConsecutiveWins || 1))));
+    delete draft.virtualHook.enterAfterRuns;
+    delete draft.virtualHook.exitAfterWins;
     return draft;
   }
 
@@ -624,8 +632,8 @@
       next.virtualHook = {
         ...clone(DEFAULT_BUILDER.virtualHook),
         enabled: config.virtual_hook.enabled !== false,
-        enterAfterRuns: Number(config.virtual_hook.enter_after_runs || DEFAULT_BUILDER.virtualHook.enterAfterRuns),
-        exitAfterWins: Number(config.virtual_hook.exit_after_wins || DEFAULT_BUILDER.virtualHook.exitAfterWins),
+        enterAfterLosses: Number(config.virtual_hook.enter_after_losses || config.virtual_hook.enter_after_runs || DEFAULT_BUILDER.virtualHook.enterAfterLosses),
+        exitAfterConsecutiveWins: Number(config.virtual_hook.exit_after_consecutive_wins || config.virtual_hook.exit_after_wins || DEFAULT_BUILDER.virtualHook.exitAfterConsecutiveWins),
       };
     } else if (config.virtual_hook_enabled !== undefined) {
       next.virtualHook.enabled = Boolean(config.virtual_hook_enabled);
@@ -695,8 +703,8 @@
       virtual_hook_enabled: Boolean(draft.virtualHook.enabled),
       virtual_hook: {
         enabled: Boolean(draft.virtualHook.enabled),
-        enter_after_runs: Math.round(draft.virtualHook.enterAfterRuns),
-        exit_after_wins: Math.round(draft.virtualHook.exitAfterWins),
+        enter_after_losses: Math.round(draft.virtualHook.enterAfterLosses),
+        exit_after_consecutive_wins: Math.round(draft.virtualHook.exitAfterConsecutiveWins),
       },
       martingale: {
         mode: "multiplier",
@@ -861,8 +869,8 @@
           ["over", "Over digit"],
           ["under", "Under digit"],
           ["digit", "Exact digit"],
-          ["rise", "Rising ticks"],
-          ["fall", "Falling ticks"],
+          ["rise", "Up ticks"],
+          ["fall", "Down ticks"],
           ["no_move", "No-move ticks"],
         ].map(([value, label]) => `<option value="${value}" ${rule.target === value ? "selected" : ""}>${label}</option>`).join("")}
       </select></label>
@@ -958,8 +966,8 @@
         <b>${hook.enabled ? "ON" : "OFF"}</b>
       </label>
       ${hook.enabled ? `<div class="inline-fields">
-        <label class="field compact"><span>Enter after runs</span><input data-builder="virtualHook.enterAfterRuns" type="number" min="1" max="50" step="1" value="${esc(hook.enterAfterRuns)}"></label>
-        <label class="field compact"><span>Leave after wins</span><input data-builder="virtualHook.exitAfterWins" type="number" min="1" max="50" step="1" value="${esc(hook.exitAfterWins)}"></label>
+        <label class="field compact"><span>Enter after losses</span><input data-builder="virtualHook.enterAfterLosses" type="number" min="1" max="50" step="1" value="${esc(hook.enterAfterLosses)}"></label>
+        <label class="field compact"><span>Leave after consecutive wins</span><input data-builder="virtualHook.exitAfterConsecutiveWins" type="number" min="1" max="50" step="1" value="${esc(hook.exitAfterConsecutiveWins)}"></label>
       </div>` : ""}
     </section>`;
   }
@@ -986,7 +994,7 @@
       parts.push(`the percentage of ${percentageTarget} in the past ${draft.percentageRule.window} digits/ticks is ${comparisonLabel(draft.percentageRule.operator).toLowerCase()} ${draft.percentageRule.threshold}%`);
     }
     if (draft.tickDirectionRule.enabled) {
-      const direction = TICK_DIRECTIONS.find((item) => item.value === draft.tickDirectionRule.direction)?.label || "Rising";
+      const direction = TICK_DIRECTIONS.find((item) => item.value === draft.tickDirectionRule.direction)?.label || "Up ticks";
       parts.push(`the last ${draft.tickDirectionRule.window} tick directions are ${direction}`);
     }
     const trade = tradeSide().label + (tradeGroup().prediction ? ` ${draft.trade.prediction}` : "");
@@ -998,7 +1006,7 @@
       ? `Re-analyze after ${draft.reanalyze.wins} wins`
       : "Re-analyze after every trade";
     const hook = draft.virtualHook.enabled
-      ? `Virtual Hook enters after ${draft.virtualHook.enterAfterRuns} run${draft.virtualHook.enterAfterRuns === 1 ? "" : "s"} and leaves after ${draft.virtualHook.exitAfterWins} virtual win${draft.virtualHook.exitAfterWins === 1 ? "" : "s"}`
+      ? `Virtual Hook enters after ${draft.virtualHook.enterAfterLosses} loss${draft.virtualHook.enterAfterLosses === 1 ? "" : "es"} and leaves after ${draft.virtualHook.exitAfterConsecutiveWins} consecutive virtual win${draft.virtualHook.exitAfterConsecutiveWins === 1 ? "" : "s"}`
       : "Virtual Hook is disabled";
     return `When ${parts.join(" AND ") || "the configured conditions are satisfied"}, place a ${trade} trade on ${markets}. ${reanalyze}. ${hook}.`;
   }

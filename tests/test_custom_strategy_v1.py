@@ -86,13 +86,24 @@ class CustomStrategyPatternTests(unittest.TestCase):
         custom = config(
             virtual_hook={
                 "enabled": True,
-                "enter_after_runs": 4,
-                "exit_after_wins": 3,
+                "enter_after_losses": 4,
+                "exit_after_consecutive_wins": 3,
             }
         )
         self.assertTrue(custom["virtual_hook_enabled"])
-        self.assertEqual(custom["virtual_hook"]["enter_after_runs"], 4)
-        self.assertEqual(custom["virtual_hook"]["exit_after_wins"], 3)
+        self.assertEqual(custom["virtual_hook"]["enter_after_losses"], 4)
+        self.assertEqual(custom["virtual_hook"]["exit_after_consecutive_wins"], 3)
+
+    def test_legacy_virtual_hook_names_are_migrated(self) -> None:
+        custom = config(
+            virtual_hook={
+                "enabled": True,
+                "enter_after_runs": 5,
+                "exit_after_wins": 2,
+            }
+        )
+        self.assertEqual(custom["virtual_hook"]["enter_after_losses"], 5)
+        self.assertEqual(custom["virtual_hook"]["exit_after_consecutive_wins"], 2)
 
     def test_compound_conditions_are_and(self) -> None:
         custom = config(
@@ -242,7 +253,9 @@ class CustomStrategyIntegrationTests(unittest.TestCase):
         self.assertIn("class CustomVirtualHookRequest(BaseModel):", api)
         self.assertIn("virtual_hook: CustomVirtualHookRequest | None = None", api)
         self.assertIn('"virtual_hook_enabled": bool(body.virtual_hook_enabled)', api)
-        self.assertIn('"virtual_hook": (', api)
+        self.assertIn('"virtual_hook": _custom_virtual_hook_payload(', api)
+        self.assertIn("enter_after_losses", api)
+        self.assertIn("exit_after_consecutive_wins", api)
         self.assertIn('"tick_directions": ["rising", "falling", "no_move"]', api)
         self.assertIn("duration_ticks: int = Field(", api)
         self.assertIn('"duration_ticks": body.duration_ticks', api)

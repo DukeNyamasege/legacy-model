@@ -9,8 +9,8 @@ from typing import Any, Iterable
 
 from app.hybrid_digit_put import DigitSignal
 from app.custom_strategy_virtual_hook import (
-    DEFAULT_VIRTUAL_ENTER_AFTER_RUNS,
-    DEFAULT_VIRTUAL_EXIT_AFTER_WINS,
+    DEFAULT_VIRTUAL_ENTER_AFTER_LOSSES,
+    DEFAULT_VIRTUAL_EXIT_AFTER_CONSECUTIVE_WINS,
     normalize_virtual_hook_settings,
 )
 from app.models import RuntimePreference, utc_now
@@ -73,8 +73,8 @@ def default_custom_strategy() -> dict[str, Any]:
         "virtual_hook_enabled": True,
         "virtual_hook": {
             "enabled": True,
-            "enter_after_runs": DEFAULT_VIRTUAL_ENTER_AFTER_RUNS,
-            "exit_after_wins": DEFAULT_VIRTUAL_EXIT_AFTER_WINS,
+            "enter_after_losses": DEFAULT_VIRTUAL_ENTER_AFTER_LOSSES,
+            "exit_after_consecutive_wins": DEFAULT_VIRTUAL_EXIT_AFTER_CONSECUTIVE_WINS,
         },
     }
 
@@ -287,8 +287,10 @@ def normalize_custom_strategy(raw: Any) -> dict[str, Any]:
         "virtual_hook_enabled": bool(virtual_hook.enabled),
         "virtual_hook": {
             "enabled": bool(virtual_hook.enabled),
-            "enter_after_runs": int(virtual_hook.enter_after_runs),
-            "exit_after_wins": int(virtual_hook.exit_after_wins),
+            "enter_after_losses": int(virtual_hook.enter_after_losses),
+            "exit_after_consecutive_wins": int(
+                virtual_hook.exit_after_consecutive_wins
+            ),
         },
     }
 

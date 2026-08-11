@@ -134,7 +134,11 @@ def _required_virtual_wins(
     return adaptive_virtual_wins_required(
         _runtime_base(repo),
         int(managed_account_id),
-        default_wins=hook.exit_after_wins if hook.enabled else VIRTUAL_WINS_REQUIRED,
+        default_wins=(
+            hook.exit_after_consecutive_wins
+            if hook.enabled
+            else VIRTUAL_WINS_REQUIRED
+        ),
         recovery_debt=float(recovery_debt or 0.0),
     )
 
@@ -153,7 +157,8 @@ def _virtual_confirmation_reason(
     )
     suffix = (
         " Alternating-trap protection is active."
-        if required > _virtual_hook_settings(repo, int(managed_account_id)).exit_after_wins
+        if required
+        > _virtual_hook_settings(repo, int(managed_account_id)).exit_after_consecutive_wins
         else ""
     )
     return f"Virtual OVER-4 confirmation active: {int(wins)}/{required} wins.{suffix}"
@@ -218,7 +223,9 @@ def _debt_requires_virtual(
 ) -> bool:
     if debt <= 0.009 or split_remaining > 0:
         return False
-    return bool(virtual_hook.enabled) and consecutive_losses >= int(virtual_hook.enter_after_runs)
+    return bool(virtual_hook.enabled) and consecutive_losses >= int(
+        virtual_hook.enter_after_losses
+    )
 
 
 def reconcile_existing_virtual_confirmations(repo: RFDir5Repository) -> int:
@@ -429,7 +436,7 @@ def install_aidr_strict_recovery_guard() -> None:
         kwargs["virtual_protection_enabled"] = bool(
             kwargs.get("virtual_protection_enabled", True)
         ) and bool(hook.enabled)
-        kwargs["virtual_trigger_actual_losses"] = int(hook.enter_after_runs)
+        kwargs["virtual_trigger_actual_losses"] = int(hook.enter_after_losses)
         lifecycle_before, _enabled, status_before, reason_before = _account_lifecycle(
             self, managed_account_id
         )
@@ -529,7 +536,9 @@ def install_aidr_strict_recovery_guard() -> None:
                                 "recovery_loss_debt": 0.0,
                                 "split_recovery_remaining": 0,
                                 "adaptive_trap_score": 0,
-                                "virtual_wins_required": int(hook.exit_after_wins),
+                                "virtual_wins_required": int(
+                                    hook.exit_after_consecutive_wins
+                                ),
                             }
                         )
                     elif hook.enabled:
@@ -539,7 +548,7 @@ def install_aidr_strict_recovery_guard() -> None:
                         )
                         required = adaptive_virtual_wins_required_for_state(
                             trap,
-                            default_wins=int(hook.exit_after_wins),
+                            default_wins=int(hook.exit_after_consecutive_wins),
                             recovery_debt=debt,
                         )
                         _force_virtual_mode(
@@ -605,7 +614,7 @@ def install_aidr_strict_recovery_guard() -> None:
                     )
                     required = adaptive_virtual_wins_required_for_state(
                         trap,
-                        default_wins=int(hook.exit_after_wins),
+                        default_wins=int(hook.exit_after_consecutive_wins),
                         recovery_debt=float(state.recovery_loss_debt or 0.0),
                     )
                     _force_virtual_mode(

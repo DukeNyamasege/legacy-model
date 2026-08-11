@@ -1008,7 +1008,7 @@ class RFDir5Repository:
                     self.base,
                     int(trade.managed_account_id),
                     default_wins=(
-                        hook.exit_after_wins
+                        hook.exit_after_consecutive_wins
                         if hook.enabled
                         else base_required_virtual_wins
                     ),

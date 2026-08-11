@@ -21,6 +21,10 @@ from app.custom_strategy_v1 import (
     read_custom_strategy,
     write_custom_strategy,
 )
+from app.custom_strategy_virtual_hook import (
+    DEFAULT_VIRTUAL_ENTER_AFTER_LOSSES,
+    DEFAULT_VIRTUAL_EXIT_AFTER_CONSECUTIVE_WINS,
+)
 from app.final_public_controls import (
     STOPPED_STATUSES,
     _clear_account_runtime_preferences,
@@ -68,8 +72,12 @@ class CustomMartingaleRequest(BaseModel):
 
 class CustomVirtualHookRequest(BaseModel):
     enabled: bool = True
-    enter_after_runs: int = Field(default=2, ge=1, le=50)
-    exit_after_wins: int = Field(default=1, ge=1, le=50)
+    enter_after_losses: int | None = Field(default=None, ge=1, le=50)
+    exit_after_consecutive_wins: int | None = Field(default=None, ge=1, le=50)
+    # Backwards-compatible input only. New strategy records are saved using
+    # losses/consecutive-wins terminology.
+    enter_after_runs: int | None = Field(default=None, ge=1, le=50)
+    exit_after_wins: int | None = Field(default=None, ge=1, le=50)
 
 
 class CustomStrategyRequest(BaseModel):
@@ -135,6 +143,36 @@ def _write_runtime_preference(
         return
     row.preference_value = str(value)
     row.updated_at = utc_now()
+
+
+def _custom_virtual_hook_payload(
+    raw: CustomVirtualHookRequest | None,
+    *,
+    enabled: bool,
+) -> dict[str, Any]:
+    if raw is None:
+        return {
+            "enabled": bool(enabled),
+            "enter_after_losses": DEFAULT_VIRTUAL_ENTER_AFTER_LOSSES,
+            "exit_after_consecutive_wins": DEFAULT_VIRTUAL_EXIT_AFTER_CONSECUTIVE_WINS,
+        }
+    return {
+        "enabled": bool(raw.enabled),
+        "enter_after_losses": int(
+            raw.enter_after_losses
+            if raw.enter_after_losses is not None
+            else raw.enter_after_runs
+            if raw.enter_after_runs is not None
+            else DEFAULT_VIRTUAL_ENTER_AFTER_LOSSES
+        ),
+        "exit_after_consecutive_wins": int(
+            raw.exit_after_consecutive_wins
+            if raw.exit_after_consecutive_wins is not None
+            else raw.exit_after_wins
+            if raw.exit_after_wins is not None
+            else DEFAULT_VIRTUAL_EXIT_AFTER_CONSECUTIVE_WINS
+        ),
+    }
 
 
 def _write_custom_martingale(
@@ -284,10 +322,9 @@ def install_custom_strategy_api(app: Any) -> None:
             "match": body.match,
             "reanalyze": body.reanalyze or {},
             "virtual_hook_enabled": bool(body.virtual_hook_enabled),
-            "virtual_hook": (
-                body.virtual_hook.model_dump()
-                if body.virtual_hook is not None
-                else {"enabled": bool(body.virtual_hook_enabled)}
+            "virtual_hook": _custom_virtual_hook_payload(
+                body.virtual_hook,
+                enabled=bool(body.virtual_hook_enabled),
             ),
         }
 
