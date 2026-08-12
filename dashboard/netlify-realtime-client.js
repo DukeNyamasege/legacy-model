@@ -7,7 +7,9 @@
     document.querySelector('meta[name="stream-base-url"]')?.content || "",
   ).trim().replace(/\/+$/, "");
   const TRADE_RESET_PREFIX = "foa-trade-session-reset-v1";
+  const METRIC_CACHE_PREFIX = "foa-live-metrics-v2";
   const FALLBACK_MS = 5000;
+  const METRIC_CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
   let socket = null;
   let reconnectTimer = null;
   let fallbackTimer = null;
@@ -17,6 +19,10 @@
 
   function storageGet(key) {
     try { return localStorage.getItem(key); } catch (_) { return null; }
+  }
+
+  function storageSet(key, value) {
+    try { localStorage.setItem(key, value); } catch (_) {}
   }
 
   function accountType(me) {
@@ -46,6 +52,29 @@
     const cutoff = resetTime(me);
     if (!cutoff) return rows;
     return rows.filter((row) => rowTime(row) >= cutoff);
+  }
+
+  function metricIdentity(me, trades) {
+    const date = String(trades?.date || "current");
+    return `${accountType(me)}:${accountMask(me)}:${date}:${resetTime(me)}`;
+  }
+
+  function metricCacheKey(me, trades) {
+    return `${METRIC_CACHE_PREFIX}:${metricIdentity(me, trades)}`;
+  }
+
+  function readCachedMetrics(me, trades) {
+    try {
+      const parsed = JSON.parse(storageGet(metricCacheKey(me, trades)) || "null");
+      if (!parsed || Date.now() - Number(parsed.savedAt || 0) > METRIC_CACHE_MAX_AGE_MS) return null;
+      return parsed;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function writeCachedMetrics(me, trades, metrics) {
+    storageSet(metricCacheKey(me, trades), JSON.stringify({ ...metrics, savedAt: Date.now() }));
   }
 
   function money(value, currency = "USD") {
@@ -102,8 +131,7 @@
     });
   }
 
-  function patchMetrics(me, trades) {
-    if (!me) return;
+  function deriveMetrics(me, trades) {
     const rows = visibleTrades(me, trades);
     const cutoff = resetTime(me);
     const summary = trades?.summary || {};
@@ -117,14 +145,57 @@
       losses = rows.filter((row) => String(row.outcome || "").toUpperCase() === "LOSS").length;
       profit = rows.reduce((sum, row) => sum + Number(row.profit || 0), 0);
     }
+    return { total, wins, losses, profit, rows };
+  }
+
+  function stableMetrics(me, trades) {
+    const incoming = deriveMetrics(me, trades);
+    const cached = readCachedMetrics(me, trades);
+    const incomingIsEmpty = incoming.rows.length === 0
+      && incoming.total === 0
+      && incoming.wins === 0
+      && incoming.losses === 0
+      && incoming.profit === 0;
+    const cachedHasActivity = cached
+      && (Number(cached.total || 0) > 0
+        || Number(cached.wins || 0) > 0
+        || Number(cached.losses || 0) > 0
+        || Number(cached.profit || 0) !== 0);
+
+    /* A same-account refresh can briefly return an empty trade summary while the
+       next account snapshot is being assembled. Do not repaint real figures as
+       zero during that gap. A new account/date/local Clear creates a different
+       cache identity, so legitimate zero states still display immediately. */
+    if (incomingIsEmpty && cachedHasActivity) {
+      return {
+        total: Number(cached.total || 0),
+        wins: Number(cached.wins || 0),
+        losses: Number(cached.losses || 0),
+        profit: Number(cached.profit || 0),
+      };
+    }
+
+    const stable = {
+      total: incoming.total,
+      wins: incoming.wins,
+      losses: incoming.losses,
+      profit: incoming.profit,
+    };
+    writeCachedMetrics(me, trades, stable);
+    return stable;
+  }
+
+  function patchMetrics(me, trades) {
+    if (!me) return;
+    const metrics = stableMetrics(me, trades);
     const currency = me.currency || "USD";
     setStat("Balance", money(me.balance || 0, currency));
-    setStat("Today's P/L", money(profit, currency));
-    setStat("P/L", money(profit, currency));
-    setStat("Number of Runs", total.toLocaleString());
-    setStat("Runs", total.toLocaleString());
-    setStat("Wins", wins.toLocaleString());
-    setStat("Losses", losses.toLocaleString());
+    setStat("Today's P/L", money(metrics.profit, currency));
+    setStat("P/L", money(metrics.profit, currency));
+    setStat("Number of Runs", metrics.total.toLocaleString());
+    setStat("Runs", metrics.total.toLocaleString());
+    setStat("Wins", metrics.wins.toLocaleString());
+    setStat("Losses", metrics.losses.toLocaleString());
   }
 
   function tradeTime(row) {
@@ -140,6 +211,20 @@
     if (className) node.className = className;
     node.textContent = String(text ?? "");
     parent.appendChild(node);
+  }
+
+  function snapshotWithStableTrades(snapshot) {
+    if (!lastSnapshot || !snapshot?.me || !snapshot?.trades) return snapshot;
+    if (metricIdentity(lastSnapshot.me, lastSnapshot.trades) !== metricIdentity(snapshot.me, snapshot.trades)) {
+      return snapshot;
+    }
+    const previousRows = visibleTrades(lastSnapshot.me, lastSnapshot.trades);
+    const incomingRows = visibleTrades(snapshot.me, snapshot.trades);
+    const incomingTotal = Number(snapshot.trades?.summary?.total ?? snapshot.me?.stats?.trades ?? 0);
+    if (!incomingRows.length && !incomingTotal && previousRows.length) {
+      return { ...snapshot, trades: lastSnapshot.trades };
+    }
+    return snapshot;
   }
 
   function patchTrades(me, trades) {
@@ -175,8 +260,9 @@
     });
   }
 
-  function applySnapshot(snapshot) {
-    if (!snapshot?.me?.authenticated) return;
+  function applySnapshot(rawSnapshot) {
+    if (!rawSnapshot?.me?.authenticated) return;
+    const snapshot = snapshotWithStableTrades(rawSnapshot);
     lastSnapshot = snapshot;
     window.FOA_NETLIFY_LIVE_CACHE = {
       savedAt: Date.now(),
@@ -267,7 +353,10 @@
   const observer = new MutationObserver((mutations) => {
     if (!lastSnapshot) return;
     if (!mutations.some((item) => item.type === "childList" && item.target?.id === "foa-simple-app")) return;
-    requestAnimationFrame(() => applySnapshot(lastSnapshot));
+    /* dashboard-v2 can rebuild the shell during Start/Stop/refresh. Repaint the
+       last live snapshot in the same mutation turn so KPIs never visibly flash
+       through their zero-valued bootstrap placeholders. */
+    applySnapshot(lastSnapshot);
   });
   observer.observe(document.documentElement, { childList: true, subtree: true });
 
@@ -289,5 +378,5 @@
   scheduleFallback();
   fallbackSnapshot();
   connect();
-  window.FOA_NETLIFY_REALTIME_MODE = "direct-vps-websocket-ticket-v1";
+  window.FOA_NETLIFY_REALTIME_MODE = "direct-vps-websocket-ticket-v2-stable-metrics";
 })();
