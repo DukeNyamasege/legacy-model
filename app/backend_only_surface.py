@@ -26,6 +26,12 @@ def install_backend_only_surface(app: Any) -> None:
         _remove_route(app, path, "GET")
         _remove_route(app, path, "HEAD")
 
+    # Production logs showed the historical all-account summary consuming tens of
+    # seconds even though the current Custom Strategy frontend does not render it.
+    # Remove the expensive implementation entirely from the backend-only entrypoint
+    # so an old browser/client cannot accidentally monopolize the API process.
+    _remove_route(app, "/metrics/summary", "GET")
+
     @app.get("/", include_in_schema=False)
     def backend_root() -> dict[str, Any]:
         return {
@@ -36,5 +42,14 @@ def install_backend_only_surface(app: Any) -> None:
             "health": "/health",
         }
 
+    @app.get("/metrics/summary", include_in_schema=False)
+    def retired_global_summary() -> dict[str, Any]:
+        return {
+            "retired": True,
+            "reason": "Netlify Custom Strategy frontend uses account-scoped realtime data",
+            "performance_profile": "constant-time-retired-summary",
+        }
+
     app.state.backend_only_surface_installed = True
+    app.state.legacy_global_metrics_summary_retired = True
     _INSTALLED = True
