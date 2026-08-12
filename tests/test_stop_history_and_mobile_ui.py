@@ -178,7 +178,7 @@ class DashboardSessionAndReachabilityTests(unittest.TestCase):
         self.assertIn('docker compose -f docker-compose.yml', deploy)
         self.assertIn("compose build api worker", deploy)
         self.assertIn("alembic upgrade head", deploy)
-        self.assertIn("DEDICATED BACKEND DEPLOYMENT", deploy)
+        self.assertIn("CONTABO BACKEND DEPLOYMENT", deploy)
 
     def test_final_dashboard_actions_route_uses_current_actions_source(self) -> None:
         final_ui = (ROOT / "app" / "final_virtual_history_ui.py").read_text(
