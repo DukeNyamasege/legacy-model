@@ -85,11 +85,13 @@ jobs:
           app/oauth_direct_account_authority.py
           app/public_websocket_resilience.py
           app/real_demo_trading_support.py
+          app/session_risk_stop_authority.py
           tests/test_custom_direct_runtime.py
           tests/test_current_custom_runtime_fix.py
           tests/test_dashboard_live_performance.py
           tests/test_netlify_vps_split.py
           tests/test_oauth_direct_mobile_compact.py
+          tests/test_session_risk_and_multidevice_ui.py
 
       - name: Typecheck direct custom runtime
         run: >-
@@ -112,6 +114,7 @@ jobs:
           app/oauth_direct_account_authority.py
           app/public_websocket_resilience.py
           app/real_demo_trading_support.py
+          app/session_risk_stop_authority.py
 
       - name: Check dashboard JavaScript syntax
         run: |
@@ -123,6 +126,7 @@ jobs:
           node --check dashboard/netlify-api-boundary.js
           node --check dashboard/netlify-realtime-client.js
           node --check dashboard/oauth-direct-runtime.js
+          node --check dashboard/final-dashboard-authority.js
           node --check scripts/build-netlify.mjs
 
       - name: Run focused release tests
@@ -133,6 +137,7 @@ jobs:
           python -m unittest -q tests.test_netlify_vps_split
           python -m unittest -q tests.test_stop_history_and_mobile_ui
           python -m unittest -q tests.test_oauth_direct_mobile_compact
+          python -m unittest -q tests.test_session_risk_and_multidevice_ui
           python -m unittest -q tests.test_seamless_execution_final
           python -m unittest -q tests.test_bulk_credential_failure_hardening
           python -m unittest -q tests.test_credential_quarantine_runtime_guard
@@ -164,6 +169,8 @@ jobs:
           grep -Fq 'stream-base-url" content="wss://api.release-gate.example"' dist/index.html
           grep -Fq '/netlify-api-boundary.js' dist/index.html
           grep -Fq '/netlify-realtime-client.js' dist/index.html
+          grep -Fq '/final-dashboard-authority.js' dist/index.html
+          test -f dist/final-dashboard-authority.css
 
       - name: Build API image
         run: docker build --target api -t legacy-model-release-gate-api:${{ github.sha }} .

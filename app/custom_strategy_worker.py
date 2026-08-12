@@ -21,6 +21,7 @@ from app.profit_accuracy_guard import install_profit_accuracy_guard
 from app.public_websocket_resilience import install_public_websocket_resilience
 from app.real_demo_trading_support import install_dual_demo_real_trading_support
 from app.rf_dir5_bot import RFDir5TradingBot
+from app.session_risk_stop_authority import install_session_risk_stop_worker
 from app.telegram_silence import install_telegram_silence
 from app.trade_registration_idempotency import install_trade_registration_idempotency
 from app.unresolved_contract_safety import install_unresolved_contract_safety
@@ -59,6 +60,11 @@ async def run_worker() -> None:
     install_custom_strategy_direct_runtime()
     install_custom_strategy_current_runtime_fix()
     install_custom_strategy_runtime_lifecycle()
+
+    # TP/SL are final account stops. The canonical counter is the persisted
+    # AccountRiskState.session_profit for the current fresh Start session, not a
+    # broad/all-time dashboard P/L value.
+    install_session_risk_stop_worker()
 
     # UI delivery is never allowed to sit on the financial execution path. This
     # final bridge also keeps transient proposal/session interruptions in an
