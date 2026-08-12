@@ -1,4 +1,0 @@
-services:
-  worker:
-    deploy:
-      replicas: 1
