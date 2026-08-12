@@ -402,16 +402,13 @@ def main() -> int:
         "dashboard actions script is not present in dashboard HTML",
     )
     require(
-        "Father of Automation" in html_text,
+        "Custom Strategy Builder" in html_text,
         "Dashboard brand marker is missing",
-    )
-    require(
-        "/ui/simplified-dashboard.js" in html_text,
-        "Historical simplified-dashboard compatibility marker is missing",
     )
     for legacy_marker in (
         "/ui/realtime-mode-hardening.js",
         "/ui/data-consistency.js",
+        "/ui/simplified-dashboard.js",
         "smart-loader",
     ):
         require(

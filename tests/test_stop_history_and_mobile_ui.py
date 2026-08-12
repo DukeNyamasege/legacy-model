@@ -115,6 +115,8 @@ class DashboardSessionAndReachabilityTests(unittest.TestCase):
     def test_vps_smoke_tracks_current_dashboard_and_keeps_healthy_api_available(self) -> None:
         smoke = (ROOT / "scripts" / "production_smoke.py").read_text(encoding="utf-8")
         self.assertIn("READINESS_PROBE_TIMEOUT_SECONDS = 30.0", smoke)
+        self.assertIn("Custom Strategy Builder", smoke)
+        self.assertNotIn('"Father of Automation" in html_text', smoke)
         self.assertIn("/ui/dashboard-v2.js", smoke)
         self.assertIn("foa-session-v2", smoke)
         self.assertIn("window.FOA_BOOT_SESSION", smoke)
