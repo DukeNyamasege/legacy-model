@@ -56,6 +56,7 @@ jobs:
           sh -n scripts/deploy_vps.sh scripts/update_vps.sh \
             scripts/run_legacy_release_tests.sh \
             scripts/cleanup_vps_artifacts.sh \
+            scripts/cleanup_repository_state.sh \
             scripts/diagnose_vps_performance.sh
           docker compose -f docker-compose.yml -f docker-compose.vps.yml config --quiet
           python scripts/audit_bulk_execution_readiness.py --help >/dev/null
