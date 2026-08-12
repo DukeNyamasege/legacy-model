@@ -159,24 +159,26 @@ class DashboardSessionAndReachabilityTests(unittest.TestCase):
         self.assertIn("REPOSITORY.worker_heartbeat()", ready_block)
         self.assertNotIn("REPOSITORY.summary()", ready_block)
 
-    def test_vps_smoke_tracks_current_dashboard_and_keeps_healthy_api_available(self) -> None:
-        smoke = (ROOT / "scripts" / "production_smoke.py").read_text(encoding="utf-8")
-        self.assertIn("READINESS_PROBE_TIMEOUT_SECONDS = 30.0", smoke)
-        self.assertIn("Custom Strategy Builder", smoke)
-        self.assertNotIn('"Father of Automation" in html_text', smoke)
-        self.assertIn("/ui/dashboard-v2.js", smoke)
-        self.assertIn("foa-session-v2", smoke)
-        self.assertIn("window.FOA_BOOT_SESSION", smoke)
-        self.assertIn("FOA_SIMPLIFIED_DASHBOARD_COMPAT", smoke)
-        self.assertIn("Old dashboard UI is still served", smoke)
-        self.assertIn("builder-shell", smoke)
-        self.assertIn("strategy-builder-card", smoke)
-        self.assertNotIn('"foa-bottom-nav",', smoke)
-        self.assertIn("mobile_input_zoom_guard", smoke)
+    def test_netlify_and_contabo_replace_old_vps_smoke_surface(self) -> None:
+        self.assertFalse((ROOT / "scripts" / "production_smoke.py").exists())
+        self.assertFalse((ROOT / "scripts" / "deploy_vps.sh").exists())
+        self.assertFalse((ROOT / "docker-compose.vps.yml").exists())
 
-        deploy = (ROOT / "scripts" / "deploy_vps.sh").read_text(encoding="utf-8")
-        self.assertIn("API_DATABASE_HEALTHY=true", deploy)
-        self.assertIn("leaving it running to avoid a public 502", deploy)
+        build = (ROOT / "scripts" / "build-netlify.mjs").read_text(encoding="utf-8")
+        self.assertIn("BACKEND_ORIGIN", build)
+        self.assertIn("netlify-api-boundary.js", build)
+        self.assertIn("netlify-realtime-client.js", build)
+        self.assertIn("/api/*", build)
+        self.assertIn("/oauth/*", build)
+
+        deploy = (ROOT / "scripts" / "deploy_dedicated_backend.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("NETLIFY + CONTABO BACKEND DEPLOYMENT", deploy)
+        self.assertIn('docker compose -f docker-compose.yml', deploy)
+        self.assertIn("compose build api worker", deploy)
+        self.assertIn("alembic upgrade head", deploy)
+        self.assertIn("CONTABO BACKEND DEPLOYMENT", deploy)
 
     def test_final_dashboard_actions_route_uses_current_actions_source(self) -> None:
         final_ui = (ROOT / "app" / "final_virtual_history_ui.py").read_text(
@@ -190,33 +192,20 @@ class DashboardSessionAndReachabilityTests(unittest.TestCase):
         for marker in ("foa-action-loader", "foa-final-trade-row", "clear-trades"):
             self.assertIn(marker, actions)
 
-    def test_vps_deploy_gates_release_before_live_cutover(self) -> None:
-        deploy = (ROOT / "scripts" / "deploy_vps.sh").read_text(encoding="utf-8")
-        main_flow = deploy.split('echo "2. Pull PostgreSQL and build exact API/worker images"', 1)[1]
-        gate = main_flow.index("run_release_gate")
-        stop_live = main_flow.index('echo "5. Stop old API and worker only after the release gate passes"')
-        self.assertLess(gate, stop_live)
-
-        self.assertIn("legacy-model-preflight-", deploy)
-        self.assertIn("DERIV_ENVIRONMENT: demo", deploy)
-        self.assertIn('DERIV_TRADING_ENABLED: "false"', deploy)
-        self.assertIn('TELEGRAM_NOTIFICATIONS_SUSPENDED: "true"', deploy)
-        self.assertIn("Release gate smoke test failed. Production was not changed.", deploy)
-        self.assertIn(
-            "Release gate: verify AIDR and private WebSocket behavior against isolated PostgreSQL",
-            deploy,
+    def test_contabo_deploy_builds_before_backend_cutover_and_preserves_database_volume(self) -> None:
+        deploy = (ROOT / "scripts" / "deploy_dedicated_backend.sh").read_text(
+            encoding="utf-8"
         )
-        self.assertIn("candidate_compose run --rm --no-deps worker", deploy)
-        self.assertNotIn(
-            "\ncompose run --rm --no-deps worker",
-            main_flow[:stop_live],
-        )
-        self.assertIn("Production cutover failed before containers were replaced", deploy)
-        self.assertIn("Verify live PostgreSQL and create a pre-migration backup before cutover", deploy)
-        self.assertIn("compose ps --status running -q database", deploy)
-        cutover_section = main_flow.split('echo "5. Stop old API and worker only after the release gate passes"', 1)[0]
-        self.assertNotIn("compose stop worker api", cutover_section)
-        self.assertNotIn("recreate_database_container", deploy)
+        build = deploy.index("compose build api worker")
+        start_database = deploy.index("compose up -d database")
+        cutover = deploy.index("compose up -d --force-recreate --remove-orphans api worker")
+        self.assertLess(build, start_database)
+        self.assertLess(start_database, cutover)
+        self.assertIn("pg_dump --format=custom --no-owner --no-privileges", deploy)
+        self.assertIn("alembic upgrade head", deploy)
+        self.assertIn("PostgreSQL named volume preserved", deploy)
+        self.assertNotIn("docker-compose.vps.yml", deploy)
+        self.assertNotIn("docker volume prune", deploy)
 
     def test_github_release_gate_workflow_exists(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "release-gate.yml").read_text(
@@ -227,10 +216,14 @@ class DashboardSessionAndReachabilityTests(unittest.TestCase):
         self.assertIn("branches: [main]", workflow)
         self.assertIn("python -m compileall -q app scripts", workflow)
         self.assertIn("python -m unittest -q tests.test_stop_history_and_mobile_ui", workflow)
-        self.assertIn("sh -n scripts/deploy_vps.sh scripts/update_vps.sh", workflow)
+        self.assertIn("sh -n scripts/deploy_dedicated_backend.sh", workflow)
+        self.assertIn("docker compose -f docker-compose.yml config --quiet", workflow)
+        self.assertNotIn("scripts/deploy_vps.sh", workflow)
+        self.assertNotIn("docker-compose.vps.yml", workflow)
         self.assertIn('alembic heads | grep -q "20260812_0021 (head)"', workflow)
         self.assertNotIn('alembic heads | grep -q "20260805_0020 (head)"', workflow)
         self.assertIn("docker build --target api", workflow)
+        self.assertIn("Production Netlify frontend build", workflow)
 
 
 if __name__ == "__main__":

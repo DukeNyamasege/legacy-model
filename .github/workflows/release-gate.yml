@@ -52,15 +52,13 @@ jobs:
           : > .env
           test -f .env
 
-      - name: Validate deployment shell, Compose and migrations
+      - name: Validate Contabo backend deployment, Compose and migrations
         run: |
-          sh -n scripts/deploy_vps.sh scripts/update_vps.sh \
-            scripts/deploy_dedicated_backend.sh \
+          sh -n scripts/deploy_dedicated_backend.sh \
             scripts/run_legacy_release_tests.sh \
-            scripts/cleanup_vps_artifacts.sh \
             scripts/cleanup_repository_state.sh \
             scripts/diagnose_vps_performance.sh
-          docker compose -f docker-compose.yml -f docker-compose.vps.yml config --quiet
+          docker compose -f docker-compose.yml config --quiet
           python scripts/audit_bulk_execution_readiness.py --help >/dev/null
           alembic heads | grep -q "20260812_0021 (head)"
 

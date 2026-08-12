@@ -124,38 +124,42 @@ class DatabaseWritePressureTests(unittest.TestCase):
         self.assertIn('down_revision = "20260726_0018"', source)
 
 
-class VpsCleanupSourceTests(unittest.TestCase):
-    def test_update_cleans_before_after_and_on_failed_deploy(self) -> None:
-        source = (ROOT / "scripts" / "update_vps.sh").read_text(encoding="utf-8")
-        pre_cleanup = source.index("cleanup_vps_artifacts.sh pre-deploy")
-        deploy = source.index("sh ./scripts/deploy_vps.sh")
-        diagnostics = source.rindex("sh scripts/diagnose_vps_performance.sh")
-        post_cleanup = source.index("cleanup_vps_artifacts.sh post-deploy")
-        failed_cleanup = source.index("cleanup_vps_artifacts.sh failed-deploy")
-        self.assertLess(pre_cleanup, deploy)
-        self.assertGreater(diagnostics, deploy)
-        self.assertGreater(post_cleanup, deploy)
-        self.assertGreater(failed_cleanup, deploy)
-        self.assertIn('flock -n 9 || fail "Another VPS update is already running"', source)
+class ContaboOperationsSourceTests(unittest.TestCase):
+    def test_retired_hostinger_update_and_cleanup_paths_are_absent(self) -> None:
+        for retired in (
+            "scripts/update_vps.sh",
+            "scripts/deploy_vps.sh",
+            "scripts/cleanup_vps_artifacts.sh",
+            "docker-compose.vps.yml",
+        ):
+            self.assertFalse((ROOT / retired).exists(), retired)
 
-    def test_cleanup_keeps_only_container_referenced_images(self) -> None:
-        source = (ROOT / "scripts" / "cleanup_vps_artifacts.sh").read_text(
+    def test_repository_cleanup_is_safe_and_volume_preserving(self) -> None:
+        source = (ROOT / "scripts" / "cleanup_repository_state.sh").read_text(
             encoding="utf-8"
         )
-        self.assertIn("legacy-model-preflight-", source)
-        self.assertIn("DEPLOYMENT_LOCK_HELD", source)
+        self.assertIn("git fetch origin --prune", source)
+        self.assertIn("git branch --merged main", source)
         self.assertIn("docker image prune -a -f", source)
         self.assertIn("docker builder prune -a -f", source)
-        self.assertIn("snapshot_running_containers", source)
-        self.assertIn("assert_running_containers_preserved", source)
-        self.assertIn("{{.State.Running}}", source)
-        self.assertIn("actual_image_id", source)
-        self.assertNotIn("assert_running_images_preserved", source)
-        self.assertNotIn("docker image inspect \"$image_id\"", source)
-        self.assertNotIn("docker system prune -a", source)
+        self.assertIn("-e .env", source)
+        self.assertIn("-e deploy-backups/", source)
+        self.assertNotIn("docker system prune", source)
         self.assertNotIn("docker volume prune", source)
-        self.assertIn("test2_database", source)
-        self.assertIn("test2_models", source)
+
+    def test_contabo_deploy_is_single_compose_and_preserves_database(self) -> None:
+        source = (ROOT / "scripts" / "deploy_dedicated_backend.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('docker compose -f docker-compose.yml "$@"', source)
+        self.assertIn("NETLIFY + CONTABO BACKEND DEPLOYMENT", source)
+        self.assertIn("compose build api worker", source)
+        self.assertIn("compose up -d database", source)
+        self.assertIn("pg_dump --format=custom", source)
+        self.assertIn("alembic upgrade head", source)
+        self.assertIn("compose up -d --force-recreate --remove-orphans api worker", source)
+        self.assertNotIn("docker-compose.vps.yml", source)
+        self.assertNotIn("docker volume prune", source)
 
     def test_compose_rotates_logs_and_disables_tick_spam(self) -> None:
         source = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
