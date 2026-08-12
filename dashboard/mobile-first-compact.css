@@ -1,0 +1,353 @@
+/* Final mobile-first density override for the Custom Strategy Builder.
+   The phone layout deliberately keeps controls horizontal and uses local
+   horizontal scrolling where five controls cannot fit safely in one viewport. */
+
+@media (max-width: 760px) {
+  .builder-shell {
+    padding: 6px !important;
+  }
+
+  .strategy-builder-card,
+  .builder-panel,
+  .builder-section {
+    border-radius: 10px !important;
+  }
+
+  .strategy-builder-card,
+  .builder-panel {
+    padding: 8px !important;
+  }
+
+  .builder-section {
+    padding: 8px 9px !important;
+    margin-bottom: 6px !important;
+  }
+
+  /* Five KPIs stay on one horizontal line instead of turning into a tall stack. */
+  .builder-stats,
+  .builder-stats.compact {
+    display: grid !important;
+    grid-template-columns: repeat(5, minmax(112px, 1fr)) !important;
+    gap: 6px !important;
+    margin: 0 0 7px !important;
+    padding: 0 0 2px !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    overscroll-behavior-inline: contain;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .builder-stats::-webkit-scrollbar,
+  .builder-stats.compact::-webkit-scrollbar,
+  .money-grid::-webkit-scrollbar,
+  .rules-stack::-webkit-scrollbar,
+  .builder-two-col::-webkit-scrollbar {
+    display: none;
+  }
+
+  .builder-stat {
+    min-height: 62px !important;
+    padding: 7px 8px !important;
+    border-radius: 9px !important;
+    scroll-snap-align: start;
+  }
+
+  .builder-stat > span {
+    font-size: 9px !important;
+    line-height: 1.1 !important;
+    white-space: nowrap;
+  }
+
+  .builder-stat > strong {
+    margin-top: 3px !important;
+    font-size: 16px !important;
+    line-height: 1.05 !important;
+  }
+
+  .builder-stat > small {
+    margin-top: 3px !important;
+    font-size: 8.5px !important;
+    line-height: 1.1 !important;
+    white-space: nowrap;
+  }
+
+  .numbered-title,
+  .section-label,
+  .panel-head {
+    margin-bottom: 6px !important;
+  }
+
+  .numbered-title b {
+    width: 19px !important;
+    height: 19px !important;
+    min-width: 19px !important;
+    font-size: 9px !important;
+  }
+
+  .numbered-title strong,
+  .section-label,
+  .panel-head h1 {
+    font-size: 11px !important;
+    line-height: 1.15 !important;
+  }
+
+  .builder-hint,
+  .builder-section p,
+  .toggle-row small {
+    margin-top: 4px !important;
+    font-size: 8.5px !important;
+    line-height: 1.25 !important;
+  }
+
+  .field > span {
+    margin-bottom: 3px !important;
+    font-size: 8.5px !important;
+    line-height: 1.1 !important;
+  }
+
+  .field input,
+  .field select,
+  .field textarea,
+  .builder-section input,
+  .builder-section select {
+    min-height: 36px !important;
+    padding: 6px 8px !important;
+    font-size: 12px !important;
+    line-height: 1.15 !important;
+    border-radius: 8px !important;
+  }
+
+  /* Trade families remain one four-button row on phones. */
+  .trade-tabs {
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    gap: 4px !important;
+  }
+
+  .trade-tabs button {
+    min-width: 0 !important;
+    min-height: 36px !important;
+    padding: 4px 2px !important;
+    font-size: 9.5px !important;
+    line-height: 1.05 !important;
+    white-space: normal !important;
+  }
+
+  /* Contract side + prediction stay beside each other. */
+  .trade-config {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 6px !important;
+    margin-top: 6px !important;
+  }
+
+  .market-mode {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 5px !important;
+  }
+
+  .market-chips {
+    gap: 4px !important;
+  }
+
+  .market-chips button,
+  .market-mode button {
+    min-height: 34px !important;
+    padding: 4px 6px !important;
+    font-size: 9px !important;
+  }
+
+  /* Strategy modes stay side-by-side; explanatory captions are hidden on phones. */
+  .mode-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 4px !important;
+  }
+
+  .mode-card {
+    min-height: 48px !important;
+    padding: 5px 4px !important;
+  }
+
+  .mode-card > span {
+    font-size: 12px !important;
+  }
+
+  .mode-card > strong {
+    font-size: 9px !important;
+    line-height: 1.05 !important;
+  }
+
+  .mode-card > small {
+    display: none !important;
+  }
+
+  /* Condition rows keep their columns. The row itself scrolls horizontally
+     rather than converting each control into another vertical block. */
+  .rules-stack {
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .rule-card {
+    gap: 6px !important;
+    padding: 8px !important;
+  }
+
+  .digit-rule,
+  .percentage-rule,
+  .tick-direction-rule {
+    grid-template-columns: repeat(4, minmax(128px, 1fr)) !important;
+    min-width: 560px !important;
+  }
+
+  .rule-title {
+    min-width: 0 !important;
+  }
+
+  .rule-title strong {
+    font-size: 9px !important;
+  }
+
+  /* Re-analysis and money management share one compact horizontal band. */
+  .builder-two-col {
+    display: grid !important;
+    grid-template-columns: minmax(170px, .55fr) minmax(520px, 1.45fr) !important;
+    gap: 6px !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .builder-two-col > .builder-section {
+    margin-bottom: 0 !important;
+  }
+
+  .money-grid {
+    display: grid !important;
+    grid-template-columns: repeat(5, minmax(96px, 1fr)) !important;
+    gap: 5px !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .toggle-row {
+    gap: 7px !important;
+    padding: 7px 8px !important;
+  }
+
+  .virtual-hook-section .toggle-row small {
+    display: none !important;
+  }
+
+  .live-summary {
+    padding: 7px 8px !important;
+    gap: 6px !important;
+  }
+
+  .live-summary p {
+    margin: 0 !important;
+    font-size: 9px !important;
+  }
+
+  .builder-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 6px !important;
+  }
+
+  .builder-actions button,
+  .builder-actions .primary-action,
+  .builder-actions .secondary-action {
+    min-height: 38px !important;
+    padding: 6px 8px !important;
+    font-size: 10px !important;
+  }
+
+  .oauth-direct-box {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 9px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+  }
+
+  .oauth-direct-box strong,
+  .oauth-direct-box p {
+    margin: 0;
+  }
+
+  .oauth-direct-box strong {
+    font-size: 10px;
+  }
+
+  .oauth-direct-box p {
+    margin-top: 2px;
+    font-size: 8.5px !important;
+  }
+
+  .oauth-direct-box a {
+    min-height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 9px;
+    border-radius: 8px;
+    text-decoration: none;
+    font-size: 9px;
+    font-weight: 800;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 420px) {
+  .builder-shell {
+    padding: 4px !important;
+  }
+
+  .strategy-builder-card,
+  .builder-panel {
+    padding: 6px !important;
+  }
+
+  .builder-section {
+    padding: 7px !important;
+  }
+
+  .builder-stats,
+  .builder-stats.compact {
+    grid-template-columns: repeat(5, minmax(104px, 1fr)) !important;
+    gap: 5px !important;
+  }
+
+  .builder-stat {
+    min-height: 58px !important;
+    padding: 6px 7px !important;
+  }
+
+  .builder-stat > strong {
+    font-size: 15px !important;
+  }
+
+  .trade-tabs button {
+    min-height: 34px !important;
+    font-size: 9px !important;
+  }
+
+  .trade-config {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .mode-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
+  .money-grid {
+    grid-template-columns: repeat(5, minmax(92px, 1fr)) !important;
+  }
+}
