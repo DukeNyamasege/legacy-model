@@ -75,11 +75,13 @@ jobs:
           app/custom_strategy_settlement.py
           app/custom_strategy_worker.py
           app/custom_strategy_runtime_api.py
+          app/dashboard_live_events.py
           app/oauth_client.py
           app/oauth_direct_account_authority.py
           app/real_demo_trading_support.py
           tests/test_custom_direct_runtime.py
           tests/test_current_custom_runtime_fix.py
+          tests/test_dashboard_live_performance.py
           tests/test_oauth_direct_mobile_compact.py
 
       - name: Typecheck direct custom runtime
@@ -94,6 +96,7 @@ jobs:
           app/custom_strategy_settlement.py
           app/custom_strategy_worker.py
           app/custom_strategy_runtime_api.py
+          app/dashboard_live_events.py
           app/oauth_client.py
           app/oauth_direct_account_authority.py
           app/real_demo_trading_support.py
@@ -111,6 +114,7 @@ jobs:
         run: |
           python -m unittest -q tests.test_custom_direct_runtime
           python -m unittest -q tests.test_current_custom_runtime_fix
+          python -m unittest -q tests.test_dashboard_live_performance
           python -m unittest -q tests.test_stop_history_and_mobile_ui
           python -m unittest -q tests.test_oauth_direct_mobile_compact
           python -m unittest -q tests.test_seamless_execution_final
