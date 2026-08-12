@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -110,6 +111,58 @@ class MobileFirstCompactBuilderContractTests(unittest.TestCase):
         self.assertIn('label.textContent = "Balance"', source)
         self.assertIn("applySnapshot(lastSnapshot);", source)
         self.assertNotIn("requestAnimationFrame(() => applySnapshot(lastSnapshot))", source)
+
+    def test_mobile_header_is_replaced_by_left_drawer(self) -> None:
+        css = (ROOT / "dashboard" / "mobile-menu-exit-spot.css").read_text(
+            encoding="utf-8"
+        )
+        source = (ROOT / "dashboard" / "mobile-menu-exit-spot.js").read_text(
+            encoding="utf-8"
+        )
+        index = (ROOT / "dashboard" / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn("@media (max-width: 760px)", css)
+        self.assertIn(".builder-header {\n    display: none !important;", css)
+        self.assertIn("transform: translateX(-104%)", css)
+        self.assertIn("inset: 0 auto 0 0", css)
+        self.assertIn("foa-mobile-menu-button", source)
+        self.assertIn('data-mobile-view="main"', source)
+        self.assertIn('data-mobile-view="settings"', source)
+        self.assertIn('data-mobile-view="trades"', source)
+        self.assertIn("data-mobile-theme-toggle", source)
+        self.assertIn("data-mobile-risk", source)
+        self.assertIn("data-mobile-logout", source)
+        self.assertIn("currentAccountLabel()", source)
+        self.assertIn("reorderTradeStats()", source)
+        self.assertIn('./mobile-menu-exit-spot.css', index)
+        self.assertIn('./mobile-menu-exit-spot.js', index)
+
+        subprocess.run(
+            ["node", "--check", str(ROOT / "dashboard" / "mobile-menu-exit-spot.js")],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_exit_spot_column_uses_settlement_digit_without_backend_changes(self) -> None:
+        source = (ROOT / "dashboard" / "mobile-menu-exit-spot.js").read_text(
+            encoding="utf-8"
+        )
+        css = (ROOT / "dashboard" / "mobile-menu-exit-spot.css").read_text(
+            encoding="utf-8"
+        )
+        backend = (ROOT / "app" / "final_public_controls.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('label.textContent = "Exit spot"', source)
+        self.assertIn("row.exit_digit ?? row.actual_last_digit", source)
+        self.assertIn("row.exit_spot ?? row.exit_tick", source)
+        self.assertIn("trade-exit-spot", source)
+        self.assertIn("trade-exit-spot", css)
+        self.assertIn('"exit_spot": trade.exit_tick', backend)
+        self.assertIn('"exit_digit": trade.exit_digit', backend)
+        self.assertIn("minmax(0, .62fr)", css)
 
     def test_final_asset_route_appends_mobile_override_after_base_css(self) -> None:
         authority = (ROOT / "app" / "builder_first_dashboard_authority.py").read_text(
