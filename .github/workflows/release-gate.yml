@@ -20,6 +20,7 @@ jobs:
     env:
       POSTGRES_PASSWORD: ci-postgres-password
       CONTROL_API_KEY: ci-control-api-key
+      DASHBOARD_STREAM_SIGNING_KEY: ci-dashboard-stream-signing-key-123456789
       DERIV_TOKEN_ENCRYPTION_KEY: ""
       DERIV_TRADING_ENABLED: "false"
       TRADING_MODE: demo
@@ -54,6 +55,7 @@ jobs:
       - name: Validate deployment shell, Compose and migrations
         run: |
           sh -n scripts/deploy_vps.sh scripts/update_vps.sh \
+            scripts/deploy_dedicated_backend.sh \
             scripts/run_legacy_release_tests.sh \
             scripts/cleanup_vps_artifacts.sh \
             scripts/cleanup_repository_state.sh \
@@ -70,6 +72,7 @@ jobs:
           ruff check --output-format=github --select E9,F63,F7,F82
           app/account_execution_session.py
           app/account_scoped_websocket_runtime.py
+          app/backend_only_surface.py
           app/custom_strategy_current_runtime_fix.py
           app/custom_strategy_direct_runtime.py
           app/custom_strategy_runtime_lifecycle.py
@@ -77,12 +80,17 @@ jobs:
           app/custom_strategy_worker.py
           app/custom_strategy_runtime_api.py
           app/dashboard_live_events.py
+          app/netlify_backend_api.py
+          app/netlify_realtime_gateway.py
+          app/netlify_worker_bridge.py
           app/oauth_client.py
           app/oauth_direct_account_authority.py
+          app/public_websocket_resilience.py
           app/real_demo_trading_support.py
           tests/test_custom_direct_runtime.py
           tests/test_current_custom_runtime_fix.py
           tests/test_dashboard_live_performance.py
+          tests/test_netlify_vps_split.py
           tests/test_oauth_direct_mobile_compact.py
 
       - name: Typecheck direct custom runtime
@@ -91,6 +99,7 @@ jobs:
           --disable-error-code=misc --disable-error-code=arg-type
           app/account_execution_session.py
           app/account_scoped_websocket_runtime.py
+          app/backend_only_surface.py
           app/custom_strategy_current_runtime_fix.py
           app/custom_strategy_direct_runtime.py
           app/custom_strategy_runtime_lifecycle.py
@@ -98,8 +107,12 @@ jobs:
           app/custom_strategy_worker.py
           app/custom_strategy_runtime_api.py
           app/dashboard_live_events.py
+          app/netlify_backend_api.py
+          app/netlify_realtime_gateway.py
+          app/netlify_worker_bridge.py
           app/oauth_client.py
           app/oauth_direct_account_authority.py
+          app/public_websocket_resilience.py
           app/real_demo_trading_support.py
 
       - name: Check dashboard JavaScript syntax
@@ -109,13 +122,17 @@ jobs:
           node --check dashboard/realtime-mode-hardening.js
           node --check dashboard/custom-martingale.js
           node --check dashboard/custom-runtime-client.js
+          node --check dashboard/netlify-api-boundary.js
+          node --check dashboard/netlify-realtime-client.js
           node --check dashboard/oauth-direct-runtime.js
+          node --check scripts/build-netlify.mjs
 
       - name: Run focused release tests
         run: |
           python -m unittest -q tests.test_custom_direct_runtime
           python -m unittest -q tests.test_current_custom_runtime_fix
           python -m unittest -q tests.test_dashboard_live_performance
+          python -m unittest -q tests.test_netlify_vps_split
           python -m unittest -q tests.test_stop_history_and_mobile_ui
           python -m unittest -q tests.test_oauth_direct_mobile_compact
           python -m unittest -q tests.test_seamless_execution_final
@@ -137,8 +154,18 @@ jobs:
           python -m unittest -q test_aidr_recovery_v2.py tests.test_aidr_virtual_soft_gate tests.test_independent_websocket_execution tests.test_private_websocket_credentials
           sh scripts/run_legacy_release_tests.sh
 
-      - name: Production dashboard build
-        run: npm run build
+      - name: Production Netlify frontend build
+        env:
+          BACKEND_ORIGIN: https://api.release-gate.example
+        run: |
+          npm run build
+          test -f dist/index.html
+          test -f dist/_redirects
+          grep -Fq '/api/* https://api.release-gate.example/:splat 200' dist/_redirects
+          grep -Fq '/oauth/* https://api.release-gate.example/oauth/:splat 200' dist/_redirects
+          grep -Fq 'stream-base-url" content="wss://api.release-gate.example"' dist/index.html
+          grep -Fq '/netlify-api-boundary.js' dist/index.html
+          grep -Fq '/netlify-realtime-client.js' dist/index.html
 
       - name: Build API image
         run: docker build --target api -t legacy-model-release-gate-api:${{ github.sha }} .
