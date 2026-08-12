@@ -34,9 +34,12 @@ git branch --merged main \
     done
 
 echo "Removing ignored build/cache files only..."
-# -X removes only ignored files. Untracked credentials, .env and database files are
-# not removed unless they are already intentionally listed in .gitignore.
-git clean -fdX
+# Preserve runtime secrets and retained operational data even when they are ignored.
+git clean -fdX \
+  -e .env \
+  -e '.env.*' \
+  -e deploy-backups/ \
+  -e performance-reports/
 
 echo "Repacking Git objects and pruning unreachable local objects..."
 git reflog expire --expire=30.days.ago --all || true
@@ -46,7 +49,7 @@ echo "Running Docker/deployment artifact cleanup..."
 sh scripts/cleanup_vps_artifacts.sh repository-cleanup
 
 echo ""
-echo "Repository cleanup complete. Current main worktree and running production containers were preserved."
+echo "Repository cleanup complete. Current main worktree, runtime secrets, retained backups and running production containers were preserved."
 git status --short
 git branch --show-current
 git rev-parse HEAD
