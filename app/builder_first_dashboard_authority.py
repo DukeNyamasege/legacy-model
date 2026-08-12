@@ -7,11 +7,13 @@ from fastapi import Request
 from fastapi.responses import HTMLResponse, Response
 
 import app.api as base_api
+from app.custom_strategy_api import install_custom_strategy_api
+from app.custom_strategy_runtime_api import install_custom_strategy_runtime_api
 from app.dashboard_stability_fix import _remove_route
 
 
 _INSTALLED = False
-UI_VERSION = "20260812-builder-first-authority-2"
+UI_VERSION = "20260812-builder-first-authority-3"
 
 
 def _headers(extra: dict[str, str] | None = None) -> dict[str, str]:
@@ -20,6 +22,7 @@ def _headers(extra: dict[str, str] | None = None) -> dict[str, str]:
         "Pragma": "no-cache",
         "X-FOA-UI-Version": UI_VERSION,
         "X-FOA-Builder-First-Dashboard": "1",
+        "X-FOA-Custom-Direct-Runtime": "1",
     }
     if extra:
         headers.update(extra)
@@ -69,12 +72,23 @@ def _dashboard_html(request: Request) -> tuple[str, bool]:
         f'src="/ui/dashboard-actions-v2.js?v={UI_VERSION}"',
     )
 
+    # This pre-client is loaded before dashboard-v2.js so one Save Builder click
+    # becomes one POST /me/custom-strategy request carrying both execution settings
+    # and strategy configuration. It also paints the backend runtime state instead
+    # of inferring RUNNING from button text.
+    direct_script = f'<script src="/ui/custom-runtime-client.js?v={UI_VERSION}"></script>'
+    marker = '<script src="/ui/dashboard-v2.js'
+    if marker in html:
+        html = html.replace(marker, f"{direct_script}\n  {marker}", 1)
+    else:
+        html = html.replace("</head>", f"  {direct_script}\n</head>", 1)
+
     session = _boot_session(request)
     if not session:
         return html, False
     payload = json.dumps(session, separators=(",", ":")).replace("</", "<\\/")
     script = f"<script>window.FOA_BOOT_SESSION={payload};</script>"
-    marker = '<script src="/ui/dashboard-v2.js'
+    marker = '<script src="/ui/custom-runtime-client.js'
     if marker in html:
         html = html.replace(marker, f"{script}\n  {marker}", 1)
     else:
@@ -87,22 +101,23 @@ def _read_dashboard_asset(name: str) -> str:
 
 
 def install_builder_first_dashboard_authority(app: Any) -> None:
-    """Make the simplified Custom Strategy Builder shell the final UI authority.
-
-    Several legacy compatibility layers still register dashboard routes during
-    startup. This installer must run last so production cannot fall back to the
-    old Overview/AIDR interface after the builder-first migration.
-    """
+    """Make Custom Strategy Builder + direct account execution the final authority."""
 
     global _INSTALLED
     if _INSTALLED:
         return
+
+    # Install/re-assert Custom Strategy routes after every historical API layer.
+    # The direct runtime API replaces lifecycle/execution-alert paths last.
+    install_custom_strategy_api(app)
+    install_custom_strategy_runtime_api(app)
 
     for path in (
         "/",
         "/ui/dashboard-v2.css",
         "/ui/dashboard-v2.js",
         "/ui/dashboard-actions-v2.js",
+        "/ui/custom-runtime-client.js",
         "/ui/simplified-dashboard.js",
     ):
         _remove_route(app, path, "GET")
@@ -154,6 +169,14 @@ def install_builder_first_dashboard_authority(app: Any) -> None:
             headers=_headers(),
         )
 
+    @app.get("/ui/custom-runtime-client.js", include_in_schema=False)
+    def custom_runtime_client_js() -> Response:
+        return Response(
+            _read_dashboard_asset("custom-runtime-client.js"),
+            media_type="application/javascript",
+            headers=_headers(),
+        )
+
     @app.get("/ui/simplified-dashboard.js", include_in_schema=False)
     def builder_first_compat_js() -> Response:
         return Response(
@@ -178,10 +201,15 @@ def install_builder_first_dashboard_authority(app: Any) -> None:
     def builder_first_actions_js_head() -> Response:
         return Response(content=b"", media_type="application/javascript", headers=_headers())
 
+    @app.head("/ui/custom-runtime-client.js", include_in_schema=False)
+    def custom_runtime_client_js_head() -> Response:
+        return Response(content=b"", media_type="application/javascript", headers=_headers())
+
     @app.head("/ui/simplified-dashboard.js", include_in_schema=False)
     def builder_first_compat_js_head() -> Response:
         return Response(content=b"", media_type="application/javascript", headers=_headers())
 
     app.state.builder_first_dashboard_authority_installed = True
+    app.state.custom_direct_runtime_ui_installed = True
     app.state.dashboard_ui_version = UI_VERSION
     _INSTALLED = True

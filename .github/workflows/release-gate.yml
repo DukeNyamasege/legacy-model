@@ -41,7 +41,9 @@ jobs:
           package-manager-cache: false
 
       - name: Install Python dependencies
-        run: python -m pip install -r requirements.txt
+        run: |
+          python -m pip install -r requirements.txt
+          python -m pip install ruff mypy
 
       - name: Create CI-only Compose environment file
         run: |
@@ -62,15 +64,39 @@ jobs:
       - name: Compile Python
         run: python -m compileall -q app scripts tests migrations
 
+      - name: Lint direct custom runtime
+        run: >-
+          ruff check --select E9,F63,F7,F82
+          app/account_execution_session.py
+          app/custom_strategy_direct_runtime.py
+          app/custom_strategy_runtime_lifecycle.py
+          app/custom_strategy_settlement.py
+          app/custom_strategy_worker.py
+          app/custom_strategy_runtime_api.py
+          tests/test_custom_direct_runtime.py
+
+      - name: Typecheck direct custom runtime
+        run: >-
+          mypy --follow-imports=skip --ignore-missing-imports --allow-untyped-defs
+          --disable-error-code=misc --disable-error-code=arg-type
+          app/account_execution_session.py
+          app/custom_strategy_direct_runtime.py
+          app/custom_strategy_runtime_lifecycle.py
+          app/custom_strategy_settlement.py
+          app/custom_strategy_worker.py
+          app/custom_strategy_runtime_api.py
+
       - name: Check dashboard JavaScript syntax
         run: |
           node --check dashboard/dashboard-v2.js
           node --check dashboard/dashboard-actions-v2.js
           node --check dashboard/realtime-mode-hardening.js
           node --check dashboard/custom-martingale.js
+          node --check dashboard/custom-runtime-client.js
 
       - name: Run focused release tests
         run: |
+          python -m unittest -q tests.test_custom_direct_runtime
           python -m unittest -q tests.test_stop_history_and_mobile_ui
           python -m unittest -q tests.test_seamless_execution_final
           python -m unittest -q tests.test_bulk_credential_failure_hardening
@@ -90,6 +116,9 @@ jobs:
           python -m unittest -q test_custom_martingale.py
           python -m unittest -q test_aidr_recovery_v2.py tests.test_aidr_virtual_soft_gate tests.test_independent_websocket_execution tests.test_private_websocket_credentials
           sh scripts/run_legacy_release_tests.sh
+
+      - name: Production dashboard build
+        run: npm run build
 
       - name: Build API image
         run: docker build --target api -t legacy-model-release-gate-api:${{ github.sha }} .

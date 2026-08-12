@@ -47,7 +47,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-underdog}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB:-underdog_test2}
       DEPLOYMENT_ID: vps-api
-      CUSTOM_STRATEGY_ONLY_RUNTIME: ${CUSTOM_STRATEGY_ONLY_RUNTIME:-true}
+      CUSTOM_STRATEGY_ONLY_RUNTIME: "true"
     depends_on:
       database:
         condition: service_healthy
@@ -70,19 +70,18 @@ services:
     restart: unless-stopped
     command: >-
       sh -ec "python scripts/wait_for_database.py --timeout 180
-      && exec python -m app.worker"
+      && exec python -m app.custom_strategy_worker"
     env_file: .env
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-underdog}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB:-underdog_test2}
-      DEPLOYMENT_ID: vps-worker
-      CUSTOM_STRATEGY_ONLY_RUNTIME: ${CUSTOM_STRATEGY_ONLY_RUNTIME:-true}
+      DEPLOYMENT_ID: vps-custom-worker
+      CUSTOM_STRATEGY_ONLY_RUNTIME: "true"
       LIVE_TICK_LOG_LINES: ${LIVE_TICK_LOG_LINES:-false}
-      TICK_PERSIST_BATCH_SIZE: ${TICK_PERSIST_BATCH_SIZE:-50}
-      TICK_PERSIST_FLUSH_SECONDS: ${TICK_PERSIST_FLUSH_SECONDS:-1.0}
 
-      # Shared REST pool is used only for account discovery and OTP generation.
-      # Keep setup traffic below the financial WebSocket hot path pressure.
-      DERIV_HTTP_CONNECTOR_LIMIT: ${DERIV_HTTP_CONNECTOR_LIMIT:-16}
+      # Shared REST pool is retained only for account discovery and authenticated
+      # OTP/session setup. Custom financial purchases are direct account WebSocket
+      # buys against the exact proposal ID.
+      DERIV_HTTP_CONNECTOR_LIMIT: ${DERIV_HTTP_CONNECTOR_LIMIT:-8}
       DERIV_HTTP_LIMIT_PER_HOST: ${DERIV_HTTP_LIMIT_PER_HOST:-4}
       DERIV_HTTP_CONCURRENCY: ${DERIV_HTTP_CONCURRENCY:-4}
       DERIV_HTTP_TOTAL_TIMEOUT_SECONDS: ${DERIV_HTTP_TOTAL_TIMEOUT_SECONDS:-20}
@@ -90,40 +89,16 @@ services:
       DERIV_ACCOUNT_LIST_CACHE_SECONDS: ${DERIV_ACCOUNT_LIST_CACHE_SECONDS:-8}
       DERIV_HTTP_RETRY_BASE_SECONDS: ${DERIV_HTTP_RETRY_BASE_SECONDS:-0.35}
 
-      # A qualified signal is consumed by one strategy-specific round-robin
-      # cohort. Each selected account still sends its own authenticated WS buy.
-      EXECUTION_COHORT_SIZE: ${EXECUTION_COHORT_SIZE:-10}
-      EXECUTION_COHORT_NORMAL_RESERVE: ${EXECUTION_COHORT_NORMAL_RESERVE:-2}
-      EXECUTION_COHORT_HANDOVER_SECONDS: ${EXECUTION_COHORT_HANDOVER_SECONDS:-8}
-      EXECUTION_TRIGGER_PROPOSAL_CANDIDATES: ${EXECUTION_TRIGGER_PROPOSAL_CANDIDATES:-3}
-      EXECUTION_TRIGGER_PROPOSAL_INTERVAL_SECONDS: ${EXECUTION_TRIGGER_PROPOSAL_INTERVAL_SECONDS:-0.10}
-      EXECUTION_PROPOSAL_START_INTERVAL_SECONDS: ${EXECUTION_PROPOSAL_START_INTERVAL_SECONDS:-0.15}
-
-      # Keep only two authenticated sockets available as nonfinancial proposal
-      # relays. They never buy unless their accounts join the selected cohort.
-      DERIV_PROPOSAL_RELAY_COUNT: ${DERIV_PROPOSAL_RELAY_COUNT:-2}
-      DERIV_PROPOSAL_RELAY_READY_TIMEOUT_SECONDS: ${DERIV_PROPOSAL_RELAY_READY_TIMEOUT_SECONDS:-10}
-      DERIV_PROPOSAL_RELAY_REQUEST_TIMEOUT_SECONDS: ${DERIV_PROPOSAL_RELAY_REQUEST_TIMEOUT_SECONDS:-6}
-      DERIV_PROPOSAL_RELAY_WARM_RETRIES: ${DERIV_PROPOSAL_RELAY_WARM_RETRIES:-5}
-
-      # Pace OTP handshakes, private buys and logical account groups. These are
-      # not bulk-purchase or copy-trading settings.
+      # Private sessions exist only for enabled account runtimes. These settings
+      # pace connection/OTP setup and reconnects; there are no cohorts or relays.
       PRIVATE_WS_CONNECT_INTERVAL_SECONDS: ${PRIVATE_WS_CONNECT_INTERVAL_SECONDS:-0.35}
       PRIVATE_WS_HANDSHAKE_CONCURRENCY: ${PRIVATE_WS_HANDSHAKE_CONCURRENCY:-2}
-      PRIVATE_WS_BUY_CONCURRENCY: ${PRIVATE_WS_BUY_CONCURRENCY:-4}
-      PRIVATE_WS_BUY_START_INTERVAL_SECONDS: ${PRIVATE_WS_BUY_START_INTERVAL_SECONDS:-0.08}
-      DERIV_WS_GROUP_SIZE: ${DERIV_WS_GROUP_SIZE:-10}
-      DERIV_WS_GROUP_CONCURRENCY: ${DERIV_WS_GROUP_CONCURRENCY:-1}
-      DERIV_WS_GROUP_START_INTERVAL_SECONDS: ${DERIV_WS_GROUP_START_INTERVAL_SECONDS:-0.10}
-      DERIV_WS_ACCOUNT_BUY_TIMEOUT_SECONDS: ${DERIV_WS_ACCOUNT_BUY_TIMEOUT_SECONDS:-12}
-      DERIV_WS_CONFIRMATION_RECONCILE_SECONDS: ${DERIV_WS_CONFIRMATION_RECONCILE_SECONDS:-0.20}
-      TRANSPORT_OUTCOME_TTL_SECONDS: ${TRANSPORT_OUTCOME_TTL_SECONDS:-600}
+      PRIVATE_WS_RATE_LIMIT_BACKOFF_SECONDS: ${PRIVATE_WS_RATE_LIMIT_BACKOFF_SECONDS:-60}
+      PRIVATE_WS_MAX_BACKOFF_SECONDS: ${PRIVATE_WS_MAX_BACKOFF_SECONDS:-300}
+      PRIVATE_WS_RECONNECT_JITTER_SECONDS: ${PRIVATE_WS_RECONNECT_JITTER_SECONDS:-1.0}
+      PRIVATE_WS_OTP_FAILURE_BACKOFF_SECONDS: ${PRIVATE_WS_OTP_FAILURE_BACKOFF_SECONDS:-5.0}
 
       INTERNAL_DASHBOARD_REFRESH_URL: http://api:8080/control/internal/dashboard-settlement-refresh
-      DEPLOYMENT_RELEASE_ID: ${DEPLOYMENT_RELEASE_ID:-}
-      DEPLOYMENT_RELEASE_FROM: ${DEPLOYMENT_RELEASE_FROM:-}
-      DEPLOYMENT_RELEASE_CHANGE_COUNT: ${DEPLOYMENT_RELEASE_CHANGE_COUNT:-0}
-      DEPLOYMENT_RELEASE_MESSAGE_B64: ${DEPLOYMENT_RELEASE_MESSAGE_B64:-}
     volumes:
       - test2_models:/app/model_artifacts
     depends_on:
