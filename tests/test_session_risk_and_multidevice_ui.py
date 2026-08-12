@@ -84,7 +84,8 @@ class VirtualHookParityAndRecoveryTests(unittest.TestCase):
         self.assertIn('"reconnecting"', recovery)
         self.assertIn("enabled_preserved=true", recovery)
         self.assertIn("_schedule_runtime_repair", recovery)
-        self.assertIn("_drop_hot_runtime_only", recovery)
+        self.assertIn("_drop_stale_execution_runtime", recovery)
+        self.assertIn("preserve _custom_direct_virtual_due", recovery)
         self.assertNotIn("update_managed_account(int(managed_id), enabled=False)", recovery)
         self.assertGreater(
             worker.index("install_seamless_execution_recovery()"),
