@@ -73,7 +73,9 @@ jobs:
           app/custom_strategy_settlement.py
           app/custom_strategy_worker.py
           app/custom_strategy_runtime_api.py
+          app/oauth_client.py
           tests/test_custom_direct_runtime.py
+          tests/test_oauth_direct_mobile_compact.py
 
       - name: Typecheck direct custom runtime
         run: >-
@@ -85,6 +87,7 @@ jobs:
           app/custom_strategy_settlement.py
           app/custom_strategy_worker.py
           app/custom_strategy_runtime_api.py
+          app/oauth_client.py
 
       - name: Check dashboard JavaScript syntax
         run: |
@@ -93,11 +96,13 @@ jobs:
           node --check dashboard/realtime-mode-hardening.js
           node --check dashboard/custom-martingale.js
           node --check dashboard/custom-runtime-client.js
+          node --check dashboard/oauth-direct-runtime.js
 
       - name: Run focused release tests
         run: |
           python -m unittest -q tests.test_custom_direct_runtime
           python -m unittest -q tests.test_stop_history_and_mobile_ui
+          python -m unittest -q tests.test_oauth_direct_mobile_compact
           python -m unittest -q tests.test_seamless_execution_final
           python -m unittest -q tests.test_bulk_credential_failure_hardening
           python -m unittest -q tests.test_credential_quarantine_runtime_guard

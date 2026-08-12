@@ -13,7 +13,7 @@ from app.dashboard_stability_fix import _remove_route
 
 
 _INSTALLED = False
-UI_VERSION = "20260812-builder-first-authority-3"
+UI_VERSION = "20260812-builder-first-authority-4"
 
 
 def _headers(extra: dict[str, str] | None = None) -> dict[str, str]:
@@ -147,19 +147,25 @@ def install_builder_first_dashboard_authority(app: Any) -> None:
 
     @app.get("/ui/dashboard-v2.css", include_in_schema=False)
     def builder_first_css() -> Response:
-        return Response(
-            _read_dashboard_asset("dashboard-v2.css"),
-            media_type="text/css",
-            headers=_headers(),
+        # Keep the existing desktop stylesheet intact and append the final phone
+        # density layer so old max-width rules cannot stack the builder vertically.
+        css = (
+            _read_dashboard_asset("dashboard-v2.css")
+            + "\n\n"
+            + _read_dashboard_asset("mobile-first-compact.css")
         )
+        return Response(css, media_type="text/css", headers=_headers())
 
     @app.get("/ui/dashboard-v2.js", include_in_schema=False)
     def builder_first_dashboard_js() -> Response:
-        return Response(
-            _read_dashboard_asset("dashboard-v2.js"),
-            media_type="application/javascript",
-            headers=_headers(),
+        # The direct-OAuth helper runs after the main renderer and replaces the old
+        # manual-PAT copy without creating another browser request or execution path.
+        source = (
+            _read_dashboard_asset("dashboard-v2.js")
+            + "\n\n"
+            + _read_dashboard_asset("oauth-direct-runtime.js")
         )
+        return Response(source, media_type="application/javascript", headers=_headers())
 
     @app.get("/ui/dashboard-actions-v2.js", include_in_schema=False)
     def builder_first_actions_js() -> Response:
