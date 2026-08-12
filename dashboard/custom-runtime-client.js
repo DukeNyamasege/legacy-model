@@ -21,6 +21,7 @@
   const GET_TIMEOUT_MS = 4500;
   const POST_TIMEOUT_MS = 12000;
   const SUMMARY_BACKGROUND_TTL_MS = 60000;
+  const TRADE_RESET_PREFIX = "foa-trade-session-reset-v1";
 
   // The old renderer owns a full-screen loader whenever any dashboard request is
   // busy. Keep the rendered UI usable instead: all reads now have bounded timeouts,
@@ -194,15 +195,80 @@
     });
   }
 
+  function storageGet(key) {
+    try {
+      return window.localStorage.getItem(key);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function liveAccountType() {
+    const value = String(liveMe?.account_type || window.FOA_BOOT_SESSION?.account_type || "demo").toLowerCase();
+    return value === "real" ? "real" : "demo";
+  }
+
+  function liveAccountMask() {
+    return String(
+      liveMe?.account_id_masked
+      || liveMe?.account_id
+      || window.FOA_BOOT_SESSION?.account_id_masked
+      || "public",
+    );
+  }
+
+  function tradeResetKey() {
+    return `${TRADE_RESET_PREFIX}:${liveAccountType()}:${liveAccountMask()}`;
+  }
+
+  function tradeResetTime() {
+    const raw = storageGet(tradeResetKey());
+    if (!raw) return 0;
+    const parsed = Date.parse(raw);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  function rowTradeTime(row) {
+    const raw = row?.purchase_time || row?.provider_purchase_time || row?.created_at || "";
+    const parsed = Date.parse(raw);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  function visibleLiveTrades() {
+    const rows = Array.isArray(liveTrades?.trades) ? liveTrades.trades : [];
+    const resetAt = tradeResetTime();
+    if (!resetAt) return rows;
+    return rows.filter((row) => {
+      const stamp = rowTradeTime(row);
+      return stamp > 0 && stamp >= resetAt;
+    });
+  }
+
+  function visibleLiveMetrics() {
+    const resetAt = tradeResetTime();
+    if (!resetAt) return null;
+    const rows = visibleLiveTrades();
+    const wins = rows.filter((row) => String(row.outcome || "").toUpperCase() === "WIN").length;
+    const losses = rows.filter((row) => String(row.outcome || "").toUpperCase() === "LOSS").length;
+    const profit = rows.reduce((total, row) => total + Number(row.profit || 0), 0);
+    return {
+      total: rows.length,
+      wins,
+      losses,
+      profit,
+    };
+  }
+
   function patchLiveMetrics() {
     if (!liveMe && !liveTrades) return;
     const currency = liveMe?.currency || "USD";
     const summary = liveTrades?.summary || {};
     const stats = liveMe?.stats || {};
-    const total = Number(summary.total ?? stats.trades ?? 0);
-    const wins = Number(summary.wins ?? stats.wins ?? 0);
-    const losses = Number(summary.losses ?? stats.losses ?? 0);
-    const profit = Number(summary.profit ?? stats.profit ?? 0);
+    const resetMetrics = visibleLiveMetrics();
+    const total = resetMetrics ? resetMetrics.total : Number(summary.total ?? stats.trades ?? 0);
+    const wins = resetMetrics ? resetMetrics.wins : Number(summary.wins ?? stats.wins ?? 0);
+    const losses = resetMetrics ? resetMetrics.losses : Number(summary.losses ?? stats.losses ?? 0);
+    const profit = resetMetrics ? resetMetrics.profit : Number(summary.profit ?? stats.profit ?? 0);
 
     if (liveMe) statValue("Balance", formatMoney(liveMe.balance || 0, currency));
     statValue("Today's P/L", formatMoney(profit, currency));
@@ -249,12 +315,14 @@
       summary?.losses || 0,
       summary?.profit || 0,
       summary?.virtual_observations || 0,
+      tradeResetTime(),
     ].join("|");
   }
 
   function patchRecentTrades() {
-    const rows = Array.isArray(liveTrades?.trades) ? liveTrades.trades : null;
-    if (!rows) return;
+    const sourceRows = Array.isArray(liveTrades?.trades) ? liveTrades.trades : null;
+    if (!sourceRows) return;
+    const rows = visibleLiveTrades();
     const currency = liveMe?.currency || "USD";
     const revision = tradeRevision(rows, liveTrades?.summary || {});
 
@@ -449,6 +517,17 @@
     ensureLiveSource();
     scheduleLiveRefresh("pageshow", 0);
   });
+  document.addEventListener("click", (event) => {
+    const button = event.target?.closest?.("[data-clear-local-trades]");
+    if (!button) return;
+    // dashboard-v2.js owns the confirmation and writes the local reset marker.
+    // Run after that handler so the SSE painter immediately respects the same reset.
+    window.setTimeout(() => {
+      if (!tradeResetTime()) return;
+      applyLiveSnapshot();
+      scheduleLiveRefresh("clear-trades", 0);
+    }, 0);
+  });
 
   // The main renderer replaces #foa-simple-app.innerHTML. Re-apply only after that
   // direct replacement; ignore mutations caused by our own live row/text patches.
@@ -472,6 +551,6 @@
   ensureLiveSource();
   scheduleLiveRefresh("boot", 0);
 
-  window.FOA_CUSTOM_DIRECT_RUNTIME_CLIENT = "20260812-live-sse-v4";
+  window.FOA_CUSTOM_DIRECT_RUNTIME_CLIENT = "20260812-live-sse-v5-clear-trades";
   window.FOA_DASHBOARD_REFRESH_MODE = "sse-primary-bounded-fallback";
 })();
