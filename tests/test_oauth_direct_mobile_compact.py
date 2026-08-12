@@ -75,7 +75,8 @@ class MobileFirstCompactBuilderContractTests(unittest.TestCase):
         self.assertIn("grid-template-columns: 1fr", two_col)
         self.assertIn("overflow: visible", two_col)
 
-        rules = css.split(".rule-card,", 1)[1].split("}", 1)[0]
+        conditions = css.split("/* Conditions wrap into two columns.", 1)[1]
+        rules = conditions.split(".rule-card,", 1)[1].split("}", 1)[0]
         self.assertIn("repeat(2, minmax(0, 1fr))", rules)
         self.assertIn("min-width: 0", rules)
 
@@ -105,6 +106,8 @@ class MobileFirstCompactBuilderContractTests(unittest.TestCase):
         self.assertIn("function stableMetrics(me, trades)", source)
         self.assertIn("incomingIsEmpty && cachedHasActivity", source)
         self.assertIn("function snapshotWithStableTrades(snapshot)", source)
+        self.assertIn("function ensureTradeBalanceStat(me)", source)
+        self.assertIn('label.textContent = "Balance"', source)
         self.assertIn("applySnapshot(lastSnapshot);", source)
         self.assertNotIn("requestAnimationFrame(() => applySnapshot(lastSnapshot))", source)
 
