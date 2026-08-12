@@ -1,76 +1,205 @@
-/* Final mobile-first density override for the Custom Strategy Builder.
-   The phone layout deliberately keeps controls horizontal and uses local
-   horizontal scrolling where five controls cannot fit safely in one viewport. */
+/* Final responsive UI authority for the Custom Strategy Builder.
+   Goals:
+   - the branding/header scrolls normally;
+   - live KPIs remain visible on Dashboard and Trades;
+   - phones never require page-level or component-level horizontal scrolling;
+   - controls wrap into additional rows instead of overflowing;
+   - trade history remains a compact left-to-right row. */
+
+/* The builder header contains navigation, not execution telemetry, so it must
+   never consume the sticky viewport slot on desktop or mobile. */
+.builder-header {
+  position: relative !important;
+  top: auto !important;
+  z-index: 20 !important;
+}
+
+/* Dashboard and Trades both use .builder-stats. This is the execution strip
+   that remains visible after it reaches the top of the viewport. */
+.builder-stats,
+.builder-stats.compact {
+  position: sticky;
+  top: max(6px, env(safe-area-inset-top));
+  z-index: 45;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: linear-gradient(150deg, rgba(7, 17, 29, .97), rgba(10, 16, 25, .97));
+  box-shadow: 0 14px 42px rgba(0, 0, 0, .28);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+#foa-simple-app[data-theme="light"] .builder-stats,
+#foa-simple-app[data-theme="light"] .builder-stats.compact {
+  background: linear-gradient(150deg, rgba(255, 255, 255, .98), rgba(247, 250, 255, .98));
+}
 
 @media (max-width: 760px) {
-  .builder-shell {
-    padding: 6px !important;
+  html,
+  body,
+  #foa-simple-app,
+  #global-dashboard-snapshot,
+  #telegram-dashboard-snapshot,
+  .builder-shell,
+  main {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: clip !important;
   }
 
+  .builder-shell {
+    width: 100% !important;
+    margin: 0 auto 24px !important;
+    padding: 7px !important;
+  }
+
+  .builder-header,
   .strategy-builder-card,
   .builder-panel,
-  .builder-section {
-    border-radius: 10px !important;
+  .builder-section,
+  .builder-card-head,
+  .panel-head,
+  .market-row,
+  .mode-grid,
+  .rules-stack,
+  .rule-card,
+  .trade-tabs,
+  .trade-config,
+  .builder-two-col,
+  .money-grid,
+  .builder-actions,
+  .trades-control-panel,
+  .session-actions-panel,
+  .builder-recent-trades,
+  .builder-stats,
+  .builder-stat,
+  .field,
+  .market-chips,
+  .toggle-row,
+  .live-summary {
+    min-width: 0 !important;
+    max-width: 100% !important;
   }
 
   .strategy-builder-card,
   .builder-panel {
-    padding: 8px !important;
+    border-radius: 12px !important;
+    overflow: hidden !important;
   }
 
   .builder-section {
-    padding: 8px 9px !important;
-    margin-bottom: 6px !important;
+    padding: 10px !important;
   }
 
-  /* Five KPIs stay on one horizontal line instead of turning into a tall stack. */
-  .builder-stats,
-  .builder-stats.compact {
+  /* Header flows away naturally. Every group is allowed to wrap instead of
+     making the phone viewport wider than the screen. */
+  .builder-header {
     display: grid !important;
-    grid-template-columns: repeat(5, minmax(112px, 1fr)) !important;
-    gap: 6px !important;
-    margin: 0 0 7px !important;
-    padding: 0 0 2px !important;
-    overflow-x: auto !important;
-    overflow-y: hidden !important;
-    overscroll-behavior-inline: contain;
-    scroll-snap-type: x proximity;
-    scrollbar-width: none;
-    -webkit-overflow-scrolling: touch;
+    grid-template-columns: 1fr !important;
+    gap: 8px !important;
+    padding: 10px !important;
+    border-radius: 13px !important;
   }
 
-  .builder-stats::-webkit-scrollbar,
-  .builder-stats.compact::-webkit-scrollbar,
-  .money-grid::-webkit-scrollbar,
-  .rules-stack::-webkit-scrollbar,
-  .builder-two-col::-webkit-scrollbar {
-    display: none;
+  .builder-brand {
+    min-width: 0 !important;
+  }
+
+  .builder-brand strong {
+    font-size: 16px !important;
+  }
+
+  .builder-brand span {
+    font-size: 9.5px !important;
+  }
+
+  .builder-nav {
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    width: 100% !important;
+    gap: 4px !important;
+  }
+
+  .builder-nav button {
+    min-width: 0 !important;
+    padding: 0 5px !important;
+    font-size: 10px !important;
+  }
+
+  .builder-head-actions {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    width: 100% !important;
+    gap: 6px !important;
+  }
+
+  .theme-toggle,
+  .account-pill,
+  .risk-button,
+  .builder-head-actions > .ghost-button,
+  .builder-head-actions > .primary-link {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .theme-toggle {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .theme-toggle button,
+  .risk-button,
+  .builder-head-actions > .ghost-button,
+  .builder-head-actions > .primary-link,
+  .account-pill {
+    font-size: 9.5px !important;
+  }
+
+  .account-pill {
+    justify-content: center;
+  }
+
+  /* Five Dashboard KPIs become two compact rows (3 + 2) instead of a sideways
+     scroller. Trades uses a 2 x 2 compact strip. */
+  .builder-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 5px !important;
+    margin: 7px 0 9px !important;
+    padding: 5px !important;
+    overflow: visible !important;
+  }
+
+  .builder-stats.compact {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
   }
 
   .builder-stat {
-    min-height: 62px !important;
-    padding: 7px 8px !important;
+    min-height: 58px !important;
+    padding: 7px !important;
     border-radius: 9px !important;
-    scroll-snap-align: start;
+    overflow: hidden !important;
   }
 
   .builder-stat > span {
-    font-size: 9px !important;
+    font-size: 8.5px !important;
     line-height: 1.1 !important;
-    white-space: nowrap;
+    white-space: normal !important;
   }
 
   .builder-stat > strong {
     margin-top: 3px !important;
-    font-size: 16px !important;
+    font-size: 15px !important;
     line-height: 1.05 !important;
+    overflow-wrap: anywhere;
   }
 
   .builder-stat > small {
     margin-top: 3px !important;
-    font-size: 8.5px !important;
+    font-size: 8px !important;
     line-height: 1.1 !important;
-    white-space: nowrap;
+    white-space: normal !important;
   }
 
   .numbered-title,
@@ -80,16 +209,27 @@
   }
 
   .numbered-title b {
-    width: 19px !important;
-    height: 19px !important;
-    min-width: 19px !important;
+    width: 20px !important;
+    height: 20px !important;
+    min-width: 20px !important;
     font-size: 9px !important;
   }
 
   .numbered-title strong,
-  .section-label,
-  .panel-head h1 {
+  .section-label {
     font-size: 11px !important;
+    line-height: 1.2 !important;
+  }
+
+  .builder-card-head,
+  .panel-head {
+    padding: 11px !important;
+  }
+
+  .builder-card-head h1,
+  .panel-head h1,
+  .panel-head h2 {
+    font-size: 17px !important;
     line-height: 1.15 !important;
   }
 
@@ -97,184 +237,302 @@
   .builder-section p,
   .toggle-row small {
     margin-top: 4px !important;
-    font-size: 8.5px !important;
-    line-height: 1.25 !important;
+    font-size: 9px !important;
+    line-height: 1.3 !important;
   }
 
   .field > span {
     margin-bottom: 3px !important;
-    font-size: 8.5px !important;
+    font-size: 9px !important;
     line-height: 1.1 !important;
   }
 
-  /* Keep form controls compact in height, but use a 16px input font so iOS does
-     not zoom the entire builder when a trader edits a condition. */
+  /* 16px is intentional for editable controls so iOS does not zoom the page. */
   .field input,
   .field select,
   .field textarea,
   .builder-section input,
   .builder-section select {
+    width: 100% !important;
+    min-width: 0 !important;
     min-height: 38px !important;
-    padding: 5px 8px !important;
+    padding: 5px 7px !important;
     font-size: 16px !important;
     line-height: 1.05 !important;
     border-radius: 8px !important;
   }
 
-  /* Trade families remain one four-button row on phones. */
-  .trade-tabs {
-    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
-    gap: 4px !important;
-  }
-
-  .trade-tabs button {
-    min-width: 0 !important;
-    min-height: 36px !important;
-    padding: 4px 2px !important;
-    font-size: 9.5px !important;
-    line-height: 1.05 !important;
-    white-space: normal !important;
-  }
-
-  /* Contract side + prediction stay beside each other. */
-  .trade-config {
-    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-    gap: 6px !important;
-    margin-top: 6px !important;
-  }
-
-  .market-mode {
-    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-    gap: 5px !important;
+  /* Market controls form ordinary rows. Selected chips wrap in-place. */
+  .market-row {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 7px !important;
   }
 
   .market-chips {
+    display: flex !important;
+    flex-wrap: wrap !important;
     gap: 4px !important;
+    overflow: visible !important;
   }
 
-  .market-chips button,
-  .market-mode button {
-    min-height: 34px !important;
+  .market-chip,
+  .market-chips button {
+    max-width: 100% !important;
+    min-width: 0 !important;
+    min-height: 32px !important;
     padding: 4px 6px !important;
     font-size: 9px !important;
+    white-space: normal !important;
   }
 
-  /* Strategy modes stay side-by-side; explanatory captions are hidden on phones. */
-  .mode-grid {
+  .market-mode {
     grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
     gap: 4px !important;
   }
 
+  .market-mode button {
+    min-width: 0 !important;
+    min-height: 34px !important;
+    padding: 4px !important;
+    font-size: 9px !important;
+    white-space: normal !important;
+  }
+
+  .mode-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 5px !important;
+  }
+
   .mode-card {
-    min-height: 48px !important;
-    padding: 5px 4px !important;
+    min-width: 0 !important;
+    min-height: 50px !important;
+    grid-template-columns: auto minmax(0, 1fr) !important;
+    gap: 5px !important;
+    padding: 6px !important;
   }
 
   .mode-card > span {
-    font-size: 12px !important;
+    width: 28px !important;
+    height: 28px !important;
+    font-size: 11px !important;
   }
 
   .mode-card > strong {
+    min-width: 0 !important;
     font-size: 9px !important;
-    line-height: 1.05 !important;
+    line-height: 1.1 !important;
+    overflow-wrap: anywhere;
   }
 
   .mode-card > small {
     display: none !important;
   }
 
-  /* Condition rows keep their columns. The row itself scrolls horizontally
-     rather than converting each control into another vertical block. */
+  /* Conditions wrap into two columns. There is deliberately no min-width and
+     no local horizontal scroller. */
   .rules-stack {
-    overflow-x: auto !important;
-    overflow-y: hidden !important;
-    scrollbar-width: none;
-    -webkit-overflow-scrolling: touch;
+    overflow: visible !important;
   }
 
-  .rule-card {
-    gap: 6px !important;
-    padding: 8px !important;
-  }
-
+  .rule-card,
   .digit-rule,
   .percentage-rule,
   .tick-direction-rule {
-    grid-template-columns: repeat(4, minmax(128px, 1fr)) !important;
-    min-width: 560px !important;
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 7px !important;
+    min-width: 0 !important;
+    width: 100% !important;
+    padding: 9px !important;
   }
 
   .rule-title {
+    grid-column: 1 / -1;
     min-width: 0 !important;
   }
 
   .rule-title strong {
-    font-size: 9px !important;
+    font-size: 10px !important;
   }
 
-  /* Re-analysis and money management share one compact horizontal band. */
+  .field.compact {
+    max-width: none !important;
+  }
+
+  /* Trade-family controls stay readable by using two rows rather than four tiny
+     overflowing tabs. Contract side and prediction still share a row. */
+  .trade-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 4px !important;
+    overflow: visible !important;
+    border: 0 !important;
+  }
+
+  .trade-tabs button {
+    min-width: 0 !important;
+    min-height: 36px !important;
+    padding: 5px 3px !important;
+    border: 1px solid var(--line) !important;
+    border-radius: 8px !important;
+    font-size: 9.5px !important;
+    line-height: 1.05 !important;
+    white-space: normal !important;
+  }
+
+  .trade-config {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 6px !important;
+    margin-top: 7px !important;
+  }
+
+  /* Re-analysis and Money Management stack vertically. Money inputs wrap into
+     normal rows instead of becoming a 500px-wide strip. */
   .builder-two-col {
     display: grid !important;
-    grid-template-columns: minmax(170px, .55fr) minmax(520px, 1.45fr) !important;
-    gap: 6px !important;
-    overflow-x: auto !important;
-    overflow-y: hidden !important;
-    scrollbar-width: none;
-    -webkit-overflow-scrolling: touch;
+    grid-template-columns: 1fr !important;
+    gap: 0 !important;
+    overflow: visible !important;
   }
 
-  .builder-two-col > .builder-section {
-    margin-bottom: 0 !important;
+  .builder-two-col .builder-section:first-child {
+    border-right: 0 !important;
   }
 
   .money-grid {
     display: grid !important;
-    grid-template-columns: repeat(5, minmax(96px, 1fr)) !important;
-    gap: 5px !important;
-    overflow-x: auto !important;
-    overflow-y: hidden !important;
-    scrollbar-width: none;
-    -webkit-overflow-scrolling: touch;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 6px !important;
+    overflow: visible !important;
+  }
+
+  .inline-fields {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 6px !important;
+    align-items: end !important;
+  }
+
+  .inline-fields > span {
+    display: none !important;
   }
 
   .toggle-row {
     gap: 7px !important;
-    padding: 7px 8px !important;
-  }
-
-  .virtual-hook-section .toggle-row small {
-    display: none !important;
+    padding: 8px !important;
+    align-items: flex-start !important;
+    flex-wrap: wrap !important;
   }
 
   .live-summary {
-    padding: 7px 8px !important;
-    gap: 6px !important;
+    padding: 8px !important;
+    gap: 7px !important;
   }
 
   .live-summary p {
     margin: 0 !important;
     font-size: 9px !important;
+    line-height: 1.35 !important;
   }
 
   .builder-actions {
     grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
     gap: 6px !important;
+    padding: 0 10px 10px !important;
+  }
+
+  .builder-actions > :last-child:nth-child(odd) {
+    grid-column: 1 / -1;
   }
 
   .builder-actions button,
   .builder-actions .primary-action,
   .builder-actions .secondary-action {
-    min-height: 38px !important;
-    padding: 6px 8px !important;
+    min-width: 0 !important;
+    min-height: 40px !important;
+    padding: 6px !important;
     font-size: 10px !important;
+    white-space: normal !important;
+  }
+
+  .trades-control-panel,
+  .session-actions-panel {
+    grid-template-columns: 1fr !important;
+    gap: 9px !important;
+    padding: 11px !important;
+  }
+
+  .trades-control-panel h1 {
+    font-size: 20px !important;
+  }
+
+  .trades-control-panel h2,
+  .session-actions-panel h2 {
+    font-size: 16px !important;
+  }
+
+  /* Recent trades remain one left-to-right record. The five cells squeeze and
+     wrap within the viewport; no sideways scrolling and no vertical card stack. */
+  .trade-head,
+  .trade-row {
+    display: grid !important;
+    grid-template-columns:
+      minmax(0, .82fr)
+      minmax(0, .92fr)
+      minmax(0, 1.14fr)
+      minmax(0, .78fr)
+      minmax(0, 1.24fr) !important;
+    gap: 3px !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    margin: 0 !important;
+    padding: 7px 5px !important;
+    border-left: 0 !important;
+    border-right: 0 !important;
+    border-radius: 0 !important;
+  }
+
+  .trade-head {
+    color: var(--muted) !important;
+    font-size: 7.5px !important;
+    line-height: 1.05 !important;
+  }
+
+  .trade-row {
+    font-size: 8.5px !important;
+    line-height: 1.15 !important;
+    background: rgba(255, 255, 255, .018) !important;
+  }
+
+  .trade-head > *,
+  .trade-row > * {
+    min-width: 0 !important;
+    max-width: 100% !important;
+    overflow-wrap: anywhere !important;
+    word-break: break-word;
+  }
+
+  .trade-row b {
+    text-align: right !important;
+  }
+
+  .empty-state {
+    padding: 15px 10px !important;
+  }
+
+  .limit-notifier {
+    inset: auto 8px 10px !important;
+    top: auto !important;
+    width: auto !important;
+    max-width: calc(100vw - 16px) !important;
   }
 
   .oauth-direct-box {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-    gap: 8px;
-    padding: 8px 9px;
+    gap: 7px;
+    padding: 8px;
     border: 1px solid var(--line);
     border-radius: 9px;
   }
@@ -298,7 +556,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 4px 9px;
+    padding: 4px 8px;
     border-radius: 8px;
     text-decoration: none;
     font-size: 9px;
@@ -309,47 +567,66 @@
 
 @media (max-width: 420px) {
   .builder-shell {
+    padding: 5px !important;
+  }
+
+  .builder-stats {
+    gap: 4px !important;
     padding: 4px !important;
   }
 
-  .strategy-builder-card,
-  .builder-panel {
+  .builder-stat {
+    min-height: 55px !important;
     padding: 6px !important;
   }
 
-  .builder-section {
-    padding: 7px !important;
-  }
-
-  .builder-stats,
-  .builder-stats.compact {
-    grid-template-columns: repeat(5, minmax(104px, 1fr)) !important;
-    gap: 5px !important;
-  }
-
-  .builder-stat {
-    min-height: 58px !important;
-    padding: 6px 7px !important;
-  }
-
   .builder-stat > strong {
-    font-size: 15px !important;
+    font-size: 14px !important;
   }
 
-  .trade-tabs button {
-    min-height: 34px !important;
-    font-size: 9px !important;
+  .builder-head-actions {
+    grid-template-columns: 1fr !important;
   }
 
-  .trade-config {
+  .rule-card,
+  .digit-rule,
+  .percentage-rule,
+  .tick-direction-rule,
+  .money-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
   }
 
-  .mode-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  .trade-head,
+  .trade-row {
+    gap: 2px !important;
+    padding: 6px 3px !important;
   }
 
-  .money-grid {
-    grid-template-columns: repeat(5, minmax(92px, 1fr)) !important;
+  .trade-head {
+    font-size: 7px !important;
+  }
+
+  .trade-row {
+    font-size: 8px !important;
+  }
+}
+
+@media (max-width: 360px) {
+  .builder-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .builder-stats.compact {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .mode-grid,
+  .market-mode {
+    grid-template-columns: 1fr 1fr !important;
+  }
+
+  .trade-head,
+  .trade-row {
+    font-size: 7px !important;
   }
 }
