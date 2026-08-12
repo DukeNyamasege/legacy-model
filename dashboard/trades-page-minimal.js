@@ -12,6 +12,7 @@
   let lastRenderedSignature = "";
   let startRedirectPending = false;
   let startRedirectStartedAt = 0;
+  let stopInFlight = false;
 
   function storageGet(key) {
     try { return localStorage.getItem(key); } catch (_) { return null; }
@@ -205,8 +206,12 @@
     stats.prepend(article);
   }
 
-  function clearIconMarkup() {
-    return `<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M7 7l1 13h8l1-13"/><path d="M10 11v5M14 11v5"/></svg>`;
+  function resetIconMarkup() {
+    return `<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7h7V3l5 5-5 5V9H7a4 4 0 0 0-4 4 7 7 0 0 0 12 4"/><path d="m15 17 2 2 4-4"/></svg>`;
+  }
+
+  function stopIconMarkup() {
+    return `<svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg>`;
   }
 
   function fallbackClearButton() {
@@ -214,12 +219,107 @@
     button.type = "button";
     button.dataset.clearLocalTrades = "true";
     button.addEventListener("click", () => {
-      if (!window.confirm("Clear the trades currently shown on this device?")) return;
+      if (!window.confirm("Reset the trades currently shown on this device?")) return;
       storageSet(resetKey(), new Date().toISOString());
       lastRenderedSignature = "";
       scheduleEnhance();
     });
     return button;
+  }
+
+  async function stopTradingFromTrades(button) {
+    if (stopInFlight) return;
+    stopInFlight = true;
+    button.disabled = true;
+    button.dataset.busy = "true";
+    button.title = "Stopping auto trading...";
+    try {
+      const response = await fetch("/me/stop-trading", {
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: "{}",
+      });
+      if (!response.ok) {
+        let message = `Stop trading failed (${response.status})`;
+        try {
+          const payload = await response.json();
+          message = payload?.detail || payload?.message || message;
+        } catch (_) {}
+        throw new Error(message);
+      }
+      button.dataset.stopped = "true";
+      button.title = "Auto trading stopped";
+      window.dispatchEvent(new CustomEvent("foa:trading-stopped-from-trades"));
+    } catch (error) {
+      window.alert(String(error?.message || error));
+    } finally {
+      stopInFlight = false;
+      button.disabled = false;
+      button.dataset.busy = "false";
+      scheduleEnhance();
+    }
+  }
+
+  function makeStopButton() {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "foa-stop-trades-icon";
+    button.dataset.stopTrades = "true";
+    button.innerHTML = stopIconMarkup();
+    button.setAttribute("aria-label", "Stop auto trading");
+    button.title = "Stop auto trading";
+    button.addEventListener("click", () => stopTradingFromTrades(button));
+    return button;
+  }
+
+  function ensureTradesControls(main) {
+    const candidates = Array.from(main.querySelectorAll(
+      "#foa-trades-controls-footer, .foa-trades-controls-footer, .foa-clear-trades-footer, .session-actions-panel"
+    ));
+    let footer = main.querySelector("#foa-trades-controls-footer") || candidates[0] || null;
+
+    candidates.forEach((node) => {
+      if (footer && node !== footer) node.remove();
+    });
+
+    if (!footer) {
+      footer = document.createElement("section");
+      main.appendChild(footer);
+    }
+
+    const needsInitialization = footer.id !== "foa-trades-controls-footer";
+    footer.id = "foa-trades-controls-footer";
+    footer.className = "foa-trades-controls-footer";
+
+    if (needsInitialization) footer.replaceChildren();
+
+    let resetButton = footer.querySelector("[data-clear-local-trades]");
+    if (!resetButton) {
+      resetButton = fallbackClearButton();
+      footer.appendChild(resetButton);
+    }
+    resetButton.className = "foa-reset-trades-icon";
+    resetButton.innerHTML = resetIconMarkup();
+    resetButton.setAttribute("aria-label", "Reset trade view");
+    resetButton.title = "Reset trade view";
+
+    let stopButton = footer.querySelector("[data-stop-trades]");
+    if (!stopButton) {
+      stopButton = makeStopButton();
+      footer.appendChild(stopButton);
+    }
+    stopButton.className = "foa-stop-trades-icon";
+    if (!stopInFlight) {
+      stopButton.disabled = false;
+      if (stopButton.dataset.stopped !== "true") stopButton.title = "Stop auto trading";
+    }
+
+    Array.from(footer.children).forEach((node) => {
+      if (node !== resetButton && node !== stopButton) node.remove();
+    });
+    return footer;
   }
 
   function minimalizeTradesView() {
@@ -232,24 +332,7 @@
     const stats = main.querySelector(".builder-stats.compact");
     ensureBalanceStat(stats);
 
-    let sessionPanel = main.querySelector(".session-actions-panel");
-    let clearButton = sessionPanel?.querySelector("[data-clear-local-trades]");
-    if (!sessionPanel) {
-      sessionPanel = document.createElement("section");
-      clearButton = fallbackClearButton();
-      sessionPanel.appendChild(clearButton);
-    }
-    sessionPanel.className = "foa-clear-trades-footer";
-    if (!clearButton) {
-      clearButton = fallbackClearButton();
-      sessionPanel.replaceChildren(clearButton);
-    } else {
-      sessionPanel.replaceChildren(clearButton);
-    }
-    clearButton.className = "foa-clear-trades-icon";
-    clearButton.innerHTML = clearIconMarkup();
-    clearButton.setAttribute("aria-label", "Clear trades");
-    clearButton.title = "Clear trades";
+    const controls = ensureTradesControls(main);
 
     let panel = main.querySelector(".foa-trades-table") || main.querySelector(".builder-recent-trades");
     if (!panel) {
@@ -260,7 +343,7 @@
     renderTradeTable(panel);
 
     if (stats && stats.nextElementSibling !== panel) main.insertBefore(panel, stats.nextElementSibling);
-    if (main.lastElementChild !== sessionPanel) main.appendChild(sessionPanel);
+    if (main.lastElementChild !== controls) main.appendChild(controls);
 
     fetchAllTrades();
   }
@@ -392,5 +475,5 @@
     ? document.addEventListener("DOMContentLoaded", scheduleEnhance, { once: true })
     : scheduleEnhance();
 
-  window.FOA_MINIMAL_TRADES_PAGE_VERSION = "20260813-1";
+  window.FOA_MINIMAL_TRADES_PAGE_VERSION = "20260813-2";
 })();
