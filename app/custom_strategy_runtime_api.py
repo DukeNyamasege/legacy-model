@@ -17,7 +17,15 @@ from app.custom_strategy_api import (
     _write_runtime_preference,
 )
 from app.custom_strategy_v1 import (
+    COMPARATORS,
+    DEFAULT_DURATION_TICKS,
+    MAX_CONDITIONS,
+    MAX_DURATION_TICKS,
+    MAX_WINDOW,
+    MIN_DURATION_TICKS,
     PREFERENCE_PREFIX as CUSTOM_PREFERENCE_PREFIX,
+    SUPPORTED_MARKETS,
+    TRADE_TYPES,
     default_custom_strategy,
     describe_custom_strategy,
     normalize_custom_strategy,
@@ -33,11 +41,12 @@ from app.final_public_controls import (
 from app.manual_martingale_v2 import (
     DEFAULT_MULTIPLIER,
     DEFAULT_SPLIT_COUNT,
+    MAX_MULTIPLIER,
     PREFERENCE_PREFIX as MANUAL_MARTINGALE_PREFIX,
     SPLIT_REMAINING_PREFIX,
     normalize_manual_martingale_settings,
 )
-from app.models import RuntimePreference, utc_now
+from app.models import ManagedAccount, RuntimePreference, utc_now
 from app.strategy_v2_preferences import (
     STRATEGY_KEY_PREFIX,
     _decode_payload,
@@ -136,9 +145,14 @@ def _finite_money(value: float, label: str) -> float:
     return round(number, 2)
 
 
-def _preflight_custom_start(session: Any, request: Request) -> tuple[Any, dict[str, Any]]:
+def _preflight_custom_start(
+    session: Any,
+    request: Request,
+    account: dict[str, Any],
+) -> tuple[Any, dict[str, Any]]:
     row = _load_managed_account(session, request, for_update=True)
-    account = _current_account_payload(request)
+    if int(row.id) != int(account["id"]):
+        raise HTTPException(status_code=409, detail="Account session changed; retry Start.")
     if not bool(account.get("has_trading_api_token", False)):
         raise HTTPException(
             status_code=409,
@@ -159,6 +173,44 @@ def _preflight_custom_start(session: Any, request: Request) -> tuple[Any, dict[s
     return row, config
 
 
+def _supported_payload() -> dict[str, Any]:
+    return {
+        "markets": list(SUPPORTED_MARKETS),
+        "market_modes": ["single", "selected", "all"],
+        "trade_types": [
+            {
+                "value": value,
+                "label": str(meta["label"]),
+                "contract_type": str(meta["contract_type"]),
+            }
+            for value, meta in TRADE_TYPES.items()
+        ],
+        "comparators": list(COMPARATORS),
+        "digit_comparators": list(COMPARATORS),
+        "percentage_comparators": [item for item in COMPARATORS if item != "all_same"],
+        "condition_types": ["digit_parity", "digit_compare", "direction", "percentage"],
+        "tick_directions": ["rising", "falling", "no_move"],
+        "duration": {
+            "unit": "ticks",
+            "minimum": MIN_DURATION_TICKS,
+            "maximum": MAX_DURATION_TICKS,
+            "default": DEFAULT_DURATION_TICKS,
+        },
+        "martingale": {
+            "modes": ["system", "multiplier", "split"],
+            "default_multiplier": DEFAULT_MULTIPLIER,
+            "minimum_multiplier": 1.10,
+            "maximum_multiplier": MAX_MULTIPLIER,
+            "default_split_count": DEFAULT_SPLIT_COUNT,
+            "minimum_split_count": 1,
+            "maximum_split_count": 3,
+        },
+        "maximum_window": MAX_WINDOW,
+        "maximum_conditions": MAX_CONDITIONS,
+        "condition_join": "AND",
+    }
+
+
 def install_custom_strategy_runtime_api(app: Any) -> None:
     """Make backend execution readiness authoritative for the builder UI."""
 
@@ -167,6 +219,7 @@ def install_custom_strategy_runtime_api(app: Any) -> None:
         return
 
     for path, method in (
+        ("/me/custom-strategy", "GET"),
         ("/me/custom-strategy", "POST"),
         ("/me/resume-trading", "POST"),
         ("/me/auto-trade", "POST"),
@@ -176,12 +229,47 @@ def install_custom_strategy_runtime_api(app: Any) -> None:
     ):
         _remove_route(app, path, method)
 
+    @app.get("/me/custom-strategy")
+    def current_custom_strategy(request: Request) -> dict[str, Any]:
+        account = _current_account_payload(request)
+        managed_id = int(account["id"])
+        with base_api.DATABASE.session() as session:
+            row = session.get(ManagedAccount, managed_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail="Managed account not found")
+            selection = _strategy_from_session(session, managed_id)
+            config = _custom_config_from_session(session, managed_id)
+            martingale = _martingale_from_session(session, managed_id)
+            open_count = _open_count(session, managed_id)
+            status = str(row.execution_status or "inactive").strip().lower()
+            stopped = not bool(row.enabled) and status in STOPPED_STATUSES
+            state = _runtime_state(enabled=bool(row.enabled), status=status)
+            reason = str(row.execution_status_reason or "")
+        preview = describe_custom_strategy(config) if bool(config.get("configured")) else ""
+        return {
+            "authenticated": True,
+            "managed_account_id": managed_id,
+            "active": str(selection.family) == "custom",
+            "editable": bool(stopped and open_count == 0),
+            "lifecycle": "stopped" if stopped else "running_or_paused",
+            "runtime_state": state,
+            "execution_status": status,
+            "execution_status_reason": reason,
+            "open_contracts": open_count,
+            "selection": selection.to_dict(),
+            "config": config,
+            "martingale": martingale,
+            "preview": preview,
+            "supported": _supported_payload(),
+        }
+
     @app.post("/me/custom-strategy")
     def save_custom_strategy_once(
         request: Request,
         body: DirectCustomStrategyRequest,
     ) -> dict[str, Any]:
         started = time.perf_counter()
+        account = _current_account_payload(request)
         payload = {
             "market_mode": body.market_mode,
             "markets": body.markets,
@@ -201,6 +289,8 @@ def install_custom_strategy_runtime_api(app: Any) -> None:
         with base_api.DATABASE.session() as session:
             row = _load_managed_account(session, request, for_update=True)
             managed_id = int(row.id)
+            if managed_id != int(account["id"]):
+                raise HTTPException(status_code=409, detail="Account session changed; retry Save.")
             status = str(row.execution_status or "inactive").strip().lower()
             if bool(row.enabled) or status not in STOPPED_STATUSES:
                 raise HTTPException(
@@ -217,8 +307,8 @@ def install_custom_strategy_runtime_api(app: Any) -> None:
                     ),
                 )
 
-            # All reads/writes below share this transaction. The former route held
-            # this FOR UPDATE lock while opening nested database sessions.
+            # All preference reads/writes share this transaction. The former route
+            # held this FOR UPDATE lock while opening nested database sessions.
             previous = _strategy_from_session(session, managed_id)
             previous_martingale = _martingale_from_session(session, managed_id)
             try:
@@ -273,7 +363,7 @@ def install_custom_strategy_runtime_api(app: Any) -> None:
         )
         preview = describe_custom_strategy(config)
         try:
-            base_api.mark_dashboard_dirty(_current_account_payload(request).get("account_type"))
+            base_api.mark_dashboard_dirty(account.get("account_type"))
             base_api.REPOSITORY.audit(
                 "PERSONAL_CUSTOM_STRATEGY_CHANGED",
                 "personal_dashboard",
@@ -315,8 +405,9 @@ def install_custom_strategy_runtime_api(app: Any) -> None:
         request: Request,
         body: DirectResumeRequest,
     ) -> dict[str, Any]:
+        account = _current_account_payload(request)
         with base_api.DATABASE.session() as session:
-            row, config = _preflight_custom_start(session, request)
+            row, config = _preflight_custom_start(session, request, account)
             managed_id = int(row.id)
             if body.mode == "start_again":
                 _reset_risk_state(session, managed_id)
@@ -346,8 +437,6 @@ def install_custom_strategy_runtime_api(app: Any) -> None:
     def custom_auto_trade(request: Request, body: base_api.AutoTradeRequest) -> dict[str, Any]:
         if bool(body.enabled):
             return start_custom_runtime(request, DirectResumeRequest(mode="start_again"))
-        # Reuse the final stop semantics (recovery reset) without calling a removed
-        # route closure: persist the authoritative stopped state directly.
         with base_api.DATABASE.session() as session:
             row = _load_managed_account(session, request, for_update=True)
             managed_id = int(row.id)
@@ -371,11 +460,7 @@ def install_custom_strategy_runtime_api(app: Any) -> None:
         if not account:
             return {"authenticated": False, "runtime_state": "STOPPED"}
         with base_api.DATABASE.session() as session:
-            row = session.get(base_api.ManagedAccount, int(account["id"])) if hasattr(base_api, "ManagedAccount") else None
-            if row is None:
-                from app.models import ManagedAccount
-
-                row = session.get(ManagedAccount, int(account["id"]))
+            row = session.get(ManagedAccount, int(account["id"]))
             if row is None:
                 return {"authenticated": False, "runtime_state": "STOPPED"}
             status = str(row.execution_status or "inactive").strip().lower()
@@ -423,5 +508,5 @@ def install_custom_strategy_runtime_api(app: Any) -> None:
         }
 
     app.state.custom_strategy_runtime_api_installed = True
-    app.state.custom_strategy_runtime_api_version = "20260812-direct-runtime-v1"
+    app.state.custom_strategy_runtime_api_version = "20260812-direct-runtime-v2"
     _INSTALLED = True
