@@ -11,6 +11,7 @@ from app.custom_strategy_current_runtime_fix import install_custom_strategy_curr
 from app.custom_strategy_direct_runtime import install_custom_strategy_direct_runtime
 from app.custom_strategy_runtime_lifecycle import install_custom_strategy_runtime_lifecycle
 from app.custom_strategy_settlement import install_custom_strategy_settlement
+from app.custom_strategy_transport_resilience import install_custom_strategy_transport_resilience
 from app.deriv_rate_limit_circuit import install_deriv_rate_limit_circuit
 from app.deriv_request_broker import install_deriv_request_broker
 from app.manual_martingale_v2 import install_manual_martingale_v2_worker
@@ -52,19 +53,21 @@ async def run_worker() -> None:
     install_manual_martingale_v2_worker()
     install_custom_strategy_settlement()
 
-    # Install the independent execution authority, then the final current-runtime
-    # correction that keeps proposal+buy on one account session and suppresses
-    # inherited RF/unrelated-history work from the Custom Strategy path.
+    # Install the independent execution authority, then the exact-account proposal
+    # correction. Transport recovery must be last so one temporary WebSocket timeout
+    # reconnects that account instead of disabling Auto Trading.
     install_custom_strategy_direct_runtime()
     install_custom_strategy_current_runtime_fix()
     install_custom_strategy_runtime_lifecycle()
+    install_custom_strategy_transport_resilience()
     install_telegram_silence()
 
     bot = RFDir5TradingBot()
     bot.logger.warning(
         "CUSTOM_STRATEGY_WORKER_READY architecture=account_scoped_direct "
         "legacy_rf=false legacy_aidr=false multi_strategy=false cohorts=false "
-        "bulk=false tick_db_persistence=false start_required=true"
+        "bulk=false tick_db_persistence=false start_required=true "
+        "transient_reconnect=automatic dashboard_notify=nonblocking"
     )
     loop = asyncio.get_running_loop()
 
