@@ -19,6 +19,27 @@ def _repair_tasks(bot: RFDir5TradingBot) -> dict[int, asyncio.Task[Any]]:
     return tasks
 
 
+def _drop_stale_execution_runtime(bot: RFDir5TradingBot, managed_id: int) -> None:
+    """Drop stale account/session references without cancelling a virtual contract."""
+
+    getattr(bot, "_custom_direct_accounts", {}).pop(int(managed_id), None)
+    getattr(bot, "_custom_direct_inflight", set()).discard(int(managed_id))
+
+    try:
+        current = asyncio.current_task()
+    except RuntimeError:
+        current = None
+    for task in list(getattr(bot, "_custom_direct_tasks", set()) or set()):
+        if task is current or task.done():
+            continue
+        if task.get_name().startswith(f"custom_direct_{int(managed_id)}_"):
+            task.cancel()
+
+    # Deliberately preserve _custom_direct_virtual_due. A virtual observation is
+    # pure bookkeeping and must still settle from public ticks while the private
+    # authenticated session reconnects.
+
+
 def _schedule_runtime_repair(bot: RFDir5TradingBot, managed_id: int) -> None:
     tasks = _repair_tasks(bot)
     current = tasks.get(int(managed_id))
@@ -41,6 +62,7 @@ def _schedule_runtime_repair(bot: RFDir5TradingBot, managed_id: int) -> None:
             )
             bot.logger.info(
                 "CUSTOM_RUNTIME_AUTO_REPAIR managed_id=%s enabled_preserved=true "
+                "virtual_observation_preserved=true "
                 "next_action=await_private_ready_or_condition",
                 int(managed_id),
             )
@@ -98,7 +120,7 @@ def install_seamless_execution_recovery() -> None:
             return
 
         bridge._schedule_private_reconnect(bot, int(managed_id))
-        bridge._drop_hot_runtime_only(bot, int(managed_id))
+        _drop_stale_execution_runtime(bot, int(managed_id))
         bot._set_account_execution_status(
             int(managed_id),
             "reconnecting",
