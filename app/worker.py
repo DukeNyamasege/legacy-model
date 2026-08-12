@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import signal
 
 from app.account_execution_diagnostics import install_account_execution_diagnostics
@@ -66,6 +67,11 @@ from app.unresolved_contract_safety import install_unresolved_contract_safety
 from app.websocket_only_execution import install_websocket_only_execution
 
 
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.getenv(name, "true" if default else "false").strip().lower()
+    return raw not in {"0", "false", "no", "off", "legacy"}
+
+
 async def run_worker() -> None:
     # Only the current enrollment generation is visible to the worker. Historical
     # registrations remain preserved but cannot auto-start after a reset.
@@ -124,12 +130,26 @@ async def run_worker() -> None:
     install_telegram_admin_integration()
     install_dynamic_deployment_announcement()
 
-    # Build the shared RF/hybrid envelope for public ticks, proposals, private
-    # account WebSockets, settlement and virtual observations.
-    install_strict_streak_guard()
-    install_hybrid_runtime_config()
-    install_hybrid_data_integrity()
-    install_hybrid_digit_put_strategy()
+    custom_strategy_only = _env_flag("CUSTOM_STRATEGY_ONLY_RUNTIME", True)
+    if custom_strategy_only:
+        logging_message = (
+            "CUSTOM_STRATEGY_ONLY_BOOTSTRAP legacy_rf=false legacy_aidr=false "
+            "system_strategy=false start_required=true"
+        )
+    else:
+        logging_message = (
+            "LEGACY_STRATEGY_BOOTSTRAP custom_strategy_only=false "
+            "legacy_rf_aidr_enabled=true"
+        )
+
+    # Build the shared RF/hybrid envelope only when an explicit rollback asks for
+    # legacy behaviour. The builder-first runtime must not globally scan RF/AIDR
+    # opportunities before an account has selected and started its custom rules.
+    if not custom_strategy_only:
+        install_strict_streak_guard()
+        install_hybrid_runtime_config()
+        install_hybrid_data_integrity()
+        install_hybrid_digit_put_strategy()
 
     install_profit_accuracy_guard()
     install_stake_only_balance_policy()
@@ -139,23 +159,24 @@ async def run_worker() -> None:
     # Results resolve by immutable managed_account_id, never duplicate masked IDs.
     install_aidr_virtual_settlement_fix()
 
-    # System Strategy remains the default AIDR sequence: OVER 1 normal, OVER 3
-    # first recovery, virtual OVER 4 and then real OVER 4 full-debt recovery.
-    install_ai_digit_recovery_v1_strategy()
-    install_aidr_execution_flow_fix()
-    install_aidr_loss_continuation_fix()
+    if not custom_strategy_only:
+        # System Strategy remains available only in explicit legacy rollback mode.
+        install_ai_digit_recovery_v1_strategy()
+        install_aidr_execution_flow_fix()
+        install_aidr_loss_continuation_fix()
 
-    # OVER-4 uses the ordinary 50% contract baseline. The final uniform virtual
-    # layer below removes proposal and real-purchase cadence from $0 observations.
-    install_aidr_virtual_soft_gate()
+        # OVER-4 uses the ordinary 50% contract baseline. The final uniform
+        # virtual layer below removes proposal and real-purchase cadence from $0
+        # observations.
+        install_aidr_virtual_soft_gate()
 
-    # Stop/Reset wins settlement races and cannot be reversed by a late callback.
-    install_aidr_strict_recovery_guard()
+        # Stop/Reset wins settlement races and cannot be reversed by a late callback.
+        install_aidr_strict_recovery_guard()
 
-    # Recovery start is idempotent. A recovery state that was already committed by
-    # the strict planner is verified as persisted instead of being reported as a
-    # false state_persisted=False failure at the WebSocket purchase boundary.
-    install_recovery_state_persistence_hardening()
+        # Recovery start is idempotent. A recovery state that was already committed by
+        # the strict planner is verified as persisted instead of being reported as a
+        # false state_persisted=False failure at the WebSocket purchase boundary.
+        install_recovery_state_persistence_hardening()
 
     # Build the legacy router first, then make v2 authoritative. V2 separates the
     # System Strategy from manual Over/Under, persists the user's prediction, and
@@ -219,6 +240,7 @@ async def run_worker() -> None:
     install_settlement_observability_hardening()
 
     bot = RFDir5TradingBot()
+    bot.logger.warning(logging_message)
     promoted = reconcile_existing_virtual_confirmations(bot.rf_repository)
     if promoted:
         bot.logger.warning(

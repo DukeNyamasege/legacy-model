@@ -215,6 +215,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://\${POSTGRES_USER:-underdog}:\${POSTGRES_PASSWORD}@database:5432/\${POSTGRES_DB:-underdog_test2}
       DEPLOYMENT_ID: preflight-api
+      CUSTOM_STRATEGY_ONLY_RUNTIME: "true"
       DERIV_ENVIRONMENT: demo
       DERIV_TRADING_ENABLED: "false"
       TRADING_MODE: demo
@@ -250,6 +251,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://\${POSTGRES_USER:-underdog}:\${POSTGRES_PASSWORD}@database:5432/\${POSTGRES_DB:-underdog_test2}
       DEPLOYMENT_ID: preflight-worker
+      CUSTOM_STRATEGY_ONLY_RUNTIME: "true"
       DERIV_ENVIRONMENT: demo
       DERIV_TRADING_ENABLED: "false"
       TRADING_MODE: demo
@@ -448,6 +450,7 @@ echo "6. Verify Docker DNS and run production migrations once"
 compose run --rm --no-deps worker sh -ec '
   python scripts/wait_for_database.py --timeout 180
   alembic upgrade head
+  python -m scripts.verify_builder_runtime_idle --stop-all
 ' || fail "Database DNS/readiness or Alembic migration failed."
 
 echo ""
@@ -464,7 +467,7 @@ API_DATABASE_HEALTHY=true
 maybe_reset_account_enrollment || fail "Account re-enrollment reset failed."
 
 echo ""
-echo "8. Replace worker only after API and PostgreSQL are healthy"
+echo "8. Replace custom runtime supervisor only after API and PostgreSQL are healthy"
 compose up -d --force-recreate worker || fail "Worker container could not start."
 sleep 8
 
@@ -478,6 +481,9 @@ if [ "$WORKER_STATE" != "running" ] || [ "$WORKER_RESTARTING" != "false" ]; then
   fail "Worker is not stably running (state=$WORKER_STATE restarting=$WORKER_RESTARTING)."
 fi
 WORKER_STABLY_RUNNING=true
+
+compose exec -T api python -m scripts.verify_builder_runtime_idle \
+  || fail "Builder-first runtime is not idle after deployment."
 
 echo ""
 echo "9. Run full backend, OAuth, provider, dashboard and WebSocket smoke tests"
@@ -538,7 +544,7 @@ echo "Dashboard WebSocket   : OK"
 echo "Custom Martingale     : VERIFIED"
 echo "Telegram release note : $TELEGRAM_RELEASE_STATUS"
 echo "Account enrollment    : $ACCOUNT_REENROLLMENT_STATUS"
-echo "Worker                : RUNNING"
+echo "Runtime supervisor    : IDLE (zero active account runtimes)"
 echo "Database              : READY"
 echo "Pre-migration backup  : CREATED"
 echo "Named volumes and trading history were preserved. Account enrollment status: $ACCOUNT_REENROLLMENT_STATUS"

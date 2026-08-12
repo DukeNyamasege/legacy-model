@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import asyncio
 import json
 import time
@@ -147,18 +148,31 @@ class RFDir5TradingBot(TradingBot):
         for state in self.clients.values():
             self._clear_recovery_state(state)
         self._save_state()
-        self.logger.info(
-            "RF_PUT5_ACTIVE version=%s direction=%s markets=%s demo_duration=%s "
-            "cumulative_recovery=%s virtual_protection=%s trigger_actual_losses=%s "
-            "bayesian_gate=true hmm_gate=true model_policy=strict_agreement",
-            RF_DIR5_VERSION,
-            self.rf_config.allowed_direction,
-            ",".join(self.symbols),
-            self.duration,
-            self.risk_config.recovery_enabled,
-            self.virtual_config.enabled,
-            self.virtual_config.trigger_actual_losses,
+        custom_only = (
+            os.getenv("CUSTOM_STRATEGY_ONLY_RUNTIME", "true")
+            .strip()
+            .lower()
+            not in {"0", "false", "no", "off", "legacy"}
         )
+        if custom_only:
+            self.logger.info(
+                "CUSTOM_STRATEGY_SUPERVISOR_ACTIVE markets=%s "
+                "legacy_rf_aidr_scanners=false start_required=true",
+                ",".join(self.symbols),
+            )
+        else:
+            self.logger.info(
+                "RF_PUT5_ACTIVE version=%s direction=%s markets=%s demo_duration=%s "
+                "cumulative_recovery=%s virtual_protection=%s trigger_actual_losses=%s "
+                "bayesian_gate=true hmm_gate=true model_policy=strict_agreement",
+                RF_DIR5_VERSION,
+                self.rf_config.allowed_direction,
+                ",".join(self.symbols),
+                self.duration,
+                self.risk_config.recovery_enabled,
+                self.virtual_config.enabled,
+                self.virtual_config.trigger_actual_losses,
+            )
 
     @staticmethod
     def telegram_hour_window(

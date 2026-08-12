@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from dataclasses import replace
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import func, select
@@ -32,6 +34,11 @@ _INSTALLED = False
 LOGGER = logging.getLogger(__name__)
 CACHE_TTL_SECONDS = 0.75
 _CUSTOM_SIGNAL_DURATIONS: dict[str, int] = {}
+
+
+def custom_strategy_only_runtime_enabled() -> bool:
+    raw = os.getenv("CUSTOM_STRATEGY_ONLY_RUNTIME", "true").strip().lower()
+    return raw not in {"0", "false", "no", "off", "legacy"}
 
 
 def _config_key(managed_id: int) -> str:
@@ -631,6 +638,97 @@ def _schedule_matches(bot: RFDir5TradingBot, tick_data: dict[str, Any]) -> None:
         task.add_done_callback(done)
 
 
+async def _custom_only_on_tick(
+    bot: RFDir5TradingBot,
+    tick_data: dict[str, Any],
+) -> None:
+    """Maintain market state without invoking RF/AIDR/system scanners.
+
+    The builder-first product uses the user's saved Custom Strategy Builder
+    rules as the sole entry authority. This ingests public ticks, records them,
+    settles custom virtual observations, and leaves proposal/purchase decisions
+    to ``_schedule_matches``.
+    """
+
+    tick = tick_data.get("tick") or {}
+    symbol = str(tick.get("symbol") or bot.symbol).strip()
+    market = bot.market_states.get(symbol)
+    if market is None or tick.get("quote") is None:
+        return
+
+    quote = Decimal(str(tick["quote"]))
+    epoch = int(tick.get("epoch") or 0)
+    tick_id = bot._tick_identity(symbol, epoch, quote)
+    previous_epoch = bot.rf_last_epoch.get(symbol, -1)
+    out_of_order = epoch > 0 and previous_epoch > 0 and epoch < previous_epoch
+    duplicate = tick_id == bot.rf_last_tick_id.get(symbol)
+    if out_of_order or duplicate:
+        return
+
+    if epoch > 0:
+        bot.rf_last_epoch[symbol] = epoch
+    bot.rf_last_tick_id[symbol] = tick_id
+    bot.live_market_symbol = symbol
+    bot._mark_tick_received(market)
+
+    display_value = f"{quote:.{market.pip_size}f}"
+    display_last_digit = None
+    for character in reversed(display_value):
+        if character.isdigit():
+            display_last_digit = int(character)
+            break
+
+    bot.tick_sequence += 1
+    market.tick_sequence += 1
+    snapshot = {
+        "quote": quote,
+        "display": display_value,
+        "epoch": epoch,
+        "tick_id": tick_id,
+        "last_digit": display_last_digit if display_last_digit is not None else "-",
+    }
+    market.live_ticks_history.append(snapshot)
+    market.ticks_history.append(snapshot)
+    if display_last_digit is not None:
+        market.raw_tick_digits.append(int(display_last_digit))
+
+    bot.repository.record_tick(
+        sequence_id=bot.tick_sequence,
+        symbol=symbol,
+        epoch=epoch,
+        tick_id=tick_id,
+        quote=float(quote),
+        final_digit=display_last_digit if display_last_digit is not None else -1,
+        connection_session_id=bot.connection_session_id,
+    )
+    bot._render_live_ticks()
+
+    virtual_config = getattr(bot, "virtual_config", None)
+    virtual_settled = list(
+        bot.rf_repository.settle_due_virtual_trades(
+            symbol=symbol,
+            tick_sequence=market.tick_sequence,
+            exit_quote=quote,
+            exit_epoch=epoch,
+            exit_digit=display_last_digit,
+            exit_after_wins=getattr(virtual_config, "exit_after_wins", 1),
+            max_observations=getattr(virtual_config, "max_observations", 0),
+        )
+        or []
+    )
+    for settled in virtual_settled:
+        bot.logger.warning(
+            "CUSTOM_VIRTUAL_TRADE_SETTLED account=%s market=%s result=%s "
+            "actual_financial_impact=0 recovery_debt=%.2f",
+            settled["account"],
+            settled["market"],
+            settled["result"],
+            float(settled["protection"].get("actual_recovery_debt") or 0.0),
+        )
+    if virtual_settled:
+        await bot._notify_dashboard_settlement()
+
+
 def _exclude_custom_from_shared_aidr() -> None:
     current = final_multi._groups_from_snapshot
     if getattr(current, "_custom_strategy_exclusion", False):
@@ -685,16 +783,21 @@ def install_custom_strategy_runtime() -> None:
             "trade_types=rise,fall,even,odd,over,under condition_join=AND "
             "duration=user_selected_ticks silent_scanning=true "
             "reanalyze=initial_analysis_then_configured_continuation "
-            "independent_from_system_aidr=true manual_martingale_compatible=true",
+            "independent_from_system_aidr=true manual_martingale_compatible=true "
+            "custom_strategy_only=%s",
             VERSION,
             10,
+            custom_strategy_only_runtime_enabled(),
         )
 
     async def custom_on_tick(
         self: RFDir5TradingBot,
         tick_data: dict[str, Any],
     ) -> None:
-        await original_on_tick(self, tick_data)
+        if custom_strategy_only_runtime_enabled():
+            await _custom_only_on_tick(self, tick_data)
+        else:
+            await original_on_tick(self, tick_data)
         try:
             _schedule_matches(self, tick_data)
         except Exception:

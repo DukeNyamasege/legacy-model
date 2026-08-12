@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 
 import aiohttp
@@ -142,10 +143,23 @@ def install_production_worker_integration() -> None:
         install_credential_quarantine_runtime_guard,
     )
 
-    install_final_shared_system_strategy_clock()
-    install_proposal_execution_recovery()
-    install_seamless_execution_runtime()
-    install_final_seamless_execution_runtime()
+    custom_strategy_only = (
+        os.getenv("CUSTOM_STRATEGY_ONLY_RUNTIME", "true")
+        .strip()
+        .lower()
+        not in {"0", "false", "no", "off", "legacy"}
+    )
+
+    if custom_strategy_only:
+        logging.getLogger(__name__).warning(
+            "LEGACY_SHARED_STRATEGY_CLOCK_DISABLED custom_strategy_only=true "
+            "rf_aidr_system_execution=false"
+        )
+    else:
+        install_final_shared_system_strategy_clock()
+        install_proposal_execution_recovery()
+        install_seamless_execution_runtime()
+        install_final_seamless_execution_runtime()
 
     # Provider bulk responses can use lists or account-keyed mappings and can wrap
     # a purchase/error in nested transaction/buy/result/data/response objects.
@@ -168,10 +182,11 @@ def install_production_worker_integration() -> None:
     # work. Preserve them for manual review but remove them from runtime locks.
     install_historical_unresolved_contract_quarantine()
 
-    # Final execution authority: the System purchase uses its already-qualified
-    # proposal immediately while all manual contract proposals run independently.
-    # One manual group can fail without delaying System or cancelling other groups.
-    install_final_multi_strategy_execution()
+    if not custom_strategy_only:
+        # Final execution authority: the System purchase uses its already-qualified
+        # proposal immediately while all manual contract proposals run independently.
+        # One manual group can fail without delaying System or cancelling other groups.
+        install_final_multi_strategy_execution()
 
     # Keep the System Strategy's strict OVER-1/OVER-3/virtual-OVER-4/real-OVER-4
     # recovery untouched. This last wrapper changes only manual strategy recovery

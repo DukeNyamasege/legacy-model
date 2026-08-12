@@ -47,6 +47,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-underdog}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB:-underdog_test2}
       DEPLOYMENT_ID: vps-api
+      CUSTOM_STRATEGY_ONLY_RUNTIME: ${CUSTOM_STRATEGY_ONLY_RUNTIME:-true}
     depends_on:
       database:
         condition: service_healthy
@@ -74,6 +75,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-underdog}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB:-underdog_test2}
       DEPLOYMENT_ID: vps-worker
+      CUSTOM_STRATEGY_ONLY_RUNTIME: ${CUSTOM_STRATEGY_ONLY_RUNTIME:-true}
       LIVE_TICK_LOG_LINES: ${LIVE_TICK_LOG_LINES:-false}
       TICK_PERSIST_BATCH_SIZE: ${TICK_PERSIST_BATCH_SIZE:-50}
       TICK_PERSIST_FLUSH_SECONDS: ${TICK_PERSIST_FLUSH_SECONDS:-1.0}
