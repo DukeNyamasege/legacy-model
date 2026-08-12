@@ -7,10 +7,19 @@ from app.account_lifecycle import install_worker_account_lifecycle
 from app.account_mode_execution_lock import install_account_mode_execution_lock
 from app.account_reenrollment import install_account_reenrollment
 from app.account_scoped_websocket_runtime import install_account_scoped_websocket_runtime
+from app.custom_strategy_comparator_extension import (
+    install_custom_strategy_comparator_extension,
+)
+
+# Extend the canonical Custom Strategy schema before direct-runtime imports bind
+# the normalization/evaluation functions used by the worker.
+install_custom_strategy_comparator_extension()
+
 from app.custom_strategy_current_runtime_fix import install_custom_strategy_current_runtime_fix
 from app.custom_strategy_direct_runtime import install_custom_strategy_direct_runtime
 from app.custom_strategy_runtime_lifecycle import install_custom_strategy_runtime_lifecycle
 from app.custom_strategy_settlement import install_custom_strategy_settlement
+from app.custom_virtual_contract_parity import install_custom_virtual_contract_parity
 from app.deriv_rate_limit_circuit import install_deriv_rate_limit_circuit
 from app.deriv_request_broker import install_deriv_request_broker
 from app.manual_martingale_v2 import install_manual_martingale_v2_worker
@@ -21,6 +30,7 @@ from app.profit_accuracy_guard import install_profit_accuracy_guard
 from app.public_websocket_resilience import install_public_websocket_resilience
 from app.real_demo_trading_support import install_dual_demo_real_trading_support
 from app.rf_dir5_bot import RFDir5TradingBot
+from app.seamless_execution_recovery import install_seamless_execution_recovery
 from app.session_risk_stop_authority import install_session_risk_stop_worker
 from app.telegram_silence import install_telegram_silence
 from app.trade_registration_idempotency import install_trade_registration_idempotency
@@ -54,6 +64,10 @@ async def run_worker() -> None:
     install_manual_martingale_v2_worker()
     install_custom_strategy_settlement()
 
+    # Virtual observations must settle the exact saved contract family: Over,
+    # Under, Match, Differs, Even, Odd, CALL or PUT with the same market/duration.
+    install_custom_virtual_contract_parity()
+
     # Install the independent execution authority, then the final current-runtime
     # correction that keeps proposal+buy on one account session and suppresses
     # inherited RF/unrelated-history work from the Custom Strategy path.
@@ -67,10 +81,10 @@ async def run_worker() -> None:
     install_session_risk_stop_worker()
 
     # UI delivery is never allowed to sit on the financial execution path. This
-    # final bridge also keeps transient proposal/session interruptions in an
-    # account-local reconnect state while treating an uncertain BUY timeout as a
-    # reconciliation event that must never be blindly retried.
+    # bridge handles bounded provider reconnects; the final recovery authority
+    # below broadens that rule to ownership/state synchronization faults too.
     install_netlify_worker_bridge()
+    install_seamless_execution_recovery()
     install_telegram_silence()
 
     bot = RFDir5TradingBot()
@@ -78,7 +92,8 @@ async def run_worker() -> None:
         "CUSTOM_STRATEGY_WORKER_READY architecture=account_scoped_direct "
         "frontend=netlify_static realtime=nonblocking_vps_websocket "
         "legacy_rf=false legacy_aidr=false multi_strategy=false cohorts=false "
-        "bulk=false tick_db_persistence=false start_required=true"
+        "bulk=false tick_db_persistence=false start_required=true "
+        "runtime_fault_policy=auto_reconnect_only"
     )
     loop = asyncio.get_running_loop()
 
