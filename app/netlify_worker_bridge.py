@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from typing import Any
 
@@ -9,10 +10,18 @@ import aiohttp
 from app import custom_strategy_direct_runtime as direct_runtime
 from app.account_execution_session import AccountExecutionError, AccountExecutionSession
 from app.rf_dir5_bot import RFDir5TradingBot
-from enhanced_bot import TradingBot
+from enhanced_bot import ClientSession, TradingBot
 
 
 _INSTALLED = False
+
+
+def _private_request_timeout() -> float:
+    try:
+        value = float(os.getenv("PRIVATE_WS_REQUEST_TIMEOUT_SECONDS", "4.0"))
+    except (TypeError, ValueError):
+        value = 4.0
+    return min(10.0, max(1.5, value))
 
 
 def _temporary_transport_problem(reason: str) -> bool:
@@ -30,6 +39,53 @@ def _temporary_transport_problem(reason: str) -> bool:
             "authenticated deriv trading session is not connected",
         )
     )
+
+
+async def _bounded_private_send_request(
+    self: ClientSession,
+    req: dict[str, Any],
+) -> dict[str, Any]:
+    """Use a bounded request SLA on an already-connected private session.
+
+    The old generic transport waited ten seconds before declaring a lost response.
+    The direct Custom Strategy worker runs next to the backend on a dedicated VPS,
+    so an unanswered private request should leave the hot path sooner and let the
+    account reconnect. BUY ambiguity is handled separately and is never retried.
+    """
+
+    if not self.ws or not self.is_connected:
+        return {
+            "error": {
+                "message": "Private WebSocket is not connected",
+                "code": "NOT_CONNECTED",
+            }
+        }
+
+    req_id = self.next_req_id
+    self.next_req_id += 1
+    request = dict(req)
+    request["req_id"] = req_id
+    future = asyncio.get_running_loop().create_future()
+    self.pending_requests[req_id] = future
+    try:
+        await self.ws.send(json.dumps(request))
+        return await asyncio.wait_for(future, timeout=_private_request_timeout())
+    except asyncio.TimeoutError:
+        return {
+            "error": {
+                "message": "Request timed out",
+                "code": "TIMEOUT",
+            }
+        }
+    except Exception as exc:
+        return {
+            "error": {
+                "message": str(exc),
+                "code": "ERROR",
+            }
+        }
+    finally:
+        self.pending_requests.pop(req_id, None)
 
 
 def _drop_hot_runtime_only(bot: RFDir5TradingBot, managed_id: int) -> None:
@@ -223,6 +279,10 @@ def install_netlify_worker_bridge() -> None:
         )
         _schedule_dashboard_wakeup(bot)
 
+    # Install after private connection rate limiting. This changes only the
+    # request/response SLA; the existing OTP/handshake gate and reconnect policy
+    # remain authoritative.
+    ClientSession.send_request = _bounded_private_send_request  # type: ignore[method-assign]
     AccountExecutionSession.proposal = proposal_with_one_safe_retry  # type: ignore[method-assign]
     AccountExecutionSession.buy_proposal = buy_without_ambiguous_retry  # type: ignore[method-assign]
     AccountExecutionSession.register_purchase = register_and_wake_dashboard  # type: ignore[method-assign]
