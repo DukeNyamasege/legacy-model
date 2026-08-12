@@ -1,18 +1,13 @@
-# Caddyfile - HTTPS reverse proxy for the Deriv bot dashboard and API
+# Caddyfile - HTTPS reverse proxy for the dedicated backend only.
 #
-# Install Caddy on Ubuntu:
-#   sudo apt install -y caddy
+# The browser UI is served by Netlify. This host exposes FastAPI REST/OAuth and
+# the signed realtime WebSocket; it does not serve the production frontend.
 #
-# Copy this file to /etc/caddy/Caddyfile, then:
-#   sudo systemctl restart caddy
-#
-# Caddy automatically provisions and renews Let's Encrypt certificates.
+# Before starting Caddy, set BACKEND_DOMAIN to the DNS name pointing at the new
+# VPS, for example: api.example.com
 
-derivadmin.site, www.derivadmin.site {
+{$BACKEND_DOMAIN:api.example.com} {
     encode zstd gzip
-
-    @www host www.derivadmin.site
-    redir @www https://derivadmin.site{uri} permanent
 
     reverse_proxy 127.0.0.1:8080
 
