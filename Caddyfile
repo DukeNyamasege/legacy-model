@@ -1,12 +1,8 @@
-# Caddyfile - HTTPS reverse proxy for the dedicated backend only.
-#
-# The browser UI is served by Netlify. This host exposes FastAPI REST/OAuth and
-# the signed realtime WebSocket; it does not serve the production frontend.
-#
-# Before starting Caddy, set BACKEND_DOMAIN to the DNS name pointing at the new
-# VPS, for example: api.example.com
+# Caddyfile - HTTPS reverse proxy for the Contabo backend only.
+# Netlify serves the browser UI at derivadmin.site.
+# Contabo exposes only FastAPI REST/OAuth and the signed realtime WebSocket.
 
-{$BACKEND_DOMAIN:api.example.com} {
+api.derivadmin.site {
     encode zstd gzip
 
     reverse_proxy 127.0.0.1:8080
