@@ -7,12 +7,12 @@ BACKUP_DIR="$PROJECT_DIR/deploy-backups"
 cd "$PROJECT_DIR"
 
 compose() {
-  docker compose -f docker-compose.yml -f docker-compose.vps.yml "$@"
+  docker compose -f docker-compose.yml "$@"
 }
 
 fail() {
   echo ""
-  echo "DEDICATED BACKEND DEPLOYMENT FAILED: $1" >&2
+  echo "CONTABO BACKEND DEPLOYMENT FAILED: $1" >&2
   compose ps || true
   exit 1
 }
@@ -20,7 +20,7 @@ fail() {
 [ -f .env ] || fail "Missing $PROJECT_DIR/.env. Create it from .env.vps.example before deployment."
 
 printf '%s\n' "============================================================"
-printf '%s\n' "NETLIFY + DEDICATED VPS BACKEND DEPLOYMENT"
+printf '%s\n' "NETLIFY + CONTABO BACKEND DEPLOYMENT"
 printf '%s\n' "============================================================"
 printf 'Project : %s\n' "$PROJECT_DIR"
 printf 'Commit  : %s\n' "$(git rev-parse HEAD)"
@@ -90,8 +90,8 @@ printf '%s\n' "8. Final service state"
 compose ps
 
 printf '%s\n' "============================================================"
-printf '%s\n' "DEDICATED BACKEND DEPLOYMENT PASSED"
+printf '%s\n' "CONTABO BACKEND DEPLOYMENT PASSED"
 printf '%s\n' "Frontend: Netlify"
-printf '%s\n' "VPS role: API + worker + PostgreSQL only"
+printf '%s\n' "Contabo role: API + worker + PostgreSQL only"
 printf '%s\n' "PostgreSQL named volume preserved"
 printf '%s\n' "============================================================"
