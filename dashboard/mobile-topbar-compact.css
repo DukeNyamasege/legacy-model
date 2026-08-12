@@ -1,0 +1,168 @@
+/* Final phone header authority.
+   Keep the menu icon and the five execution KPIs in one 44px row, then let the
+   strategy builder use the rest of the screen. This layer intentionally loads
+   after the existing mobile drawer stylesheet. */
+
+@media (max-width: 760px) {
+  .foa-mobile-menu-launcher.foa-mobile-execution-topbar {
+    display: grid !important;
+    grid-template-columns: 42px minmax(0, 1fr) !important;
+    align-items: stretch !important;
+    gap: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    height: 44px !important;
+    min-height: 44px !important;
+    padding: 0 !important;
+    margin: 0 0 5px !important;
+    position: sticky !important;
+    top: max(2px, env(safe-area-inset-top)) !important;
+    z-index: 100 !important;
+    overflow: hidden !important;
+    border: 1px solid var(--line) !important;
+    border-radius: 11px !important;
+    background: linear-gradient(150deg, rgba(7, 17, 29, .97), rgba(8, 14, 23, .97)) !important;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, .24) !important;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+  }
+
+  #foa-simple-app[data-theme="light"] .foa-mobile-menu-launcher.foa-mobile-execution-topbar {
+    background: linear-gradient(150deg, rgba(255, 255, 255, .98), rgba(246, 249, 253, .98)) !important;
+  }
+
+  .foa-mobile-execution-topbar .foa-mobile-menu-button {
+    width: 42px !important;
+    height: 42px !important;
+    min-width: 42px !important;
+    min-height: 42px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-right: 1px solid var(--line) !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .foa-mobile-inline-stats {
+    display: grid !important;
+    grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+    align-items: stretch !important;
+    width: 100% !important;
+    height: 42px !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    gap: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+  }
+
+  .foa-mobile-mini-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    height: 42px;
+    padding: 2px 1px;
+    overflow: hidden;
+    border-left: 1px solid rgba(148, 163, 184, .12);
+    background: transparent;
+    text-align: center;
+  }
+
+  .foa-mobile-mini-stat:first-child {
+    border-left: 0;
+  }
+
+  .foa-mobile-mini-stat span,
+  .foa-mobile-mini-stat strong {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .foa-mobile-mini-stat span {
+    color: var(--muted);
+    font-size: clamp(5.8px, 1.75vw, 7px);
+    font-weight: 750;
+    line-height: 1;
+    letter-spacing: .015em;
+    text-transform: uppercase;
+  }
+
+  .foa-mobile-mini-stat strong {
+    margin-top: 3px;
+    color: var(--text);
+    font-size: clamp(7.8px, 2.35vw, 10px);
+    font-weight: 850;
+    line-height: 1;
+    letter-spacing: -.035em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .foa-mobile-mini-stat[data-tone="win"] strong {
+    color: var(--green);
+  }
+
+  .foa-mobile-mini-stat[data-tone="loss"] strong {
+    color: var(--red);
+  }
+
+  /* The old large KPI cards are deliberately retained in the DOM as a live-data
+     source for the existing realtime client, but they no longer consume phone
+     space. The compact strip above is the only visible execution header. */
+  .builder-stats,
+  .builder-stats.compact {
+    display: none !important;
+  }
+
+  /* Trades used to repeat account balance, trading status and another Start/Stop
+     control immediately below the KPIs. On phones that information/control is
+     redundant: account identity lives in the drawer and execution is controlled
+     from the strategy builder. */
+  .trades-control-panel {
+    display: none !important;
+  }
+
+  /* Keep notices below the compact header; they scroll away normally and never
+     become part of the sticky execution chrome. */
+  .notice,
+  .credential-notice {
+    position: relative !important;
+    top: auto !important;
+  }
+}
+
+@media (max-width: 360px) {
+  .foa-mobile-menu-launcher.foa-mobile-execution-topbar {
+    grid-template-columns: 40px minmax(0, 1fr) !important;
+    height: 42px !important;
+    min-height: 42px !important;
+  }
+
+  .foa-mobile-execution-topbar .foa-mobile-menu-button,
+  .foa-mobile-inline-stats,
+  .foa-mobile-mini-stat {
+    height: 40px !important;
+    min-height: 40px !important;
+  }
+
+  .foa-mobile-execution-topbar .foa-mobile-menu-button {
+    width: 40px !important;
+    min-width: 40px !important;
+  }
+
+  .foa-mobile-mini-stat span {
+    font-size: 5.6px;
+  }
+
+  .foa-mobile-mini-stat strong {
+    font-size: 7.6px;
+  }
+}
