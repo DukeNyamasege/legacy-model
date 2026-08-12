@@ -101,12 +101,19 @@ def normalize_token_payload(
         raise ValueError("OAuth token response did not include an access token")
     expires_in = int(payload.get("expires_in", 3600) or 3600)
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=max(60, expires_in))
+
+    # OAuth servers may omit `scope` when the granted scopes are unchanged from the
+    # authorization request. This application always requests trade + application_read,
+    # so preserve that known grant instead of incorrectly forcing a second PAT/API-token
+    # connection after a valid Deriv OAuth login or refresh.
+    scope = str(payload.get("scope") or " ".join(DEFAULT_SCOPES)).strip()
+
     return {
         "auth_type": "oauth",
         "access_token": access_token,
         "refresh_token": str(payload.get("refresh_token") or fallback_refresh_token).strip(),
         "expires_at": expires_at.isoformat(),
-        "scope": str(payload.get("scope", "")).strip(),
+        "scope": scope,
         "token_type": str(payload.get("token_type", "Bearer")).strip(),
     }
 
