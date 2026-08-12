@@ -42,8 +42,11 @@ class AccountExecutionSession:
     account_id: str
     managed_account_id: int
 
+    def _profile(self) -> dict[str, Any]:
+        return dict(getattr(self.bot, "user_profiles", {}).get(self.token, {}) or {})
+
     def prepare(self) -> tuple[dict[str, Any], Any]:
-        profile = dict(getattr(self.bot, "user_profiles", {}).get(self.token, {}) or {})
+        profile = self._profile()
         profile_managed_id = profile.get("managed_account_id")
         if profile_managed_id in {None, ""} or int(profile_managed_id) != int(
             self.managed_account_id
@@ -189,6 +192,30 @@ class AccountExecutionSession:
             )
         return float(snapshot.balance if snapshot is not None else 0.0)
 
+    async def _ensure_current_balance(self) -> float:
+        balance = self._current_balance()
+        if balance > 0:
+            return balance
+        # A newly connected private session can become ready a few milliseconds
+        # before the subscribed balance message is committed. Refresh once here;
+        # never reject the account as insufficient solely because the snapshot has
+        # not arrived yet.
+        try:
+            await self.bot._refresh_account_balance_snapshot(
+                self.token,
+                self.account_id,
+            )
+        except Exception as exc:
+            raise AccountExecutionPreparationError(
+                "account balance could not be initialized"
+            ) from exc
+        balance = self._current_balance()
+        if balance <= 0:
+            raise AccountExecutionPreparationError(
+                "account balance is unavailable for stake validation"
+            )
+        return balance
+
     async def register_purchase(
         self,
         *,
@@ -283,6 +310,7 @@ class AccountExecutionSession:
         virtual_protection_enabled: bool,
     ) -> int:
         state, _private_session = self.prepare()
+        profile = self._profile()
         configured_stake = round(float(state.get("base_stake") or 0.50), 2)
         first_economics = await self.proposal(
             signal,
@@ -292,14 +320,14 @@ class AccountExecutionSession:
         profit_ratio = float(first_economics.potential_profit) / float(
             first_economics.stake
         )
-        balance = self._current_balance()
+        balance = await self._ensure_current_balance()
         plan = self.bot.rf_repository.plan_stake(
             managed_account_id=self.managed_account_id,
             account_id_masked=mask_account_id(self.account_id),
             current_balance=balance,
             requested_stake=configured_stake,
             proposal_profit_ratio=profit_ratio,
-            recovery_enabled=bool(state.get("martingale_enabled", True)),
+            recovery_enabled=bool(profile.get("martingale_enabled", True)),
             recovery_trigger_losses=2,
             minimum_stake=configured_stake,
             virtual_protection_enabled=bool(virtual_protection_enabled),
