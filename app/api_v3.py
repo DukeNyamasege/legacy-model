@@ -68,6 +68,9 @@ from app.live_metrics_ui import install_live_metrics_ui  # noqa: E402
 from app.model_pnl_display_aliases import install_model_pnl_display_aliases  # noqa: E402
 from app.multi_strategy_api import install_multi_strategy_api  # noqa: E402
 from app.multi_strategy_ui import install_multi_strategy_ui  # noqa: E402
+from app.oauth_direct_account_authority import (  # noqa: E402
+    install_oauth_direct_account_authority,
+)
 from app.oauth_session_recovery import install_oauth_session_recovery  # noqa: E402
 from app.personal_account_identity_balance import (  # noqa: E402
     install_personal_account_identity_balance,
@@ -101,6 +104,7 @@ install_telegram_silence()
 # final guards afterwards so no older compatibility layer can override them.
 install_account_mode_execution_lock()
 install_profit_accuracy_guard()
+install_oauth_direct_account_authority()
 install_personal_autotrade_start_fix()
 
 # Advanced Martingale remains account-scoped. System exact-debt recovery is the

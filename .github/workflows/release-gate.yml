@@ -66,15 +66,20 @@ jobs:
 
       - name: Lint direct custom runtime
         run: >-
-          ruff check --select E9,F63,F7,F82
+          ruff check --output-format=github --select E9,F63,F7,F82
           app/account_execution_session.py
+          app/account_scoped_websocket_runtime.py
+          app/custom_strategy_current_runtime_fix.py
           app/custom_strategy_direct_runtime.py
           app/custom_strategy_runtime_lifecycle.py
           app/custom_strategy_settlement.py
           app/custom_strategy_worker.py
           app/custom_strategy_runtime_api.py
           app/oauth_client.py
+          app/oauth_direct_account_authority.py
+          app/real_demo_trading_support.py
           tests/test_custom_direct_runtime.py
+          tests/test_current_custom_runtime_fix.py
           tests/test_oauth_direct_mobile_compact.py
 
       - name: Typecheck direct custom runtime
@@ -82,12 +87,16 @@ jobs:
           mypy --follow-imports=skip --ignore-missing-imports --allow-untyped-defs
           --disable-error-code=misc --disable-error-code=arg-type
           app/account_execution_session.py
+          app/account_scoped_websocket_runtime.py
+          app/custom_strategy_current_runtime_fix.py
           app/custom_strategy_direct_runtime.py
           app/custom_strategy_runtime_lifecycle.py
           app/custom_strategy_settlement.py
           app/custom_strategy_worker.py
           app/custom_strategy_runtime_api.py
           app/oauth_client.py
+          app/oauth_direct_account_authority.py
+          app/real_demo_trading_support.py
 
       - name: Check dashboard JavaScript syntax
         run: |
@@ -101,6 +110,7 @@ jobs:
       - name: Run focused release tests
         run: |
           python -m unittest -q tests.test_custom_direct_runtime
+          python -m unittest -q tests.test_current_custom_runtime_fix
           python -m unittest -q tests.test_stop_history_and_mobile_ui
           python -m unittest -q tests.test_oauth_direct_mobile_compact
           python -m unittest -q tests.test_seamless_execution_final

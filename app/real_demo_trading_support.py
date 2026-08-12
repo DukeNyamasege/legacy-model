@@ -18,14 +18,36 @@ def _truthy(value: Any, default: bool = False) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on", "real"}
 
 
+def _oauth_trade_credential(payload: dict[str, Any]) -> str:
+    auth_type = str(payload.get("auth_type") or "").strip().lower()
+    if auth_type == "oauth":
+        token = str(
+            payload.get("access_token") or payload.get("oauth_access_token") or ""
+        ).strip()
+        raw_scope = payload.get("scope") or payload.get("oauth_scope") or payload.get("scopes")
+    else:
+        token = str(payload.get("oauth_access_token") or "").strip()
+        raw_scope = payload.get("oauth_scope") or payload.get("scope") or payload.get("scopes")
+    scopes = {
+        item.strip().lower()
+        for item in str(raw_scope or "").replace(",", " ").split()
+        if item.strip()
+    }
+    return token if token and "trade" in scopes else ""
+
+
 def _account_purchase_token_from_payload(payload: dict[str, Any]) -> str:
     """Return this row's own trade-capable credential.
 
-    Do not let a Demo PAT make a Real account executable.  If the row was stored
-    from OAuth and the OAuth credential has trade scope, the row's own OAuth
-    access token is valid for the account-specific OTP/purchase flow.
+    The current Custom Strategy runtime uses OAuth with trade scope as the primary
+    credential for the account-specific OTP/private-WebSocket flow. A legacy PAT
+    may remain encrypted as a compatibility fallback, but it must not override a
+    healthy OAuth session after the trader logs in through Deriv.
     """
 
+    oauth_credential = _oauth_trade_credential(payload)
+    if oauth_credential:
+        return oauth_credential
     return private_websocket_credential_from_payload(payload)
 
 
