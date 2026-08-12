@@ -2,14 +2,33 @@
   "use strict";
 
   const nativeFetch = window.fetch.bind(window);
+  const nativeSetInterval = window.setInterval.bind(window);
   let deferredSettings = null;
   let runtimeSnapshot = null;
+  let liveMe = null;
+  let liveTrades = null;
+  let eventSource = null;
+  let liveRefreshTimer = null;
+  let liveRefreshInFlight = false;
+  let liveRefreshPending = false;
+  let summarySnapshot = null;
+  let summaryRefreshAt = 0;
+
   const cache = new Map();
   const CACHE_TTL = new Map([
-    ["/me", 30000],
-    ["/metrics/summary", 60000],
     ["/me/custom-strategy", 300000],
   ]);
+  const GET_TIMEOUT_MS = 4500;
+  const POST_TIMEOUT_MS = 12000;
+  const SUMMARY_BACKGROUND_TTL_MS = 60000;
+
+  // The old renderer owns a full-screen loader whenever any dashboard request is
+  // busy. Keep the rendered UI usable instead: all reads now have bounded timeouts,
+  // live data arrives independently, and mutations expose their result inline.
+  const style = document.createElement("style");
+  style.id = "foa-nonblocking-loader-style";
+  style.textContent = "#foa-simple-app #smart-loader{display:none!important;pointer-events:none!important}";
+  document.head.appendChild(style);
 
   function urlPath(input) {
     try {
@@ -46,27 +65,59 @@
   }
 
   function invalidateAccountCache() {
-    for (const key of Array.from(cache.keys())) {
-      if (key.startsWith("/me") || key.startsWith("/metrics/summary")) cache.delete(key);
+    cache.clear();
+  }
+
+  async function fetchWithTimeout(input, options = {}, timeoutMs = GET_TIMEOUT_MS) {
+    if (options?.signal || typeof AbortController === "undefined") {
+      return nativeFetch(input, options);
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), Math.max(250, Number(timeoutMs || GET_TIMEOUT_MS)));
+    try {
+      return await nativeFetch(input, { ...options, signal: controller.signal });
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        throw new Error(`Dashboard request timed out after ${Math.round(timeoutMs / 1000)}s`);
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timer);
     }
   }
 
   function cachedFetch(input, options, path) {
     const key = path;
     const ttl = CACHE_TTL.get(basePath(path));
-    if (!ttl) return nativeFetch(input, options);
+    if (!ttl) return fetchWithTimeout(input, options, GET_TIMEOUT_MS);
     const now = Date.now();
     const hit = cache.get(key);
-    if (hit && now - hit.savedAt < ttl) return hit.response.clone();
-    return nativeFetch(input, options).then((response) => {
+    if (hit && now - hit.savedAt < ttl) return Promise.resolve(hit.response.clone());
+    return fetchWithTimeout(input, options, GET_TIMEOUT_MS).then((response) => {
       if (response.ok) cache.set(key, { savedAt: now, response: response.clone() });
       return response;
     });
   }
 
+  function refreshSummaryInBackground(path) {
+    const now = Date.now();
+    if (now - summaryRefreshAt < SUMMARY_BACKGROUND_TTL_MS) return;
+    summaryRefreshAt = now;
+    fetchWithTimeout(path, {
+      credentials: "same-origin",
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+    }, 2000).then(async (response) => {
+      if (!response.ok) return;
+      try {
+        summarySnapshot = await response.json();
+      } catch (_) {}
+    }).catch(() => {});
+  }
+
   function runtimeText(payload) {
     const state = String(payload?.runtime_state || "STOPPED").toUpperCase();
-    const reason = String(payload?.reason || "").trim();
+    const reason = String(payload?.reason || payload?.execution_status_reason || "").trim();
     const labels = {
       STOPPED: ["Ready", reason || "Auto trading is stopped"],
       STARTING: ["Starting", reason || "Initializing account execution session"],
@@ -95,8 +146,6 @@
       button.dataset.mainAction = enabled ? "stop" : "start";
       button.textContent = enabled ? "Stop Auto Trading" : "Start Auto Trading";
       button.classList.toggle("danger", enabled);
-      // Never disable Stop merely because a proposal/purchase is in progress.
-      // The backend lifecycle remains authoritative for the resulting race.
       button.disabled = false;
     });
 
@@ -120,6 +169,88 @@
     } else if (notice) {
       notice.remove();
     }
+  }
+
+  function formatMoney(value, currency = "USD") {
+    const amount = Number(value || 0);
+    const prefix = String(currency || "USD").toUpperCase() === "USD" ? "$" : `${currency} `;
+    return `${amount < 0 ? "-" : ""}${prefix}${Math.abs(amount).toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
+  }
+
+  function statValue(label, value) {
+    document.querySelectorAll(".builder-stat").forEach((card) => {
+      const name = String(card.querySelector("span")?.textContent || "").trim();
+      if (name !== label) return;
+      const strong = card.querySelector("strong");
+      if (strong) strong.textContent = String(value);
+    });
+  }
+
+  function patchLiveMetrics() {
+    if (!liveMe && !liveTrades) return;
+    const currency = liveMe?.currency || "USD";
+    const summary = liveTrades?.summary || {};
+    const stats = liveMe?.stats || {};
+    const total = Number(summary.total ?? stats.trades ?? 0);
+    const wins = Number(summary.wins ?? stats.wins ?? 0);
+    const losses = Number(summary.losses ?? stats.losses ?? 0);
+    const profit = Number(summary.profit ?? stats.profit ?? 0);
+
+    if (liveMe) statValue("Balance", formatMoney(liveMe.balance || 0, currency));
+    statValue("Today's P/L", formatMoney(profit, currency));
+    statValue("P/L", formatMoney(profit, currency));
+    statValue("Number of Runs", total.toLocaleString());
+    statValue("Runs", total.toLocaleString());
+    statValue("Wins", wins.toLocaleString());
+    statValue("Losses", losses.toLocaleString());
+  }
+
+  function tradeTime(row) {
+    const raw = row.purchase_time || row.provider_purchase_time || row.created_at || row.settlement_time;
+    if (!raw) return "-";
+    const date = new Date(raw);
+    return Number.isNaN(date.getTime()) ? "-" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  }
+
+  function tradeResult(row, currency) {
+    const outcome = String(row.outcome || "OPEN").toUpperCase();
+    if (outcome === "WIN" || outcome === "LOSS") return `${outcome} - ${formatMoney(row.profit || 0, currency)}`;
+    return outcome;
+  }
+
+  function patchRecentTrades() {
+    const rows = Array.isArray(liveTrades?.trades) ? liveTrades.trades : null;
+    if (!rows) return;
+    const currency = liveMe?.currency || "USD";
+    document.querySelectorAll(".builder-recent-trades").forEach((panel) => {
+      Array.from(panel.children).forEach((child) => {
+        if (child.classList?.contains("trade-row") || child.classList?.contains("empty-state")) child.remove();
+      });
+      const limit = document.querySelector(".trades-control-panel") ? 50 : 8;
+      if (!rows.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty-state";
+        empty.textContent = "No recent trades yet.";
+        panel.appendChild(empty);
+        return;
+      }
+      rows.slice(0, limit).forEach((row) => {
+        const outcome = String(row.outcome || "OPEN").toUpperCase();
+        const item = document.createElement("div");
+        item.className = "trade-row";
+        item.innerHTML = `<span>${tradeTime(row)}</span><strong>${String(row.symbol || row.market || "-")}</strong><span>${String(row.contract_type || row.type || "-")}</span><span>${formatMoney(row.buy_price ?? row.stake ?? row.amount ?? 0, currency)}</span><b class="${outcome === "WIN" ? "win" : outcome === "LOSS" ? "loss" : "open"}">${tradeResult(row, currency)}</b>`;
+        panel.appendChild(item);
+      });
+    });
+  }
+
+  function applyLiveSnapshot() {
+    if (runtimeSnapshot) applyRuntime(runtimeSnapshot);
+    patchLiveMetrics();
+    patchRecentTrades();
   }
 
   async function inspectRuntimeResponse(response) {
@@ -151,51 +282,148 @@
         };
       }
       const next = { ...options, body: JSON.stringify(custom) };
-      const response = await nativeFetch(input, next);
+      const response = await fetchWithTimeout(input, next, POST_TIMEOUT_MS);
       if (response.ok) {
         deferredSettings = null;
-        // Keep the recent /me and summary snapshots so mutate()'s forced refresh
-        // does not immediately repeat those expensive reads after a save. The
-        // builder already owns the just-saved values locally.
-        for (const key of Array.from(cache.keys())) {
-          if (key.startsWith("/me/custom-strategy")) cache.delete(key);
-        }
+        cache.clear();
       }
       await inspectRuntimeResponse(response);
       return response;
     }
 
+    // The current builder does not render the old global model summary. Never make
+    // navigation or account refresh wait for that legacy aggregate. Refresh it only
+    // in the background for compatibility with any older observer still reading it.
+    if (method === "GET" && route === "/metrics/summary") {
+      refreshSummaryInBackground(path);
+      return jsonResponse(summarySnapshot || { performance_profile: "background-summary" });
+    }
+
     if (method !== "GET") invalidateAccountCache();
     const response = method === "GET"
       ? await cachedFetch(input, options, path)
-      : await nativeFetch(input, options);
-    if (route === "/me/resume-trading" || route === "/me/auto-trade") {
+      : await fetchWithTimeout(input, options, POST_TIMEOUT_MS);
+    if (route === "/me/resume-trading" || route === "/me/auto-trade" || route === "/me/stop-trading") {
       await inspectRuntimeResponse(response);
+      scheduleLiveRefresh("mutation");
     }
     return response;
   };
 
+  async function nativeJSON(path, timeoutMs = GET_TIMEOUT_MS) {
+    const response = await fetchWithTimeout(path, {
+      credentials: "same-origin",
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+    }, timeoutMs);
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    return response.json();
+  }
+
+  async function refreshLiveData() {
+    if (liveRefreshInFlight) {
+      liveRefreshPending = true;
+      return;
+    }
+    liveRefreshInFlight = true;
+    try {
+      const [me, life, trades] = await Promise.all([
+        nativeJSON("/me", 3500),
+        nativeJSON("/me/trading-lifecycle", 3500),
+        nativeJSON("/me/trades/today?limit=100", 3500),
+      ]);
+      if (me?.authenticated) liveMe = me;
+      if (life?.authenticated) applyRuntime(life);
+      if (trades?.authenticated) liveTrades = trades;
+      applyLiveSnapshot();
+    } catch (_) {
+      // The normal 15-second renderer refresh remains a fallback. Never cover the
+      // current screen with a loader just because one live sync attempt was slow.
+    } finally {
+      liveRefreshInFlight = false;
+      if (liveRefreshPending) {
+        liveRefreshPending = false;
+        scheduleLiveRefresh("coalesced", 80);
+      }
+    }
+  }
+
+  function scheduleLiveRefresh(_reason = "event", delay = 120) {
+    window.clearTimeout(liveRefreshTimer);
+    liveRefreshTimer = window.setTimeout(refreshLiveData, Math.max(0, Number(delay || 0)));
+  }
+
   async function pollRuntime() {
     if (document.hidden) return;
     try {
-      const response = await nativeFetch("/me/execution-runtime", {
-        credentials: "same-origin",
-        cache: "no-store",
-        headers: { Accept: "application/json" },
-      });
-      if (!response.ok) return;
-      applyRuntime(await response.json());
+      const payload = await nativeJSON("/me/execution-runtime", 3000);
+      if (!payload?.authenticated) return;
+      applyRuntime(payload);
     } catch (_) {}
   }
 
+  function ensureLiveSource() {
+    if (eventSource || typeof EventSource === "undefined") return;
+    const booted = Boolean(window.FOA_BOOT_SESSION?.authenticated) || Boolean(document.querySelector(".account-pill"));
+    if (!booted) return;
+    try {
+      eventSource = new EventSource("/me/live-events", { withCredentials: true });
+      eventSource.addEventListener("snapshot", (event) => {
+        try {
+          const payload = JSON.parse(event.data || "{}");
+          if (!payload?.authenticated) return;
+          applyRuntime(payload);
+          scheduleLiveRefresh("sse");
+        } catch (_) {}
+      });
+      eventSource.addEventListener("account", () => {
+        eventSource?.close();
+        eventSource = null;
+      });
+      eventSource.onerror = () => {
+        // EventSource reconnects automatically. Runtime polling below remains the
+        // low-frequency fallback when a proxy temporarily blocks SSE.
+      };
+    } catch (_) {
+      eventSource = null;
+    }
+  }
+
   window.addEventListener("dashboard:snapshot-ready", () => {
-    if (runtimeSnapshot) applyRuntime(runtimeSnapshot);
+    applyLiveSnapshot();
+    ensureLiveSource();
   });
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) pollRuntime();
+    if (!document.hidden) {
+      ensureLiveSource();
+      pollRuntime();
+      scheduleLiveRefresh("visible", 0);
+    }
   });
-  window.setInterval(pollRuntime, 4000);
-  pollRuntime();
+  window.addEventListener("pageshow", () => {
+    ensureLiveSource();
+    scheduleLiveRefresh("pageshow", 0);
+  });
 
-  window.FOA_CUSTOM_DIRECT_RUNTIME_CLIENT = "20260812-v2";
+  // MutationObserver re-applies the last live snapshot after the legacy renderer
+  // rebuilds the dashboard DOM. It does not make server requests.
+  const observer = new MutationObserver(() => {
+    if (!document.querySelector("#foa-simple-app")) return;
+    window.requestAnimationFrame(applyLiveSnapshot);
+  });
+  observer.observe(document.documentElement, { childList: true, subtree: true });
+
+  // SSE is the primary path. This 20-second poll is only a proxy/network fallback.
+  nativeSetInterval(() => {
+    if (document.hidden) return;
+    pollRuntime();
+    scheduleLiveRefresh("fallback", 0);
+  }, 20000);
+
+  pollRuntime();
+  ensureLiveSource();
+  scheduleLiveRefresh("boot", 0);
+
+  window.FOA_CUSTOM_DIRECT_RUNTIME_CLIENT = "20260812-live-sse-v3";
+  window.FOA_DASHBOARD_REFRESH_MODE = "sse-primary-bounded-fallback";
 })();
