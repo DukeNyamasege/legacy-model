@@ -11,10 +11,11 @@ from app.custom_strategy_api import install_custom_strategy_api
 from app.custom_strategy_runtime_api import install_custom_strategy_runtime_api
 from app.dashboard_live_events import install_dashboard_live_events
 from app.dashboard_stability_fix import _remove_route
+from app.seamless_dashboard_runtime import install_seamless_dashboard_runtime
 
 
 _INSTALLED = False
-UI_VERSION = "20260812-live-dashboard-authority-5"
+UI_VERSION = "20260812-live-dashboard-authority-6"
 
 
 def _headers(extra: dict[str, str] | None = None) -> dict[str, str]:
@@ -24,7 +25,7 @@ def _headers(extra: dict[str, str] | None = None) -> dict[str, str]:
         "X-FOA-UI-Version": UI_VERSION,
         "X-FOA-Builder-First-Dashboard": "1",
         "X-FOA-Custom-Direct-Runtime": "1",
-        "X-FOA-Live-Dashboard": "sse-primary",
+        "X-FOA-Live-Dashboard": "seamless-sse-snapshot",
     }
     if extra:
         headers.update(extra)
@@ -74,23 +75,25 @@ def _dashboard_html(request: Request) -> tuple[str, bool]:
         f'src="/ui/dashboard-actions-v2.js?v={UI_VERSION}"',
     )
 
-    # This pre-client is loaded before dashboard-v2.js so one Save Builder click
-    # becomes one POST /me/custom-strategy request carrying both execution settings
-    # and strategy configuration. It also owns the event-driven live dashboard and
-    # prevents slow background reads from covering the rendered UI with a blocker.
+    # The seamless broker must load before custom-runtime-client.js. That client
+    # captures window.fetch as its native transport, so its SSE/fallback refreshes
+    # are automatically single-flight and use /me/live-snapshot rather than three
+    # duplicate personal history requests.
+    seamless_script = f'<script src="/ui/seamless-runtime-client.js?v={UI_VERSION}"></script>'
     direct_script = f'<script src="/ui/custom-runtime-client.js?v={UI_VERSION}"></script>'
-    marker = '<script src="/ui/dashboard-v2.js'
-    if marker in html:
-        html = html.replace(marker, f"{direct_script}\n  {marker}", 1)
+    pre_clients = f"{seamless_script}\n  {direct_script}"
+    dashboard_marker = '<script src="/ui/dashboard-v2.js'
+    if dashboard_marker in html:
+        html = html.replace(dashboard_marker, f"{pre_clients}\n  {dashboard_marker}", 1)
     else:
-        html = html.replace("</head>", f"  {direct_script}\n</head>", 1)
+        html = html.replace("</head>", f"  {pre_clients}\n</head>", 1)
 
     session = _boot_session(request)
     if not session:
         return html, False
     payload = json.dumps(session, separators=(",", ":")).replace("</", "<\\/")
     script = f"<script>window.FOA_BOOT_SESSION={payload};</script>"
-    marker = '<script src="/ui/custom-runtime-client.js'
+    marker = '<script src="/ui/seamless-runtime-client.js'
     if marker in html:
         html = html.replace(marker, f"{script}\n  {marker}", 1)
     else:
@@ -110,12 +113,12 @@ def install_builder_first_dashboard_authority(app: Any) -> None:
         return
 
     # Install/re-assert Custom Strategy routes after every historical API layer.
-    # The direct runtime API replaces lifecycle/execution-alert paths last. The
-    # live-event stream is read-only and is intentionally independent of browser
-    # lifetime, so closing a tab can never mutate server-side execution state.
+    # The final snapshot authority removes synchronous legacy global summary work
+    # from browser request threads. Browser close/disconnect stays read-only.
     install_custom_strategy_api(app)
     install_custom_strategy_runtime_api(app)
     install_dashboard_live_events(app)
+    install_seamless_dashboard_runtime(app)
 
     for path in (
         "/",
@@ -123,6 +126,7 @@ def install_builder_first_dashboard_authority(app: Any) -> None:
         "/ui/dashboard-v2.js",
         "/ui/dashboard-actions-v2.js",
         "/ui/custom-runtime-client.js",
+        "/ui/seamless-runtime-client.js",
         "/ui/simplified-dashboard.js",
     ):
         _remove_route(app, path, "GET")
@@ -152,8 +156,6 @@ def install_builder_first_dashboard_authority(app: Any) -> None:
 
     @app.get("/ui/dashboard-v2.css", include_in_schema=False)
     def builder_first_css() -> Response:
-        # Keep the existing desktop stylesheet intact and append the final phone
-        # density layer so old max-width rules cannot stack the builder vertically.
         css = (
             _read_dashboard_asset("dashboard-v2.css")
             + "\n\n"
@@ -163,8 +165,6 @@ def install_builder_first_dashboard_authority(app: Any) -> None:
 
     @app.get("/ui/dashboard-v2.js", include_in_schema=False)
     def builder_first_dashboard_js() -> Response:
-        # The direct-OAuth helper runs after the main renderer and replaces the old
-        # manual-PAT copy without creating another browser request or execution path.
         source = (
             _read_dashboard_asset("dashboard-v2.js")
             + "\n\n"
@@ -184,6 +184,14 @@ def install_builder_first_dashboard_authority(app: Any) -> None:
     def custom_runtime_client_js() -> Response:
         return Response(
             _read_dashboard_asset("custom-runtime-client.js"),
+            media_type="application/javascript",
+            headers=_headers(),
+        )
+
+    @app.get("/ui/seamless-runtime-client.js", include_in_schema=False)
+    def seamless_runtime_client_js() -> Response:
+        return Response(
+            _read_dashboard_asset("seamless-runtime-client.js"),
             media_type="application/javascript",
             headers=_headers(),
         )
@@ -214,6 +222,10 @@ def install_builder_first_dashboard_authority(app: Any) -> None:
 
     @app.head("/ui/custom-runtime-client.js", include_in_schema=False)
     def custom_runtime_client_js_head() -> Response:
+        return Response(content=b"", media_type="application/javascript", headers=_headers())
+
+    @app.head("/ui/seamless-runtime-client.js", include_in_schema=False)
+    def seamless_runtime_client_js_head() -> Response:
         return Response(content=b"", media_type="application/javascript", headers=_headers())
 
     @app.head("/ui/simplified-dashboard.js", include_in_schema=False)
