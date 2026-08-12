@@ -57,6 +57,7 @@ jobs:
             scripts/run_legacy_release_tests.sh \
             scripts/cleanup_vps_artifacts.sh \
             scripts/cleanup_repository_state.sh \
+            scripts/recover_vps_env_from_running_stack.sh \
             scripts/diagnose_vps_performance.sh
           docker compose -f docker-compose.yml -f docker-compose.vps.yml config --quiet
           python scripts/audit_bulk_execution_readiness.py --help >/dev/null
@@ -74,15 +75,19 @@ jobs:
           app/custom_strategy_direct_runtime.py
           app/custom_strategy_runtime_lifecycle.py
           app/custom_strategy_settlement.py
+          app/custom_strategy_transport_resilience.py
           app/custom_strategy_worker.py
           app/custom_strategy_runtime_api.py
           app/dashboard_live_events.py
+          app/seamless_dashboard_runtime.py
+          app/public_websocket_resilience.py
           app/oauth_client.py
           app/oauth_direct_account_authority.py
           app/real_demo_trading_support.py
           tests/test_custom_direct_runtime.py
           tests/test_current_custom_runtime_fix.py
           tests/test_dashboard_live_performance.py
+          tests/test_seamless_runtime_controls.py
           tests/test_oauth_direct_mobile_compact.py
 
       - name: Typecheck direct custom runtime
@@ -95,9 +100,12 @@ jobs:
           app/custom_strategy_direct_runtime.py
           app/custom_strategy_runtime_lifecycle.py
           app/custom_strategy_settlement.py
+          app/custom_strategy_transport_resilience.py
           app/custom_strategy_worker.py
           app/custom_strategy_runtime_api.py
           app/dashboard_live_events.py
+          app/seamless_dashboard_runtime.py
+          app/public_websocket_resilience.py
           app/oauth_client.py
           app/oauth_direct_account_authority.py
           app/real_demo_trading_support.py
@@ -108,6 +116,7 @@ jobs:
           node --check dashboard/dashboard-actions-v2.js
           node --check dashboard/realtime-mode-hardening.js
           node --check dashboard/custom-martingale.js
+          node --check dashboard/seamless-runtime-client.js
           node --check dashboard/custom-runtime-client.js
           node --check dashboard/oauth-direct-runtime.js
 
@@ -116,6 +125,7 @@ jobs:
           python -m unittest -q tests.test_custom_direct_runtime
           python -m unittest -q tests.test_current_custom_runtime_fix
           python -m unittest -q tests.test_dashboard_live_performance
+          python -m unittest -q tests.test_seamless_runtime_controls
           python -m unittest -q tests.test_stop_history_and_mobile_ui
           python -m unittest -q tests.test_oauth_direct_mobile_compact
           python -m unittest -q tests.test_seamless_execution_final
