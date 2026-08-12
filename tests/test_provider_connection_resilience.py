@@ -80,13 +80,16 @@ class DeploymentSourceInvariantTests(unittest.TestCase):
         self.assertLess(circuit, public)
         self.assertLess(public, bot)
 
-    def test_smoke_retries_provider_and_skips_it_only_in_preflight(self) -> None:
-        source = (ROOT / "scripts" / "production_smoke.py").read_text(encoding="utf-8")
-        self.assertIn("DEPLOY_PROVIDER_WS_ATTEMPTS", source)
-        self.assertIn("DERIV_PUBLIC_WS_SMOKE_RETRY", source)
-        self.assertIn("bounded attempts", source)
-        self.assertIn('deployment_id.startswith("preflight-api")', source)
-        self.assertIn("isolated_preflight_avoids_duplicate_provider_connection", source)
+    def test_contabo_deploy_validates_backend_health_without_old_smoke(self) -> None:
+        self.assertFalse((ROOT / "scripts" / "production_smoke.py").exists())
+        source = (ROOT / "scripts" / "deploy_dedicated_backend.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("/health/database", source)
+        self.assertIn("/health/frontend-backend", source)
+        self.assertIn("CONTABO BACKEND DEPLOYMENT PASSED", source)
+        self.assertIn("compose build api worker", source)
+        self.assertNotIn("DEPLOY_PROVIDER_WS_ATTEMPTS", source)
 
     def test_financial_execution_remains_private_websocket_only(self) -> None:
         public_source = (ROOT / "app" / "public_websocket_resilience.py").read_text(encoding="utf-8")
