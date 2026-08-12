@@ -15,7 +15,6 @@ from app.account_execution_session import (
 from app.custom_strategy_direct_runtime import _refresh_direct_accounts
 from app.custom_strategy_runtime_api import _runtime_state
 from app.custom_strategy_settlement import custom_virtual_outcome
-from app.strategy.decision_engine import ProposalEconomics
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -390,5 +389,5 @@ class CustomRuntimeArchitectureTests(TestCase):
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
         self.assertIn("python -m app.custom_strategy_worker", compose)
         self.assertNotIn("exec python -m app.worker", compose)
-        self.assertNotIn("LIVE_TICK_LOG_LINES", compose)
+        self.assertIn("LIVE_TICK_LOG_LINES: ${LIVE_TICK_LOG_LINES:-false}", compose)
         self.assertNotIn("TICK_PERSIST_", compose)
