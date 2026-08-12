@@ -73,7 +73,10 @@
       return nativeFetch(input, options);
     }
     const controller = new AbortController();
-    const timer = window.setTimeout(() => controller.abort(), Math.max(250, Number(timeoutMs || GET_TIMEOUT_MS)));
+    const timer = window.setTimeout(
+      () => controller.abort(),
+      Math.max(250, Number(timeoutMs || GET_TIMEOUT_MS)),
+    );
     try {
       return await nativeFetch(input, { ...options, signal: controller.signal });
     } catch (error) {
@@ -139,12 +142,14 @@
     document.querySelectorAll(".builder-status-line").forEach((line) => {
       line.dataset.runtimeState = state;
       const text = line.querySelector("span");
-      if (text) text.textContent = `${label} - ${detail}`;
+      if (text && text.textContent !== `${label} - ${detail}`) text.textContent = `${label} - ${detail}`;
     });
 
     document.querySelectorAll("[data-main-action]").forEach((button) => {
-      button.dataset.mainAction = enabled ? "stop" : "start";
-      button.textContent = enabled ? "Stop Auto Trading" : "Start Auto Trading";
+      const nextAction = enabled ? "stop" : "start";
+      const nextText = enabled ? "Stop Auto Trading" : "Start Auto Trading";
+      button.dataset.mainAction = nextAction;
+      if (button.textContent !== nextText) button.textContent = nextText;
       button.classList.toggle("danger", enabled);
       button.disabled = false;
     });
@@ -152,8 +157,8 @@
     document.querySelectorAll(".trades-control-panel").forEach((panel) => {
       const title = panel.querySelector("h2");
       const paragraphs = panel.querySelectorAll("p");
-      if (title) title.textContent = label;
-      if (paragraphs.length > 1) paragraphs[1].textContent = detail;
+      if (title && title.textContent !== label) title.textContent = label;
+      if (paragraphs.length > 1 && paragraphs[1].textContent !== detail) paragraphs[1].textContent = detail;
     });
 
     let notice = document.querySelector("#custom-runtime-error-notice");
@@ -165,7 +170,7 @@
         const main = document.querySelector(".builder-shell main");
         if (main) main.prepend(notice);
       }
-      if (notice) notice.textContent = detail;
+      if (notice && notice.textContent !== detail) notice.textContent = detail;
     } else if (notice) {
       notice.remove();
     }
@@ -185,7 +190,7 @@
       const name = String(card.querySelector("span")?.textContent || "").trim();
       if (name !== label) return;
       const strong = card.querySelector("strong");
-      if (strong) strong.textContent = String(value);
+      if (strong && strong.textContent !== String(value)) strong.textContent = String(value);
     });
   }
 
@@ -212,36 +217,75 @@
     const raw = row.purchase_time || row.provider_purchase_time || row.created_at || row.settlement_time;
     if (!raw) return "-";
     const date = new Date(raw);
-    return Number.isNaN(date.getTime()) ? "-" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    return Number.isNaN(date.getTime())
+      ? "-"
+      : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   }
 
   function tradeResult(row, currency) {
     const outcome = String(row.outcome || "OPEN").toUpperCase();
-    if (outcome === "WIN" || outcome === "LOSS") return `${outcome} - ${formatMoney(row.profit || 0, currency)}`;
+    if (outcome === "WIN" || outcome === "LOSS") {
+      return `${outcome} - ${formatMoney(row.profit || 0, currency)}`;
+    }
     return outcome;
+  }
+
+  function appendText(parent, tag, value, className = "") {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    node.textContent = String(value ?? "");
+    parent.appendChild(node);
+    return node;
+  }
+
+  function tradeRevision(rows, summary) {
+    const first = rows[0] || {};
+    return [
+      first.id || first.trade_id || first.virtual_trade_id || "",
+      first.outcome || first.virtual_result || "",
+      first.settlement_time || first.settled_at || "",
+      summary?.total || 0,
+      summary?.wins || 0,
+      summary?.losses || 0,
+      summary?.profit || 0,
+      summary?.virtual_observations || 0,
+    ].join("|");
   }
 
   function patchRecentTrades() {
     const rows = Array.isArray(liveTrades?.trades) ? liveTrades.trades : null;
     if (!rows) return;
     const currency = liveMe?.currency || "USD";
+    const revision = tradeRevision(rows, liveTrades?.summary || {});
+
     document.querySelectorAll(".builder-recent-trades").forEach((panel) => {
+      if (panel.dataset.liveRevision === revision) return;
+      panel.dataset.liveRevision = revision;
+
       Array.from(panel.children).forEach((child) => {
         if (child.classList?.contains("trade-row") || child.classList?.contains("empty-state")) child.remove();
       });
+
       const limit = document.querySelector(".trades-control-panel") ? 50 : 8;
       if (!rows.length) {
-        const empty = document.createElement("div");
-        empty.className = "empty-state";
-        empty.textContent = "No recent trades yet.";
-        panel.appendChild(empty);
+        appendText(panel, "div", "No recent trades yet.", "empty-state");
         return;
       }
+
       rows.slice(0, limit).forEach((row) => {
         const outcome = String(row.outcome || "OPEN").toUpperCase();
         const item = document.createElement("div");
         item.className = "trade-row";
-        item.innerHTML = `<span>${tradeTime(row)}</span><strong>${String(row.symbol || row.market || "-")}</strong><span>${String(row.contract_type || row.type || "-")}</span><span>${formatMoney(row.buy_price ?? row.stake ?? row.amount ?? 0, currency)}</span><b class="${outcome === "WIN" ? "win" : outcome === "LOSS" ? "loss" : "open"}">${tradeResult(row, currency)}</b>`;
+        appendText(item, "span", tradeTime(row));
+        appendText(item, "strong", row.symbol || row.market || "-");
+        appendText(item, "span", row.contract_type || row.type || "-");
+        appendText(item, "span", formatMoney(row.buy_price ?? row.stake ?? row.amount ?? 0, currency));
+        appendText(
+          item,
+          "b",
+          tradeResult(row, currency),
+          outcome === "WIN" ? "win" : outcome === "LOSS" ? "loss" : "open",
+        );
         panel.appendChild(item);
       });
     });
@@ -337,8 +381,8 @@
       if (trades?.authenticated) liveTrades = trades;
       applyLiveSnapshot();
     } catch (_) {
-      // The normal 15-second renderer refresh remains a fallback. Never cover the
-      // current screen with a loader just because one live sync attempt was slow.
+      // The normal renderer refresh remains a fallback. Never cover the current
+      // screen with a loader just because one live sync attempt was slow.
     } finally {
       liveRefreshInFlight = false;
       if (liveRefreshPending) {
@@ -364,7 +408,8 @@
 
   function ensureLiveSource() {
     if (eventSource || typeof EventSource === "undefined") return;
-    const booted = Boolean(window.FOA_BOOT_SESSION?.authenticated) || Boolean(document.querySelector(".account-pill"));
+    const booted = Boolean(window.FOA_BOOT_SESSION?.authenticated)
+      || Boolean(document.querySelector(".account-pill"));
     if (!booted) return;
     try {
       eventSource = new EventSource("/me/live-events", { withCredentials: true });
@@ -405,10 +450,13 @@
     scheduleLiveRefresh("pageshow", 0);
   });
 
-  // MutationObserver re-applies the last live snapshot after the legacy renderer
-  // rebuilds the dashboard DOM. It does not make server requests.
-  const observer = new MutationObserver(() => {
-    if (!document.querySelector("#foa-simple-app")) return;
+  // The main renderer replaces #foa-simple-app.innerHTML. Re-apply only after that
+  // direct replacement; ignore mutations caused by our own live row/text patches.
+  const observer = new MutationObserver((mutations) => {
+    const dashboardReplaced = mutations.some(
+      (mutation) => mutation.type === "childList" && mutation.target?.id === "foa-simple-app",
+    );
+    if (!dashboardReplaced) return;
     window.requestAnimationFrame(applyLiveSnapshot);
   });
   observer.observe(document.documentElement, { childList: true, subtree: true });
@@ -424,6 +472,6 @@
   ensureLiveSource();
   scheduleLiveRefresh("boot", 0);
 
-  window.FOA_CUSTOM_DIRECT_RUNTIME_CLIENT = "20260812-live-sse-v3";
+  window.FOA_CUSTOM_DIRECT_RUNTIME_CLIENT = "20260812-live-sse-v4";
   window.FOA_DASHBOARD_REFRESH_MODE = "sse-primary-bounded-fallback";
 })();
