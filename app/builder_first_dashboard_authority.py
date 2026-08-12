@@ -9,11 +9,12 @@ from fastapi.responses import HTMLResponse, Response
 import app.api as base_api
 from app.custom_strategy_api import install_custom_strategy_api
 from app.custom_strategy_runtime_api import install_custom_strategy_runtime_api
+from app.dashboard_live_events import install_dashboard_live_events
 from app.dashboard_stability_fix import _remove_route
 
 
 _INSTALLED = False
-UI_VERSION = "20260812-builder-first-authority-4"
+UI_VERSION = "20260812-live-dashboard-authority-5"
 
 
 def _headers(extra: dict[str, str] | None = None) -> dict[str, str]:
@@ -23,6 +24,7 @@ def _headers(extra: dict[str, str] | None = None) -> dict[str, str]:
         "X-FOA-UI-Version": UI_VERSION,
         "X-FOA-Builder-First-Dashboard": "1",
         "X-FOA-Custom-Direct-Runtime": "1",
+        "X-FOA-Live-Dashboard": "sse-primary",
     }
     if extra:
         headers.update(extra)
@@ -74,8 +76,8 @@ def _dashboard_html(request: Request) -> tuple[str, bool]:
 
     # This pre-client is loaded before dashboard-v2.js so one Save Builder click
     # becomes one POST /me/custom-strategy request carrying both execution settings
-    # and strategy configuration. It also paints the backend runtime state instead
-    # of inferring RUNNING from button text.
+    # and strategy configuration. It also owns the event-driven live dashboard and
+    # prevents slow background reads from covering the rendered UI with a blocker.
     direct_script = f'<script src="/ui/custom-runtime-client.js?v={UI_VERSION}"></script>'
     marker = '<script src="/ui/dashboard-v2.js'
     if marker in html:
@@ -108,9 +110,12 @@ def install_builder_first_dashboard_authority(app: Any) -> None:
         return
 
     # Install/re-assert Custom Strategy routes after every historical API layer.
-    # The direct runtime API replaces lifecycle/execution-alert paths last.
+    # The direct runtime API replaces lifecycle/execution-alert paths last. The
+    # live-event stream is read-only and is intentionally independent of browser
+    # lifetime, so closing a tab can never mutate server-side execution state.
     install_custom_strategy_api(app)
     install_custom_strategy_runtime_api(app)
+    install_dashboard_live_events(app)
 
     for path in (
         "/",
