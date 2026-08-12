@@ -57,7 +57,7 @@ jobs:
             scripts/diagnose_vps_performance.sh
           docker compose -f docker-compose.yml -f docker-compose.vps.yml config --quiet
           python scripts/audit_bulk_execution_readiness.py --help >/dev/null
-          alembic heads | grep -q "20260805_0020 (head)"
+          alembic heads | grep -q "20260812_0021 (head)"
 
       - name: Compile Python
         run: python -m compileall -q app scripts tests migrations

@@ -176,6 +176,8 @@ class DashboardSessionAndReachabilityTests(unittest.TestCase):
         self.assertIn("python -m compileall -q app scripts", workflow)
         self.assertIn("python -m unittest -q tests.test_stop_history_and_mobile_ui", workflow)
         self.assertIn("sh -n scripts/deploy_vps.sh scripts/update_vps.sh", workflow)
+        self.assertIn('alembic heads | grep -q "20260812_0021 (head)"', workflow)
+        self.assertNotIn('alembic heads | grep -q "20260805_0020 (head)"', workflow)
         self.assertIn("docker build --target api", workflow)
 
 
