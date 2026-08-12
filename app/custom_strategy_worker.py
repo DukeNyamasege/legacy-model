@@ -7,6 +7,7 @@ from app.account_lifecycle import install_worker_account_lifecycle
 from app.account_mode_execution_lock import install_account_mode_execution_lock
 from app.account_reenrollment import install_account_reenrollment
 from app.account_scoped_websocket_runtime import install_account_scoped_websocket_runtime
+from app.custom_strategy_current_runtime_fix import install_custom_strategy_current_runtime_fix
 from app.custom_strategy_direct_runtime import install_custom_strategy_direct_runtime
 from app.custom_strategy_runtime_lifecycle import install_custom_strategy_runtime_lifecycle
 from app.custom_strategy_settlement import install_custom_strategy_settlement
@@ -51,9 +52,11 @@ async def run_worker() -> None:
     install_manual_martingale_v2_worker()
     install_custom_strategy_settlement()
 
-    # Install the independent execution authority last. It overrides the inherited
-    # RF tick/scanner hooks and never calls the legacy purchase router.
+    # Install the independent execution authority, then the final current-runtime
+    # correction that keeps proposal+buy on one account session and suppresses
+    # inherited RF/unrelated-history work from the Custom Strategy path.
     install_custom_strategy_direct_runtime()
+    install_custom_strategy_current_runtime_fix()
     install_custom_strategy_runtime_lifecycle()
     install_telegram_silence()
 
