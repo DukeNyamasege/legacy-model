@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "20260812-oauth-direct-account-1";
+  const VERSION = "20260812-oauth-direct-account-2";
 
   function replaceCredentialCopy() {
     const card = document.querySelector(".credential-card");
@@ -46,14 +46,16 @@
   }
 
   function replaceLegacyTokenErrors() {
-    document.querySelectorAll(".inline-error, .inline-warning, .status-message").forEach((node) => {
-      const text = String(node.textContent || "");
-      if (!/trade-scope token|api token|trading credential/i.test(text)) return;
-      if (/invalid|expired|rejected|connect|required|missing/i.test(text)) {
-        node.textContent =
-          "Deriv account authorization is unavailable. Reconnect this account through Deriv OAuth, then start Auto Trading again.";
-      }
-    });
+    document
+      .querySelectorAll(".inline-error, .inline-warning, .status-message, .error-banner, .builder-error")
+      .forEach((node) => {
+        const text = String(node.textContent || "");
+        if (!/trade-scope token|api token|trading credential/i.test(text)) return;
+        if (/invalid|expired|rejected|connect|required|missing/i.test(text)) {
+          node.textContent =
+            "Deriv account authorization is unavailable. Reconnect this account through Deriv OAuth, then start Auto Trading again.";
+        }
+      });
   }
 
   function apply() {
