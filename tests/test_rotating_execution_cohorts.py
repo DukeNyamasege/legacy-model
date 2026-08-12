@@ -151,14 +151,19 @@ class RotatingExecutionCohortTests(unittest.TestCase):
         self.assertIn('"buy": "1"', source)
         self.assertIn('"parameters": parameters', source)
 
-    def test_production_defaults_limit_connection_and_buy_pressure(self) -> None:
+    def test_custom_production_runtime_does_not_install_cohort_pressure_controls(self) -> None:
         compose = (ROOT / "docker-compose.yml").read_text()
-        self.assertIn("EXECUTION_COHORT_SIZE:-10", compose)
-        self.assertIn("DERIV_PROPOSAL_RELAY_COUNT:-2", compose)
+        worker = (ROOT / "app" / "custom_strategy_worker.py").read_text()
+        self.assertIn("python -m app.custom_strategy_worker", compose)
         self.assertIn("PRIVATE_WS_HANDSHAKE_CONCURRENCY:-2", compose)
-        self.assertIn("PRIVATE_WS_BUY_CONCURRENCY:-4", compose)
-        self.assertIn("DERIV_WS_GROUP_CONCURRENCY:-1", compose)
-        self.assertIn("DERIV_WS_GROUP_SIZE:-10", compose)
+        self.assertNotIn("EXECUTION_COHORT_SIZE", compose)
+        self.assertNotIn("DERIV_PROPOSAL_RELAY_COUNT", compose)
+        self.assertNotIn("PRIVATE_WS_BUY_CONCURRENCY", compose)
+        self.assertNotIn("DERIV_WS_GROUP_CONCURRENCY", compose)
+        self.assertNotIn("DERIV_WS_GROUP_SIZE", compose)
+        self.assertNotIn("install_rotating_execution_cohorts", worker)
+        self.assertNotIn("install_scalable_group_execution", worker)
+        self.assertNotIn("install_guaranteed_signal_delivery", worker)
 
     def test_financial_transport_remains_independent_websocket_only(self) -> None:
         source = (ROOT / "app" / "rotating_execution_cohorts.py").read_text()
