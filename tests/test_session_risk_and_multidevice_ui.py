@@ -70,7 +70,7 @@ class VirtualHookParityAndRecoveryTests(unittest.TestCase):
         source = (ROOT / "app" / "final_personal_trade_stream.py").read_text(
             encoding="utf-8"
         )
-        self.assertIn('"contract_type": f"VIRTUAL HOOK · {contract_label}"', source)
+        self.assertIn('"contract_type": f"VIRTUAL HOOK · {contract_label} · {progress_text}"', source)
         self.assertIn("virtual_contract_display", source)
         self.assertNotIn('row.barrier or "3"', source)
         self.assertNotIn("VIRTUAL OVER-4", source)
