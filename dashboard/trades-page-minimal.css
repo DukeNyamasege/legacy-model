@@ -1,9 +1,10 @@
 /* Minimal trade-history screen.
-   Dashboard remains the place for strategy setup and execution controls; Trades
-   is intentionally reduced to execution KPIs, the trade table and one clear icon. */
+   Dashboard remains the place for strategy setup. Trades is intentionally
+   reduced to execution KPIs, the trade table, and one bottom control bar. */
 
-.foa-clear-trades-footer,
-.foa-clear-trades-icon {
+.foa-trades-controls-footer,
+.foa-reset-trades-icon,
+.foa-stop-trades-icon {
   display: none;
 }
 
@@ -53,20 +54,24 @@ body.foa-trades-page-active main > .builder-stats.compact {
   font-weight: 850;
 }
 
-.foa-clear-trades-footer {
+.foa-trades-controls-footer {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 9px;
+  width: 100%;
   min-height: 44px;
   margin: 7px 0 18px !important;
-  padding: 4px 0 !important;
-  border: 0 !important;
-  background: transparent !important;
+  padding: 5px 9px !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 11px !important;
+  background: linear-gradient(150deg, var(--panel), var(--panel-2)) !important;
   box-shadow: none !important;
-  overflow: visible !important;
+  overflow: hidden !important;
 }
 
-.foa-clear-trades-icon {
+.foa-reset-trades-icon,
+.foa-stop-trades-icon {
   display: inline-grid;
   place-items: center;
   width: 32px;
@@ -74,14 +79,37 @@ body.foa-trades-page-active main > .builder-stats.compact {
   min-width: 32px;
   min-height: 32px;
   padding: 0;
-  border: 1px solid rgba(239, 68, 68, .34);
   border-radius: 9px;
-  color: var(--red);
-  background: var(--red-soft);
   cursor: pointer;
+  transition: transform 120ms ease, opacity 120ms ease, border-color 120ms ease;
 }
 
-.foa-clear-trades-icon svg {
+.foa-reset-trades-icon {
+  border: 1px solid rgba(59, 130, 246, .38);
+  color: #93c5fd;
+  background: var(--blue-soft);
+}
+
+.foa-stop-trades-icon {
+  border: 1px solid rgba(239, 68, 68, .40);
+  color: #fecaca;
+  background: var(--red-soft);
+}
+
+.foa-reset-trades-icon:hover,
+.foa-stop-trades-icon:hover {
+  transform: translateY(-1px);
+}
+
+.foa-reset-trades-icon:disabled,
+.foa-stop-trades-icon:disabled {
+  cursor: wait;
+  opacity: .55;
+  transform: none;
+}
+
+.foa-reset-trades-icon svg,
+.foa-stop-trades-icon svg {
   width: 15px;
   height: 15px;
   pointer-events: none;
@@ -173,12 +201,14 @@ body.foa-trades-page-active main > .builder-stats.compact {
     white-space: nowrap;
   }
 
-  body.foa-trades-page-active .foa-clear-trades-footer {
-    min-height: 38px;
+  body.foa-trades-page-active .foa-trades-controls-footer {
+    min-height: 40px;
     margin-top: 5px !important;
+    padding: 4px 7px !important;
   }
 
-  body.foa-trades-page-active .foa-clear-trades-icon {
+  body.foa-trades-page-active .foa-reset-trades-icon,
+  body.foa-trades-page-active .foa-stop-trades-icon {
     width: 29px;
     height: 29px;
     min-width: 29px;

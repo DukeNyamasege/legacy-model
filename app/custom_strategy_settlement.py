@@ -5,13 +5,20 @@ from decimal import Decimal
 from typing import Any
 
 import app.repositories.rf_dir5_repository as rf_repository_module
+from app.custom_strategy_v1 import (
+    TRADE_TYPES,
+    contract_for_config,
+    market_selected,
+    read_custom_strategy,
+)
 from app.models import DirectionalSignal
-from app.repositories.rf_dir5_repository import RFDir5Repository
+from app.repositories.rf_dir5_repository import RFDir5Repository, VIRTUAL_MODE
 
 
 LOGGER = logging.getLogger(__name__)
 _INSTALLED = False
 _ORIGINAL_START_VIRTUAL = None
+_ORIGINAL_PROTECTION_PAYLOAD = None
 
 
 def _last_digit(value: Decimal) -> int:
@@ -72,6 +79,37 @@ def custom_virtual_outcome(
     raise ValueError(f"Unsupported custom virtual contract {contract or normalized_direction}")
 
 
+def virtual_signal_matches_config(config: dict[str, Any], signal: Any) -> bool:
+    """Require a virtual observation to be the exact contract the account configured.
+
+    This is intentionally fail-closed. A saved Over 2 strategy may only create an
+    Over 2 virtual observation; changing the saved strategy to Over 7 immediately
+    makes Over 7 the only valid virtual observation. Market and duration are also
+    checked against the same saved account configuration.
+    """
+
+    if not bool(config.get("configured")) or signal is None:
+        return False
+    try:
+        contract_type, direction, barrier = contract_for_config(config)
+        symbol = str(getattr(signal, "symbol", "") or "").strip().upper()
+        if not market_selected(config, symbol):
+            return False
+        if str(getattr(signal, "contract_type", "") or "").strip().upper() != contract_type:
+            return False
+        if str(getattr(signal, "direction", "") or "").strip().upper() != direction.upper():
+            return False
+        if str(getattr(signal, "barrier", "") or "").strip() != str(barrier or "").strip():
+            return False
+        if max(1, int(getattr(signal, "duration_ticks", 1) or 1)) != int(
+            config.get("duration_ticks") or 1
+        ):
+            return False
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
 def _ensure_parent(self: RFDir5Repository, signal: Any) -> bool:
     signal_id = str(getattr(signal, "signal_id", "") or "").strip()
     if not signal_id:
@@ -128,6 +166,22 @@ def _start_virtual_with_parent(
     **kwargs: Any,
 ) -> dict[str, Any] | None:
     signal = kwargs.get("signal")
+    managed_account_id = kwargs.get("managed_account_id")
+    try:
+        managed_id = int(managed_account_id)
+    except (TypeError, ValueError):
+        return None
+    config = read_custom_strategy(self.database, managed_id)
+    if not virtual_signal_matches_config(config, signal):
+        LOGGER.error(
+            "CUSTOM_VIRTUAL_STRATEGY_MISMATCH managed_id=%s symbol=%s contract=%s barrier=%s duration=%s",
+            managed_id,
+            getattr(signal, "symbol", None),
+            getattr(signal, "contract_type", None),
+            getattr(signal, "barrier", None),
+            getattr(signal, "duration_ticks", None),
+        )
+        return None
     if signal is None or not _ensure_parent(self, signal):
         return None
     original = _ORIGINAL_START_VIRTUAL
@@ -136,12 +190,56 @@ def _start_virtual_with_parent(
     return original(self, *args, **kwargs)
 
 
+def _configured_virtual_description(config: dict[str, Any]) -> str:
+    if not bool(config.get("configured")):
+        return "configured strategy"
+    trade_type = str(config.get("trade_type") or "").strip().lower()
+    label = str(TRADE_TYPES.get(trade_type, {}).get("label") or trade_type or "strategy")
+    prediction = config.get("prediction")
+    if prediction is not None:
+        label = f"{label} {prediction}"
+    markets = [str(value) for value in config.get("markets") or []]
+    if str(config.get("market_mode") or "all") == "all":
+        market_label = "the next configured qualifying market"
+    elif len(markets) == 1:
+        market_label = markets[0]
+    else:
+        market_label = "the next qualifying configured market"
+    return f"{label} on {market_label}"
+
+
+def _protection_payload_for_config(
+    self: RFDir5Repository,
+    state: Any,
+) -> dict[str, Any]:
+    original = _ORIGINAL_PROTECTION_PAYLOAD
+    if original is None:
+        return self._default_virtual_state()
+    payload = original(self, state)
+    if str(payload.get("mode") or "") != VIRTUAL_MODE or state is None:
+        return payload
+    try:
+        config = read_custom_strategy(self.database, int(state.managed_account_id))
+        description = _configured_virtual_description(config)
+        required = max(1, int(payload.get("virtual_wins_required") or 1))
+        payload["next_action"] = (
+            f"Waiting for {required} virtual {description} win"
+            f"{'' if required == 1 else 's'} using the exact saved strategy"
+        )
+    except Exception:
+        payload["next_action"] = "Waiting for the next exact configured-strategy virtual result"
+    return payload
+
+
 def install_custom_strategy_settlement() -> None:
-    global _INSTALLED, _ORIGINAL_START_VIRTUAL
+    global _INSTALLED, _ORIGINAL_START_VIRTUAL, _ORIGINAL_PROTECTION_PAYLOAD
     if _INSTALLED:
         return
     _ORIGINAL_START_VIRTUAL = RFDir5Repository.start_virtual_trade
+    _ORIGINAL_PROTECTION_PAYLOAD = RFDir5Repository._protection_payload
     RFDir5Repository.start_virtual_trade = _start_virtual_with_parent
+    RFDir5Repository._protection_payload = _protection_payload_for_config
     rf_repository_module._virtual_trade_outcome = custom_virtual_outcome
     RFDir5Repository._custom_strategy_settlement_installed = True
+    RFDir5Repository._custom_strategy_virtual_parity_installed = True
     _INSTALLED = True
