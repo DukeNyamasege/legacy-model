@@ -94,6 +94,24 @@
     });
   }
 
+  function ensureTradeBalanceStat(me) {
+    const compact = document.querySelector(".builder-stats.compact");
+    if (!compact) return;
+    const exists = Array.from(compact.querySelectorAll(".builder-stat > span"))
+      .some((node) => String(node.textContent || "").trim() === "Balance");
+    if (exists) return;
+    const card = document.createElement("article");
+    card.className = "builder-stat";
+    const label = document.createElement("span");
+    label.textContent = "Balance";
+    const value = document.createElement("strong");
+    value.textContent = money(me?.balance || 0, me?.currency || "USD");
+    const caption = document.createElement("small");
+    caption.textContent = `${accountType(me)} account`;
+    card.append(label, value, caption);
+    compact.prepend(card);
+  }
+
   function runtimeLabel(lifecycle) {
     const state = String(lifecycle?.runtime_state || "STOPPED").toUpperCase();
     const reason = String(lifecycle?.reason || lifecycle?.execution_status_reason || "").trim();
@@ -187,6 +205,7 @@
 
   function patchMetrics(me, trades) {
     if (!me) return;
+    ensureTradeBalanceStat(me);
     const metrics = stableMetrics(me, trades);
     const currency = me.currency || "USD";
     setStat("Balance", money(me.balance || 0, currency));
