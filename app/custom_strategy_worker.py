@@ -14,6 +14,7 @@ from app.custom_strategy_settlement import install_custom_strategy_settlement
 from app.deriv_rate_limit_circuit import install_deriv_rate_limit_circuit
 from app.deriv_request_broker import install_deriv_request_broker
 from app.manual_martingale_v2 import install_manual_martingale_v2_worker
+from app.netlify_worker_bridge import install_netlify_worker_bridge
 from app.per_account_virtual_runtime import install_account_isolation_invariants
 from app.private_websocket_rate_limit import install_private_websocket_rate_limit
 from app.profit_accuracy_guard import install_profit_accuracy_guard
@@ -58,11 +59,18 @@ async def run_worker() -> None:
     install_custom_strategy_direct_runtime()
     install_custom_strategy_current_runtime_fix()
     install_custom_strategy_runtime_lifecycle()
+
+    # UI delivery is never allowed to sit on the financial execution path. This
+    # final bridge also keeps transient proposal/session interruptions in an
+    # account-local reconnect state while treating an uncertain BUY timeout as a
+    # reconciliation event that must never be blindly retried.
+    install_netlify_worker_bridge()
     install_telegram_silence()
 
     bot = RFDir5TradingBot()
     bot.logger.warning(
         "CUSTOM_STRATEGY_WORKER_READY architecture=account_scoped_direct "
+        "frontend=netlify_static realtime=nonblocking_vps_websocket "
         "legacy_rf=false legacy_aidr=false multi_strategy=false cohorts=false "
         "bulk=false tick_db_persistence=false start_required=true"
     )
