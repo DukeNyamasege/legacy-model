@@ -36,29 +36,80 @@ class OAuthDirectCredentialContractTests(unittest.TestCase):
 
 
 class MobileFirstCompactBuilderContractTests(unittest.TestCase):
-    def test_phone_kpis_and_trade_controls_remain_horizontal(self) -> None:
+    def test_header_scrolls_away_and_execution_kpis_are_sticky(self) -> None:
+        css = (ROOT / "dashboard" / "mobile-first-compact.css").read_text(
+            encoding="utf-8"
+        )
+        header = css.split(".builder-header {", 1)[1].split("}", 1)[0]
+        self.assertIn("position: relative !important", header)
+        self.assertIn("top: auto !important", header)
+
+        stats = css.split(".builder-stats,", 1)[1].split("}", 1)[0]
+        self.assertIn("position: sticky", stats)
+        self.assertIn("env(safe-area-inset-top)", stats)
+
+    def test_phone_builder_wraps_inside_viewport_without_horizontal_scrollers(self) -> None:
         css = (ROOT / "dashboard" / "mobile-first-compact.css").read_text(
             encoding="utf-8"
         )
         self.assertIn("@media (max-width: 760px)", css)
-        self.assertIn("grid-template-columns: repeat(5, minmax(112px, 1fr)) !important", css)
-        self.assertIn("grid-template-columns: repeat(4, minmax(0, 1fr)) !important", css)
-        self.assertIn("grid-template-columns: repeat(2, minmax(0, 1fr)) !important", css)
+        self.assertIn("overflow-x: clip !important", css)
         self.assertIn("grid-template-columns: repeat(3, minmax(0, 1fr)) !important", css)
-        self.assertIn("overflow-x: auto !important", css)
-        self.assertIn("min-width: 560px !important", css)
+        self.assertIn("grid-template-columns: repeat(2, minmax(0, 1fr)) !important", css)
+        self.assertIn("grid-template-columns: 1fr !important", css)
+        self.assertNotIn("overflow-x: auto !important", css)
+        self.assertNotIn("min-width: 560px !important", css)
+        self.assertNotIn("minmax(520px", css)
         self.assertIn("@media (max-width: 420px)", css)
+        self.assertIn("@media (max-width: 360px)", css)
 
-    def test_money_management_remains_one_compact_horizontal_band(self) -> None:
+    def test_money_and_condition_controls_wrap_to_new_rows(self) -> None:
         css = (ROOT / "dashboard" / "mobile-first-compact.css").read_text(
             encoding="utf-8"
         )
         money = css.split(".money-grid {", 1)[1].split("}", 1)[0]
-        self.assertIn("repeat(5", money)
-        self.assertIn("overflow-x: auto", money)
+        self.assertIn("repeat(2, minmax(0, 1fr))", money)
+        self.assertIn("overflow: visible", money)
+
         two_col = css.split(".builder-two-col {", 1)[1].split("}", 1)[0]
-        self.assertIn("minmax(170px", two_col)
-        self.assertIn("minmax(520px", two_col)
+        self.assertIn("grid-template-columns: 1fr", two_col)
+        self.assertIn("overflow: visible", two_col)
+
+        conditions = css.split("/* Conditions wrap into two columns.", 1)[1]
+        rules = conditions.split(".rule-card,", 1)[1].split("}", 1)[0]
+        self.assertIn("repeat(2, minmax(0, 1fr))", rules)
+        self.assertIn("min-width: 0", rules)
+
+    def test_mobile_trade_history_remains_left_to_right_without_side_scroll(self) -> None:
+        css = (ROOT / "dashboard" / "mobile-first-compact.css").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(".trade-head,\n  .trade-row {", css)
+        trades = css.split(".trade-head,\n  .trade-row {", 1)[1].split("}", 1)[0]
+        self.assertIn("minmax(0, .82fr)", trades)
+        self.assertIn("minmax(0, 1.24fr)", trades)
+        self.assertIn("width: 100% !important", trades)
+        self.assertIn("min-width: 0 !important", trades)
+
+        base = (ROOT / "dashboard" / "dashboard-v2.css").read_text(encoding="utf-8")
+        mobile = base.split("@media (max-width: 760px)", 1)[1]
+        self.assertIn(".trade-head {\n    display: none;", mobile)
+        # The final mobile layer intentionally overrides the old hidden header and
+        # one-column trade card after the base stylesheet is emitted.
+        self.assertIn("display: grid !important", trades)
+
+    def test_live_realtime_client_preserves_nonzero_metrics_across_empty_refresh(self) -> None:
+        source = (ROOT / "dashboard" / "netlify-realtime-client.js").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('const METRIC_CACHE_PREFIX = "foa-live-metrics-v2"', source)
+        self.assertIn("function stableMetrics(me, trades)", source)
+        self.assertIn("incomingIsEmpty && cachedHasActivity", source)
+        self.assertIn("function snapshotWithStableTrades(snapshot)", source)
+        self.assertIn("function ensureTradeBalanceStat(me)", source)
+        self.assertIn('label.textContent = "Balance"', source)
+        self.assertIn("applySnapshot(lastSnapshot);", source)
+        self.assertNotIn("requestAnimationFrame(() => applySnapshot(lastSnapshot))", source)
 
     def test_final_asset_route_appends_mobile_override_after_base_css(self) -> None:
         authority = (ROOT / "app" / "builder_first_dashboard_authority.py").read_text(
