@@ -164,6 +164,44 @@ class MobileFirstCompactBuilderContractTests(unittest.TestCase):
         self.assertIn('"exit_digit": trade.exit_digit', backend)
         self.assertIn("minmax(0, .62fr)", css)
 
+    def test_mobile_execution_header_is_one_menu_plus_five_stat_row(self) -> None:
+        css = (ROOT / "dashboard" / "mobile-topbar-compact.css").read_text(
+            encoding="utf-8"
+        )
+        source = (ROOT / "dashboard" / "mobile-topbar-compact.js").read_text(
+            encoding="utf-8"
+        )
+        index = (ROOT / "dashboard" / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn("grid-template-columns: 42px minmax(0, 1fr) !important", css)
+        self.assertIn("grid-template-columns: repeat(5, minmax(0, 1fr)) !important", css)
+        self.assertIn("height: 44px !important", css)
+        self.assertIn("position: sticky !important", css)
+        self.assertIn(".builder-stats,\n  .builder-stats.compact {\n    display: none !important;", css)
+        self.assertIn(".trades-control-panel {\n    display: none !important;", css)
+        self.assertIn('["balance", "Balance"]', source)
+        self.assertIn('["runs", "Runs"]', source)
+        self.assertIn('["profit", "P/L"]', source)
+        self.assertIn('["wins", "Wins"]', source)
+        self.assertIn('["losses", "Losses"]', source)
+        self.assertLess(source.index('["balance", "Balance"]'), source.index('["runs", "Runs"]'))
+        self.assertLess(source.index('["runs", "Runs"]'), source.index('["profit", "P/L"]'))
+        self.assertLess(source.index('["profit", "P/L"]'), source.index('["wins", "Wins"]'))
+        self.assertLess(source.index('["wins", "Wins"]'), source.index('["losses", "Losses"]'))
+        self.assertIn('launcher.classList.add("foa-mobile-execution-topbar")', source)
+        self.assertIn("window.FOA_NETLIFY_LIVE_CACHE", source)
+        self.assertIn('./mobile-topbar-compact.css', index)
+        self.assertIn('./mobile-topbar-compact.js', index)
+        self.assertLess(index.index('./mobile-menu-exit-spot.css'), index.index('./mobile-topbar-compact.css'))
+        self.assertLess(index.index('./mobile-menu-exit-spot.js'), index.index('./mobile-topbar-compact.js'))
+
+        subprocess.run(
+            ["node", "--check", str(ROOT / "dashboard" / "mobile-topbar-compact.js")],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
     def test_final_asset_route_appends_mobile_override_after_base_css(self) -> None:
         authority = (ROOT / "app" / "builder_first_dashboard_authority.py").read_text(
             encoding="utf-8"
