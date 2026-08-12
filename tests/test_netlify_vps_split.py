@@ -35,7 +35,11 @@ class NetlifyVpsSplitArchitectureTests(unittest.TestCase):
 
     def test_realtime_ticket_does_not_expose_deriv_credential(self) -> None:
         gateway = source("app/netlify_realtime_gateway.py")
-        ticket_section = gateway.split("def _ticket_payload", 1)[1].split("def ", 1)[0]
+        ticket_section = gateway.split("def netlify_live_ticket", 1)[1].split(
+            '@app.get("/me/live-snapshot"', 1
+        )[0]
+        self.assertIn('"sid": session_hash_value', ticket_section)
+        self.assertIn('"mid": int(account["id"])', ticket_section)
         self.assertNotIn("access_token", ticket_section)
         self.assertNotIn("refresh_token", ticket_section)
         self.assertNotIn("token_secret", ticket_section)
@@ -47,7 +51,7 @@ class NetlifyVpsSplitArchitectureTests(unittest.TestCase):
         self.assertIn("/me/live-ticket", realtime)
         self.assertIn("/ws/me/live", realtime)
         self.assertIn("/me/live-snapshot", realtime)
-        self.assertIn("FALLBACK_INTERVAL_MS", realtime)
+        self.assertIn("FALLBACK_MS", realtime)
         self.assertIn("netlify-same-origin-rest-v1", boundary)
         self.assertIn("GET_TIMEOUT_MS", boundary)
         self.assertIn("WRITE_TIMEOUT_MS", boundary)
