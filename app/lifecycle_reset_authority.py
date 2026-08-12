@@ -24,6 +24,12 @@ from app.models import AccountRiskState, ManagedAccount, RuntimePreference, Trad
 
 _INSTALLED = False
 _RESET_MARKER_PREFIX = "aidr_hard_reset_at:"
+_RISK_LIMIT_STOP_STATUSES = {"take_profit", "stop_loss"}
+
+# TP and SL are terminal execution outcomes, not resumable pause reasons. Mutate
+# the shared lifecycle sets so every later route/guard sees the same semantics.
+STOPPED_STATUSES.update(_RISK_LIMIT_STOP_STATUSES)
+PAUSED_STATUSES.difference_update(_RISK_LIMIT_STOP_STATUSES)
 
 
 def _write_reset_marker(session: Any, managed_account_id: int) -> None:
@@ -140,6 +146,7 @@ def install_lifecycle_reset_authority(app: Any) -> None:
 
     Pause -> Resume preserves active recovery state.
     Stop -> Start resets active recovery state but retains all trade history.
+    TP/SL -> Start are also hard-stop -> fresh-start transitions.
     Reset Today/All is the only operation that deletes the selected history and
     leaves the account stopped so the worker cannot immediately repopulate it.
     """
@@ -242,8 +249,9 @@ def install_lifecycle_reset_authority(app: Any) -> None:
         with base_api.DATABASE.session() as session:
             row = _load_managed_account(session, request, for_update=True)
             previous = str(row.execution_status or "inactive").strip().lower()
-            # Continue is valid only from an intentional pause. Any stopped state
-            # always starts fresh, even if an old browser sends mode=continue.
+            # Continue is valid only from an intentional pause. Any stopped state,
+            # including a TP/SL hard stop, always starts fresh even if an old
+            # browser sends mode=continue.
             fresh = requested_mode == "start_again" or previous in STOPPED_STATUSES
             _start(session, row, fresh=fresh)
             managed_id = int(row.id)
@@ -300,12 +308,32 @@ def install_lifecycle_reset_authority(app: Any) -> None:
                 lifecycle = "paused"
             else:
                 lifecycle = "running"
+
+            session_profit = round(float(state.session_profit or 0.0), 2) if state else 0.0
+            take_profit = max(0.0, round(float(row.take_profit or 0.0), 2))
+            stop_loss = max(0.0, round(abs(float(row.stop_loss or 0.0)), 2))
+            if status == "take_profit":
+                limit_target = take_profit
+                limit_achieved = session_profit
+            elif status == "stop_loss":
+                limit_target = stop_loss
+                limit_achieved = session_profit
+            else:
+                limit_target = 0.0
+                limit_achieved = 0.0
+
             return {
                 "authenticated": True,
                 "lifecycle": lifecycle,
                 "execution_status": status,
                 "reason": str(row.execution_status_reason or ""),
                 "enabled": bool(row.enabled),
+                "session_profit": session_profit,
+                "take_profit": take_profit,
+                "stop_loss": stop_loss,
+                "limit_target": limit_target,
+                "limit_achieved": limit_achieved,
+                "risk_limit_is_hard_stop": status in _RISK_LIMIT_STOP_STATUSES,
                 "recovery_debt": round(float(state.recovery_loss_debt or 0.0), 2) if state else 0.0,
                 "protection_mode": str(state.protection_mode or "NORMAL_MODE") if state else "NORMAL_MODE",
                 "virtual_wins": int(state.virtual_win_count or 0) if state else 0,
