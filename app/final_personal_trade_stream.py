@@ -10,6 +10,12 @@ from sqlalchemy import or_, select
 import app.api as base_api
 from app.aidr_adaptive_virtual import adaptive_virtual_wins_required
 from app.ai_digit_recovery_v1 import VIRTUAL_WINS_REQUIRED
+from app.custom_strategy_comparator_extension import (
+    install_custom_strategy_comparator_extension,
+)
+from app.custom_strategy_v1 import contract_for_config, read_custom_strategy
+from app.custom_strategy_virtual_hook import virtual_hook_settings_from_session
+from app.custom_virtual_contract_parity import virtual_contract_display
 from app.final_public_controls import (
     _current_account_payload,
     _remove_route,
@@ -26,6 +32,8 @@ from app.models import (
 )
 from app.repositories.rf_dir5_repository import REAL_RECOVERY_PENDING, VIRTUAL_WAITING_FOR_WIN
 
+
+install_custom_strategy_comparator_extension()
 _INSTALLED = False
 
 
@@ -78,33 +86,61 @@ def _split_remaining(managed_account_id: int) -> int:
         return 0
 
 
-def _virtual_rows_with_progress(rows: list[VirtualTrade]) -> list[dict[str, Any]]:
-    """Return retained virtual history with each row's original requirement.
+def _current_virtual_requirement(managed_account_id: int) -> int:
+    try:
+        with base_api.DATABASE.session() as session:
+            hook = virtual_hook_settings_from_session(session, int(managed_account_id))
+        return max(1, int(hook.exit_after_consecutive_wins)) if hook.enabled else 1
+    except Exception:
+        return max(1, int(VIRTUAL_WINS_REQUIRED or 1))
 
-    Stop and fresh Start reset the live recovery state but never remove older rows
-    from the dashboard. Only the explicit Clear Today / Clear All action deletes
-    history. The account's current AIDR status is reported separately by
-    `_aidr_summary`; the sequence shown here describes each historical row.
+
+def _current_custom_contract_label(managed_account_id: int) -> str:
+    try:
+        config = read_custom_strategy(base_api.DATABASE, int(managed_account_id))
+        contract_type, direction, barrier = contract_for_config(config)
+        return virtual_contract_display(
+            contract_type,
+            barrier=barrier,
+            direction=direction,
+        )
+    except Exception:
+        return "CUSTOM STRATEGY"
+
+
+def _virtual_rows_with_progress(
+    rows: list[VirtualTrade],
+    *,
+    managed_account_id: int = 0,
+) -> list[dict[str, Any]]:
+    """Return virtual history using the exact contract stored on each observation.
+
+    Settled legacy rows created before progress snapshots keep their historical
+    two-win grouping. Current rows persist `progress=x/y`, so the exact hook
+    requirement travels with each observation instead of being reinterpreted.
     """
 
     ordered = sorted(
         rows,
-        key=lambda row: _timestamp(row.created_at)
+        key=lambda row: _timestamp(getattr(row, "created_at", None))
         or datetime.min.replace(tzinfo=timezone.utc),
     )
     streak = 0
     payloads: list[dict[str, Any]] = []
+    current_required = _current_virtual_requirement(managed_account_id) if managed_account_id else 1
     for row in ordered:
-        outcome = _virtual_outcome(row.result)
-        barrier = str(row.barrier or "3").strip() or "3"
-        stored_progress = re.search(r"progress=(\d+)/(\d+)", str(row.reason or ""))
-        row_required = (
-            max(1, int(stored_progress.group(2)))
-            if stored_progress
-            else VIRTUAL_WINS_REQUIRED
-            if outcome in {"OPEN", "CANCELLED"}
-            else 2
+        outcome = _virtual_outcome(getattr(row, "result", "OPEN"))
+        stored_progress = re.search(
+            r"progress=(\d+)/(\d+)",
+            str(getattr(row, "reason", "") or ""),
         )
+        if stored_progress:
+            row_required = max(1, int(stored_progress.group(2)))
+        elif outcome in {"WIN", "LOSS"}:
+            row_required = 2
+        else:
+            row_required = current_required
+
         if outcome == "WIN":
             streak = (
                 min(row_required, int(stored_progress.group(1)))
@@ -114,8 +150,6 @@ def _virtual_rows_with_progress(rows: list[VirtualTrade]) -> list[dict[str, Any]
             sequence = streak
             progress_text = f"WIN {streak}/{row_required}"
             if streak >= row_required:
-                # A completed row arms one real OVER-4 recovery. Any later virtual
-                # row belongs to a new cycle after that real recovery lost.
                 streak = 0
         elif outcome == "LOSS":
             streak = 0
@@ -128,43 +162,65 @@ def _virtual_rows_with_progress(rows: list[VirtualTrade]) -> list[dict[str, Any]
             sequence = streak
             progress_text = f"PENDING · {streak}/{row_required}"
 
+        contract_type = str(getattr(row, "contract_type", "") or "")
+        barrier = str(getattr(row, "barrier", "") or "")
+        direction = str(getattr(row, "direction", "") or "")
+        contract_label = virtual_contract_display(
+            contract_type,
+            barrier=barrier,
+            direction=direction,
+        )
+        created_at = getattr(row, "created_at", None)
+        settled_at = getattr(row, "settled_at", None)
+        expected_payout = getattr(row, "expected_payout", None)
+        actual_last_digit = getattr(row, "actual_last_digit", None)
+        exit_spot = getattr(row, "exit_spot", None)
+        prediction_digit = getattr(row, "prediction_digit", None)
+        row_id = int(getattr(row, "id", 0))
+        virtual_trade_id = str(getattr(row, "virtual_trade_id", "") or "")
+        signal_id = str(getattr(row, "signal_id", "") or "")
+        market = str(getattr(row, "market", "") or "")
+        simulated_stake = float(getattr(row, "simulated_stake", 0.0) or 0.0)
+        raw_result = str(getattr(row, "result", "OPEN") or "OPEN")
+
         payloads.append(
             {
-                "id": f"virtual-{int(row.id)}",
-                "trade_id": str(row.virtual_trade_id or f"virtual-{int(row.id)}"),
-                "virtual_trade_id": str(row.virtual_trade_id or ""),
-                "signal_id": str(row.signal_id or ""),
+                "id": f"virtual-{row_id}",
+                "trade_id": virtual_trade_id or f"virtual-{row_id}",
+                "virtual_trade_id": virtual_trade_id,
+                "signal_id": signal_id,
                 "is_virtual": True,
                 "trade_kind": "virtual",
-                "symbol": str(row.market or ""),
-                "market": str(row.market or ""),
-                "contract_type": f"VIRTUAL OVER {barrier} · {progress_text}",
-                "type": "VIRTUAL TRADE",
+                "symbol": market,
+                "market": market,
+                "contract_type": f"VIRTUAL HOOK · {contract_label} · {progress_text}",
+                "type": "VIRTUAL HOOK",
                 "barrier": barrier,
-                "buy_price": float(row.simulated_stake or 0.0),
-                "stake": float(row.simulated_stake or 0.0),
-                "simulated_stake": float(row.simulated_stake or 0.0),
-                "payout": float(row.expected_payout) if row.expected_payout is not None else None,
+                "prediction": prediction_digit,
+                "buy_price": simulated_stake,
+                "stake": simulated_stake,
+                "simulated_stake": simulated_stake,
+                "payout": float(expected_payout) if expected_payout is not None else None,
                 "expected_payout": (
-                    float(row.expected_payout) if row.expected_payout is not None else None
+                    float(expected_payout) if expected_payout is not None else None
                 ),
                 "profit": 0.0,
                 "actual_profit_loss": 0.0,
                 "amount_charged": 0.0,
                 "outcome": outcome,
-                "virtual_result": str(row.result or "OPEN"),
+                "virtual_result": raw_result,
                 "display_result": f"VIRTUAL {progress_text}",
                 "virtual_win_sequence": sequence,
                 "virtual_wins_required": row_required,
                 "history_retained": True,
-                "exit_digit": row.actual_last_digit,
-                "actual_last_digit": row.actual_last_digit,
-                "exit_spot": row.exit_spot,
-                "purchase_time": row.created_at.isoformat() if row.created_at else None,
-                "provider_purchase_time": row.created_at.isoformat() if row.created_at else None,
-                "settlement_time": row.settled_at.isoformat() if row.settled_at else None,
-                "created_at": row.created_at.isoformat() if row.created_at else None,
-                "settled_at": row.settled_at.isoformat() if row.settled_at else None,
+                "exit_digit": actual_last_digit,
+                "actual_last_digit": actual_last_digit,
+                "exit_spot": exit_spot,
+                "purchase_time": created_at.isoformat() if created_at else None,
+                "provider_purchase_time": created_at.isoformat() if created_at else None,
+                "settlement_time": settled_at.isoformat() if settled_at else None,
+                "created_at": created_at.isoformat() if created_at else None,
+                "settled_at": settled_at.isoformat() if settled_at else None,
                 "financial_impact_label": "$0.00",
             }
         )
@@ -179,21 +235,22 @@ def _aidr_summary(state: AccountRiskState | None, managed_account_id: int) -> di
     required = adaptive_virtual_wins_required(
         base_api.REPOSITORY,
         int(managed_account_id),
-        default_wins=VIRTUAL_WINS_REQUIRED,
+        default_wins=_current_virtual_requirement(managed_account_id),
         recovery_debt=debt,
     )
+    contract_label = _current_custom_contract_label(managed_account_id)
     if raw_mode == VIRTUAL_WAITING_FOR_WIN:
         mode = "virtual"
-        next_action = f"Virtual OVER-4 confirmation: {wins}/{required} wins."
+        next_action = f"Virtual {contract_label} confirmation: {wins}/{required} wins."
     elif raw_mode == REAL_RECOVERY_PENDING and split > 0:
         mode = "full_recovery"
-        next_action = "One real OVER-4 trade will target the full recovery debt."
+        next_action = f"Next qualifying real {contract_label} trade continues recovery."
     elif raw_mode == REAL_RECOVERY_PENDING:
         mode = "exact_recovery"
-        next_action = "Next qualifying trade is one real OVER-3 exact recovery."
+        next_action = f"Next qualifying real {contract_label} trade continues recovery."
     else:
         mode = "normal"
-        next_action = "Normal OVER-1 execution."
+        next_action = f"Normal {contract_label} Custom Strategy execution."
     return {
         "mode": mode,
         "raw_mode": raw_mode,
@@ -206,15 +263,12 @@ def _aidr_summary(state: AccountRiskState | None, managed_account_id: int) -> di
         "split_recovery_remaining": split,
         "full_recovery_remaining": split,
         "next_action": next_action,
+        "custom_contract": contract_label,
     }
 
 
 def install_final_personal_trade_stream(app: Any) -> None:
-    """Install one final actual + virtual daily history stream.
-
-    Execution lifecycle changes never filter this stream. Stop, Pause and Start
-    affect future execution and recovery state only; Clear Today/All owns deletion.
-    """
+    """Install one final actual + exact-contract virtual daily history stream."""
 
     global _INSTALLED
     if _INSTALLED:
@@ -273,7 +327,10 @@ def install_final_personal_trade_stream(app: Any) -> None:
             }
             for trade, candidate, directional in actual_rows
         ]
-        virtual_trades = _virtual_rows_with_progress(list(virtual_rows))
+        virtual_trades = _virtual_rows_with_progress(
+            list(virtual_rows),
+            managed_account_id=managed_id,
+        )
         trades = sorted(
             [*actual_trades, *virtual_trades],
             key=_sort_time,

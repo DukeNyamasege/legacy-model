@@ -3,13 +3,17 @@
 
   const SERVER_STRATEGY_PREFIX = "foa-running-server-strategy-v1";
   const LIMIT_DISMISS_PREFIX = "foa-final-risk-limit-dismiss-v1";
+  const SPECIAL_COMPARATOR_PREFIX = "foa-special-last-comparator-v1";
   const BUILDER_DRAFT_KEYS = ["foa-builder-draft-v2", "foa-builder-draft-v1"];
+  const SPECIAL_COMPARATORS = new Set(["all_even", "all_odd"]);
   const START_AUTHORITY_WINDOW_MS = 60000;
   const POLL_MS = 4000;
   let localStartAt = 0;
   let polling = false;
   let scheduled = false;
   let lastLifecycle = null;
+  let specialComparatorHydrated = false;
+  let specialComparatorTouchedAt = 0;
 
   function storageGet(key) {
     try { return localStorage.getItem(key); } catch (_) { return null; }
@@ -75,6 +79,15 @@
     return `${SERVER_STRATEGY_PREFIX}:${accountIdentity()}`;
   }
 
+  function specialComparatorKey() {
+    return `${SPECIAL_COMPARATOR_PREFIX}:${accountIdentity()}`;
+  }
+
+  function specialComparator() {
+    const value = String(storageGet(specialComparatorKey()) || "");
+    return SPECIAL_COMPARATORS.has(value) ? value : "";
+  }
+
   function money(value, currency = "USD") {
     const amount = Number(value || 0);
     const unit = String(currency || "USD").toUpperCase();
@@ -98,7 +111,8 @@
     const drawer = document.querySelector("#foa-mobile-drawer");
     if (!drawer) return;
 
-    const headCopy = drawer.querySelector(".foa-mobile-drawer-head > div");
+    const head = drawer.querySelector(".foa-mobile-drawer-head");
+    const headCopy = head?.querySelector(":scope > div");
     headCopy?.remove();
 
     const nav = drawer.querySelector(".foa-mobile-drawer-nav");
@@ -111,8 +125,91 @@
       const trades = nav.querySelector('[data-mobile-view="trades"]');
       nav.replaceChildren(...[dashboard, trades].filter(Boolean));
     }
+
+    /* Navigation belongs immediately below the close icon. Appearance follows it;
+       the trading account and logout/risk actions stay anchored at the bottom. */
+    if (head && nav && head.nextElementSibling !== nav) head.after(nav);
     if (nav && theme && nav.nextElementSibling !== theme) nav.after(theme);
     if (account && actions && account.nextElementSibling !== actions) actions.before(account);
+
+    const active = document.querySelector(".builder-header .builder-nav [data-view].active");
+    const activeView = String(active?.dataset?.view || "main");
+    drawer.querySelectorAll("[data-mobile-view]").forEach((button) => {
+      button.classList.toggle("active", String(button.dataset.mobileView || "main") === activeView);
+    });
+  }
+
+  function readableBuilderLabels() {
+    document.querySelectorAll(".field > span").forEach((node) => {
+      const text = String(node.textContent || "");
+      const updated = text
+        .replace(/Check last N digits/gi, "Check last number of digits")
+        .replace(/Last N digits/gi, "Last number of digits");
+      if (updated !== text) node.textContent = updated;
+    });
+  }
+
+  function ensureSpecialComparatorOptions() {
+    const select = document.querySelector('select[data-builder="lastRule.operator"]');
+    if (!select) return;
+
+    const options = [
+      ["all_even", "All even"],
+      ["all_odd", "All odd"],
+    ];
+    options.forEach(([value, label]) => {
+      if (select.querySelector(`option[value="${value}"]`)) return;
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      select.appendChild(option);
+    });
+
+    const special = specialComparator();
+    if (special && select.value !== special) select.value = special;
+
+    const valueInput = document.querySelector('input[data-builder="lastRule.value"]');
+    const valueField = valueInput?.closest("label.field");
+    if (valueField) valueField.hidden = Boolean(special);
+  }
+
+  function hydrateSpecialComparatorFromConfig(payload, { force = false } = {}) {
+    if (!force && specialComparatorHydrated) return;
+    if (!force && Date.now() - specialComparatorTouchedAt < 120000) return;
+    const digit = (payload?.config?.conditions || []).find((item) => item?.kind === "digit_compare");
+    const operator = String(digit?.operator || "").toLowerCase();
+    if (SPECIAL_COMPARATORS.has(operator)) storageSet(specialComparatorKey(), operator);
+    else storageRemove(specialComparatorKey());
+    specialComparatorHydrated = true;
+    scheduleEnhance();
+  }
+
+  function installSpecialComparatorRequestBridge() {
+    if (window.__FOA_SPECIAL_COMPARATOR_FETCH_BRIDGE__) return;
+    window.__FOA_SPECIAL_COMPARATOR_FETCH_BRIDGE__ = true;
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async (input, init = {}) => {
+      const method = String(init?.method || "GET").toUpperCase();
+      const rawUrl = typeof input === "string" ? input : String(input?.url || "");
+      const isCustomSave = method === "POST"
+        && (rawUrl.includes("/me/custom-strategy") || rawUrl.includes("/api/me/custom-strategy"));
+      if (!isCustomSave) return originalFetch(input, init);
+
+      const special = specialComparator();
+      if (!special || typeof init.body !== "string") return originalFetch(input, init);
+      try {
+        const payload = JSON.parse(init.body);
+        const condition = Array.isArray(payload?.conditions)
+          ? payload.conditions.find((item) => item?.kind === "digit_compare")
+          : null;
+        if (condition) {
+          condition.operator = special;
+          delete condition.value;
+          return originalFetch(input, { ...init, body: JSON.stringify(payload) });
+        }
+      } catch (_) {}
+      return originalFetch(input, init);
+    };
   }
 
   function limitDismissKey(lifecycle) {
@@ -204,6 +301,7 @@
   async function synchronizeRunningStrategy(lifecycle) {
     if (!running(lifecycle)) return;
     const custom = await getJSON("/me/custom-strategy");
+    hydrateSpecialComparatorFromConfig(custom, { force: true });
     if (!custom?.config?.configured) return;
 
     const hash = strategyHash(custom.config);
@@ -216,9 +314,6 @@
     localStartAt = 0;
     if (thisDeviceStarted) return;
 
-    /* Another browser/device started this run. Its pre-Start save is the server
-       authority. Remove only this device's local builder drafts, then reload once;
-       dashboard-v2 hydrates the exact server config and keeps that hash locally. */
     BUILDER_DRAFT_KEYS.forEach(storageRemove);
     window.location.reload();
   }
@@ -230,10 +325,14 @@
       const lifecycle = await getJSON("/me/trading-lifecycle");
       lastLifecycle = lifecycle;
       syncLimitNotice(lifecycle);
+      if (!specialComparatorHydrated) {
+        try {
+          hydrateSpecialComparatorFromConfig(await getJSON("/me/custom-strategy"));
+        } catch (_) {}
+      }
       await synchronizeRunningStrategy(lifecycle);
     } catch (_) {
-      // Existing dashboard/realtime fallback remains authoritative during a brief
-      // network interruption. Do not alter local strategy state on failed reads.
+      // Failed UI reads never alter trading lifecycle or local strategy state.
     } finally {
       polling = false;
     }
@@ -242,6 +341,8 @@
   function enhance() {
     scheduled = false;
     cleanNavigation();
+    readableBuilderLabels();
+    ensureSpecialComparatorOptions();
     if (lastLifecycle) syncLimitNotice(lastLifecycle);
   }
 
@@ -251,9 +352,25 @@
     window.requestAnimationFrame(enhance);
   }
 
+  installSpecialComparatorRequestBridge();
+
+  document.addEventListener("change", (event) => {
+    const select = event.target?.closest?.('select[data-builder="lastRule.operator"]');
+    if (!select) return;
+    const value = String(select.value || "").toLowerCase();
+    specialComparatorTouchedAt = Date.now();
+    specialComparatorHydrated = true;
+    if (SPECIAL_COMPARATORS.has(value)) storageSet(specialComparatorKey(), value);
+    else storageRemove(specialComparatorKey());
+    window.setTimeout(scheduleEnhance, 0);
+  }, true);
+
   document.addEventListener("click", (event) => {
     if (event.target?.closest?.('[data-main-action="start"]')) {
       localStartAt = Date.now();
+    }
+    if (event.target?.closest?.('[data-mobile-view="main"], [data-mobile-view="trades"]')) {
+      window.setTimeout(scheduleEnhance, 0);
     }
   }, true);
 
@@ -283,5 +400,5 @@
         window.setTimeout(pollAuthority, 700);
       })();
 
-  window.FOA_FINAL_DASHBOARD_AUTHORITY_VERSION = "20260813-1";
+  window.FOA_FINAL_DASHBOARD_AUTHORITY_VERSION = "20260813-2";
 })();
