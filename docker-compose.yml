@@ -42,12 +42,15 @@ services:
     command: >-
       sh -ec "python scripts/wait_for_database.py --timeout 180
       && alembic upgrade head
-      && exec uvicorn app.api_v3:app --host 0.0.0.0 --port 8080"
+      && exec uvicorn app.netlify_backend_api:app --host 0.0.0.0 --port 8080"
     env_file: .env
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-underdog}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB:-underdog_test2}
-      DEPLOYMENT_ID: vps-api
+      DEPLOYMENT_ID: vps-backend-api
       CUSTOM_STRATEGY_ONLY_RUNTIME: "true"
+      FRONTEND_HOSTING_MODE: ${FRONTEND_HOSTING_MODE:-netlify}
+      DASHBOARD_FRONTEND_ORIGINS: ${DASHBOARD_FRONTEND_ORIGINS:-}
+      DASHBOARD_STREAM_SIGNING_KEY: ${DASHBOARD_STREAM_SIGNING_KEY:-}
     depends_on:
       database:
         condition: service_healthy
@@ -76,6 +79,7 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-underdog}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB:-underdog_test2}
       DEPLOYMENT_ID: vps-custom-worker
       CUSTOM_STRATEGY_ONLY_RUNTIME: "true"
+      FRONTEND_HOSTING_MODE: ${FRONTEND_HOSTING_MODE:-netlify}
       LIVE_TICK_LOG_LINES: ${LIVE_TICK_LOG_LINES:-false}
 
       # Shared REST pool is retained only for account discovery and authenticated
@@ -98,6 +102,12 @@ services:
       PRIVATE_WS_RECONNECT_JITTER_SECONDS: ${PRIVATE_WS_RECONNECT_JITTER_SECONDS:-1.0}
       PRIVATE_WS_OTP_FAILURE_BACKOFF_SECONDS: ${PRIVATE_WS_OTP_FAILURE_BACKOFF_SECONDS:-5.0}
 
+      # Planned Custom Strategy market-set restarts reconnect immediately; actual
+      # provider outages/rate limits still use the bounded resilience backoff.
+      DERIV_PUBLIC_WS_PLANNED_RESTART_SECONDS: ${DERIV_PUBLIC_WS_PLANNED_RESTART_SECONDS:-0.35}
+
+      # Execution never waits for this UI wake-up. The worker sends a coalesced
+      # best-effort notification and the API WebSocket also checks durable DB state.
       INTERNAL_DASHBOARD_REFRESH_URL: http://api:8080/control/internal/dashboard-settlement-refresh
     volumes:
       - test2_models:/app/model_artifacts
