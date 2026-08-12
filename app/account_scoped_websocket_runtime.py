@@ -14,6 +14,58 @@ _INSTALLED = False
 _ORIGINAL_LOAD_RUNTIME_ACCOUNTS = None
 
 
+def _oauth_scopes(payload: dict[str, Any]) -> set[str]:
+    raw = payload.get("oauth_scope") or payload.get("scope") or payload.get("scopes")
+    return {
+        item.strip().lower()
+        for item in str(raw or "").replace(",", " ").split()
+        if item.strip()
+    }
+
+
+def _promote_embedded_oauth_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Promote the OAuth grant stored inside an old OAuth+PAT compatibility row.
+
+    Earlier versions made a PAT authoritative after OAuth login and moved the
+    OAuth values into oauth_* fields. Custom Strategy now executes each account
+    through its own OAuth-authenticated private WebSocket, so a valid embedded
+    trade-scoped OAuth credential must become the primary credential again.
+    """
+
+    if str(payload.get("auth_type") or "").strip().lower() == "oauth":
+        return dict(payload)
+
+    oauth_access = str(payload.get("oauth_access_token") or "").strip()
+    if not oauth_access or "trade" not in _oauth_scopes(payload):
+        return dict(payload)
+
+    promoted = dict(payload)
+    legacy_pat = str(
+        payload.get("pat_token")
+        or (
+            payload.get("access_token")
+            if str(payload.get("auth_type") or "").strip().lower() != "oauth"
+            else ""
+        )
+        or ""
+    ).strip()
+    if legacy_pat:
+        promoted["pat_token"] = legacy_pat
+        promoted["pat_token_set"] = True
+
+    promoted.update(
+        {
+            "auth_type": "oauth",
+            "access_token": oauth_access,
+            "refresh_token": str(payload.get("oauth_refresh_token") or "").strip(),
+            "expires_at": str(payload.get("oauth_expires_at") or "").strip(),
+            "scope": str(payload.get("oauth_scope") or payload.get("scope") or "").strip(),
+            "auth_source": "deriv_oauth",
+        }
+    )
+    return promoted
+
+
 def _refresh_enabled_oauth_rows(bot: TradingBot) -> None:
     """Refresh each enabled row's own OAuth credential before runtime loading."""
 
@@ -25,6 +77,21 @@ def _refresh_enabled_oauth_rows(bot: TradingBot) -> None:
             payload = decrypt_auth_payload(row.token_secret, bot.encryption_key)
         except Exception:
             continue
+
+        promoted = _promote_embedded_oauth_payload(payload)
+        if promoted != payload:
+            payload = promoted
+            bot.repository.update_managed_account(
+                int(row.id),
+                token_secret=encrypt_auth_payload(payload, bot.encryption_key),
+                enabled=bool(row.enabled),
+            )
+            bot.logger.info(
+                "ACCOUNT_OAUTH_CREDENTIAL_PROMOTED managed_id=%s account=%s source=legacy_pat_wrapper",
+                int(row.id),
+                mask_account_id(str(payload.get("account_id") or "")),
+            )
+
         if str(payload.get("auth_type") or "").strip().lower() != "oauth":
             continue
         if not token_is_expiring(payload):
@@ -119,8 +186,8 @@ def _account_scoped_runtime_accounts(self: TradingBot):
                 managed_id_int,
                 "token_required",
                 (
-                    f"{account_type.upper()} account needs an OAuth access token or PAT "
-                    "with trade permission for authenticated WebSocket execution."
+                    f"{account_type.upper()} account needs OAuth trade permission "
+                    "for authenticated WebSocket execution."
                 ),
             )
             self.logger.warning(
@@ -157,7 +224,7 @@ def _account_scoped_runtime_accounts(self: TradingBot):
             managed_id_int,
             mask_account_id(account_id),
             account_type,
-            "oauth" if profile["auth_type"] == "oauth" else "pat",
+            "oauth" if profile["auth_type"] == "oauth" else "legacy_pat_fallback",
         )
 
     return filtered_keys, filtered_profiles
