@@ -52,7 +52,7 @@ class NetlifyVpsSplitArchitectureTests(unittest.TestCase):
         self.assertIn("/ws/me/live", realtime)
         self.assertIn("/me/live-snapshot", realtime)
         self.assertIn("FALLBACK_MS", realtime)
-        self.assertIn("netlify-same-origin-rest-v1", boundary)
+        self.assertIn("netlify-same-origin-rest-v2-optimistic-lifecycle", boundary)
         self.assertIn("GET_TIMEOUT_MS", boundary)
         self.assertIn("WRITE_TIMEOUT_MS", boundary)
 
