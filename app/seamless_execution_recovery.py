@@ -141,7 +141,7 @@ def install_seamless_execution_recovery() -> None:
 
     # Keep a reference only for diagnostics/tests. Runtime faults no longer invoke
     # it because the old handler could disable the managed account.
-    direct_runtime._previous_stop_on_runtime_failure = previous_fail_handler
+    setattr(direct_runtime, "_previous_stop_on_runtime_failure", previous_fail_handler)
     direct_runtime._fail_closed = reconnect_without_stopping
     RFDir5TradingBot._seamless_execution_recovery_installed = True
     _INSTALLED = True
