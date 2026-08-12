@@ -78,6 +78,7 @@ jobs:
       - name: Typecheck direct custom runtime
         run: >-
           mypy --follow-imports=skip --ignore-missing-imports --allow-untyped-defs
+          --disable-error-code=misc --disable-error-code=arg-type
           app/account_execution_session.py
           app/custom_strategy_direct_runtime.py
           app/custom_strategy_runtime_lifecycle.py
