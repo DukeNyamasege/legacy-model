@@ -39,17 +39,19 @@ git clean -fdX \
   -e .env \
   -e '.env.*' \
   -e deploy-backups/ \
+  -e backups/ \
   -e performance-reports/
 
 echo "Repacking Git objects and pruning unreachable local objects..."
 git reflog expire --expire=30.days.ago --all || true
 git gc --prune=30.days.ago
 
-echo "Running Docker/deployment artifact cleanup..."
-sh scripts/cleanup_vps_artifacts.sh repository-cleanup
+echo "Removing unused Docker build cache/images without touching volumes..."
+docker image prune -a -f --filter "until=168h" || true
+docker builder prune -a -f --filter "until=168h" || true
 
 echo ""
-echo "Repository cleanup complete. Current main worktree, runtime secrets, retained backups and running production containers were preserved."
+echo "Repository cleanup complete. Current main worktree, runtime secrets, backups and Docker volumes were preserved."
 git status --short
 git branch --show-current
 git rev-parse HEAD
