@@ -45,6 +45,20 @@ class DashboardLivePerformanceTests(TestCase):
         self.assertIn("foa-nonblocking-loader-style", source)
         self.assertNotIn('["/me", 30000]', source)
 
+    def test_live_dashboard_respects_clear_trades_reset(self) -> None:
+        source = (ROOT / "dashboard" / "custom-runtime-client.js").read_text(
+            encoding="utf-8"
+        )
+        builder = (ROOT / "dashboard" / "dashboard-v2.js").read_text(encoding="utf-8")
+        self.assertIn('TRADE_RESET_PREFIX = "foa-trade-session-reset-v1"', source)
+        self.assertIn("function tradeResetTime()", source)
+        self.assertIn("function visibleLiveTrades()", source)
+        self.assertIn("function visibleLiveMetrics()", source)
+        self.assertIn('event.target?.closest?.("[data-clear-local-trades]")', source)
+        self.assertIn('storageSet(tradeResetKey(), new Date().toISOString())', builder)
+        self.assertIn("const resetMetrics = visibleLiveMetrics()", source)
+        self.assertIn("const rows = visibleLiveTrades()", source)
+
     def test_builder_installs_live_stream_after_runtime_routes(self) -> None:
         source = (ROOT / "app" / "builder_first_dashboard_authority.py").read_text(
             encoding="utf-8"
