@@ -54,6 +54,11 @@ PUBLIC_WS_JITTER_SECONDS = _positive_float(
     5.0,
     0.0,
 )
+PUBLIC_WS_FAST_RECONNECT_SECONDS = _positive_float(
+    "DERIV_PUBLIC_WS_FAST_RECONNECT_SECONDS",
+    0.35,
+    0.10,
+)
 
 
 def _preflight_stream_disabled() -> bool:
@@ -75,6 +80,20 @@ def _rate_limited(error: BaseException) -> bool:
             "http 429",
             "status 429",
         )
+    )
+
+
+def _planned_restart(error: BaseException) -> bool:
+    """Return true for our own subscription refresh / provider service restart.
+
+    A 1012 restart isn't rate limiting and should not inherit the normal 15+ second
+    outage backoff. The production logs showed custom_market_set_changed taking
+    roughly 18 seconds even though the worker deliberately requested that restart.
+    """
+
+    text = f"{type(error).__name__}: {error}".lower()
+    return "custom_market_set_changed" in text or (
+        "1012" in text and "service restart" in text
     )
 
 
@@ -102,10 +121,14 @@ def _retry_delay(attempt: int, *, rate_limited: bool) -> float:
     return min(PUBLIC_WS_BACKOFF_MAX_SECONDS, exponential + jitter)
 
 
+def _fast_retry_delay() -> float:
+    return PUBLIC_WS_FAST_RECONNECT_SECONDS + random.uniform(0.0, 0.20)
+
+
 async def _sleep_while_running(client: PublicMarketDataClient, seconds: float) -> None:
     remaining = max(0.0, float(seconds))
     while client.bot.is_running and remaining > 0:
-        interval = min(1.0, remaining)
+        interval = min(0.25 if remaining < 2 else 1.0, remaining)
         await asyncio.sleep(interval)
         remaining -= interval
 
@@ -113,10 +136,9 @@ async def _sleep_while_running(client: PublicMarketDataClient, seconds: float) -
 async def _resilient_connect_and_run(self: PublicMarketDataClient) -> None:
     """Maintain one public market stream without reconnect storms.
 
-    Candidate workers deliberately avoid an external market-data connection. The
-    candidate API and worker are validated locally while one standalone smoke
-    connection verifies the official public endpoint. Production uses one stream
-    with bounded exponential backoff and a long cooldown after provider throttling.
+    Planned subscription changes reconnect immediately. Genuine network failures
+    keep bounded exponential backoff, and provider throttling keeps the long rate
+    limit cooldown. Financial purchases remain on independent private sessions.
     """
 
     if _preflight_stream_disabled():
@@ -169,22 +191,36 @@ async def _resilient_connect_and_run(self: PublicMarketDataClient) -> None:
         except asyncio.CancelledError:
             raise
         except Exception as error:
-            attempt += 1
             self._handle_disconnect(error)
             limited = _rate_limited(error)
-            retry_delay = _retry_delay(attempt, rate_limited=limited)
-            log = self.bot.logger.warning if _expected_connection_error(error) or limited else self.bot.logger.error
-            log(
-                "PUBLIC_STREAM_BACKOFF error_type=%s error=%r attempt=%s "
-                "rate_limited=%s retry_seconds=%.1f max_retry_seconds=%.1f "
-                "global_execution_continues=true",
-                type(error).__name__,
-                error,
-                attempt,
-                str(limited).lower(),
-                retry_delay,
-                PUBLIC_WS_BACKOFF_MAX_SECONDS,
-            )
+            planned = _planned_restart(error) and not limited
+            if planned:
+                attempt = 0
+                retry_delay = _fast_retry_delay()
+                self.bot.logger.info(
+                    "PUBLIC_STREAM_FAST_RECONNECT reason=planned_restart "
+                    "retry_seconds=%.2f global_execution_continues=true",
+                    retry_delay,
+                )
+            else:
+                attempt += 1
+                retry_delay = _retry_delay(attempt, rate_limited=limited)
+                log = (
+                    self.bot.logger.warning
+                    if _expected_connection_error(error) or limited
+                    else self.bot.logger.error
+                )
+                log(
+                    "PUBLIC_STREAM_BACKOFF error_type=%s error=%r attempt=%s "
+                    "rate_limited=%s retry_seconds=%.1f max_retry_seconds=%.1f "
+                    "global_execution_continues=true",
+                    type(error).__name__,
+                    error,
+                    attempt,
+                    str(limited).lower(),
+                    retry_delay,
+                    PUBLIC_WS_BACKOFF_MAX_SECONDS,
+                )
 
         if self.bot.is_running:
             await _sleep_while_running(self, retry_delay)
@@ -202,9 +238,11 @@ def install_public_websocket_resilience() -> None:
     LOGGER.warning(
         "PUBLIC_WEBSOCKET_RESILIENCE_INSTALLED open_timeout_seconds=%.1f "
         "backoff_base_seconds=%.1f backoff_max_seconds=%.1f "
-        "rate_limit_backoff_seconds=%.1f preflight_external_stream=false",
+        "rate_limit_backoff_seconds=%.1f fast_reconnect_seconds=%.2f "
+        "preflight_external_stream=false",
         PUBLIC_WS_OPEN_TIMEOUT_SECONDS,
         PUBLIC_WS_BACKOFF_BASE_SECONDS,
         PUBLIC_WS_BACKOFF_MAX_SECONDS,
         PUBLIC_WS_RATE_LIMIT_BACKOFF_SECONDS,
+        PUBLIC_WS_FAST_RECONNECT_SECONDS,
     )
