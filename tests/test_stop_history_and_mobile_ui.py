@@ -65,8 +65,11 @@ class DashboardSessionAndReachabilityTests(unittest.TestCase):
         final_ui = api_v3.index("install_final_virtual_history_ui(app)")
         session_resilience = api_v3.index("install_dashboard_session_resilience(app)")
         head_compat = api_v3.index("install_head_request_compat(app)")
+        builder_authority = api_v3.index("install_builder_first_dashboard_authority(app)")
         self.assertLess(final_ui, session_resilience)
         self.assertLess(session_resilience, head_compat)
+        self.assertLess(head_compat, builder_authority)
+        self.assertLess(api_v3.index("install_database_runtime_hardening(app)"), builder_authority)
 
         source = (ROOT / "app" / "dashboard_session_resilience.py").read_text(
             encoding="utf-8"
@@ -82,6 +85,26 @@ class DashboardSessionAndReachabilityTests(unittest.TestCase):
         self.assertIn("booting: !BOOT_SESSION?.authenticated", source)
         self.assertIn("function switchMode(mode)", source)
         self.assertIn('refresh(false, "Refreshing dashboard...")', source)
+
+    def test_builder_first_dashboard_authority_serves_final_shell_last(self) -> None:
+        source = (ROOT / "app" / "builder_first_dashboard_authority.py").read_text(
+            encoding="utf-8"
+        )
+        for marker in (
+            'base_api.ROOT / "dashboard" / "index.html"',
+            'base_api.ROOT / "dashboard" / name',
+            "X-FOA-Builder-First-Dashboard",
+            "FOA_SIMPLIFIED_DASHBOARD_COMPAT",
+            '"/ui/dashboard-v2.css"',
+            '"/ui/dashboard-v2.js"',
+            '"/ui/dashboard-actions-v2.js"',
+            '"/ui/simplified-dashboard.js"',
+            "_remove_route(app, path, \"GET\")",
+            "_remove_route(app, path, \"HEAD\")",
+        ):
+            self.assertIn(marker, source)
+        self.assertNotIn("AI Digit Recovery V1", source)
+        self.assertNotIn("Start Even AutoTrade", source)
 
     def test_head_compatibility_covers_static_and_health_routes(self) -> None:
         head = (ROOT / "app" / "head_request_compat.py").read_text(encoding="utf-8")
@@ -120,6 +143,8 @@ class DashboardSessionAndReachabilityTests(unittest.TestCase):
         self.assertIn("/ui/dashboard-v2.js", smoke)
         self.assertIn("foa-session-v2", smoke)
         self.assertIn("window.FOA_BOOT_SESSION", smoke)
+        self.assertIn("FOA_SIMPLIFIED_DASHBOARD_COMPAT", smoke)
+        self.assertIn("Old dashboard UI is still served", smoke)
         self.assertIn("mobile_input_zoom_guard", smoke)
 
         deploy = (ROOT / "scripts" / "deploy_vps.sh").read_text(encoding="utf-8")

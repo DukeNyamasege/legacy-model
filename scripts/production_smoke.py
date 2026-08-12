@@ -431,6 +431,15 @@ def main() -> int:
         "/me",
     ):
         require(marker in dashboard_text, f"dashboard-v2 JavaScript is missing {marker!r}")
+    for old_ui_marker in (
+        "AI Digit Recovery V1",
+        "Start Even AutoTrade",
+        "AIDR MODE",
+    ):
+        require(
+            old_ui_marker not in dashboard_text,
+            f"Old dashboard UI is still served by dashboard-v2.js: {old_ui_marker}",
+        )
 
     actions_script = session.get(f"{base_url}/ui/dashboard-actions-v2.js", timeout=20)
     require(
@@ -466,9 +475,8 @@ def main() -> int:
     )
     simplified_text = simplified_script.text
     for marker in (
-        "foa-simple-app",
-        "window.FOA_BOOT_SESSION",
-        "foa-session-v2",
+        "FOA_SIMPLIFIED_DASHBOARD_COMPAT",
+        "builder-first",
     ):
         require(marker in simplified_text, f"Simplified dashboard JavaScript is missing {marker!r}")
 

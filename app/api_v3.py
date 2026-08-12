@@ -51,6 +51,9 @@ from app.dashboard_stability_fix import install_dashboard_stability_fix  # noqa:
 from app.database_runtime_hardening import (  # noqa: E402
     install_database_runtime_hardening,
 )
+from app.builder_first_dashboard_authority import (  # noqa: E402
+    install_builder_first_dashboard_authority,
+)
 from app.fast_integration_health import install_fast_integration_health  # noqa: E402
 from app.final_personal_trade_stream import install_final_personal_trade_stream  # noqa: E402
 from app.final_public_controls import install_final_public_controls  # noqa: E402
@@ -226,3 +229,8 @@ install_fast_integration_health(app)
 # Database failures are converted into controlled 503 responses after every final
 # route has been installed.
 install_database_runtime_hardening(app)
+
+# The builder-first migration replaces the old Overview/AIDR shell entirely. This
+# must be last because several historical compatibility layers still register
+# dashboard routes during import.
+install_builder_first_dashboard_authority(app)
