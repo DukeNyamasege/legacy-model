@@ -2,6 +2,7 @@
   "use strict";
 
   // Compatibility route only. The production UI is the builder-first dashboard.
+  window.FOA_SIMPLIFIED_DASHBOARD_COMPAT = "builder-first";
   if (window.FOA_BUILDER_FIRST_COMPAT_LOADED) return;
   window.FOA_BUILDER_FIRST_COMPAT_LOADED = true;
 

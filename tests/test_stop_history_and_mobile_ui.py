@@ -106,6 +106,16 @@ class DashboardSessionAndReachabilityTests(unittest.TestCase):
         self.assertNotIn("AI Digit Recovery V1", source)
         self.assertNotIn("Start Even AutoTrade", source)
 
+    def test_simplified_dashboard_file_is_builder_first_compatibility_stub(self) -> None:
+        source = (ROOT / "dashboard" / "simplified-dashboard.js").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("FOA_SIMPLIFIED_DASHBOARD_COMPAT", source)
+        self.assertIn("builder-first", source)
+        self.assertIn("/ui/dashboard-v2.js", source)
+        self.assertNotIn("AI Digit Recovery V1", source)
+        self.assertNotIn("Start Even AutoTrade", source)
+
     def test_head_compatibility_covers_static_and_health_routes(self) -> None:
         head = (ROOT / "app" / "head_request_compat.py").read_text(encoding="utf-8")
         for path in (
