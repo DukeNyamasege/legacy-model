@@ -1,0 +1,207 @@
+/* Final UI authority for the compact personal dashboard.
+   Loaded after every historical dashboard layer so older responsive rules cannot
+   reintroduce icon-only Trades controls or a mismatched mobile theme. */
+
+/* Keep the desktop header focused on the two real destinations. */
+.builder-header .builder-brand > div:not(.builder-logo) {
+  display: none !important;
+}
+
+/* The Trades footer is one row with two equal, explicit actions. */
+body.foa-trades-page-active .foa-trades-controls-footer {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important;
+  align-items: stretch !important;
+  gap: 8px !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  min-height: 54px !important;
+  margin: 8px 0 18px !important;
+  padding: 5px !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 12px !important;
+  background: linear-gradient(150deg, var(--panel), var(--panel-2)) !important;
+  box-sizing: border-box !important;
+}
+
+body.foa-trades-page-active .foa-reset-trades-icon,
+body.foa-trades-page-active .foa-stop-trades-icon {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  height: auto !important;
+  min-height: 44px !important;
+  padding: 0 12px !important;
+  border-radius: 9px !important;
+  font-size: 12px !important;
+  font-weight: 850 !important;
+  letter-spacing: .01em !important;
+  line-height: 1 !important;
+  white-space: nowrap !important;
+  box-sizing: border-box !important;
+}
+
+body.foa-trades-page-active .foa-reset-trades-icon {
+  color: var(--text) !important;
+  border: 1px solid var(--line-strong) !important;
+  background: rgba(59, 130, 246, .12) !important;
+}
+
+body.foa-trades-page-active .foa-stop-trades-icon {
+  color: #fecaca !important;
+  border: 1px solid rgba(239, 68, 68, .46) !important;
+  background: var(--red-soft) !important;
+}
+
+body.foa-trades-page-active .foa-reset-trades-icon svg,
+body.foa-trades-page-active .foa-stop-trades-icon svg {
+  display: none !important;
+}
+
+body.foa-trades-page-active .foa-reset-trades-icon::before {
+  content: "Clear Trades";
+}
+
+body.foa-trades-page-active .foa-stop-trades-icon::before {
+  content: "Stop Trading";
+}
+
+/* The drawer lives under <body>, not inside #foa-simple-app. Theme selectors
+   therefore use the html data-theme value set by dashboard-v2.js. */
+html[data-theme="dark"] .foa-mobile-drawer {
+  color: #f8fafc !important;
+  background:
+    radial-gradient(circle at 0 0, rgba(59, 130, 246, .18), transparent 18rem),
+    linear-gradient(160deg, #07111d, #03070d 72%) !important;
+}
+
+html[data-theme="light"] .foa-mobile-drawer {
+  color: #0f172a !important;
+  background:
+    radial-gradient(circle at 0 0, rgba(37, 99, 235, .11), transparent 18rem),
+    linear-gradient(160deg, #ffffff, #f3f6fb 72%) !important;
+  box-shadow: 28px 0 70px rgba(15, 23, 42, .18) !important;
+}
+
+html[data-theme="light"] .foa-mobile-drawer-backdrop {
+  background: rgba(15, 23, 42, .35) !important;
+}
+
+html[data-theme="light"] .foa-mobile-menu-button,
+html[data-theme="light"] .foa-mobile-drawer-close,
+html[data-theme="light"] .foa-mobile-nav-button,
+html[data-theme="light"] .foa-mobile-risk-button {
+  color: #0f172a !important;
+  background: rgba(255, 255, 255, .84) !important;
+}
+
+html[data-theme="light"] .foa-mobile-nav-button.active {
+  color: #fff !important;
+  background: linear-gradient(135deg, var(--blue-deep), var(--blue)) !important;
+}
+
+html[data-theme="light"] .foa-mobile-account-card,
+html[data-theme="light"] .foa-mobile-theme-row {
+  color: #0f172a !important;
+  background: rgba(37, 99, 235, .055) !important;
+}
+
+/* Appearance switch: track and thumb both visibly belong to the active theme. */
+html[data-theme="dark"] .foa-mobile-theme-toggle {
+  border-color: rgba(148, 163, 184, .34) !important;
+  background: #172033 !important;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .025) !important;
+}
+
+html[data-theme="dark"] .foa-mobile-theme-toggle::after {
+  background: #e2e8f0 !important;
+  box-shadow: 0 2px 7px rgba(0, 0, 0, .34) !important;
+}
+
+html[data-theme="light"] .foa-mobile-theme-toggle {
+  border-color: #cbd5e1 !important;
+  background: #dbe3ef !important;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, .025) !important;
+}
+
+html[data-theme="light"] .foa-mobile-theme-toggle::after {
+  background: #334155 !important;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, .18) !important;
+}
+
+html[data-theme="light"] .foa-mobile-theme-toggle[aria-checked="true"],
+html[data-theme="dark"] .foa-mobile-theme-toggle[aria-checked="true"] {
+  background: var(--blue) !important;
+  border-color: var(--blue) !important;
+}
+
+html[data-theme="light"] .foa-mobile-theme-toggle[aria-checked="true"]::after,
+html[data-theme="dark"] .foa-mobile-theme-toggle[aria-checked="true"]::after {
+  background: #fff !important;
+}
+
+/* TP/SL final notification is explicit about target vs achieved session P/L. */
+.foa-final-limit-notifier {
+  z-index: 140 !important;
+}
+
+.foa-final-limit-notifier .foa-limit-values {
+  display: block;
+  margin-top: 2px;
+  font-weight: 800;
+}
+
+@media (max-width: 760px) {
+  /* No title/"navigation" prose in the drawer. Keep only the close control up top,
+     then place navigation, Appearance and account actions together at the bottom. */
+  .foa-mobile-drawer-head {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    min-height: 42px !important;
+    padding-bottom: 8px !important;
+  }
+
+  .foa-mobile-drawer-head > div {
+    display: none !important;
+  }
+
+  .foa-mobile-drawer-nav {
+    margin-top: auto !important;
+  }
+
+  .foa-mobile-drawer-nav [data-mobile-view="settings"] {
+    display: none !important;
+  }
+
+  .foa-mobile-theme-row {
+    margin-top: 7px !important;
+  }
+
+  .foa-mobile-account-card {
+    order: 1;
+    margin: 7px 0 0 !important;
+  }
+
+  .foa-mobile-drawer-actions {
+    order: 2;
+    margin-top: 6px !important;
+    padding-top: 0 !important;
+  }
+
+  body.foa-trades-page-active .foa-trades-controls-footer {
+    gap: 6px !important;
+    min-height: 50px !important;
+    padding: 4px !important;
+  }
+
+  body.foa-trades-page-active .foa-reset-trades-icon,
+  body.foa-trades-page-active .foa-stop-trades-icon {
+    min-height: 42px !important;
+    padding: 0 8px !important;
+    font-size: 11px !important;
+  }
+}
