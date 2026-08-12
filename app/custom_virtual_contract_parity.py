@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Any
+from typing import Any, Callable
 
 from app import custom_strategy_v1 as custom
 from app.repositories import rf_dir5_repository as rf_repo
 
 
 _INSTALLED = False
+_ORIGINAL_OUTCOME: Callable[..., tuple[str, int | None]] | None = None
 
 
 def virtual_contract_display(
@@ -85,8 +86,10 @@ def _exact_virtual_outcome(
     if contract == "PUT" or normalized_direction in {"FALL", "FALLING"}:
         return ("WIN" if Decimal(exit_quote) < Decimal(entry_quote) else "LOSS", digit)
 
-    # Keep compatibility for any historical custom direction not covered above.
-    return rf_repo._virtual_trade_outcome_original(
+    # Historical/unknown rows retain the repository's previous settlement logic.
+    if _ORIGINAL_OUTCOME is None:
+        raise ValueError(f"Unsupported virtual contract type: {contract or '-'}")
+    return _ORIGINAL_OUTCOME(
         direction=direction,
         contract_type=contract_type,
         barrier=barrier,
@@ -100,12 +103,11 @@ def _exact_virtual_outcome(
 def install_custom_virtual_contract_parity() -> None:
     """Make the Virtual Hook use exactly what the account is actually trading."""
 
-    global _INSTALLED
+    global _INSTALLED, _ORIGINAL_OUTCOME
     if _INSTALLED:
         return
 
-    if not hasattr(rf_repo, "_virtual_trade_outcome_original"):
-        rf_repo._virtual_trade_outcome_original = rf_repo._virtual_trade_outcome
+    _ORIGINAL_OUTCOME = rf_repo._virtual_trade_outcome
     original_protection_payload = rf_repo.RFDir5Repository._protection_payload
 
     def protection_payload(self: Any, state: Any) -> dict[str, Any]:
