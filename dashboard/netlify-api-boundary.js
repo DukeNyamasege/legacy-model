@@ -40,7 +40,6 @@
   function originalPath(input) {
     const url = asURL(input);
     if (!url) return "";
-    if (url.origin !== window.location.origin) return `${url.pathname}${url.search}`;
     return `${url.pathname}${url.search}`;
   }
 
@@ -67,7 +66,25 @@
     const path = `${url.pathname}${url.search}`;
     if (!shouldProxy(path)) return input;
     const next = `${API_PREFIX}${url.pathname}${url.search}`;
-    if (input instanceof Request) return new Request(next, input);
+    // Application calls use path strings. Preserve Request callers by rebuilding
+    // from the original request's public RequestInit-compatible properties.
+    if (input instanceof Request) {
+      return new Request(next, {
+        method: input.method,
+        headers: input.headers,
+        body: ["GET", "HEAD"].includes(input.method.toUpperCase()) ? undefined : input.body,
+        mode: input.mode,
+        credentials: input.credentials,
+        cache: input.cache,
+        redirect: input.redirect,
+        referrer: input.referrer,
+        referrerPolicy: input.referrerPolicy,
+        integrity: input.integrity,
+        keepalive: input.keepalive,
+        signal: input.signal,
+        duplex: input.duplex,
+      });
+    }
     return next;
   }
 
@@ -81,6 +98,51 @@
     }
     if (route === "/me/trades/today") return cache.trades || null;
     return null;
+  }
+
+  function isLifecycleMutation(route) {
+    return [
+      "/me/resume-trading",
+      "/me/auto-trade",
+      "/me/stop-trading",
+    ].includes(route);
+  }
+
+  function applyLifecycleMutation(payload) {
+    if (!payload || typeof payload !== "object") return;
+    const cache = window.FOA_NETLIFY_LIVE_CACHE || {};
+    const runtimeState = String(payload.runtime_state || payload.state || "STOPPED").toUpperCase();
+    const enabled = payload.enabled === undefined
+      ? !["STOPPED", "ERROR"].includes(runtimeState)
+      : Boolean(payload.enabled);
+    const executionStatus = String(
+      payload.execution_status
+      || payload.state
+      || (enabled ? "starting" : "stopped"),
+    ).toLowerCase();
+    const reason = String(payload.message || payload.reason || "");
+    cache.lifecycle = {
+      ...(cache.lifecycle || {}),
+      authenticated: true,
+      enabled,
+      runtime_state: runtimeState,
+      execution_status: executionStatus,
+      reason,
+      fatal: runtimeState === "ERROR",
+    };
+    if (cache.me) {
+      cache.me = {
+        ...cache.me,
+        enabled,
+        execution_status: executionStatus,
+        execution_status_reason: reason,
+      };
+    }
+    cache.savedAt = Date.now();
+    window.FOA_NETLIFY_LIVE_CACHE = cache;
+    document.dispatchEvent(new CustomEvent("foa:backend-lifecycle", {
+      detail: cache.lifecycle,
+    }));
   }
 
   function timeoutFor(method) {
@@ -132,11 +194,21 @@
       if (route === "/metrics/summary") {
         return responseJSON({ performance_profile: "netlify-static-background-summary" });
       }
-    } else {
-      window.FOA_NETLIFY_LIVE_CACHE = null;
+    } else if (!isLifecycleMutation(route)) {
+      // Preserve the last-good data object so a following lifecycle response can
+      // make Start/Stop locally authoritative without another full dashboard read.
+      if (window.FOA_NETLIFY_LIVE_CACHE) {
+        window.FOA_NETLIFY_LIVE_CACHE.savedAt = 0;
+      }
     }
 
-    return boundedFetch(rewriteURL(input), options);
+    const response = await boundedFetch(rewriteURL(input), options);
+    if (method !== "GET" && response.ok && isLifecycleMutation(route)) {
+      try {
+        applyLifecycleMutation(await response.clone().json());
+      } catch (_) {}
+    }
+    return response;
   };
 
   window.FOA_API_URL = (path) => {
@@ -144,5 +216,5 @@
     if (value.startsWith(`${API_PREFIX}/`)) return value;
     return shouldProxy(value) ? `${API_PREFIX}${value}` : value;
   };
-  window.FOA_BACKEND_PROXY_MODE = "netlify-same-origin-rest-v1";
+  window.FOA_BACKEND_PROXY_MODE = "netlify-same-origin-rest-v2-optimistic-lifecycle";
 })();
