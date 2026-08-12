@@ -55,6 +55,7 @@ jobs:
       - name: Validate deployment shell, Compose and migrations
         run: |
           sh -n scripts/deploy_vps.sh scripts/update_vps.sh \
+            scripts/deploy_dedicated_backend.sh \
             scripts/run_legacy_release_tests.sh \
             scripts/cleanup_vps_artifacts.sh \
             scripts/cleanup_repository_state.sh \
@@ -71,6 +72,7 @@ jobs:
           ruff check --output-format=github --select E9,F63,F7,F82
           app/account_execution_session.py
           app/account_scoped_websocket_runtime.py
+          app/backend_only_surface.py
           app/custom_strategy_current_runtime_fix.py
           app/custom_strategy_direct_runtime.py
           app/custom_strategy_runtime_lifecycle.py
@@ -97,6 +99,7 @@ jobs:
           --disable-error-code=misc --disable-error-code=arg-type
           app/account_execution_session.py
           app/account_scoped_websocket_runtime.py
+          app/backend_only_surface.py
           app/custom_strategy_current_runtime_fix.py
           app/custom_strategy_direct_runtime.py
           app/custom_strategy_runtime_lifecycle.py
