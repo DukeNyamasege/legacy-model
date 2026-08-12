@@ -95,7 +95,9 @@
       button.dataset.mainAction = enabled ? "stop" : "start";
       button.textContent = enabled ? "Stop Auto Trading" : "Start Auto Trading";
       button.classList.toggle("danger", enabled);
-      button.disabled = state === "EXECUTING";
+      // Never disable Stop merely because a proposal/purchase is in progress.
+      // The backend lifecycle remains authoritative for the resulting race.
+      button.disabled = false;
     });
 
     document.querySelectorAll(".trades-control-panel").forEach((panel) => {
@@ -152,7 +154,12 @@
       const response = await nativeFetch(input, next);
       if (response.ok) {
         deferredSettings = null;
-        invalidateAccountCache();
+        // Keep the recent /me and summary snapshots so mutate()'s forced refresh
+        // does not immediately repeat those expensive reads after a save. The
+        // builder already owns the just-saved values locally.
+        for (const key of Array.from(cache.keys())) {
+          if (key.startsWith("/me/custom-strategy")) cache.delete(key);
+        }
       }
       await inspectRuntimeResponse(response);
       return response;
@@ -190,5 +197,5 @@
   window.setInterval(pollRuntime, 4000);
   pollRuntime();
 
-  window.FOA_CUSTOM_DIRECT_RUNTIME_CLIENT = "20260812-v1";
+  window.FOA_CUSTOM_DIRECT_RUNTIME_CLIENT = "20260812-v2";
 })();
