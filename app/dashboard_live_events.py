@@ -88,6 +88,8 @@ def _live_snapshot(managed_id: int) -> dict[str, Any] | None:
         enabled = bool(row.enabled)
         status = str(row.execution_status or "inactive").strip().lower()
         reason = str(row.execution_status_reason or "")
+        status_updated_at = _iso(row.execution_status_updated_at)
+        row_updated_at = _iso(row.updated_at)
         revision_parts = (
             int(latest_actual[0] or 0),
             _iso(latest_actual[1]),
@@ -95,8 +97,8 @@ def _live_snapshot(managed_id: int) -> dict[str, Any] | None:
             int(latest_virtual[0] or 0),
             _iso(latest_virtual[1]),
             _iso(latest_virtual[2]),
-            _iso(row.execution_status_updated_at),
-            _iso(row.updated_at),
+            status_updated_at,
+            row_updated_at,
             enabled,
             status,
         )
@@ -107,7 +109,7 @@ def _live_snapshot(managed_id: int) -> dict[str, Any] | None:
         "runtime_state": _runtime_state(enabled=enabled, status=status),
         "execution_status": status,
         "reason": reason,
-        "updated_at": _iso(row.execution_status_updated_at),
+        "updated_at": status_updated_at,
         "revision": "|".join(str(item) for item in revision_parts),
     }
 
