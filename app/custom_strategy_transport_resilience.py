@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import random
 import time
 from contextlib import suppress
 from typing import Any
@@ -9,6 +10,7 @@ from typing import Any
 import aiohttp
 
 from app import custom_strategy_direct_runtime as direct_runtime
+from app import private_websocket_rate_limit as private_rate
 from app.account_execution_session import AccountExecutionError, AccountExecutionSession
 from app.private_websocket_rate_limit import wake_private_connection, wait_until_connected
 from enhanced_bot import TradingBot, mask_account_id
@@ -36,6 +38,25 @@ def _is_transient(value: Any) -> bool:
     return any(marker in text for marker in _TRANSIENT_MARKERS)
 
 
+def _fast_private_normal_backoff(session: Any, config: Any, attempt: int) -> float:
+    """Reconnect ordinary private-session failures quickly, not rate-limit failures."""
+
+    try:
+        base = float(os.getenv("PRIVATE_WS_NORMAL_BACKOFF_SECONDS", "0.75"))
+    except (TypeError, ValueError):
+        base = 0.75
+    base = max(0.25, base)
+    maximum = float(getattr(config, "maximum_backoff_seconds", 300.0) or 300.0)
+    configured_jitter = max(
+        0.0,
+        float(getattr(config, "reconnect_jitter_seconds", 1.0) or 0.0),
+    )
+    # Large reconnect jitter is useful for rate-limit recovery but harmful when one
+    # active trader's healthy socket is interrupted. Keep ordinary jitter subsecond.
+    jitter = random.uniform(0.0, min(0.35, configured_jitter))
+    return min(maximum, base * (1.5 ** min(max(0, int(attempt)), 8))) + jitter
+
+
 async def _reconnect_private_session(
     execution: AccountExecutionSession,
     *,
@@ -60,10 +81,6 @@ async def _reconnect_private_session(
     )
 
     websocket = getattr(session, "ws", None)
-    # A timed-out request can leave the socket apparently connected while its
-    # request/response router is no longer healthy. With no known open contract at
-    # proposal time, recycle that transport and let the existing OTP connection
-    # loop obtain a fresh account-scoped URL.
     if websocket is not None and not getattr(session, "pending_contracts", set()):
         with suppress(Exception):
             await asyncio.wait_for(
@@ -107,8 +124,6 @@ async def _nonblocking_dashboard_notify(self: TradingBot) -> None:
                             response.status,
                         )
         except Exception:
-            # The browser SSE/live-snapshot path is authoritative. A saturated API
-            # must never delay contract settlement cleanup or turn into WARNING spam.
             self.logger.debug("DASHBOARD_SETTLEMENT_PUSH_DEFERRED transport=unavailable")
 
     task = asyncio.create_task(push(), name="dashboard_settlement_refresh")
@@ -238,6 +253,7 @@ def install_custom_strategy_transport_resilience() -> None:
     AccountExecutionSession.buy_proposal = resilient_buy  # type: ignore[method-assign]
     direct_runtime._fail_closed = transient_aware_fail_closed
     direct_runtime._account_has_open_actual = open_or_transport_hold
+    private_rate._normal_backoff = _fast_private_normal_backoff
     TradingBot._notify_dashboard_settlement = _nonblocking_dashboard_notify
     TradingBot._custom_strategy_transport_resilience_installed = True
     _INSTALLED = True
