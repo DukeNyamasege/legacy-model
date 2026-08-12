@@ -64,8 +64,9 @@ class DashboardLivePerformanceTests(TestCase):
             encoding="utf-8"
         )
         self.assertIn("install_dashboard_live_events(app)", source)
+        self.assertIn("install_seamless_dashboard_runtime(app)", source)
         self.assertIn('X-FOA-Live-Dashboard', source)
-        self.assertIn("live-dashboard-authority-5", source)
+        self.assertIn("live-dashboard-authority-6", source)
 
 
 if __name__ == "__main__":
