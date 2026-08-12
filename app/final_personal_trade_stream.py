@@ -111,26 +111,36 @@ def _current_custom_contract_label(managed_account_id: int) -> str:
 def _virtual_rows_with_progress(
     rows: list[VirtualTrade],
     *,
-    managed_account_id: int,
+    managed_account_id: int = 0,
 ) -> list[dict[str, Any]]:
-    """Return virtual history using the exact contract stored on each observation."""
+    """Return virtual history using the exact contract stored on each observation.
+
+    Settled legacy rows created before progress snapshots keep their historical
+    two-win grouping. Current rows persist `progress=x/y`, so the exact hook
+    requirement travels with each observation instead of being reinterpreted.
+    """
 
     ordered = sorted(
         rows,
-        key=lambda row: _timestamp(row.created_at)
+        key=lambda row: _timestamp(getattr(row, "created_at", None))
         or datetime.min.replace(tzinfo=timezone.utc),
     )
     streak = 0
     payloads: list[dict[str, Any]] = []
-    current_required = _current_virtual_requirement(managed_account_id)
+    current_required = _current_virtual_requirement(managed_account_id) if managed_account_id else 1
     for row in ordered:
-        outcome = _virtual_outcome(row.result)
-        stored_progress = re.search(r"progress=(\d+)/(\d+)", str(row.reason or ""))
-        row_required = (
-            max(1, int(stored_progress.group(2)))
-            if stored_progress
-            else current_required
+        outcome = _virtual_outcome(getattr(row, "result", "OPEN"))
+        stored_progress = re.search(
+            r"progress=(\d+)/(\d+)",
+            str(getattr(row, "reason", "") or ""),
         )
+        if stored_progress:
+            row_required = max(1, int(stored_progress.group(2)))
+        elif outcome in {"WIN", "LOSS"}:
+            row_required = 2
+        else:
+            row_required = current_required
+
         if outcome == "WIN":
             streak = (
                 min(row_required, int(stored_progress.group(1)))
@@ -152,49 +162,65 @@ def _virtual_rows_with_progress(
             sequence = streak
             progress_text = f"PENDING · {streak}/{row_required}"
 
+        contract_type = str(getattr(row, "contract_type", "") or "")
+        barrier = str(getattr(row, "barrier", "") or "")
+        direction = str(getattr(row, "direction", "") or "")
         contract_label = virtual_contract_display(
-            str(row.contract_type or ""),
-            barrier=str(row.barrier or ""),
-            direction=str(row.direction or ""),
+            contract_type,
+            barrier=barrier,
+            direction=direction,
         )
+        created_at = getattr(row, "created_at", None)
+        settled_at = getattr(row, "settled_at", None)
+        expected_payout = getattr(row, "expected_payout", None)
+        actual_last_digit = getattr(row, "actual_last_digit", None)
+        exit_spot = getattr(row, "exit_spot", None)
+        prediction_digit = getattr(row, "prediction_digit", None)
+        row_id = int(getattr(row, "id", 0))
+        virtual_trade_id = str(getattr(row, "virtual_trade_id", "") or "")
+        signal_id = str(getattr(row, "signal_id", "") or "")
+        market = str(getattr(row, "market", "") or "")
+        simulated_stake = float(getattr(row, "simulated_stake", 0.0) or 0.0)
+        raw_result = str(getattr(row, "result", "OPEN") or "OPEN")
+
         payloads.append(
             {
-                "id": f"virtual-{int(row.id)}",
-                "trade_id": str(row.virtual_trade_id or f"virtual-{int(row.id)}"),
-                "virtual_trade_id": str(row.virtual_trade_id or ""),
-                "signal_id": str(row.signal_id or ""),
+                "id": f"virtual-{row_id}",
+                "trade_id": virtual_trade_id or f"virtual-{row_id}",
+                "virtual_trade_id": virtual_trade_id,
+                "signal_id": signal_id,
                 "is_virtual": True,
                 "trade_kind": "virtual",
-                "symbol": str(row.market or ""),
-                "market": str(row.market or ""),
-                "contract_type": f"VIRTUAL HOOK · {contract_label}",
+                "symbol": market,
+                "market": market,
+                "contract_type": f"VIRTUAL HOOK · {contract_label} · {progress_text}",
                 "type": "VIRTUAL HOOK",
-                "barrier": str(row.barrier or ""),
-                "prediction": row.prediction_digit,
-                "buy_price": float(row.simulated_stake or 0.0),
-                "stake": float(row.simulated_stake or 0.0),
-                "simulated_stake": float(row.simulated_stake or 0.0),
-                "payout": float(row.expected_payout) if row.expected_payout is not None else None,
+                "barrier": barrier,
+                "prediction": prediction_digit,
+                "buy_price": simulated_stake,
+                "stake": simulated_stake,
+                "simulated_stake": simulated_stake,
+                "payout": float(expected_payout) if expected_payout is not None else None,
                 "expected_payout": (
-                    float(row.expected_payout) if row.expected_payout is not None else None
+                    float(expected_payout) if expected_payout is not None else None
                 ),
                 "profit": 0.0,
                 "actual_profit_loss": 0.0,
                 "amount_charged": 0.0,
                 "outcome": outcome,
-                "virtual_result": str(row.result or "OPEN"),
+                "virtual_result": raw_result,
                 "display_result": f"VIRTUAL {progress_text}",
                 "virtual_win_sequence": sequence,
                 "virtual_wins_required": row_required,
                 "history_retained": True,
-                "exit_digit": row.actual_last_digit,
-                "actual_last_digit": row.actual_last_digit,
-                "exit_spot": row.exit_spot,
-                "purchase_time": row.created_at.isoformat() if row.created_at else None,
-                "provider_purchase_time": row.created_at.isoformat() if row.created_at else None,
-                "settlement_time": row.settled_at.isoformat() if row.settled_at else None,
-                "created_at": row.created_at.isoformat() if row.created_at else None,
-                "settled_at": row.settled_at.isoformat() if row.settled_at else None,
+                "exit_digit": actual_last_digit,
+                "actual_last_digit": actual_last_digit,
+                "exit_spot": exit_spot,
+                "purchase_time": created_at.isoformat() if created_at else None,
+                "provider_purchase_time": created_at.isoformat() if created_at else None,
+                "settlement_time": settled_at.isoformat() if settled_at else None,
+                "created_at": created_at.isoformat() if created_at else None,
+                "settled_at": settled_at.isoformat() if settled_at else None,
                 "financial_impact_label": "$0.00",
             }
         )
