@@ -116,6 +116,20 @@ class DashboardSessionAndReachabilityTests(unittest.TestCase):
         self.assertNotIn("AI Digit Recovery V1", source)
         self.assertNotIn("Start Even AutoTrade", source)
 
+    def test_startup_token_sync_cannot_replace_builder_first_assets(self) -> None:
+        source = (ROOT / "app" / "personal_token_sync.py").read_text(
+            encoding="utf-8"
+        )
+        startup = source.split(
+            "async def finalize_linked_account_token_sync() -> None:", 1
+        )[1].split("app.state.personal_token_sync_installed", 1)[0]
+        authority_guard = startup.index(
+            '"builder_first_dashboard_authority_installed"'
+        )
+        legacy_asset_install = startup.index("_install_final_dashboard_scripts(app)")
+        self.assertLess(authority_guard, legacy_asset_install)
+        self.assertIn("return", startup[authority_guard:legacy_asset_install])
+
     def test_head_compatibility_covers_static_and_health_routes(self) -> None:
         head = (ROOT / "app" / "head_request_compat.py").read_text(encoding="utf-8")
         for path in (

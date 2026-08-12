@@ -458,10 +458,19 @@ def install_personal_token_sync(app: Any) -> None:
 
     @app.on_event("startup")
     async def finalize_linked_account_token_sync() -> None:
-        # Final UI routes are installed later during app.api_v3 import. Replacing
-        # them at startup preserves every existing UI layer and appends only the
-        # linked-account token guidance.
         _install_token_route(app)
+        # The builder-first dashboard owns its assets after the application has
+        # finished importing. Reinstalling the legacy script here would happen at
+        # startup, after that ownership was established, and silently restore the
+        # retired Overview/Trades/Strategy shell.
+        if bool(
+            getattr(
+                app.state,
+                "builder_first_dashboard_authority_installed",
+                False,
+            )
+        ):
+            return
         _install_final_dashboard_scripts(app)
 
     app.state.personal_token_sync_installed = True

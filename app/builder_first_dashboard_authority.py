@@ -11,7 +11,7 @@ from app.dashboard_stability_fix import _remove_route
 
 
 _INSTALLED = False
-UI_VERSION = "20260812-builder-first-authority-1"
+UI_VERSION = "20260812-builder-first-authority-2"
 
 
 def _headers(extra: dict[str, str] | None = None) -> dict[str, str]:
