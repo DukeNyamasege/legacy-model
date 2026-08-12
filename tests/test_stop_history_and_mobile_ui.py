@@ -145,6 +145,9 @@ class DashboardSessionAndReachabilityTests(unittest.TestCase):
         self.assertIn("window.FOA_BOOT_SESSION", smoke)
         self.assertIn("FOA_SIMPLIFIED_DASHBOARD_COMPAT", smoke)
         self.assertIn("Old dashboard UI is still served", smoke)
+        self.assertIn("builder-shell", smoke)
+        self.assertIn("strategy-builder-card", smoke)
+        self.assertNotIn('"foa-bottom-nav",', smoke)
         self.assertIn("mobile_input_zoom_guard", smoke)
 
         deploy = (ROOT / "scripts" / "deploy_vps.sh").read_text(encoding="utf-8")

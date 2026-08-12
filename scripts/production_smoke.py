@@ -462,9 +462,9 @@ def main() -> int:
     stylesheet_text = stylesheet.text
     for marker in (
         "foa-simple-app",
-        "foa-bottom-nav",
-        "font-size:16px",
-        "min-height:44px",
+        "builder-shell",
+        "builder-header",
+        "strategy-builder-card",
     ):
         require(marker in stylesheet_text.replace(" ", ""), f"dashboard-v2 stylesheet is missing {marker!r}")
 
