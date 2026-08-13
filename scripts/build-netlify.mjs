@@ -58,6 +58,12 @@ if (!html.includes('/netlify-api-boundary.js')) {
   html = html.replace("</head>", `${boundaryScript}</head>`);
 }
 
+if (!html.includes('/result-based-mobile-compact.css')) {
+  html = html.replace(
+    "</head>",
+    '  <link rel="stylesheet" href="/result-based-mobile-compact.css">\n</head>',
+  );
+}
 if (!html.includes('/result-ui-fixes.css')) {
   html = html.replace(
     "</head>",
