@@ -160,8 +160,6 @@ def _resolve_prediction(mode: str, digits: list[int], config: dict[str, Any]) ->
     if not digits:
         raise ValueError("Dynamic prediction is unavailable until the market has a tick")
     if mode == "last_digit":
-        # The prediction is the exact final digit of the qualifying pattern — the
-        # same trigger digit that caused this contract to become eligible.
         return int(digits[-1])
 
     window = _prediction_window(config)
@@ -189,8 +187,6 @@ def _mode_label(mode: str, prediction_window: int | None = None) -> str:
 
 
 def install_custom_strategy_last_digit_prediction() -> None:
-    """Allow Matches/Differs to resolve one exact dynamic prediction at signal time."""
-
     global _INSTALLED
     if _INSTALLED:
         return
@@ -250,6 +246,7 @@ def install_custom_strategy_last_digit_prediction() -> None:
             if 0 <= int(value) <= 9
         ]
         resolved_digit = _resolve_prediction(mode, digits, normalized)
+        actual_trigger_digit = int(digits[-1])
 
         resolved = dict(normalized)
         resolved["prediction"] = resolved_digit
@@ -266,7 +263,11 @@ def install_custom_strategy_last_digit_prediction() -> None:
         signal.contract_type = contract_type
         signal.direction = f"{prefix}_{resolved_digit}"
         signal.barrier = str(resolved_digit)
-        signal.signal_last_digit = int(digits[-1])
+        # The existing exact-runtime validator reads signal_last_digit as the
+        # concrete dynamic barrier. Preserve the actual qualifying market digit in
+        # a separate field; Last Digit naturally has both values equal.
+        signal.signal_last_digit = resolved_digit
+        signal.qualifying_last_digit = actual_trigger_digit
         signal.dynamic_prediction_mode = mode
         signal.dynamic_prediction_digit = resolved_digit
         signal.dynamic_prediction_window = (
