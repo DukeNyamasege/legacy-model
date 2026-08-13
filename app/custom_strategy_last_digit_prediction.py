@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections import Counter
 from typing import Any
 
@@ -303,3 +304,11 @@ def install_custom_strategy_last_digit_prediction() -> None:
     custom.DYNAMIC_MATCH_PREDICTION_MODES = tuple(sorted(_DYNAMIC_MODES))
 
     _INSTALLED = True
+
+    # The worker needs one final fail-visible layer after result routing and the
+    # manual Stop status authority. Chain that later installation here without
+    # importing worker-only runtime modules into the API container.
+    if os.getenv("DEPLOYMENT_ID", "").strip() == "vps-custom-worker":
+        from app.custom_strategy_fail_visible import chain_after_manual_stop_install
+
+        chain_after_manual_stop_install()
