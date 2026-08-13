@@ -16,6 +16,9 @@ from app.custom_strategy_last_digit_prediction import (
 install_custom_strategy_last_digit_prediction()
 
 from app.custom_strategy_api import install_custom_strategy_api  # noqa: E402
+from app.custom_strategy_result_routing_api import (  # noqa: E402
+    install_custom_strategy_result_routing_api,
+)
 from app.custom_strategy_runtime_api import install_custom_strategy_runtime_api  # noqa: E402
 from app.dashboard_live_events import install_dashboard_live_events  # noqa: E402
 from app.dashboard_stability_fix import _remove_route  # noqa: E402
@@ -24,7 +27,7 @@ from app.session_risk_api_authority import install_session_risk_api_authority  #
 
 
 _INSTALLED = False
-UI_VERSION = "20260813-final-readiness-1"
+UI_VERSION = "20260813-result-routing-1"
 
 
 def _headers(extra: dict[str, str] | None = None) -> dict[str, str]:
@@ -121,11 +124,14 @@ def install_builder_first_dashboard_authority(app: Any) -> None:
     install_global_trade_history_cutoff(app)
 
     # Re-register the direct Custom Strategy routes, then replace their generic
-    # lifecycle endpoints with the signed session-risk authority. Every browser and
-    # the worker therefore read the same frozen TP/SL thresholds for this Start.
+    # lifecycle endpoints with the signed session-risk authority. Result routing
+    # wraps the final Custom Strategy GET/POST only after those authorities exist,
+    # so legacy clients remain compatible and route-only edits synchronize across
+    # devices without changing the canonical primary strategy.
     install_custom_strategy_api(app)
     install_custom_strategy_runtime_api(app)
     install_session_risk_api_authority(app)
+    install_custom_strategy_result_routing_api(app)
     install_dashboard_live_events(app)
 
     for path in (
