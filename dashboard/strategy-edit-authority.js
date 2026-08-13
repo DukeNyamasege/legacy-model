@@ -83,7 +83,6 @@
       result: fieldValues("[data-result-route]"),
       strategyMode: activeValue("[data-strategy-mode]", "data-strategy-mode"),
       marketMode: activeValue("[data-market-mode]", "data-market-mode"),
-      tradeGroup: activeValue("[data-trade-group]", "data-trade-group"),
       markets: selectedMarkets(),
       resultEnabled: Boolean(q("#result-routing-enabled")?.checked),
       recoveryStyle: String(q("#recovery-style")?.value || ""),
@@ -133,8 +132,13 @@
     try {
       activate("[data-strategy-mode]", "strategyMode", snapshot.strategyMode);
       activate("[data-market-mode]", "marketMode", snapshot.marketMode);
-      activate("[data-trade-group]", "tradeGroup", snapshot.tradeGroup);
 
+      // IMPORTANT: trade.group belongs exclusively to dashboard-v2.js. Restoring
+      // it here caused the helper to click the previously captured Odd/Even tab
+      // immediately after the user selected Over/Under, Matches/Differs or
+      // Rise/Fall. The canonical builder already marks trade-group changes dirty,
+      // saves them to the account-scoped builder draft and protects them from
+      // silent server hydration, so this authority must never re-select a group.
       restoreFields(snapshot.builder, "[data-builder]", "data-builder");
       restoreFields(snapshot.result, "[data-result-route]", "data-result-route");
 
@@ -218,5 +222,5 @@
     ? document.addEventListener("DOMContentLoaded", schedule, { once: true })
     : schedule();
 
-  window.FOA_STRATEGY_EDIT_AUTHORITY_VERSION = "20260813-1";
+  window.FOA_STRATEGY_EDIT_AUTHORITY_VERSION = "20260813-2";
 })();
