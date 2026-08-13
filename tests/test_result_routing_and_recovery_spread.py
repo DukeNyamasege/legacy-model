@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -180,6 +181,7 @@ class ResultRoutingAndRecoverySpreadTests(unittest.TestCase):
         ui = (ROOT / "dashboard" / "result-based-strategy.js").read_text(encoding="utf-8")
         ui_fix = (ROOT / "dashboard" / "result-ui-fixes.js").read_text(encoding="utf-8")
         css_fix = (ROOT / "dashboard" / "result-ui-fixes.css").read_text(encoding="utf-8")
+        compact = (ROOT / "dashboard" / "result-based-mobile-compact.css").read_text(encoding="utf-8")
         prediction_ui = (ROOT / "dashboard" / "prediction-ui-fix.js").read_text(encoding="utf-8")
         build = (ROOT / "scripts" / "build-netlify.mjs").read_text(encoding="utf-8")
 
@@ -191,6 +193,7 @@ class ResultRoutingAndRecoverySpreadTests(unittest.TestCase):
         self.assertIn("Martingale Spread — exact debt", ui)
         self.assertIn("Recover loss in how many splits", ui_fix)
         self.assertIn("recovered equally", ui_fix)
+        self.assertIn("result-routing-enabled:not(:checked)", compact)
         self.assertIn("result-routing-toggle", css_fix)
         self.assertIn("data-theme=light", css_fix)
         self.assertIn("most_appearing", prediction_ui)
@@ -198,6 +201,19 @@ class ResultRoutingAndRecoverySpreadTests(unittest.TestCase):
         self.assertIn("prediction-ui-fix.js", build)
         self.assertIn("result-ui-fixes.js", build)
         self.assertIn("result-ui-fixes.css", build)
+        self.assertIn("result-based-mobile-compact.css", build)
+
+        for relative in (
+            "dashboard/prediction-ui-fix.js",
+            "dashboard/result-ui-fixes.js",
+        ):
+            subprocess.run(
+                ["node", "--check", str(ROOT / relative)],
+                check=True,
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+            )
 
 
 if __name__ == "__main__":
