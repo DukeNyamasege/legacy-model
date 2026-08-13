@@ -12,7 +12,6 @@ from app.rf_dir5_bot import RFDir5TradingBot
 
 _INSTALLED = False
 _ORIGINAL_EXECUTE: Any = None
-_ORIGINAL_SCHEDULE: Any = None
 _ORIGINAL_PROPOSAL: Any = None
 _ORIGINAL_BUY: Any = None
 _ORIGINAL_HISTORY_COUNT: Any = None
@@ -56,21 +55,20 @@ def _prediction_window(config: dict[str, Any]) -> int:
 def install_custom_strategy_manual_stop_guard() -> None:
     """Make manual Stop a final barrier for every not-yet-sent purchase.
 
-    The worker can have a qualifying task already queued when the HTTP Stop request
-    commits. This guard re-reads the persisted ManagedAccount lifecycle before the
-    task, before proposal and again immediately before BUY. A disabled/stopped row
-    cancels the task without sending a new financial purchase. Contracts whose BUY
-    request was already sent before Stop are still registered and settled normally.
+    The in-memory scanner remains database-free. Once a pattern qualifies, the
+    worker re-reads the persisted ManagedAccount lifecycle at task entry, before
+    proposal, and again immediately before BUY. A disabled/stopped row cancels the
+    queued task without sending a new financial purchase. Contracts whose BUY was
+    already sent before Stop are still registered and settled normally.
     """
 
     global _INSTALLED
-    global _ORIGINAL_EXECUTE, _ORIGINAL_SCHEDULE, _ORIGINAL_PROPOSAL, _ORIGINAL_BUY
+    global _ORIGINAL_EXECUTE, _ORIGINAL_PROPOSAL, _ORIGINAL_BUY
     global _ORIGINAL_HISTORY_COUNT, _ORIGINAL_SET_STATUS
     if _INSTALLED:
         return
 
     _ORIGINAL_EXECUTE = direct_runtime._execute_for_account
-    _ORIGINAL_SCHEDULE = direct_runtime._schedule_account_matches
     _ORIGINAL_PROPOSAL = AccountExecutionSession.proposal
     _ORIGINAL_BUY = AccountExecutionSession.buy_proposal
     _ORIGINAL_HISTORY_COUNT = RFDir5TradingBot._public_history_count
@@ -90,21 +88,6 @@ def install_custom_strategy_manual_stop_guard() -> None:
                 getattr(bot, "_custom_direct_inflight", set()).discard(managed_id)
                 return
             raise
-
-    def guarded_schedule(bot: RFDir5TradingBot, *, symbol: str, tick: dict[str, Any]) -> None:
-        runtime = dict(getattr(bot, "_custom_direct_accounts", {}) or {})
-        if not runtime:
-            return _ORIGINAL_SCHEDULE(bot, symbol=symbol, tick=tick)
-        allowed = {
-            int(managed_id): item
-            for managed_id, item in runtime.items()
-            if _allows_new_execution(bot, int(managed_id))
-        }
-        bot._custom_direct_accounts = allowed
-        try:
-            _ORIGINAL_SCHEDULE(bot, symbol=symbol, tick=tick)
-        finally:
-            bot._custom_direct_accounts = runtime
 
     async def guarded_proposal(
         self: AccountExecutionSession,
@@ -164,7 +147,6 @@ def install_custom_strategy_manual_stop_guard() -> None:
         return min(1000, max(1, required)) if required else 0
 
     direct_runtime._execute_for_account = guarded_execute
-    direct_runtime._schedule_account_matches = guarded_schedule
     AccountExecutionSession.proposal = guarded_proposal  # type: ignore[method-assign]
     AccountExecutionSession.buy_proposal = guarded_buy  # type: ignore[method-assign]
     Test2Repository.set_managed_account_execution_status = guarded_set_status
