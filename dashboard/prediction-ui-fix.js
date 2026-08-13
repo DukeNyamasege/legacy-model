@@ -4,7 +4,8 @@
   if (window.__FOA_FINAL_PREDICTION_UI__) return;
   window.__FOA_FINAL_PREDICTION_UI__ = true;
 
-  const MODE_PREFIX = "foa-match-prediction-mode-v3";
+  const PRIMARY_PREFIX = "foa-match-prediction-mode-v3";
+  const RECOVERY_PREFIX = "foa-after-loss-prediction-mode-v1";
   const LEGACY_PREFIX = "foa-match-prediction-mode-v1";
   const MODES = [
     ["last_digit", "Last digit"],
@@ -26,41 +27,29 @@
     return `${mode}:${account}`;
   }
 
-  function key(prefix = MODE_PREFIX) {
+  function key(prefix) {
     return `${prefix}:${accountIdentity()}`;
   }
 
-  function getStoredMode() {
+  function getMode(prefix) {
     try {
-      const value = String(localStorage.getItem(key()) || "").trim().toLowerCase();
+      const value = String(localStorage.getItem(key(prefix)) || "").trim().toLowerCase();
       return MODE_VALUES.has(value) ? value : "";
     } catch (_) {
       return "";
     }
   }
 
-  function setStoredMode(mode) {
+  function setMode(prefix, mode) {
     try {
-      if (MODE_VALUES.has(mode)) localStorage.setItem(key(), mode);
-      else localStorage.removeItem(key());
+      if (MODE_VALUES.has(mode)) localStorage.setItem(key(prefix), mode);
+      else localStorage.removeItem(key(prefix));
       localStorage.removeItem(key(LEGACY_PREFIX));
     } catch (_) {}
   }
 
   function clearLegacyMode() {
     try { localStorage.removeItem(key(LEGACY_PREFIX)); } catch (_) {}
-  }
-
-  function sideValue() {
-    return String(document.querySelector('select[data-builder="trade.side"]')?.value || "").toLowerCase();
-  }
-
-  function sourcePrediction() {
-    const input = document.querySelector('input[data-builder="trade.prediction"]');
-    return {
-      input,
-      field: input ? (input.closest("label.field") || input.parentElement) : null,
-    };
   }
 
   function options(selected) {
@@ -78,62 +67,133 @@
     return "";
   }
 
-  function hydrate(payload) {
-    const config = payload?.config;
-    const side = String(config?.trade_type || "").toLowerCase();
-    if (!SIDES.has(side)) return;
-    const mode = modeFromConfig(config);
-    setStoredMode(mode);
-    if (!mode && Number.isInteger(Number(config?.prediction))) {
-      const { input } = sourcePrediction();
-      if (input) input.value = String(config.prediction);
-    }
-    schedule();
+  function primarySource() {
+    const input = document.querySelector('input[data-builder="trade.prediction"]');
+    return { input, field: input ? (input.closest("label.field") || input.parentElement) : null };
   }
 
-  function enhance() {
-    scheduled = false;
-    clearLegacyMode();
+  function recoverySource() {
+    const input = document.querySelector('#result-routing-section input[data-result-route="prediction"]');
+    return { input, field: input ? (input.closest("label.result-routing-field") || input.parentElement) : null };
+  }
 
-    const side = sideValue();
-    const { input, field: source } = sourcePrediction();
+  function primarySide() {
+    return String(document.querySelector('select[data-builder="trade.side"]')?.value || "").toLowerCase();
+  }
+
+  function recoverySide() {
+    return String(document.querySelector('#result-routing-section select[data-result-route="tradeType"]')?.value || "").toLowerCase();
+  }
+
+  function ensureSelector({ input, source, active, selectorAttr, fieldAttr, modePrefix }) {
     if (!input || !source) return;
-
-    const active = SIDES.has(side);
-    let finalField = document.querySelector("[data-final-prediction-field]");
-
+    let field = document.querySelector(`[${fieldAttr}]`);
     if (!active) {
-      source.hidden = false;
-      source.style.removeProperty("display");
-      finalField?.remove();
+      if (field) field.remove();
       return;
     }
 
     source.hidden = true;
     source.style.setProperty("display", "none", "important");
-
-    if (!finalField) {
-      finalField = document.createElement("label");
-      finalField.className = "field foa-final-prediction-field";
-      finalField.dataset.finalPredictionField = "true";
-      source.after(finalField);
+    if (!field) {
+      field = document.createElement("label");
+      field.className = source.classList.contains("result-routing-field")
+        ? "result-routing-field foa-final-prediction-field"
+        : "field foa-final-prediction-field";
+      field.setAttribute(fieldAttr.replace(/^data-/, "data-"), "true");
+      source.after(field);
     }
 
-    const mode = getStoredMode();
+    const mode = getMode(modePrefix);
     const fixed = String(Math.max(0, Math.min(9, Number(input.value || 0))));
     const selected = mode || fixed;
-    let select = finalField.querySelector("[data-final-prediction]");
+    let select = field.querySelector(`[${selectorAttr}]`);
     if (!select) {
-      finalField.innerHTML = `<span>Prediction</span><select data-final-prediction aria-label="Prediction">${options(selected)}</select>`;
-      select = finalField.querySelector("[data-final-prediction]");
+      field.innerHTML = `<span>Prediction</span><select ${selectorAttr} aria-label="Prediction">${options(selected)}</select>`;
+      select = field.querySelector(`[${selectorAttr}]`);
     }
     if (select && select.value !== selected) select.value = selected;
+  }
+
+  function enhancePrimary() {
+    clearLegacyMode();
+    const { input, field } = primarySource();
+    if (!input || !field) return;
+    const active = SIDES.has(primarySide());
+    if (!active) {
+      field.hidden = false;
+      field.style.removeProperty("display");
+      document.querySelector("[data-final-prediction-field]")?.remove();
+      return;
+    }
+    ensureSelector({
+      input,
+      source: field,
+      active,
+      selectorAttr: "data-final-prediction",
+      fieldAttr: "data-final-prediction-field",
+      modePrefix: PRIMARY_PREFIX,
+    });
+  }
+
+  function enhanceRecovery() {
+    const { input, field } = recoverySource();
+    if (!input || !field) return;
+    const side = recoverySide();
+    const active = SIDES.has(side);
+    const needsNumeric = ["over", "under", "matches", "differs"].includes(side);
+    if (!active) {
+      document.querySelector("[data-after-loss-prediction-field]")?.remove();
+      field.hidden = !needsNumeric;
+      if (needsNumeric) field.style.removeProperty("display");
+      return;
+    }
+    ensureSelector({
+      input,
+      source: field,
+      active,
+      selectorAttr: "data-after-loss-prediction",
+      fieldAttr: "data-after-loss-prediction-field",
+      modePrefix: RECOVERY_PREFIX,
+    });
+  }
+
+  function enhance() {
+    scheduled = false;
+    enhancePrimary();
+    enhanceRecovery();
   }
 
   function schedule() {
     if (scheduled) return;
     scheduled = true;
     requestAnimationFrame(enhance);
+  }
+
+  function hydrate(payload) {
+    const config = payload?.config;
+    const side = String(config?.trade_type || "").toLowerCase();
+    if (SIDES.has(side)) {
+      const mode = modeFromConfig(config);
+      setMode(PRIMARY_PREFIX, mode);
+      if (!mode && Number.isInteger(Number(config?.prediction))) {
+        const { input } = primarySource();
+        if (input) input.value = String(config.prediction);
+      }
+    }
+
+    const route = payload?.result_routing?.after_loss;
+    const routeSide = String(route?.trade_type || "").toLowerCase();
+    if (SIDES.has(routeSide)) {
+      const raw = String(route?.prediction || "").trim().toLowerCase();
+      const mode = MODE_VALUES.has(raw) ? raw : "";
+      setMode(RECOVERY_PREFIX, mode);
+      if (!mode && Number.isInteger(Number(route?.prediction))) {
+        const { input } = recoverySource();
+        if (input) input.value = String(route.prediction);
+      }
+    }
+    schedule();
   }
 
   function installFetchBridge() {
@@ -153,19 +213,30 @@
           const payload = JSON.parse(init.body);
           const side = String(payload?.trade_type || "").toLowerCase();
           if (SIDES.has(side)) {
-            const mode = getStoredMode();
+            const mode = getMode(PRIMARY_PREFIX);
             const reanalyze = payload.reanalyze && typeof payload.reanalyze === "object" ? { ...payload.reanalyze } : {};
             if (mode) {
               payload.prediction = null;
               reanalyze.prediction_mode = mode;
             } else {
               delete reanalyze.prediction_mode;
-              const { input: predictionInput } = sourcePrediction();
+              const { input: predictionInput } = primarySource();
               payload.prediction = Math.max(0, Math.min(9, Number(predictionInput?.value || payload.prediction || 0)));
             }
             payload.reanalyze = reanalyze;
-            nextInit = { ...init, body: JSON.stringify(payload) };
           }
+
+          const route = payload?.result_routing?.after_loss;
+          const routeSide = String(route?.trade_type || "").toLowerCase();
+          if (route && SIDES.has(routeSide)) {
+            const mode = getMode(RECOVERY_PREFIX);
+            if (mode) route.prediction = mode;
+            else {
+              const { input: recoveryInput } = recoverySource();
+              route.prediction = Math.max(0, Math.min(9, Number(recoveryInput?.value || route.prediction || 0)));
+            }
+          }
+          nextInit = { ...init, body: JSON.stringify(payload) };
         } catch (_) {}
       }
 
@@ -180,14 +251,13 @@
   installFetchBridge();
 
   document.addEventListener("change", (event) => {
-    const select = event.target?.closest?.("[data-final-prediction]");
-    if (select) {
-      const value = String(select.value || "");
-      const { input } = sourcePrediction();
-      if (MODE_VALUES.has(value)) {
-        setStoredMode(value);
-      } else {
-        setStoredMode("");
+    const primary = event.target?.closest?.("[data-final-prediction]");
+    if (primary) {
+      const value = String(primary.value || "");
+      const { input } = primarySource();
+      if (MODE_VALUES.has(value)) setMode(PRIMARY_PREFIX, value);
+      else {
+        setMode(PRIMARY_PREFIX, "");
         if (input) {
           input.value = String(Math.max(0, Math.min(9, Number(value || 0))));
           input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -197,7 +267,25 @@
       window.setTimeout(schedule, 0);
       return;
     }
-    if (event.target?.matches?.('select[data-builder="trade.side"],[data-mode],[data-mobile-mode]')) {
+
+    const recovery = event.target?.closest?.("[data-after-loss-prediction]");
+    if (recovery) {
+      const value = String(recovery.value || "");
+      const { input } = recoverySource();
+      if (MODE_VALUES.has(value)) setMode(RECOVERY_PREFIX, value);
+      else {
+        setMode(RECOVERY_PREFIX, "");
+        if (input) {
+          input.value = String(Math.max(0, Math.min(9, Number(value || 0))));
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+      }
+      window.setTimeout(schedule, 0);
+      return;
+    }
+
+    if (event.target?.matches?.('select[data-builder="trade.side"],select[data-result-route="tradeType"],[data-mode],[data-mobile-mode]')) {
       window.setTimeout(schedule, 0);
     }
   }, true);
@@ -209,5 +297,5 @@
     ? document.addEventListener("DOMContentLoaded", schedule, { once: true })
     : schedule();
 
-  window.FOA_FINAL_PREDICTION_VERSION = "20260813-3";
+  window.FOA_FINAL_PREDICTION_VERSION = "20260813-4";
 })();
