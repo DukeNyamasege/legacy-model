@@ -83,6 +83,7 @@ jobs:
           app/custom_virtual_contract_parity.py
           app/dashboard_live_events.py
           app/exact_strategy_execution_authority.py
+          app/final_execution_continuity.py
           app/global_trade_history_cutoff.py
           app/netlify_backend_api.py
           app/netlify_realtime_gateway.py
@@ -95,6 +96,7 @@ jobs:
           app/session_risk_api_authority.py
           app/session_risk_limits.py
           app/session_risk_stop_authority.py
+          tests/test_account_bound_risk_and_ws_continuity.py
           tests/test_custom_direct_runtime.py
           tests/test_current_custom_runtime_fix.py
           tests/test_dashboard_live_performance.py
@@ -125,6 +127,7 @@ jobs:
           app/custom_virtual_contract_parity.py
           app/dashboard_live_events.py
           app/exact_strategy_execution_authority.py
+          app/final_execution_continuity.py
           app/global_trade_history_cutoff.py
           app/netlify_backend_api.py
           app/netlify_realtime_gateway.py
@@ -155,10 +158,12 @@ jobs:
           node --check dashboard/matches-differs-last-digit.js
           node --check dashboard/signed-risk-limit-display.js
           node --check dashboard/tablet-navigation-fix.js
+          node --check dashboard/account-bound-risk-notice.js
           node --check scripts/build-netlify.mjs
 
       - name: Run focused release tests
         run: |
+          python -m unittest -q tests.test_account_bound_risk_and_ws_continuity
           python -m unittest -q tests.test_custom_direct_runtime
           python -m unittest -q tests.test_current_custom_runtime_fix
           python -m unittest -q tests.test_dashboard_live_performance
@@ -208,10 +213,14 @@ jobs:
           grep -Fq '/matches-differs-last-digit.js' dist/index.html
           grep -Fq '/signed-risk-limit-display.js' dist/index.html
           grep -Fq '/tablet-navigation-fix.js' dist/index.html
+          grep -Fq '/account-bound-risk-notice.js' dist/index.html
+          grep -Fq '/account-bound-risk-notice.css' dist/index.html
           test -f dist/global-trade-clear.js
           test -f dist/final-dashboard-authority.css
           test -f dist/trades-start-stop-toggle.css
           test -f dist/tablet-navigation-fix.css
+          test -f dist/account-bound-risk-notice.js
+          test -f dist/account-bound-risk-notice.css
 
       - name: Build API image
         run: docker build --target api -t legacy-model-release-gate-api:${{ github.sha }} .
