@@ -88,7 +88,7 @@
   <script src="./final-dashboard-authority.js" defer></script>
   <script src="./trades-start-stop-toggle.js" defer></script>
   <script src="./last-digit-special-ui.js" defer></script>
-  <script src="./matches-differs-last-digit.js" defer></script>
+  <script src="./matches-differs-last-digit.js?v=20260813-5" defer></script>
   <script src="./risk-stop-session-authority.js" defer></script>
   <script src="./signed-risk-limit-display.js" defer></script>
   <script src="./account-bound-risk-notice.js" defer></script>
@@ -97,6 +97,37 @@
   <script src="./stopped-ui-authority.js?v=20260813-2" defer></script>
   <script src="./strategy-edit-authority.js?v=20260813-1" defer></script>
   <script>
+    // A connected private WebSocket is transport readiness, not a separate
+    // strategy state. Keep the Custom Strategy status line on the scanner state
+    // instead of visibly oscillating between Waiting and transport-active.
+    (function () {
+      var waiting = "Waiting - Execution session ready; waiting for the configured Custom Strategy condition";
+      var scheduled = false;
+      function normalizeRuntimeCopy() {
+        scheduled = false;
+        document.querySelectorAll(".builder-status-line span").forEach(function (node) {
+          if (String(node.textContent || "").toLowerCase().indexOf("private trading connection is active") !== -1) {
+            node.textContent = waiting;
+          }
+        });
+        document.querySelectorAll(".trades-control-panel p").forEach(function (node) {
+          if (String(node.textContent || "").toLowerCase().indexOf("private trading connection is active") !== -1) {
+            node.textContent = "Execution session ready; waiting for the configured Custom Strategy condition.";
+          }
+        });
+      }
+      function schedule() {
+        if (scheduled) return;
+        scheduled = true;
+        requestAnimationFrame(normalizeRuntimeCopy);
+      }
+      new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+      window.setInterval(schedule, 500);
+      document.readyState === "loading"
+        ? document.addEventListener("DOMContentLoaded", schedule, { once: true })
+        : schedule();
+    })();
+
     window.setTimeout(function () {
       var bootstrap = document.getElementById("foa-bootstrap");
       var app = document.getElementById("foa-simple-app");
