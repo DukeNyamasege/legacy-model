@@ -28,6 +28,7 @@ from app.custom_virtual_contract_parity import install_custom_virtual_contract_p
 from app.deriv_rate_limit_circuit import install_deriv_rate_limit_circuit
 from app.deriv_request_broker import install_deriv_request_broker
 from app.exact_strategy_execution_authority import install_exact_strategy_execution_authority
+from app.final_execution_continuity import install_final_execution_continuity
 from app.manual_martingale_execution_authority import (
     install_manual_martingale_execution_authority,
 )
@@ -106,6 +107,12 @@ async def run_worker() -> None:
     # arms after one actual loss and may use the available account balance while
     # retaining the normal minimum cash reserve.
     install_manual_martingale_execution_authority()
+
+    # Install last: normal runtime/transport faults may never deliberately close a
+    # healthy private WebSocket or convert themselves into an account-level stop.
+    # The account's own ClientSession reconnect loop remains authoritative and is
+    # woken immediately when execution needs it.
+    install_final_execution_continuity()
     install_telegram_silence()
 
     bot = RFDir5TradingBot()
@@ -115,7 +122,7 @@ async def run_worker() -> None:
         "legacy_rf=false legacy_aidr=false multi_strategy=false cohorts=false "
         "bulk=false tick_db_persistence=false start_required=true "
         "exact_entry_guard=true stale_signal_policy=skip_not_late_buy "
-        "runtime_fault_policy=auto_reconnect_only"
+        "runtime_fault_policy=soft_reconnect_no_forced_disconnect"
     )
     loop = asyncio.get_running_loop()
 
