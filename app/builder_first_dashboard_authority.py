@@ -11,10 +11,11 @@ from app.custom_strategy_api import install_custom_strategy_api
 from app.custom_strategy_runtime_api import install_custom_strategy_runtime_api
 from app.dashboard_live_events import install_dashboard_live_events
 from app.dashboard_stability_fix import _remove_route
+from app.global_trade_history_cutoff import install_global_trade_history_cutoff
 
 
 _INSTALLED = False
-UI_VERSION = "20260812-live-dashboard-authority-5"
+UI_VERSION = "20260813-global-trade-history-1"
 
 
 def _headers(extra: dict[str, str] | None = None) -> dict[str, str]:
@@ -74,10 +75,6 @@ def _dashboard_html(request: Request) -> tuple[str, bool]:
         f'src="/ui/dashboard-actions-v2.js?v={UI_VERSION}"',
     )
 
-    # This pre-client is loaded before dashboard-v2.js so one Save Builder click
-    # becomes one POST /me/custom-strategy request carrying both execution settings
-    # and strategy configuration. It also owns the event-driven live dashboard and
-    # prevents slow background reads from covering the rendered UI with a blocker.
     direct_script = f'<script src="/ui/custom-runtime-client.js?v={UI_VERSION}"></script>'
     marker = '<script src="/ui/dashboard-v2.js'
     if marker in html:
@@ -109,10 +106,11 @@ def install_builder_first_dashboard_authority(app: Any) -> None:
     if _INSTALLED:
         return
 
-    # Install/re-assert Custom Strategy routes after every historical API layer.
-    # The direct runtime API replaces lifecycle/execution-alert paths last. The
-    # live-event stream is read-only and is intentionally independent of browser
-    # lifetime, so closing a tab can never mutate server-side execution state.
+    # This is the final API installer in api_v3. Re-assert the account-wide trade
+    # visibility boundary here so no older reset route can make cleared history
+    # reappear after logout/login or on a second device.
+    install_global_trade_history_cutoff(app)
+
     install_custom_strategy_api(app)
     install_custom_strategy_runtime_api(app)
     install_dashboard_live_events(app)
@@ -152,8 +150,6 @@ def install_builder_first_dashboard_authority(app: Any) -> None:
 
     @app.get("/ui/dashboard-v2.css", include_in_schema=False)
     def builder_first_css() -> Response:
-        # Keep the existing desktop stylesheet intact and append the final phone
-        # density layer so old max-width rules cannot stack the builder vertically.
         css = (
             _read_dashboard_asset("dashboard-v2.css")
             + "\n\n"
@@ -163,8 +159,6 @@ def install_builder_first_dashboard_authority(app: Any) -> None:
 
     @app.get("/ui/dashboard-v2.js", include_in_schema=False)
     def builder_first_dashboard_js() -> Response:
-        # The direct-OAuth helper runs after the main renderer and replaces the old
-        # manual-PAT copy without creating another browser request or execution path.
         source = (
             _read_dashboard_asset("dashboard-v2.js")
             + "\n\n"
