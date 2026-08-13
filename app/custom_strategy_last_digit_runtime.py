@@ -22,14 +22,27 @@ def _resolved_config(config: dict[str, Any], signal: Any) -> dict[str, Any]:
         return config
     digit = int(getattr(signal, "signal_last_digit", -1))
     if not 0 <= digit <= 9:
-        raise ValueError("Dynamic Matches/Differs signal is missing its qualifying last digit")
+        raise ValueError("Dynamic Matches/Differs signal is missing its qualifying prediction digit")
+
+    # Freeze the dynamic prediction into a concrete numeric contract for every
+    # downstream validator. Merely setting prediction=<digit> is insufficient:
+    # normalize_custom_strategy() will prefer prediction_mode from reanalyze and
+    # convert the config back to a dynamic sentinel. That caused latched signals
+    # such as DIFFERS 4 to be compared against the literal barrier "last_digit",
+    # repeatedly triggering runtime resynchronization instead of a BUY.
     resolved = dict(config)
     resolved["prediction"] = digit
+    resolved.pop("prediction_mode", None)
+    resolved.pop("prediction_window", None)
+    reanalyze = dict(resolved.get("reanalyze") or {})
+    reanalyze.pop("prediction_mode", None)
+    reanalyze.pop("prediction_window", None)
+    resolved["reanalyze"] = reanalyze
     return resolved
 
 
 def install_custom_strategy_last_digit_runtime() -> None:
-    """Make exact-entry and Virtual Hook guards accept the resolved tick barrier."""
+    """Make entry and Virtual Hook guards accept the frozen dynamic barrier."""
 
     global _INSTALLED
     if _INSTALLED:
@@ -53,9 +66,9 @@ def install_custom_strategy_last_digit_runtime() -> None:
         resolved = _resolved_config(config, signal)
         original_config = item.config
         original_trigger = str(getattr(signal, "trigger_name", "") or "")
-        # The canonical exact validator validates the concrete numeric barrier.
-        # Temporarily give it the matching resolved fingerprint; the signal keeps
-        # its stable dynamic-strategy fingerprint everywhere else.
+        # Validate the concrete numeric contract created when the signal qualified.
+        # The stable dynamic strategy fingerprint is restored immediately after the
+        # check so persistence/routing still identifies the user's saved strategy.
         item.config = resolved
         signal.trigger_name = (
             f"CUSTOM-V2-{custom.custom_strategy_fingerprint(resolved)[:8].upper()}"
