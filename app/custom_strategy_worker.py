@@ -28,6 +28,9 @@ from app.custom_virtual_contract_parity import install_custom_virtual_contract_p
 from app.deriv_rate_limit_circuit import install_deriv_rate_limit_circuit
 from app.deriv_request_broker import install_deriv_request_broker
 from app.exact_strategy_execution_authority import install_exact_strategy_execution_authority
+from app.manual_martingale_execution_authority import (
+    install_manual_martingale_execution_authority,
+)
 from app.manual_martingale_v2 import install_manual_martingale_v2_worker
 from app.netlify_worker_bridge import install_netlify_worker_bridge
 from app.per_account_virtual_runtime import install_account_isolation_invariants
@@ -97,6 +100,12 @@ async def run_worker() -> None:
     # below broadens that rule to ownership/state synchronization faults too.
     install_netlify_worker_bridge()
     install_seamless_execution_recovery()
+
+    # This must install after seamless recovery so a business-rule stake skip is
+    # not mistaken for a private-WebSocket failure. A saved Custom multiplier now
+    # arms after one actual loss and may use the available account balance while
+    # retaining the normal minimum cash reserve.
+    install_manual_martingale_execution_authority()
     install_telegram_silence()
 
     bot = RFDir5TradingBot()
