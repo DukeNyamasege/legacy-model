@@ -28,6 +28,11 @@ def install_session_risk_api_authority(app: Any) -> None:
     amount and SL is the negative stated amount. The lifecycle endpoint reports the
     same snapshot that the worker enforces, so notifications cannot mix a stale
     target with another session's P/L.
+
+    Lifecycle reads also include the selected managed-account identity and the
+    execution-status timestamp. Frontends can therefore fail closed when a stale
+    response belongs to another account and can distinguish a current TP/SL
+    transition from an old persisted hard-stop seen only after login.
     """
 
     global _INSTALLED
@@ -58,6 +63,11 @@ def install_session_risk_api_authority(app: Any) -> None:
             )[:160]
             row.execution_status_updated_at = utc_now()
             row.updated_at = utc_now()
+            status_updated_at = (
+                row.execution_status_updated_at.isoformat()
+                if row.execution_status_updated_at is not None
+                else ""
+            )
 
         base_api.LOGGER.info(
             "CUSTOM_RUNTIME_START_REQUESTED managed_id=%s markets=%s "
@@ -69,8 +79,14 @@ def install_session_risk_api_authority(app: Any) -> None:
         )
         return {
             "success": True,
+            "authenticated": True,
+            "managed_account_id": managed_id,
+            "account_type": str(account.get("account_type") or "demo"),
+            "account_id_masked": str(account.get("account_id_masked") or ""),
             "enabled": True,
             "state": "starting",
+            "execution_status": "starting",
+            "execution_status_updated_at": status_updated_at,
             "lifecycle": "running",
             "runtime_state": "STARTING",
             "take_profit": limits.take_profit,
@@ -104,6 +120,12 @@ def install_session_risk_api_authority(app: Any) -> None:
             enabled = bool(row.enabled)
             runtime_state = _runtime_state(enabled=enabled, status=status)
             session_profit = round(float(state.session_profit or 0.0), 2) if state else 0.0
+            status_reason = str(row.execution_status_reason or "")
+            status_updated_at = (
+                row.execution_status_updated_at.isoformat()
+                if row.execution_status_updated_at is not None
+                else ""
+            )
 
         lifecycle = "running" if runtime_state in {
             "STARTING",
@@ -123,11 +145,15 @@ def install_session_risk_api_authority(app: Any) -> None:
 
         return {
             "authenticated": True,
+            "managed_account_id": managed_id,
+            "account_type": str(account.get("account_type") or "demo"),
+            "account_id_masked": str(account.get("account_id_masked") or ""),
             "enabled": enabled,
             "lifecycle": lifecycle,
             "runtime_state": runtime_state,
             "execution_status": status,
-            "reason": str(row.execution_status_reason or ""),
+            "execution_status_updated_at": status_updated_at,
+            "reason": status_reason,
             "session_profit": session_profit,
             "take_profit": limits.take_profit,
             "stop_loss": limits.stop_loss,
