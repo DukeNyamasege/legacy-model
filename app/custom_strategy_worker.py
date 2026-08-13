@@ -22,6 +22,7 @@ from app.custom_strategy_settlement import install_custom_strategy_settlement
 from app.custom_virtual_contract_parity import install_custom_virtual_contract_parity
 from app.deriv_rate_limit_circuit import install_deriv_rate_limit_circuit
 from app.deriv_request_broker import install_deriv_request_broker
+from app.exact_strategy_execution_authority import install_exact_strategy_execution_authority
 from app.manual_martingale_v2 import install_manual_martingale_v2_worker
 from app.netlify_worker_bridge import install_netlify_worker_bridge
 from app.per_account_virtual_runtime import install_account_isolation_invariants
@@ -73,6 +74,11 @@ async def run_worker() -> None:
     # inherited RF/unrelated-history work from the Custom Strategy path.
     install_custom_strategy_direct_runtime()
     install_custom_strategy_current_runtime_fix()
+
+    # Exact-entry authority is installed after the current private-session fix so
+    # it wraps that same proposal+BUY path. It re-validates every condition and
+    # skips stale trigger ticks instead of purchasing one or more digits late.
+    install_exact_strategy_execution_authority()
     install_custom_strategy_runtime_lifecycle()
 
     # TP/SL are final account stops. The canonical counter is the persisted
@@ -93,6 +99,7 @@ async def run_worker() -> None:
         "frontend=netlify_static realtime=nonblocking_vps_websocket "
         "legacy_rf=false legacy_aidr=false multi_strategy=false cohorts=false "
         "bulk=false tick_db_persistence=false start_required=true "
+        "exact_entry_guard=true stale_signal_policy=skip_not_late_buy "
         "runtime_fault_policy=auto_reconnect_only"
     )
     loop = asyncio.get_running_loop()
