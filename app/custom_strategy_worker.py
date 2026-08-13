@@ -23,6 +23,7 @@ from app.custom_split_recovery_authority import install_custom_split_recovery_au
 from app.custom_strategy_current_runtime_fix import install_custom_strategy_current_runtime_fix
 from app.custom_strategy_direct_runtime import install_custom_strategy_direct_runtime
 from app.custom_strategy_last_digit_runtime import install_custom_strategy_last_digit_runtime
+from app.custom_strategy_manual_stop_guard import install_custom_strategy_manual_stop_guard
 from app.custom_strategy_result_router import install_custom_strategy_result_router
 from app.custom_strategy_runtime_lifecycle import install_custom_strategy_runtime_lifecycle
 from app.custom_strategy_settlement import install_custom_strategy_settlement
@@ -116,6 +117,11 @@ async def run_worker() -> None:
     # determines when recovery routing begins and ends.
     install_custom_strategy_result_router()
 
+    # Manual Stop is the final purchase authority. It is installed after result
+    # routing so both primary and after-loss routes are checked against the latest
+    # persisted account lifecycle before scheduling, proposal and BUY.
+    install_custom_strategy_manual_stop_guard()
+
     # Install last: normal runtime/transport faults may never deliberately close a
     # healthy private WebSocket or convert themselves into an account-level stop.
     # The account's own ClientSession reconnect loop remains authoritative and is
@@ -129,7 +135,8 @@ async def run_worker() -> None:
         "frontend=netlify_static realtime=nonblocking_vps_websocket "
         "legacy_rf=false legacy_aidr=false multi_strategy=false cohorts=false "
         "bulk=false tick_db_persistence=false start_required=true "
-        "exact_entry_guard=true result_routing=account_outcome_debt "
+        "exact_entry_guard=true manual_stop_buy_guard=true "
+        "result_routing=account_outcome_debt "
         "martingale_spread=1_to_3_successful_parts "
         "runtime_fault_policy=soft_reconnect_no_forced_disconnect"
     )
