@@ -19,9 +19,11 @@ from app.custom_strategy_last_digit_prediction import (
 install_custom_strategy_comparator_extension()
 install_custom_strategy_last_digit_prediction()
 
+from app.custom_split_recovery_authority import install_custom_split_recovery_authority
 from app.custom_strategy_current_runtime_fix import install_custom_strategy_current_runtime_fix
 from app.custom_strategy_direct_runtime import install_custom_strategy_direct_runtime
 from app.custom_strategy_last_digit_runtime import install_custom_strategy_last_digit_runtime
+from app.custom_strategy_result_router import install_custom_strategy_result_router
 from app.custom_strategy_runtime_lifecycle import install_custom_strategy_runtime_lifecycle
 from app.custom_strategy_settlement import install_custom_strategy_settlement
 from app.custom_virtual_contract_parity import install_custom_virtual_contract_parity
@@ -102,11 +104,17 @@ async def run_worker() -> None:
     install_netlify_worker_bridge()
     install_seamless_execution_recovery()
 
-    # This must install after seamless recovery so a business-rule stake skip is
-    # not mistaken for a private-WebSocket failure. A saved Custom multiplier now
-    # arms after one actual loss and may use the available account balance while
-    # retaining the normal minimum cash reserve.
+    # Business-rule stake policies install after transport recovery so a valid
+    # financial skip can never be mistaken for a private-WebSocket fault.
     install_manual_martingale_execution_authority()
+    install_custom_split_recovery_authority()
+
+    # Result routing is account scoped and outcome driven. The first/debt-free
+    # route remains the exact existing Custom Strategy. Only users who explicitly
+    # enable the new option get an independent after-loss contract/analysis route.
+    # It is installed after Martingale settlement wrappers so the final debt ledger
+    # determines when recovery routing begins and ends.
+    install_custom_strategy_result_router()
 
     # Install last: normal runtime/transport faults may never deliberately close a
     # healthy private WebSocket or convert themselves into an account-level stop.
@@ -121,7 +129,8 @@ async def run_worker() -> None:
         "frontend=netlify_static realtime=nonblocking_vps_websocket "
         "legacy_rf=false legacy_aidr=false multi_strategy=false cohorts=false "
         "bulk=false tick_db_persistence=false start_required=true "
-        "exact_entry_guard=true stale_signal_policy=skip_not_late_buy "
+        "exact_entry_guard=true result_routing=account_outcome_debt "
+        "martingale_spread=1_to_3_successful_parts "
         "runtime_fault_policy=soft_reconnect_no_forced_disconnect"
     )
     loop = asyncio.get_running_loop()

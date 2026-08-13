@@ -1,0 +1,200 @@
+.result-routing-section {
+  border-top: 1px solid var(--border, rgba(148, 163, 184, .22));
+}
+
+.result-routing-toggle,
+.result-routing-primary-note,
+.result-routing-recovery-box,
+.recovery-spread-control {
+  border: 1px solid var(--border, rgba(148, 163, 184, .22));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--panel, #091321) 88%, transparent);
+}
+
+.result-routing-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+}
+
+.result-routing-toggle > span,
+.result-routing-primary-note > span {
+  min-width: 0;
+}
+
+.result-routing-toggle strong,
+.result-routing-primary-note strong,
+.result-routing-recovery-head strong,
+.recovery-spread-control strong {
+  display: block;
+  color: var(--text, #f8fafc);
+}
+
+.result-routing-toggle small,
+.result-routing-primary-note small,
+.result-routing-recovery-head small,
+.recovery-spread-control small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted, #9fb0c5);
+  line-height: 1.45;
+}
+
+.result-routing-toggle input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  accent-color: #3b82f6;
+}
+
+.result-routing-primary-note {
+  margin-top: 10px;
+  padding: 11px 13px;
+}
+
+.result-routing-primary-note b {
+  color: #22c55e;
+}
+
+.result-routing-recovery-box {
+  display: grid;
+  gap: 12px;
+  margin-top: 10px;
+  padding: 13px;
+}
+
+.result-routing-recovery-box[hidden],
+.result-routing-fields[hidden],
+.result-route-value-field[hidden],
+.result-route-percentage-value[hidden],
+.recovery-spread-parts[hidden] {
+  display: none !important;
+}
+
+.result-routing-recovery-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.result-routing-badge {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(245, 158, 11, .45);
+  color: #fbbf24;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .04em;
+}
+
+.result-routing-grid,
+.result-routing-analysis-grid,
+.recovery-spread-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.result-routing-analysis-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.result-routing-subsection {
+  display: grid;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border, rgba(148, 163, 184, .18));
+}
+
+.result-routing-subsection > strong {
+  font-size: 12px;
+  color: var(--text, #f8fafc);
+}
+
+.result-routing-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted, #a6b5c8);
+  font-size: 12px;
+}
+
+.result-routing-field input,
+.result-routing-field select,
+.recovery-spread-control select {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  box-sizing: border-box;
+  border: 1px solid var(--border, rgba(148, 163, 184, .28));
+  border-radius: 10px;
+  padding: 0 10px;
+  color: var(--text, #f8fafc);
+  background: var(--input, #111a27);
+  font: inherit;
+}
+
+.result-routing-field input[type="checkbox"] {
+  width: 18px;
+  min-height: 18px;
+  padding: 0;
+  accent-color: #3b82f6;
+}
+
+.result-routing-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+}
+
+.result-routing-preview {
+  margin: 0;
+  padding: 9px 11px;
+  border-radius: 10px;
+  color: var(--muted, #a6b5c8);
+  background: rgba(59, 130, 246, .08);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.recovery-spread-control {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px;
+}
+
+.recovery-spread-grid {
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+}
+
+.recovery-spread-note {
+  margin: 0;
+  color: var(--muted, #a6b5c8);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+@media (max-width: 760px) {
+  .result-routing-toggle,
+  .result-routing-recovery-head {
+    align-items: flex-start;
+  }
+
+  .result-routing-grid,
+  .result-routing-analysis-grid,
+  .recovery-spread-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .result-routing-recovery-box,
+  .result-routing-primary-note,
+  .recovery-spread-control {
+    border-radius: 12px;
+  }
+}
