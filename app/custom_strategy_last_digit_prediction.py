@@ -305,10 +305,13 @@ def install_custom_strategy_last_digit_prediction() -> None:
 
     _INSTALLED = True
 
-    # The worker needs one final fail-visible layer after result routing and the
-    # manual Stop status authority. Chain that later installation here without
-    # importing worker-only runtime modules into the API container.
+    # Worker-only execution authorities. A qualified Custom Strategy signal is now
+    # latched and remains eligible for proposal/BUY even when newer ticks arrive.
+    # The fail-visible guard is still chained after Manual Stop so runtime failures
+    # are surfaced to the affected account instead of being hidden as Waiting.
     if os.getenv("DEPLOYMENT_ID", "").strip() == "vps-custom-worker":
+        from app.custom_strategy_latched_entry import install_custom_strategy_latched_entry
         from app.custom_strategy_fail_visible import chain_after_manual_stop_install
 
+        install_custom_strategy_latched_entry()
         chain_after_manual_stop_install()
