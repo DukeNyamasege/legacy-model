@@ -13,6 +13,7 @@ _ORIGINAL_SCHEDULE: Any = None
 _ORIGINAL_EVALUATE: Any = None
 _ORIGINAL_BUILD: Any = None
 _ORIGINAL_SET_STATUS: Any = None
+_ACTIVE_BOT: RFDir5TradingBot | None = None
 
 
 class _AccountStrategyFailure(RuntimeError):
@@ -88,9 +89,19 @@ def install_custom_strategy_fail_visible() -> None:
         try:
             return bool(_ORIGINAL_EVALUATE(config, digits=digits, quotes=quotes))
         except (TypeError, ValueError) as exc:
-            raise _AccountStrategyFailure(_error_reason("invalid Custom Strategy", exc)) from exc
+            reason = _error_reason("invalid Custom Strategy", exc)
+            bot = _ACTIVE_BOT
+            managed_id = _managed_id_for_config(bot, config) if bot is not None else None
+            if bot is not None and managed_id is not None:
+                _write_error(bot, managed_id, reason, "CUSTOM_STRATEGY_EVALUATION_FAILED")
+            raise _AccountStrategyFailure(reason) from exc
         except Exception as exc:
-            raise _AccountStrategyFailure(_error_reason("strategy evaluation failed", exc)) from exc
+            reason = _error_reason("strategy evaluation failed", exc)
+            bot = _ACTIVE_BOT
+            managed_id = _managed_id_for_config(bot, config) if bot is not None else None
+            if bot is not None and managed_id is not None:
+                _write_error(bot, managed_id, reason, "CUSTOM_STRATEGY_EVALUATION_FAILED")
+            raise _AccountStrategyFailure(reason) from exc
 
     def build_visible(
         bot: RFDir5TradingBot,
@@ -121,22 +132,18 @@ def install_custom_strategy_fail_visible() -> None:
         symbol: str,
         tick: dict[str, Any],
     ) -> None:
+        global _ACTIVE_BOT
+        previous_bot = _ACTIVE_BOT
+        _ACTIVE_BOT = bot
         try:
             _ORIGINAL_SCHEDULE(bot, symbol=symbol, tick=tick)
-        except _AccountStrategyFailure as exc:
-            # Signal-build failures already know their account. Evaluation failures
-            # are attributed here using the routed runtime/config currently active.
-            reason = str(exc)[:160]
-            candidates = list(getattr(bot, "_custom_direct_accounts", {}).items())
-            if len(candidates) == 1:
-                managed_id = int(candidates[0][0])
-                _write_error(
-                    bot,
-                    managed_id,
-                    reason,
-                    "CUSTOM_STRATEGY_EVALUATION_FAILED",
-                )
+        except _AccountStrategyFailure:
+            # The failing evaluator/build function has already persisted the exact
+            # affected account as ERROR. Suppress only this tick's broken route so
+            # unrelated public market processing remains alive.
             return
+        finally:
+            _ACTIVE_BOT = previous_bot
 
     def preserve_error_status(
         self: Test2Repository,
