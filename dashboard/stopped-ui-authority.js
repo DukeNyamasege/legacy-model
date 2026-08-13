@@ -27,9 +27,14 @@
 
   function stopped(me, lifecycle) {
     if (!me?.authenticated) return false;
+    // A confirmed lifecycle response is newer and more authoritative than a
+    // briefly stale /me cache immediately after Start/Stop.
+    if (lifecycle && typeof lifecycle.enabled === "boolean") {
+      if (lifecycle.enabled === false) return true;
+      return false;
+    }
     if (me.enabled === false) return true;
-    if (lifecycle?.enabled === false) return true;
-    return String(lifecycle?.runtime_state || "").toUpperCase() === "STOPPED";
+    return false;
   }
 
   function enforce() {
@@ -102,5 +107,5 @@
     ? document.addEventListener("DOMContentLoaded", schedule, { once: true })
     : schedule();
 
-  window.FOA_STOPPED_UI_AUTHORITY_VERSION = "20260813-1";
+  window.FOA_STOPPED_UI_AUTHORITY_VERSION = "20260813-2";
 })();
