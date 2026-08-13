@@ -6,7 +6,8 @@ from typing import Any
 from app import custom_strategy_direct_runtime as direct_runtime
 from app.account_execution_session import AccountExecutionSession
 from app.account_mode_execution_lock import account_allows_new_execution
-from app.models import ManagedAccount
+from app.models import ManagedAccount, utc_now
+from app.repositories.test2_repository import Test2Repository
 from app.rf_dir5_bot import RFDir5TradingBot
 
 _INSTALLED = False
@@ -15,6 +16,7 @@ _ORIGINAL_SCHEDULE: Any = None
 _ORIGINAL_PROPOSAL: Any = None
 _ORIGINAL_BUY: Any = None
 _ORIGINAL_HISTORY_COUNT: Any = None
+_ORIGINAL_SET_STATUS: Any = None
 
 
 def _allows_new_execution(bot: RFDir5TradingBot, managed_id: int) -> bool:
@@ -63,7 +65,7 @@ def install_custom_strategy_manual_stop_guard() -> None:
 
     global _INSTALLED
     global _ORIGINAL_EXECUTE, _ORIGINAL_SCHEDULE, _ORIGINAL_PROPOSAL, _ORIGINAL_BUY
-    global _ORIGINAL_HISTORY_COUNT
+    global _ORIGINAL_HISTORY_COUNT, _ORIGINAL_SET_STATUS
     if _INSTALLED:
         return
 
@@ -72,6 +74,7 @@ def install_custom_strategy_manual_stop_guard() -> None:
     _ORIGINAL_PROPOSAL = AccountExecutionSession.proposal
     _ORIGINAL_BUY = AccountExecutionSession.buy_proposal
     _ORIGINAL_HISTORY_COUNT = RFDir5TradingBot._public_history_count
+    _ORIGINAL_SET_STATUS = Test2Repository.set_managed_account_execution_status
 
     async def guarded_execute(bot: RFDir5TradingBot, item: Any, *, signal: Any) -> None:
         managed_id = int(item.managed_id)
@@ -124,6 +127,30 @@ def install_custom_strategy_manual_stop_guard() -> None:
             raise asyncio.CancelledError("manual Stop blocks BUY")
         return await _ORIGINAL_BUY(self, economics)
 
+    def guarded_set_status(
+        self: Test2Repository,
+        account_id: int,
+        execution_status: str,
+        reason: str = "",
+    ) -> None:
+        with self.database.session() as session:
+            row = session.get(ManagedAccount, int(account_id), with_for_update=True)
+            if row is not None and not bool(row.enabled):
+                current = str(row.execution_status or "inactive").strip().lower()
+                # A hard TP/SL status is retained until an explicit Stop/Start.
+                # Every other disabled state is normalized to stopped and may not
+                # be rewritten by a late qualified task or transport refresh.
+                if current not in {"take_profit", "stop_loss", "manual_pause"}:
+                    row.enabled = False
+                    row.execution_status = "stopped"
+                    row.execution_status_reason = (
+                        "Auto trading is stopped. Start Auto Trading is required before execution."
+                    )[:160]
+                    row.execution_status_updated_at = utc_now()
+                    row.updated_at = utc_now()
+                return
+        _ORIGINAL_SET_STATUS(self, int(account_id), execution_status, reason)
+
     def history_count(self: RFDir5TradingBot) -> int:
         required = int(_ORIGINAL_HISTORY_COUNT(self)) if _ORIGINAL_HISTORY_COUNT else 0
         for item in (getattr(self, "_custom_direct_accounts", {}) or {}).values():
@@ -140,6 +167,7 @@ def install_custom_strategy_manual_stop_guard() -> None:
     direct_runtime._schedule_account_matches = guarded_schedule
     AccountExecutionSession.proposal = guarded_proposal  # type: ignore[method-assign]
     AccountExecutionSession.buy_proposal = guarded_buy  # type: ignore[method-assign]
+    Test2Repository.set_managed_account_execution_status = guarded_set_status
     RFDir5TradingBot._public_history_count = history_count
     RFDir5TradingBot._custom_strategy_manual_stop_guard_installed = True
     _INSTALLED = True
