@@ -1,0 +1,29 @@
+/* Trades footer lifecycle toggle: one control starts or stops Auto Trading. */
+body.foa-trades-page-active .foa-stop-trades-icon[data-trading-state="stopped"],
+body.foa-trades-page-active .foa-stop-trades-icon[data-trading-state="starting"] {
+  color: #ecfdf5 !important;
+  border-color: rgba(52, 211, 153, .58) !important;
+  background: linear-gradient(145deg, rgba(2, 44, 34, .98), rgba(6, 95, 70, .97) 54%, rgba(5, 150, 105, .92)) !important;
+  box-shadow: 0 12px 30px rgba(5, 150, 105, .24), inset 0 1px 0 rgba(255, 255, 255, .10) !important;
+}
+
+body.foa-trades-page-active .foa-stop-trades-icon[data-trading-state="stopped"]:hover {
+  border-color: rgba(110, 231, 183, .86) !important;
+  box-shadow: 0 15px 34px rgba(5, 150, 105, .32), inset 0 1px 0 rgba(255, 255, 255, .12) !important;
+}
+
+body.foa-trades-page-active .foa-stop-trades-icon[data-trading-state="stopped"]::before {
+  content: "Start Trading" !important;
+}
+
+body.foa-trades-page-active .foa-stop-trades-icon[data-trading-state="running"]::before {
+  content: "Stop Trading" !important;
+}
+
+body.foa-trades-page-active .foa-stop-trades-icon[data-trading-state="starting"]::before {
+  content: "Starting Trading..." !important;
+}
+
+body.foa-trades-page-active .foa-stop-trades-icon[data-trading-state="stopping"]::before {
+  content: "Stopping Trading..." !important;
+}
