@@ -1,0 +1,138 @@
+/* Final personal risk-notification authority.
+   Legacy TP/SL popups can retain stale state while Demo/Real is switching, so
+   only the account-verified notifier is visible. */
+.limit-notifier {
+  display: none !important;
+}
+
+.foa-account-risk-notifier {
+  position: fixed;
+  z-index: 14000;
+  top: max(18px, env(safe-area-inset-top));
+  right: 18px;
+  width: min(440px, calc(100vw - 36px));
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid rgba(59, 130, 246, .72);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 8% 0%, rgba(59, 130, 246, .28), transparent 42%),
+    linear-gradient(135deg, rgba(16, 53, 112, .98), rgba(7, 28, 66, .99));
+  color: #f8fbff;
+  box-shadow:
+    0 24px 70px rgba(0, 0, 0, .48),
+    inset 0 1px 0 rgba(255, 255, 255, .10);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.foa-account-risk-icon {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  border: 1px solid rgba(147, 197, 253, .42);
+  background: rgba(147, 197, 253, .16);
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: .02em;
+}
+
+.foa-account-risk-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.foa-account-risk-copy strong {
+  font-size: 16px;
+  line-height: 1.2;
+  font-weight: 900;
+}
+
+.foa-account-risk-copy span {
+  font-size: 18px;
+  line-height: 1.22;
+  font-weight: 850;
+  letter-spacing: -.015em;
+}
+
+.foa-account-risk-copy small {
+  color: #bfdbfe;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.foa-account-risk-ok {
+  min-width: 48px;
+  height: 38px;
+  padding: 0 13px;
+  border: 1px solid rgba(191, 219, 254, .32);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, .12);
+  color: #fff;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.foa-account-risk-ok:hover {
+  background: rgba(255, 255, 255, .19);
+  transform: translateY(-1px);
+}
+
+html[data-theme="light"] .foa-account-risk-notifier {
+  border-color: rgba(37, 99, 235, .42);
+  background:
+    radial-gradient(circle at 8% 0%, rgba(59, 130, 246, .16), transparent 42%),
+    linear-gradient(135deg, rgba(239, 246, 255, .99), rgba(219, 234, 254, .99));
+  color: #102341;
+  box-shadow: 0 22px 58px rgba(30, 64, 175, .18);
+}
+
+html[data-theme="light"] .foa-account-risk-icon {
+  border-color: rgba(37, 99, 235, .28);
+  background: rgba(37, 99, 235, .10);
+  color: #1d4ed8;
+}
+
+html[data-theme="light"] .foa-account-risk-copy small {
+  color: #475569;
+}
+
+html[data-theme="light"] .foa-account-risk-ok {
+  border-color: rgba(37, 99, 235, .25);
+  background: rgba(37, 99, 235, .10);
+  color: #1e3a8a;
+}
+
+@media (max-width: 760px) {
+  .foa-account-risk-notifier {
+    top: 52px;
+    right: 10px;
+    width: calc(100vw - 20px);
+    grid-template-columns: 42px minmax(0, 1fr) auto;
+    gap: 10px;
+    padding: 13px;
+    border-radius: 15px;
+  }
+
+  .foa-account-risk-icon {
+    width: 40px;
+    height: 40px;
+  }
+
+  .foa-account-risk-copy strong {
+    font-size: 14px;
+  }
+
+  .foa-account-risk-copy span {
+    font-size: 15px;
+  }
+}
