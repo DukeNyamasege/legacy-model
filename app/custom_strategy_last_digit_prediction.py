@@ -246,7 +246,6 @@ def install_custom_strategy_last_digit_prediction() -> None:
             if 0 <= int(value) <= 9
         ]
         resolved_digit = _resolve_prediction(mode, digits, normalized)
-        actual_trigger_digit = int(digits[-1])
 
         resolved = dict(normalized)
         resolved["prediction"] = resolved_digit
@@ -263,16 +262,10 @@ def install_custom_strategy_last_digit_prediction() -> None:
         signal.contract_type = contract_type
         signal.direction = f"{prefix}_{resolved_digit}"
         signal.barrier = str(resolved_digit)
-        # The existing exact-runtime validator reads signal_last_digit as the
-        # concrete dynamic barrier. Preserve the actual qualifying market digit in
-        # a separate field; Last Digit naturally has both values equal.
+        # DigitSignal is a slotted dataclass. Keep the concrete dynamic barrier in
+        # the canonical field that the exact-entry/virtual runtimes already read;
+        # never attach ad-hoc attributes that are not declared by DigitSignal.
         signal.signal_last_digit = resolved_digit
-        signal.qualifying_last_digit = actual_trigger_digit
-        signal.dynamic_prediction_mode = mode
-        signal.dynamic_prediction_digit = resolved_digit
-        signal.dynamic_prediction_window = (
-            _prediction_window(normalized) if mode in _FREQUENCY_MODES else 1
-        )
         fingerprint = custom.custom_strategy_fingerprint(normalized)
         signal.trigger_name = f"CUSTOM-V2-{fingerprint[:8].upper()}"
         return signal
