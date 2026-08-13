@@ -9,6 +9,7 @@ from app.rf_dir5_bot import RFDir5TradingBot
 
 
 _INSTALLED = False
+_CHAINED = False
 _ORIGINAL_SCHEDULE: Any = None
 _ORIGINAL_EVALUATE: Any = None
 _ORIGINAL_BUILD: Any = None
@@ -170,3 +171,21 @@ def install_custom_strategy_fail_visible() -> None:
     Test2Repository.set_managed_account_execution_status = preserve_error_status
     RFDir5TradingBot._custom_strategy_fail_visible_installed = True
     _INSTALLED = True
+
+
+def chain_after_manual_stop_install() -> None:
+    """Arrange installation after result routing and the manual-stop status guard."""
+
+    global _CHAINED
+    if _CHAINED:
+        return
+    from app import custom_strategy_manual_stop_guard as manual_stop
+
+    original_install = manual_stop.install_custom_strategy_manual_stop_guard
+
+    def install_manual_stop_with_visible_errors() -> None:
+        original_install()
+        install_custom_strategy_fail_visible()
+
+    manual_stop.install_custom_strategy_manual_stop_guard = install_manual_stop_with_visible_errors
+    _CHAINED = True
