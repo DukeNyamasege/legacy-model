@@ -2,8 +2,16 @@
   "use strict";
 
   const POLL_MS = 1200;
+  const ACTIVE_RUNTIME_STATES = new Set([
+    "STARTING",
+    "WAITING_FOR_CONDITION",
+    "EXECUTING",
+    "RUNNING",
+  ]);
   let polling = false;
-  let suppressUntil = 0;
+  let currentStopKey = "";
+  const dismissedStopKeys = new Set();
+  const fallbackActiveSessions = new Map();
 
   function selectedMode() {
     const active = document.querySelector('[data-mode="demo"].active, [data-mode="real"].active');
@@ -14,8 +22,48 @@
     return String(value || "demo").toLowerCase() === "real" ? "real" : "demo";
   }
 
-  function accountMask(me) {
-    return String(me?.account_id_masked || me?.account_id || me?.label || "").trim();
+  function accountMask(value) {
+    return String(
+      value?.account_id_masked
+      || value?.account_id
+      || value?.label
+      || "",
+    ).trim();
+  }
+
+  function managedId(value) {
+    const raw = Number(value?.managed_account_id ?? value?.id ?? 0);
+    return Number.isFinite(raw) && raw > 0 ? String(Math.trunc(raw)) : "";
+  }
+
+  function accountIdentity(me) {
+    return `${normalizedMode(me?.account_type)}:${managedId(me) || accountMask(me) || "unknown"}`;
+  }
+
+  function lifecycleMatchesAccount(me, lifecycle) {
+    if (!me?.authenticated || !lifecycle?.authenticated) return false;
+
+    const currentMode = normalizedMode(me.account_type);
+    const uiMode = selectedMode();
+    if (uiMode && uiMode !== currentMode) return false;
+
+    if (lifecycle.account_type && normalizedMode(lifecycle.account_type) !== currentMode) {
+      return false;
+    }
+
+    const meId = managedId(me);
+    const lifeId = managedId(lifecycle);
+    if (meId && lifeId && meId !== lifeId) return false;
+
+    const meMask = accountMask(me);
+    const lifeMask = accountMask(lifecycle);
+    if (meMask && lifeMask && meMask !== lifeMask) return false;
+
+    return true;
+  }
+
+  function sessionKey(lifecycle) {
+    return String(lifecycle?.session_limits_started_at || "").trim();
   }
 
   function money(value, currency = "USD") {
@@ -40,18 +88,16 @@
 
   function removeNotice() {
     document.querySelectorAll(".foa-account-risk-notifier").forEach((node) => node.remove());
+    currentStopKey = "";
   }
 
   function exactLimitMatchesCurrentAccount(me, lifecycle) {
-    if (!me?.authenticated || !lifecycle?.authenticated) return false;
-    const currentMode = normalizedMode(me.account_type);
-    const uiMode = selectedMode();
-    if (uiMode && uiMode !== currentMode) return false;
+    if (!lifecycleMatchesAccount(me, lifecycle)) return false;
 
     const status = String(lifecycle.execution_status || "").toLowerCase();
     const meStatus = String(me.execution_status || "").toLowerCase();
     if (!["take_profit", "stop_loss"].includes(status)) return false;
-    if (meStatus !== status) return false;
+    if (meStatus && meStatus !== status) return false;
     if (Boolean(me.enabled) || Boolean(lifecycle.enabled)) return false;
     if (lifecycle.risk_limit_is_hard_stop !== true) return false;
 
@@ -67,8 +113,57 @@
     return targetMagnitude > 0;
   }
 
+  function fallbackConfirmedTransition(me, lifecycle) {
+    if (!lifecycleMatchesAccount(me, lifecycle)) return false;
+
+    const key = accountIdentity(me);
+    const session = sessionKey(lifecycle);
+    const runtime = String(lifecycle?.runtime_state || "").toUpperCase();
+    const status = String(lifecycle?.execution_status || "").toLowerCase();
+
+    if (lifecycle?.enabled === true && ACTIVE_RUNTIME_STATES.has(runtime) && session) {
+      fallbackActiveSessions.set(key, session);
+      return false;
+    }
+
+    return Boolean(
+      ["take_profit", "stop_loss"].includes(status)
+      && lifecycle?.enabled === false
+      && session
+      && fallbackActiveSessions.get(key) === session,
+    );
+  }
+
+  function confirmedTransition(me, lifecycle) {
+    const gate = window.FOA_RISK_STOP_SESSION_GATE;
+    if (gate?.observe) {
+      const result = gate.observe(me, lifecycle);
+      return Boolean(result?.confirmedRiskStop);
+    }
+    return fallbackConfirmedTransition(me, lifecycle);
+  }
+
+  function stopEventKey(me, lifecycle) {
+    const status = String(lifecycle.execution_status || "").toLowerCase();
+    const achieved = Number(lifecycle.limit_achieved ?? lifecycle.session_profit ?? 0).toFixed(2);
+    const updated = String(lifecycle.execution_status_updated_at || "").trim();
+    return [
+      accountIdentity(me),
+      sessionKey(lifecycle),
+      status,
+      updated,
+      achieved,
+    ].join(":");
+  }
+
   function renderNotice(me, lifecycle) {
-    if (!exactLimitMatchesCurrentAccount(me, lifecycle)) {
+    if (!exactLimitMatchesCurrentAccount(me, lifecycle) || !confirmedTransition(me, lifecycle)) {
+      removeNotice();
+      return;
+    }
+
+    const eventKey = stopEventKey(me, lifecycle);
+    if (!eventKey || dismissedStopKeys.has(eventKey)) {
       removeNotice();
       return;
     }
@@ -88,9 +183,13 @@
       notice.className = "foa-account-risk-notifier";
       notice.setAttribute("role", "status");
       notice.setAttribute("aria-live", "polite");
-      (document.querySelector("#foa-simple-app") || document.body).appendChild(notice);
+      document.body.appendChild(notice);
     }
 
+    if (currentStopKey === eventKey && notice.dataset.stopEvent === eventKey) return;
+
+    currentStopKey = eventKey;
+    notice.dataset.stopEvent = eventKey;
     notice.dataset.account = account;
     notice.dataset.accountType = mode;
     notice.dataset.limit = status;
@@ -104,18 +203,16 @@
       <button type="button" class="foa-account-risk-ok">OK</button>`;
 
     notice.querySelector(".foa-account-risk-ok")?.addEventListener("click", () => {
+      dismissedStopKeys.add(eventKey);
       notice.remove();
-      suppressUntil = Date.now() + 30000;
+      currentStopKey = "";
     }, { once: true });
   }
 
   async function poll() {
-    if (polling || document.hidden || Date.now() < suppressUntil) return;
+    if (polling || document.hidden) return;
     polling = true;
     try {
-      // Read /me first and lifecycle second. A Demo/Real switch between the two
-      // reads cannot create a notice because both status and configured target
-      // must still agree with the currently selected account.
       const me = await getJSON("/me");
       if (!me?.authenticated) {
         removeNotice();
@@ -124,7 +221,6 @@
       const lifecycle = await getJSON("/me/trading-lifecycle");
       renderNotice(me, lifecycle);
     } catch (_) {
-      // A delayed UI read never changes or stops backend execution.
     } finally {
       polling = false;
     }
@@ -132,13 +228,20 @@
 
   function invalidateForAccountSwitch() {
     removeNotice();
-    suppressUntil = Date.now() + 800;
+    fallbackActiveSessions.clear();
+    window.FOA_RISK_STOP_SESSION_GATE?.resetForAccountSwitch?.();
     window.setTimeout(poll, 900);
     window.setTimeout(poll, 1800);
   }
 
   document.addEventListener("click", (event) => {
-    if (event.target?.closest?.("[data-mode]")) invalidateForAccountSwitch();
+    if (event.target?.closest?.("[data-mode]")) {
+      invalidateForAccountSwitch();
+      return;
+    }
+    if (event.target?.closest?.('[data-main-action="start"],[data-main-action="resume"]')) {
+      removeNotice();
+    }
   }, true);
 
   window.addEventListener("focus", poll);
@@ -147,12 +250,10 @@
     if (!document.hidden) poll();
   });
 
-  // Legacy risk notices are intentionally hidden by the matching CSS asset. This
-  // account-bound authority is the only layer allowed to render TP/SL notices.
   window.setInterval(poll, POLL_MS);
   document.readyState === "loading"
     ? document.addEventListener("DOMContentLoaded", () => window.setTimeout(poll, 350), { once: true })
     : window.setTimeout(poll, 350);
 
-  window.FOA_ACCOUNT_BOUND_RISK_NOTICE_VERSION = "20260813-1";
+  window.FOA_ACCOUNT_BOUND_RISK_NOTICE_VERSION = "20260813-2";
 })();
