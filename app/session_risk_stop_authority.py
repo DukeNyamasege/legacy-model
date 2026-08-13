@@ -40,6 +40,9 @@ def _session_risk_snapshot(
     The worker never falls back to all-time account P/L or stale in-memory limit
     values. Take profit is positive. Stop loss is negative. Both are rounded to
     cents before comparison so the worker, lifecycle API and UI use one value.
+
+    At fresh Start the snapshot source is account.take_profit and account.stop_loss;
+    after Start those exact values stay frozen for the running session.
     """
 
     with bot.repository.database.session() as session:
