@@ -118,9 +118,26 @@ def install_session_risk_api_authority(app: Any) -> None:
             limits = read_session_risk_limits(session, managed_id, account=row)
             status = str(row.execution_status or "inactive").strip().lower()
             enabled = bool(row.enabled)
-            runtime_state = _runtime_state(enabled=enabled, status=status)
             session_profit = round(float(state.session_profit or 0.0), 2) if state else 0.0
             status_reason = str(row.execution_status_reason or "")
+
+            # Disabled is the authoritative manual execution barrier. A late worker
+            # task may have been created before Stop and may still hold an old
+            # waiting/executing reason in memory. Never expose that as a live state.
+            # TP/SL are kept as hard-stop events so the account-bound notification
+            # gate can display a genuine current-session transition exactly once.
+            if not enabled and status not in {"take_profit", "stop_loss", "manual_pause"}:
+                if status != "stopped" or "stopped" not in status_reason.lower():
+                    row.execution_status = "stopped"
+                    row.execution_status_reason = (
+                        "Auto trading is stopped. Press Start Auto Trading to begin a fresh session."
+                    )[:160]
+                    row.execution_status_updated_at = utc_now()
+                    row.updated_at = utc_now()
+                status = "stopped"
+                status_reason = str(row.execution_status_reason or "")
+
+            runtime_state = _runtime_state(enabled=enabled, status=status)
             status_updated_at = (
                 row.execution_status_updated_at.isoformat()
                 if row.execution_status_updated_at is not None
