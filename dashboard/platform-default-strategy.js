@@ -8,6 +8,7 @@
   const INIT_PREFIX = `foa-platform-default-initialized:${VERSION}`;
   let applying = false;
   let pending = false;
+  let pendingPayload = null;
 
   const q = (selector, root = document) => root.querySelector(selector);
 
@@ -35,6 +36,15 @@
     try { localStorage.setItem(initKey(payload), "1"); } catch (_) {}
   }
 
+  function builderReady() {
+    return Boolean(
+      q(".strategy-builder-card")
+      && q('[data-market-mode="all"]')
+      && q('[data-strategy-mode="last_digit"]')
+      && q('[data-trade-group="matches_differs"]'),
+    );
+  }
+
   function fire(field, eventName = null) {
     if (!field) return;
     const type = eventName || (field.tagName === "SELECT" || field.type === "checkbox" ? "change" : "input");
@@ -53,7 +63,7 @@
     }
     if (String(field.value) === String(value)) return true;
     field.value = String(value);
-    fire(field, field.tagName === "SELECT" ? "change" : "change");
+    fire(field, "change");
     return true;
   }
 
@@ -84,6 +94,8 @@
   }
 
   function applyPrimary() {
+    if (!builderReady()) return false;
+
     clickChoice('[data-market-mode="all"]');
     clickChoice('[data-strategy-mode="last_digit"]');
     clickChoice('[data-trade-group="matches_differs"]');
@@ -91,6 +103,9 @@
     setBuilder("lastRule.window", 2);
     setBuilder("lastRule.operator", "all_same");
     setBuilder("trade.side", "differs");
+    // The hidden numeric field remains valid for the canonical builder. The
+    // dynamic-prediction authority below changes the saved prediction to the
+    // final qualifying trigger digit (prediction_mode=last_digit).
     setBuilder("trade.prediction", 4);
     setBuilder("reanalyze.mode", "after_every_trade");
     setBuilder("money.stake", 0.5);
@@ -101,6 +116,7 @@
     setBuilder("virtualHook.enabled", true);
     setBuilder("virtualHook.enterAfterLosses", 2);
     setBuilder("virtualHook.exitAfterConsecutiveWins", 1);
+    return true;
   }
 
   function applyDynamicPrediction() {
@@ -139,22 +155,35 @@
   }
 
   function applyPreset({ force = false, payload = null } = {}) {
-    if (applying) return;
-    if (!force && wasInitialized(payload)) return;
+    if (applying) return false;
+    if (!force && wasInitialized(payload)) {
+      pendingPayload = null;
+      return true;
+    }
+    if (!builderReady()) {
+      pendingPayload = payload || pendingPayload || {};
+      return false;
+    }
+
     applying = true;
+    let primaryApplied = false;
     try {
-      applyPrimary();
-      markInitialized(payload);
+      primaryApplied = applyPrimary();
+      if (primaryApplied) {
+        markInitialized(payload);
+        pendingPayload = null;
+      }
     } finally {
       applying = false;
     }
+    if (!primaryApplied) return false;
 
     // Primary changes re-render the builder. Re-apply dependent controls after
-    // those renders so the dynamic prediction and after-loss route land in their
-    // own canonical state managers rather than being painted only visually.
+    // those renders so prediction and after-loss settings enter their canonical
+    // state managers rather than being painted only visually.
     [0, 60, 160, 360, 700].forEach((delay) => {
       window.setTimeout(() => {
-        if (applying) return;
+        if (applying || !builderReady()) return;
         applying = true;
         try {
           applyPrimary();
@@ -165,9 +194,11 @@
         }
       }, delay);
     });
+    return true;
   }
 
   function schedulePreset(options = {}) {
+    if (options?.payload) pendingPayload = options.payload;
     if (pending) return;
     pending = true;
     window.setTimeout(() => {
@@ -186,6 +217,8 @@
         const payload = await response.clone().json();
         if (payload?.authenticated && payload?.config?.configured === false) {
           schedulePreset({ payload });
+        } else if (payload?.config?.configured === true) {
+          pendingPayload = null;
         }
       } catch (_) {}
     }
@@ -203,6 +236,12 @@
     if (!window.confirm("Reset this strategy to the platform default? Your current unsaved builder configuration will be replaced.")) return;
     schedulePreset({ force: true });
   }, true);
+
+  // If the account's first server response arrived while another dashboard view
+  // was open, apply the default when the Builder is mounted later.
+  new MutationObserver(() => {
+    if (pendingPayload && builderReady()) schedulePreset({ payload: pendingPayload });
+  }).observe(document.documentElement, { childList: true, subtree: true });
 
   window.FOA_PLATFORM_DEFAULT_STRATEGY_VERSION = VERSION;
 })();
