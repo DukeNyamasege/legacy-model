@@ -80,6 +80,7 @@ jobs:
           app/custom_strategy_runtime_api.py
           app/custom_virtual_contract_parity.py
           app/dashboard_live_events.py
+          app/exact_strategy_execution_authority.py
           app/netlify_backend_api.py
           app/netlify_realtime_gateway.py
           app/netlify_worker_bridge.py
@@ -92,6 +93,7 @@ jobs:
           tests/test_custom_direct_runtime.py
           tests/test_current_custom_runtime_fix.py
           tests/test_dashboard_live_performance.py
+          tests/test_exact_strategy_execution_authority.py
           tests/test_netlify_vps_split.py
           tests/test_oauth_direct_mobile_compact.py
           tests/test_session_risk_and_multidevice_ui.py
@@ -113,6 +115,7 @@ jobs:
           app/custom_strategy_runtime_api.py
           app/custom_virtual_contract_parity.py
           app/dashboard_live_events.py
+          app/exact_strategy_execution_authority.py
           app/netlify_backend_api.py
           app/netlify_realtime_gateway.py
           app/netlify_worker_bridge.py
@@ -135,6 +138,7 @@ jobs:
           node --check dashboard/oauth-direct-runtime.js
           node --check dashboard/final-dashboard-authority.js
           node --check dashboard/trades-start-stop-toggle.js
+          node --check dashboard/last-digit-special-ui.js
           node --check scripts/build-netlify.mjs
 
       - name: Run focused release tests
@@ -142,6 +146,7 @@ jobs:
           python -m unittest -q tests.test_custom_direct_runtime
           python -m unittest -q tests.test_current_custom_runtime_fix
           python -m unittest -q tests.test_dashboard_live_performance
+          python -m unittest -q tests.test_exact_strategy_execution_authority
           python -m unittest -q tests.test_netlify_vps_split
           python -m unittest -q tests.test_stop_history_and_mobile_ui
           python -m unittest -q tests.test_oauth_direct_mobile_compact
@@ -180,6 +185,7 @@ jobs:
           grep -Fq '/netlify-realtime-client.js' dist/index.html
           grep -Fq '/final-dashboard-authority.js' dist/index.html
           grep -Fq '/trades-start-stop-toggle.js' dist/index.html
+          grep -Fq '/last-digit-special-ui.js' dist/index.html
           test -f dist/final-dashboard-authority.css
           test -f dist/trades-start-stop-toggle.css
 
