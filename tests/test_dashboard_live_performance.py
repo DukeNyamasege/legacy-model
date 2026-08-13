@@ -65,7 +65,7 @@ class DashboardLivePerformanceTests(TestCase):
         )
         self.assertIn("install_dashboard_live_events(app)", source)
         self.assertIn('X-FOA-Live-Dashboard', source)
-        self.assertIn("live-dashboard-authority-5", source)
+        self.assertIn("global-trade-history-1", source)
 
 
 if __name__ == "__main__":
