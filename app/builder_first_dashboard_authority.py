@@ -7,15 +7,24 @@ from fastapi import Request
 from fastapi.responses import HTMLResponse, Response
 
 import app.api as base_api
-from app.custom_strategy_api import install_custom_strategy_api
-from app.custom_strategy_runtime_api import install_custom_strategy_runtime_api
-from app.dashboard_live_events import install_dashboard_live_events
-from app.dashboard_stability_fix import _remove_route
-from app.global_trade_history_cutoff import install_global_trade_history_cutoff
+from app.custom_strategy_last_digit_prediction import (
+    install_custom_strategy_last_digit_prediction,
+)
+
+# Dynamic Matches/Differs prediction must extend the canonical strategy module
+# before the API/runtime modules bind normalization helpers by import.
+install_custom_strategy_last_digit_prediction()
+
+from app.custom_strategy_api import install_custom_strategy_api  # noqa: E402
+from app.custom_strategy_runtime_api import install_custom_strategy_runtime_api  # noqa: E402
+from app.dashboard_live_events import install_dashboard_live_events  # noqa: E402
+from app.dashboard_stability_fix import _remove_route  # noqa: E402
+from app.global_trade_history_cutoff import install_global_trade_history_cutoff  # noqa: E402
+from app.session_risk_api_authority import install_session_risk_api_authority  # noqa: E402
 
 
 _INSTALLED = False
-UI_VERSION = "20260813-global-trade-history-1"
+UI_VERSION = "20260813-final-readiness-1"
 
 
 def _headers(extra: dict[str, str] | None = None) -> dict[str, str]:
@@ -111,8 +120,12 @@ def install_builder_first_dashboard_authority(app: Any) -> None:
     # reappear after logout/login or on a second device.
     install_global_trade_history_cutoff(app)
 
+    # Re-register the direct Custom Strategy routes, then replace their generic
+    # lifecycle endpoints with the signed session-risk authority. Every browser and
+    # the worker therefore read the same frozen TP/SL thresholds for this Start.
     install_custom_strategy_api(app)
     install_custom_strategy_runtime_api(app)
+    install_session_risk_api_authority(app)
     install_dashboard_live_events(app)
 
     for path in (

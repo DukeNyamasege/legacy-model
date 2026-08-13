@@ -10,13 +10,18 @@ from app.account_scoped_websocket_runtime import install_account_scoped_websocke
 from app.custom_strategy_comparator_extension import (
     install_custom_strategy_comparator_extension,
 )
+from app.custom_strategy_last_digit_prediction import (
+    install_custom_strategy_last_digit_prediction,
+)
 
 # Extend the canonical Custom Strategy schema before direct-runtime imports bind
 # the normalization/evaluation functions used by the worker.
 install_custom_strategy_comparator_extension()
+install_custom_strategy_last_digit_prediction()
 
 from app.custom_strategy_current_runtime_fix import install_custom_strategy_current_runtime_fix
 from app.custom_strategy_direct_runtime import install_custom_strategy_direct_runtime
+from app.custom_strategy_last_digit_runtime import install_custom_strategy_last_digit_runtime
 from app.custom_strategy_runtime_lifecycle import install_custom_strategy_runtime_lifecycle
 from app.custom_strategy_settlement import install_custom_strategy_settlement
 from app.custom_virtual_contract_parity import install_custom_virtual_contract_parity
@@ -79,11 +84,12 @@ async def run_worker() -> None:
     # it wraps that same proposal+BUY path. It re-validates every condition and
     # skips stale trigger ticks instead of purchasing one or more digits late.
     install_exact_strategy_execution_authority()
+    install_custom_strategy_last_digit_runtime()
     install_custom_strategy_runtime_lifecycle()
 
     # TP/SL are final account stops. The canonical counter is the persisted
-    # AccountRiskState.session_profit for the current fresh Start session, not a
-    # broad/all-time dashboard P/L value.
+    # AccountRiskState.session_profit for the current fresh Start session, with TP
+    # positive and SL negative from the frozen settings snapshot.
     install_session_risk_stop_worker()
 
     # UI delivery is never allowed to sit on the financial execution path. This
