@@ -27,7 +27,7 @@ from app.session_risk_api_authority import install_session_risk_api_authority  #
 
 
 _INSTALLED = False
-UI_VERSION = "20260813-result-routing-1"
+UI_VERSION = "20260813-final-readiness-1-result-routing-1"
 
 
 def _headers(extra: dict[str, str] | None = None) -> dict[str, str]:
