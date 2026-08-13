@@ -7,8 +7,6 @@ from app.custom_strategy_comparator_extension import (
     install_custom_strategy_comparator_extension,
 )
 
-# Keep recovery-route analysis capable of the same value-free All Even/All Odd
-# conditions as the primary Custom Strategy builder.
 install_custom_strategy_comparator_extension()
 
 from app.custom_strategy_v1 import (  # noqa: E402
@@ -28,6 +26,22 @@ VERSION = "custom-result-routing-v1"
 PREFERENCE_PREFIX = "custom_result_routing:v1:"
 AFTER_WIN = "after_win"
 AFTER_LOSS = "after_loss"
+_DYNAMIC_PREDICTIONS = {
+    "last_digit": "last digit",
+    "most_appearing": "most appearing",
+    "second_most_appearing": "second most appearing",
+}
+_DYNAMIC_ALIASES = {
+    "last": "last_digit",
+    "last digit": "last_digit",
+    "last_digit": "last_digit",
+    "most": "most_appearing",
+    "most appearing": "most_appearing",
+    "most_appearing": "most_appearing",
+    "second most": "second_most_appearing",
+    "second most appearing": "second_most_appearing",
+    "second_most_appearing": "second_most_appearing",
+}
 
 
 def preference_key(managed_account_id: int) -> str:
@@ -47,12 +61,20 @@ def _normalize_trade_type(value: Any) -> str:
     return trade_type
 
 
-def _normalize_prediction(trade_type: str, value: Any) -> int | None:
+def _normalize_prediction(trade_type: str, value: Any) -> int | str | None:
     if trade_type not in {"over", "under", "matches", "differs"}:
         return None
+    if trade_type in {"matches", "differs"} and isinstance(value, str):
+        dynamic = _DYNAMIC_ALIASES.get(value.strip().lower())
+        if dynamic:
+            return dynamic
     try:
         prediction = int(value)
     except (TypeError, ValueError) as exc:
+        if trade_type in {"matches", "differs"}:
+            raise ValueError(
+                "Recovery prediction must be 0-9, Last digit, Most appearing, or Second most appearing"
+            ) from exc
         raise ValueError("Recovery prediction must be a whole digit") from exc
     if not 0 <= prediction <= 9:
         raise ValueError("Recovery prediction must be between 0 and 9")
@@ -162,14 +184,6 @@ def merge_result_route(
     routing: dict[str, Any] | None,
     route: str,
 ) -> dict[str, Any]:
-    """Return the exact strategy to evaluate for one account outcome state.
-
-    The primary saved Custom Strategy remains authoritative for the first trade and
-    after wins. Only trade contract, prediction, duration and entry conditions are
-    overridden while the account is in the after-loss route. Markets, re-analysis,
-    Virtual Hook and all other account settings remain unchanged.
-    """
-
     base = normalize_custom_strategy(base_config)
     normalized = normalize_result_routing(routing or {"enabled": False})
     if route != AFTER_LOSS or not bool(normalized.get("enabled")):
@@ -177,14 +191,26 @@ def merge_result_route(
     override = normalized.get(AFTER_LOSS)
     if not isinstance(override, dict):
         return base
+
     result = dict(base)
+    prediction = override.get("prediction")
+    dynamic = prediction if isinstance(prediction, str) and prediction in _DYNAMIC_PREDICTIONS else ""
+    reanalyze = dict(result.get("reanalyze") or {})
+    if dynamic:
+        reanalyze["prediction_mode"] = dynamic
+        resolved_prediction: int | None = None
+    else:
+        reanalyze.pop("prediction_mode", None)
+        resolved_prediction = int(prediction) if prediction is not None else None
+
     result.update(
         {
             "trade_type": override["trade_type"],
-            "prediction": override.get("prediction"),
+            "prediction": resolved_prediction,
             "duration_ticks": int(override["duration_ticks"]),
             "conditions": [dict(item) for item in override["conditions"]],
             "match": "all",
+            "reanalyze": reanalyze,
         }
     )
     return normalize_custom_strategy(result)
@@ -198,7 +224,9 @@ def describe_result_routing(routing: dict[str, Any] | None) -> str:
     trade_type = str(route.get("trade_type") or "")
     label = str(TRADE_TYPES.get(trade_type, {}).get("label") or trade_type.title())
     prediction = route.get("prediction")
-    if prediction is not None:
+    if isinstance(prediction, str) and prediction in _DYNAMIC_PREDICTIONS:
+        label = f"{label} {_DYNAMIC_PREDICTIONS[prediction]}"
+    elif prediction is not None:
         label = f"{label} {prediction}"
     conditions = " AND ".join(
         describe_condition(item) for item in list(route.get("conditions") or [])

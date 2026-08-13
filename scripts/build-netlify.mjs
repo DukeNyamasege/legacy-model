@@ -41,8 +41,6 @@ await rm(output, { recursive: true, force: true });
 await mkdir(output, { recursive: true });
 await cp(resolve(root, "dashboard"), output, { recursive: true });
 
-// Netlify serves the dashboard files directly from dist/. The VPS dynamic route
-// used /ui/* aliases, so convert those aliases to the static files copied above.
 const indexPath = resolve(output, "index.html");
 let html = await readFile(indexPath, "utf8");
 html = html
@@ -58,6 +56,19 @@ html = html
 const boundaryScript = '  <script src="/netlify-api-boundary.js"></script>\n';
 if (!html.includes('/netlify-api-boundary.js')) {
   html = html.replace("</head>", `${boundaryScript}</head>`);
+}
+
+if (!html.includes('/result-based-mobile-compact.css')) {
+  html = html.replace(
+    "</head>",
+    '  <link rel="stylesheet" href="/result-based-mobile-compact.css">\n</head>',
+  );
+}
+if (!html.includes('/result-ui-fixes.css')) {
+  html = html.replace(
+    "</head>",
+    '  <link rel="stylesheet" href="/result-ui-fixes.css">\n</head>',
+  );
 }
 
 const dashboardMarker = '<script src="/dashboard-v2.js" defer></script>';
@@ -76,10 +87,31 @@ const realtimeScript = '  <script src="/netlify-realtime-client.js" defer></scri
 if (!html.includes('/netlify-realtime-client.js')) {
   html = html.replace("</body>", `${realtimeScript}</body>`);
 }
+
+const resultScriptMarker = '<script src="./result-based-strategy.js" defer></script>';
+if (!html.includes('/prediction-ui-fix.js')) {
+  if (html.includes(resultScriptMarker)) {
+    html = html.replace(
+      resultScriptMarker,
+      '  <script src="/prediction-ui-fix.js" defer></script>\n  ' + resultScriptMarker,
+    );
+  } else {
+    html = html.replace("</body>", '  <script src="/prediction-ui-fix.js" defer></script>\n</body>');
+  }
+}
+if (!html.includes('/result-ui-fixes.js')) {
+  if (html.includes(resultScriptMarker)) {
+    html = html.replace(
+      resultScriptMarker,
+      resultScriptMarker + '\n  <script src="/result-ui-fixes.js" defer></script>',
+    );
+  } else {
+    html = html.replace("</body>", '  <script src="/result-ui-fixes.js" defer></script>\n</body>');
+  }
+}
+
 await writeFile(indexPath, html, "utf8");
 
-// Keep the final compact mobile layer last, exactly as the former VPS dashboard
-// authority did. Old responsive rules therefore cannot re-stack the builder.
 const cssPath = resolve(output, "dashboard-v2.css");
 const [desktopCss, mobileCss] = await Promise.all([
   readFile(resolve(root, "dashboard", "dashboard-v2.css"), "utf8"),
@@ -87,9 +119,6 @@ const [desktopCss, mobileCss] = await Promise.all([
 ]);
 await writeFile(cssPath, `${desktopCss}\n\n/* NETLIFY FINAL MOBILE LAYER */\n${mobileCss}\n`, "utf8");
 
-// REST/OAuth stay same-origin from the browser. This avoids cross-site cookies
-// and CORS on normal UI actions. Realtime intentionally does not use this proxy;
-// it opens a signed direct WSS connection to the backend origin.
 const redirects = [];
 if (backendOrigin) {
   redirects.push(`/api/* ${backendOrigin}/:splat 200`);
