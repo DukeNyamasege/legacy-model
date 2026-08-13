@@ -5,6 +5,7 @@ from typing import Any
 
 from app.final_public_controls import PAUSED_STATUSES, STOPPED_STATUSES
 from app.models import AccountRiskState, ManagedAccount, utc_now
+from app.session_risk_limits import read_session_risk_limits
 from enhanced_bot import TradingBot, mask_account_id
 
 
@@ -33,42 +34,24 @@ def _session_risk_snapshot(
     bot: TradingBot,
     *,
     managed_account_id: int,
-    state: dict[str, Any],
 ) -> tuple[float, float, float]:
-    """Read the exact persisted Start-session P/L and current account limits.
+    """Read the exact fresh-Start P/L and frozen signed TP/SL thresholds.
 
-    TP/SL must not use all-time or broad dashboard P/L. AccountRiskState is reset
-    on a fresh Start and incremented only by that account's settled monetary
-    contracts, so it is the canonical risk-limit counter for the running session.
+    The worker never falls back to all-time account P/L or stale in-memory limit
+    values. Take profit is positive. Stop loss is negative. Both are rounded to
+    cents before comparison so the worker, lifecycle API and UI use one value.
     """
 
     with bot.repository.database.session() as session:
         account = session.get(ManagedAccount, int(managed_account_id))
         risk = session.get(AccountRiskState, int(managed_account_id))
-        session_profit = (
-            float(risk.session_profit or 0.0)
-            if risk is not None
-            else float(state.get("profit_today", 0.0) or 0.0)
+        limits = read_session_risk_limits(
+            session,
+            int(managed_account_id),
+            account=account,
         )
-        take_profit = max(
-            0.0,
-            float(
-                account.take_profit
-                if account is not None
-                else state.get("take_profit", 0.0) or 0.0
-            ),
-        )
-        stop_loss = max(
-            0.0,
-            abs(
-                float(
-                    account.stop_loss
-                    if account is not None
-                    else state.get("stop_loss", 0.0) or 0.0
-                )
-            ),
-        )
-    return session_profit, take_profit, stop_loss
+        session_profit = round(float(risk.session_profit or 0.0), 2) if risk else 0.0
+    return session_profit, limits.take_profit, limits.stop_loss
 
 
 def _stop_for_risk_limit(
@@ -83,13 +66,7 @@ def _stop_for_risk_limit(
     take_profit: float,
     stop_loss: float,
 ) -> str:
-    """Atomically disable new execution while preserving the hit P/L for display.
-
-    Recovery/session state is intentionally retained while the account sits in the
-    TP/SL stopped state so every browser can see the exact achieved session P/L.
-    The next Start is classified as a fresh Start and resets that state before any
-    new contract can be purchased.
-    """
+    """Atomically stop execution while preserving the exact hit P/L for display."""
 
     is_tp = status == "take_profit"
     label = "Take profit" if is_tp else "Stop loss"
@@ -124,13 +101,14 @@ def _stop_for_risk_limit(
             "session_profit": round(float(session_profit), 2),
             "take_profit": round(float(take_profit), 2),
             "stop_loss": round(float(stop_loss), 2),
+            "signed_limits": True,
             "execution_stopped": True,
             "next_start_fresh": True,
         },
     )
     bot.logger.warning(
         "ACCOUNT_RISK_LIMIT_HARD_STOP account=%s limit=%s target=%.2f "
-        "session_profit=%.2f stopped=true next_start_fresh=true",
+        "session_profit=%.2f signed_limits=true stopped=true next_start_fresh=true",
         mask_account_id(account_id),
         status,
         target,
@@ -152,9 +130,8 @@ def _enforce_session_risk_limit(
     session_profit, take_profit, stop_loss = _session_risk_snapshot(
         self,
         managed_account_id=managed_account_id,
-        state=state,
     )
-    if take_profit > 0 and session_profit >= take_profit - 0.005:
+    if take_profit > 0 and session_profit >= take_profit:
         return _stop_for_risk_limit(
             self,
             token=token,
@@ -166,7 +143,7 @@ def _enforce_session_risk_limit(
             take_profit=take_profit,
             stop_loss=stop_loss,
         )
-    if stop_loss > 0 and session_profit <= -stop_loss + 0.005:
+    if stop_loss < 0 and session_profit <= stop_loss:
         return _stop_for_risk_limit(
             self,
             token=token,
@@ -182,7 +159,7 @@ def _enforce_session_risk_limit(
 
 
 def install_session_risk_stop_worker() -> None:
-    """Make session P/L the final worker authority for TP/SL enforcement."""
+    """Make fresh-Start session P/L the final worker authority for TP/SL."""
 
     global _INSTALLED
     install_limit_stop_status_semantics()
