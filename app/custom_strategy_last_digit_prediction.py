@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from typing import Any
 
 from app import custom_strategy_v1 as custom
@@ -7,35 +8,105 @@ from app import custom_strategy_v1 as custom
 
 _INSTALLED = False
 _DYNAMIC_TRADE_TYPES = {"matches", "differs"}
-_SENTINELS = {"last_digit", "last digit", "last"}
+_DYNAMIC_MODES = {"last_digit", "most_appearing", "second_most_appearing"}
+_SENTINEL_ALIASES = {
+    "last": "last_digit",
+    "last digit": "last_digit",
+    "last_digit": "last_digit",
+    "most": "most_appearing",
+    "most appearing": "most_appearing",
+    "most_appearing": "most_appearing",
+    "second most": "second_most_appearing",
+    "second most appearing": "second_most_appearing",
+    "second_most_appearing": "second_most_appearing",
+}
 
 
 def _trade_type(raw: Any) -> str:
     if not isinstance(raw, dict):
         return ""
-    value = str(raw.get("trade_type") or "").strip().lower()
-    return value
+    return str(raw.get("trade_type") or "").strip().lower()
 
 
-def _uses_last_digit(raw: Any) -> bool:
-    if _trade_type(raw) not in _DYNAMIC_TRADE_TYPES:
-        return False
-    if not isinstance(raw, dict):
-        return False
+def _prediction_mode(raw: Any) -> str:
+    if _trade_type(raw) not in _DYNAMIC_TRADE_TYPES or not isinstance(raw, dict):
+        return ""
     prediction = raw.get("prediction")
+    if isinstance(prediction, str):
+        alias = _SENTINEL_ALIASES.get(prediction.strip().lower())
+        if alias:
+            return alias
+    reanalyze = raw.get("reanalyze") if isinstance(raw.get("reanalyze"), dict) else {}
+    nested = str(reanalyze.get("prediction_mode") or raw.get("prediction_mode") or "").strip().lower()
+    alias = _SENTINEL_ALIASES.get(nested, nested)
+    if alias in _DYNAMIC_MODES:
+        return alias
     if prediction is None:
-        return True
-    return str(prediction).strip().lower() in _SENTINELS
+        return "last_digit"
+    return ""
+
+
+def _with_prediction_mode(normalized: dict[str, Any], mode: str) -> dict[str, Any]:
+    result = dict(normalized)
+    reanalyze = dict(result.get("reanalyze") or {})
+    if mode:
+        result["prediction"] = None
+        result["prediction_mode"] = mode
+        reanalyze["prediction_mode"] = mode
+    else:
+        result.pop("prediction_mode", None)
+        reanalyze.pop("prediction_mode", None)
+    result["reanalyze"] = reanalyze
+    return result
+
+
+def _prediction_window(config: dict[str, Any], available: int) -> int:
+    windows: list[int] = []
+    for condition in list(config.get("conditions") or []):
+        try:
+            value = int(condition.get("window") or 0)
+        except (TypeError, ValueError, AttributeError):
+            value = 0
+        if value > 0:
+            windows.append(value)
+    requested = max(windows or [available or 1])
+    return max(1, min(int(available or 1), requested))
+
+
+def _rank_digits(sample: list[int]) -> list[int]:
+    counts = Counter(int(value) for value in sample if 0 <= int(value) <= 9)
+    last_seen = {digit: -1 for digit in range(10)}
+    for index, digit in enumerate(sample):
+        if 0 <= int(digit) <= 9:
+            last_seen[int(digit)] = index
+    return sorted(
+        range(10),
+        key=lambda digit: (-int(counts.get(digit, 0)), -int(last_seen[digit]), digit),
+    )
+
+
+def _resolve_prediction(mode: str, digits: list[int], config: dict[str, Any]) -> int:
+    if not digits:
+        raise ValueError("Dynamic prediction is unavailable until the market has a tick")
+    if mode == "last_digit":
+        return int(digits[-1])
+    window = _prediction_window(config, len(digits))
+    ranked = _rank_digits(digits[-window:])
+    if mode == "second_most_appearing":
+        return int(ranked[1])
+    return int(ranked[0])
+
+
+def _mode_label(mode: str) -> str:
+    if mode == "most_appearing":
+        return "most appearing digit"
+    if mode == "second_most_appearing":
+        return "second most appearing digit"
+    return "last digit"
 
 
 def install_custom_strategy_last_digit_prediction() -> None:
-    """Allow Matches/Differs to use the qualifying tick's last digit as barrier.
-
-    The persisted sentinel is `prediction=None`, which is already accepted by the
-    public request schema. At signal time it is resolved to the exact last digit of
-    the qualifying market tick, so real and virtual contracts receive the same
-    concrete numeric barrier.
-    """
+    """Allow Matches/Differs to resolve one dynamic prediction at signal time."""
 
     global _INSTALLED
     if _INSTALLED:
@@ -47,15 +118,14 @@ def install_custom_strategy_last_digit_prediction() -> None:
     original_describe = custom.describe_custom_strategy
 
     def normalize_custom_strategy(raw: Any) -> dict[str, Any]:
-        if _uses_last_digit(raw):
-            proxy = dict(raw)
-            # Let the canonical validator validate every other field using a legal
-            # temporary digit, then restore the dynamic sentinel.
+        mode = _prediction_mode(raw)
+        if mode:
+            proxy = dict(raw) if isinstance(raw, dict) else {}
             proxy["prediction"] = 0
             normalized = original_normalize(proxy)
-            normalized["prediction"] = None
-            return normalized
-        return original_normalize(raw)
+            return _with_prediction_mode(normalized, mode)
+        normalized = original_normalize(raw)
+        return _with_prediction_mode(normalized, "")
 
     def contract_for_config(
         config: dict[str, Any],
@@ -64,14 +134,15 @@ def install_custom_strategy_last_digit_prediction() -> None:
     ) -> tuple[str, str, str]:
         normalized = normalize_custom_strategy(config)
         trade_type = str(normalized.get("trade_type") or "")
-        if trade_type in _DYNAMIC_TRADE_TYPES and normalized.get("prediction") is None:
+        mode = _prediction_mode(normalized)
+        if trade_type in _DYNAMIC_TRADE_TYPES and mode:
             contract_type = str(custom.TRADE_TYPES[trade_type]["contract_type"])
             prefix = "MATCHES" if trade_type == "matches" else "DIFFERS"
             if last_digit is None:
-                return contract_type, f"{prefix}_LAST_DIGIT", "last_digit"
+                return contract_type, f"{prefix}_{mode.upper()}", mode
             digit = int(last_digit)
             if not 0 <= digit <= 9:
-                raise ValueError("Last-digit prediction must resolve to a digit from 0 to 9")
+                raise ValueError("Dynamic prediction must resolve to a digit from 0 to 9")
             return contract_type, f"{prefix}_{digit}", str(digit)
         return original_contract(normalized)
 
@@ -84,7 +155,8 @@ def install_custom_strategy_last_digit_prediction() -> None:
     ) -> Any:
         normalized = normalize_custom_strategy(config)
         trade_type = str(normalized.get("trade_type") or "")
-        if trade_type not in _DYNAMIC_TRADE_TYPES or normalized.get("prediction") is not None:
+        mode = _prediction_mode(normalized)
+        if trade_type not in _DYNAMIC_TRADE_TYPES or not mode:
             return original_build(bot, symbol=symbol, tick=tick, config=normalized)
 
         market = bot.market_states[str(symbol)]
@@ -93,42 +165,53 @@ def install_custom_strategy_last_digit_prediction() -> None:
             for value in list(getattr(market, "raw_tick_digits", []) or [])
             if 0 <= int(value) <= 9
         ]
-        if not digits:
-            raise ValueError("Last-digit prediction is unavailable until the market has a tick")
-        last_digit = int(digits[-1])
+        resolved_digit = _resolve_prediction(mode, digits, normalized)
 
         resolved = dict(normalized)
-        resolved["prediction"] = last_digit
+        resolved["prediction"] = resolved_digit
+        resolved.pop("prediction_mode", None)
+        resolved_reanalyze = dict(resolved.get("reanalyze") or {})
+        resolved_reanalyze.pop("prediction_mode", None)
+        resolved["reanalyze"] = resolved_reanalyze
+
         signal = original_build(bot, symbol=symbol, tick=tick, config=resolved)
-        contract_type, direction, barrier = contract_for_config(
-            normalized,
-            last_digit=last_digit,
-        )
+        contract_type = str(custom.TRADE_TYPES[trade_type]["contract_type"])
+        prefix = "MATCHES" if trade_type == "matches" else "DIFFERS"
         signal.contract_type = contract_type
-        signal.direction = direction
-        signal.barrier = barrier
-        signal.signal_last_digit = last_digit
+        signal.direction = f"{prefix}_{resolved_digit}"
+        signal.barrier = str(resolved_digit)
+        signal.signal_last_digit = int(digits[-1])
+        signal.dynamic_prediction_mode = mode
+        signal.dynamic_prediction_digit = resolved_digit
         fingerprint = custom.custom_strategy_fingerprint(normalized)
         signal.trigger_name = f"CUSTOM-V2-{fingerprint[:8].upper()}"
         return signal
 
     def describe_custom_strategy(config: dict[str, Any]) -> str:
         normalized = normalize_custom_strategy(config)
-        description = original_describe(normalized)
+        mode = _prediction_mode(normalized)
+        if not mode:
+            return original_describe(normalized)
         trade_type = str(normalized.get("trade_type") or "")
-        if trade_type in _DYNAMIC_TRADE_TYPES and normalized.get("prediction") is None:
-            label = str(custom.TRADE_TYPES[trade_type]["label"])
-            description = description.replace(
-                f"THEN BUY {label} on ",
-                f"THEN BUY {label} last digit on ",
-                1,
-            )
-        return description
+        label = str(custom.TRADE_TYPES[trade_type]["label"])
+        proxy = dict(normalized)
+        proxy["prediction"] = 0
+        proxy.pop("prediction_mode", None)
+        proxy_reanalyze = dict(proxy.get("reanalyze") or {})
+        proxy_reanalyze.pop("prediction_mode", None)
+        proxy["reanalyze"] = proxy_reanalyze
+        description = original_describe(proxy)
+        return description.replace(
+            f"THEN BUY {label} 0 on ",
+            f"THEN BUY {label} {_mode_label(mode)} on ",
+            1,
+        )
 
     custom.normalize_custom_strategy = normalize_custom_strategy
     custom.contract_for_config = contract_for_config
     custom.build_custom_signal = build_custom_signal
     custom.describe_custom_strategy = describe_custom_strategy
     custom.LAST_DIGIT_PREDICTION = None
+    custom.DYNAMIC_MATCH_PREDICTION_MODES = tuple(sorted(_DYNAMIC_MODES))
 
     _INSTALLED = True
