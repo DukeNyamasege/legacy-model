@@ -134,9 +134,9 @@ def _virtual_rows_with_progress(
     payloads: list[dict[str, Any]] = []
     current_required = _current_virtual_requirement(managed_account_id) if managed_account_id else 1
     # Rows produced before progress=x/y was persisted belonged to the historical
-    # AIDR two-win presentation. Do not reinterpret that old history using today's
-    # Custom Strategy hook. New settled rows always persist their own requirement.
-    legacy_required = max(1, int(VIRTUAL_WINS_REQUIRED or 2))
+    # two-win AIDR presentation. This value is historical data semantics, not the
+    # current runtime setting. New settled rows persist their own exact requirement.
+    legacy_required = 2
     for row in ordered:
         outcome = _virtual_outcome(getattr(row, "result", "OPEN"))
         stored_progress = re.search(
