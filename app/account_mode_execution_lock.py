@@ -43,6 +43,7 @@ STARTING_LIKE_STATUSES = {
 AUTO_PROMOTION_STATUSES = {
     "validating",
     "connecting",
+    "watching",
     "active",
     "reconnecting",
     "base_stake_protection",
@@ -102,7 +103,7 @@ def _manual_locking_set_status(original_set_status):
             current_status = str(row.execution_status or "inactive").strip().lower()
             current_lifecycle = account_lifecycle_from_row(row)
 
-            # Worker validation, OAuth refresh, balance refresh, and dashboard
+            # Worker validation, OAuth refresh, balance refresh, dashboard
             # repair jobs must never promote a mode/account that the user stopped
             # or paused. The previous guard required enabled=false, which allowed
             # an impossible mixed row (status=stopped, enabled=true) to be promoted
