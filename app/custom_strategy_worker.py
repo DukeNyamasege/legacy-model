@@ -32,6 +32,7 @@ from app.custom_virtual_contract_parity import install_custom_virtual_contract_p
 from app.deriv_rate_limit_circuit import install_deriv_rate_limit_circuit
 from app.deriv_request_broker import install_deriv_request_broker
 from app.exact_strategy_execution_authority import install_exact_strategy_execution_authority
+from app.execution_stop_reason_authority import install_execution_stop_reason_authority
 from app.final_execution_continuity import install_final_execution_continuity
 from app.manual_martingale_execution_authority import (
     install_manual_martingale_execution_authority,
@@ -128,11 +129,17 @@ async def run_worker() -> None:
     # persisted account lifecycle before scheduling, proposal and BUY.
     install_custom_strategy_manual_stop_guard()
 
-    # Install last: normal runtime/transport faults may never deliberately close a
-    # healthy private WebSocket or convert themselves into an account-level stop.
-    # The account's own ClientSession reconnect loop remains authoritative and is
-    # woken immediately when execution needs it.
+    # Normal runtime/transport faults may never deliberately close a healthy
+    # private WebSocket or convert themselves into an account-level stop. The
+    # account's own ClientSession reconnect loop remains authoritative and is woken
+    # immediately when execution needs it.
     install_final_execution_continuity()
+
+    # Install after every lifecycle/failure wrapper. This is the final invariant:
+    # terminal account states keep the exact initiating reason, generic worker
+    # housekeeping cannot erase it, and a started account with a missing private
+    # session is automatically repaired instead of silently becoming idle.
+    install_execution_stop_reason_authority()
     install_telegram_silence()
 
     bot = RFDir5TradingBot()
@@ -144,7 +151,8 @@ async def run_worker() -> None:
         "explicit_start_pickup=true exact_entry_guard=true manual_stop_buy_guard=true "
         "result_routing=account_outcome_debt "
         "martingale_spread=1_to_3_successful_parts "
-        "runtime_fault_policy=soft_reconnect_no_forced_disconnect"
+        "runtime_fault_policy=soft_reconnect_no_forced_disconnect "
+        "stop_reason_authority=durable execution_liveness_watchdog=true"
     )
     loop = asyncio.get_running_loop()
 
