@@ -18,7 +18,7 @@
   <link rel="stylesheet" href="./account-bound-risk-notice.css">
   <link rel="stylesheet" href="./result-based-strategy.css">
   <link rel="stylesheet" href="./result-ui-fixes.css">
-  <link rel="stylesheet" href="./prelogin-landing-v2.css?v=20260814-1">
+  <link rel="stylesheet" href="./prelogin-landing-v2.css?v=20260814-2">
   <style>
     html,
     body {
@@ -27,6 +27,15 @@
       background: #03070d;
       color: #f8fafc;
       font-family: "Space Grotesk", "Manrope", "Segoe UI", sans-serif;
+    }
+
+    /*
+     * The legacy dashboard renderer still has a compatibility loginView().
+     * Never allow that old card to reach first paint. The pre-login landing
+     * authority is loaded before dashboard-v2.js and replaces it before paint.
+     */
+    .public-builder {
+      display: none !important;
     }
 
     #foa-bootstrap {
@@ -79,6 +88,8 @@
     </div>
   </div>
   <noscript>This dashboard requires JavaScript.</noscript>
+  <!-- Install the pre-login observer before dashboard-v2 can emit compatibility markup. -->
+  <script src="./prelogin-landing-v2.js?v=20260814-2" defer></script>
   <script src="/ui/dashboard-v2.js" defer></script>
   <script src="/ui/dashboard-actions-v2.js" defer></script>
   <script src="./mobile-menu-exit-spot.js" defer></script>
@@ -99,7 +110,6 @@
   <script src="./stopped-ui-authority.js?v=20260813-2" defer></script>
   <script src="./strategy-edit-authority.js?v=20260813-3" defer></script>
   <script src="./execution-status-banner.js?v=20260813-1" defer></script>
-  <script src="./prelogin-landing-v2.js?v=20260814-1" defer></script>
   <script>
     // A connected private WebSocket is transport readiness, not a separate
     // strategy state. Keep the Custom Strategy status line on the scanner state
