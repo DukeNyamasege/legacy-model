@@ -97,7 +97,7 @@
     const status = String(lifecycle.execution_status || "").toLowerCase();
     const meStatus = String(me.execution_status || "").toLowerCase();
     if (!["take_profit", "stop_loss"].includes(status)) return false;
-    if (meStatus && meStatus !== status) return false;
+    if (meStatus !== status) return false;
     if (Boolean(me.enabled) || Boolean(lifecycle.enabled)) return false;
     if (lifecycle.risk_limit_is_hard_stop !== true) return false;
 
@@ -255,5 +255,5 @@
     ? document.addEventListener("DOMContentLoaded", () => window.setTimeout(poll, 350), { once: true })
     : window.setTimeout(poll, 350);
 
-  window.FOA_ACCOUNT_BOUND_RISK_NOTICE_VERSION = "20260813-2";
+  window.FOA_ACCOUNT_BOUND_RISK_NOTICE_VERSION = "20260814-3";
 })();
