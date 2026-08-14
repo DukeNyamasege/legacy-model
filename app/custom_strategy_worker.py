@@ -22,6 +22,9 @@ install_custom_strategy_last_digit_prediction()
 from app.custom_execution_consistency_authority import (
     install_custom_execution_consistency_authority,
 )
+from app.custom_split_equal_spread_authority import (
+    install_custom_split_equal_spread_authority,
+)
 from app.custom_split_recovery_authority import install_custom_split_recovery_authority
 from app.custom_strategy_connection_stampede_guard import (
     install_custom_strategy_connection_stampede_guard,
@@ -163,12 +166,11 @@ async def run_worker() -> None:
     # loops own their own backoff and sibling accounts are never globally rebuilt.
     install_custom_strategy_connection_stampede_guard()
 
-    # FINAL CUSTOM EXECUTION AUTHORITY. Transport deadlines mean reconnect and
-    # provider reconciliation, never Auto Trading Stop. Multiplier Martingale is
-    # previous actual stake x multiplier only; exact loss-vs-payout sizing belongs
-    # exclusively to configured split recovery. Virtual Hook state is persisted
-    # and pushed to the dashboard immediately on entry and on every $0 mirror.
+    # Transport/Virtual Hook/Multiplier consistency installs first. Split Recovery
+    # is then wrapped one final time so the configured spread width (1/2/3), not
+    # the number of remaining successful legs, is always the risk divisor.
     install_custom_execution_consistency_authority()
+    install_custom_split_equal_spread_authority()
     install_telegram_silence()
 
     bot = RFDir5TradingBot()
@@ -181,7 +183,8 @@ async def run_worker() -> None:
         "history_startup=parallel_bounded exact_entry_guard=true manual_stop_buy_guard=true "
         "result_routing=account_outcome_debt "
         "martingale_multiplier=previous_actual_stake_times_multiplier "
-        "martingale_split=exact_debt_by_payout_1_to_3_successful_parts hidden_buffer=false "
+        "martingale_split=equal_loss_pool_by_configured_split_count "
+        "split_payout_sized=true split_rebase_after_actual_loss=true hidden_buffer=false "
         "virtual_hook=exact_zero_stake_mirror persistent_open_lock=true immediate_ui=true "
         "virtual_void_policy=retry_without_real_unlock same_tick_reentry=false "
         "runtime_fault_policy=reconnect_reconcile_never_stop "
