@@ -43,8 +43,8 @@ class ExecutionStopReasonAuthorityTests(unittest.TestCase):
         )
         self.assertIn("def _write_terminal_state", source)
         self.assertIn("row.enabled = False", source)
-        self.assertIn('row.execution_status = normalized', source)
-        self.assertIn('row.execution_status_reason = safe_reason', source)
+        self.assertIn("row.execution_status = normalized", source)
+        self.assertIn("row.execution_status_reason = safe_reason", source)
         self.assertIn("ACCOUNT_AUTOTRADE_STOP_RECORDED", source)
         self.assertIn("_write_terminal_state(", source)
         self.assertIn('"error",', source)
@@ -62,7 +62,7 @@ class ExecutionStopReasonAuthorityTests(unittest.TestCase):
         self.assertIn("ACCOUNT_EXECUTION_LIVENESS_REPAIR", source)
         self.assertIn("lifecycle_stop=false auto_retry=true", source)
 
-    def test_dashboard_surfaces_reasoned_terminal_states(self) -> None:
+    def test_dashboard_surfaces_reasoned_terminal_states_without_observer_loop(self) -> None:
         source = (ROOT / "dashboard" / "execution-status-banner.js").read_text(
             encoding="utf-8"
         )
@@ -74,7 +74,10 @@ class ExecutionStopReasonAuthorityTests(unittest.TestCase):
         self.assertIn('box.setAttribute("aria-live", "assertive")', source)
         self.assertIn("Take profit stop", source)
         self.assertIn("Stop loss stop", source)
-        self.assertIn("/execution-status-banner.js?v=20260814-1", index)
+        self.assertIn("function scheduleUpdate()", source)
+        self.assertIn("requestAnimationFrame(() =>", source)
+        self.assertIn("if (box.textContent !== nextText) box.textContent = nextText", source)
+        self.assertIn("/execution-status-banner.js?v=20260814-2", index)
 
 
 if __name__ == "__main__":
