@@ -16,14 +16,16 @@ _STARTUP_FAILURE_WINDOW_SECONDS = 90.0
 
 
 def _represented_managed_ids(bot: RFDir5TradingBot) -> set[int]:
+    """Return accounts that have an actual private-session runtime object.
+
+    `valid_clients` alone is intentionally not enough. Validation can add an
+    account to that list before `_ensure_sessions_for_valid_clients()` has created
+    its ClientSession. Treating that intermediate list membership as ready would
+    allow the global revision fast-path to skip the very session creation Start
+    is waiting for.
+    """
+
     represented: set[int] = set()
-    for token, _account_id in list(getattr(bot, "valid_clients", []) or []):
-        try:
-            managed_id = bot._managed_account_id_for_token(token)
-            if managed_id is not None:
-                represented.add(int(managed_id))
-        except Exception:
-            continue
     for session in list(getattr(bot, "sessions", {}).values()):
         try:
             managed_id = getattr(session, "managed_account_id", None)
@@ -119,7 +121,7 @@ def install_custom_strategy_startup_authority() -> None:
     whether account membership changed. That optimization is insufficient for a
     per-account Start/Stop product: a newly started row can be older than the
     current global maximum and therefore fail to trigger a reload. An enabled
-    startup-state account that is absent from valid_clients/sessions is now an
+    startup-state account without a concrete private ClientSession is now an
     independent refresh signal and bypasses the global revision fast-path.
 
     Startup validation failures are also bounded. The UI may show a retry state
