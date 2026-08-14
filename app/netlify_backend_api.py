@@ -10,8 +10,12 @@ backend-only surface are then installed last.
 from app.api_v3 import app
 from app.backend_only_surface import install_backend_only_surface
 from app.netlify_realtime_gateway import install_netlify_realtime_gateway
+from app.seamless_account_switch import install_seamless_account_switch
 
 
+# Install after api_v3 so this wrapper calls the final account-switch and /me
+# authorities rather than an older compatibility route.
+install_seamless_account_switch(app)
 install_netlify_realtime_gateway(app)
 install_backend_only_surface(app)
 
