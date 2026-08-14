@@ -6,8 +6,79 @@
   <meta name="color-scheme" content="dark light">
   <meta name="theme-color" content="#071120">
   <meta name="robots" content="noindex,nofollow,noarchive,nosnippet">
+  <meta name="referrer" content="no-referrer">
   <meta name="api-base-url" content="">
   <title>Derivadmin · Strategy Automation</title>
+  <script>
+    /*
+     * Deriv may return an OAuth authorization response to the site root when an
+     * older registered redirect is still in circulation. Never leave code/state
+     * in the visible address bar or browser history while the static dashboard
+     * boots. Copy only the callback fields into memory, clean the current history
+     * entry immediately, and hand the response to the same-origin /oauth proxy.
+     * The backend performs the PKCE/state checks, creates the HttpOnly session,
+     * and already responds with a 303 redirect to the clean root.
+     */
+    (function () {
+      var current;
+      try {
+        current = new URL(window.location.href);
+      } catch (_) {
+        return;
+      }
+
+      var isRootCallback = current.pathname === "/" && (
+        current.searchParams.has("code") || current.searchParams.has("error")
+      );
+      if (!isRootCallback) return;
+
+      var callback = new URL("/oauth/callback", current.origin);
+      ["code", "state", "error", "error_description"].forEach(function (key) {
+        var value = current.searchParams.get(key);
+        if (value) callback.searchParams.set(key, value);
+      });
+
+      document.documentElement.dataset.oauthCallbackProcessing = "true";
+      window.__FOA_OAUTH_CALLBACK_PENDING__ = true;
+
+      /* Replace, rather than push, so the sensitive callback URL is not kept in
+         the user's Back-button history. */
+      try {
+        window.history.replaceState(window.history.state, "", "/");
+      } catch (_) {}
+
+      window.fetch(callback.pathname + callback.search, {
+        method: "GET",
+        credentials: "include",
+        cache: "no-store",
+        redirect: "follow",
+        referrerPolicy: "no-referrer",
+        headers: { "Accept": "text/html,application/xhtml+xml" }
+      }).then(function (response) {
+        var finalUrl;
+        try {
+          finalUrl = new URL(response.url, current.origin);
+        } catch (_) {
+          finalUrl = null;
+        }
+        var oauthError = finalUrl && finalUrl.searchParams.get("oauth_error");
+        if (oauthError) {
+          try {
+            window.sessionStorage.setItem("foa-oauth-error-v1", String(oauthError).slice(0, 700));
+          } catch (_) {}
+          window.location.replace("/");
+          return;
+        }
+        if (!response.ok) throw new Error("OAuth callback request failed");
+        window.location.replace("/");
+      }).catch(function () {
+        /* Network/proxy fallback: use the normal backend callback navigation.
+           location.replace prevents this temporary URL becoming a history entry,
+           and the backend immediately redirects back to '/'. */
+        window.location.replace(callback.pathname + callback.search);
+      });
+    })();
+  </script>
   <link rel="stylesheet" href="/ui/dashboard-v2.css">
   <link rel="stylesheet" href="./mobile-menu-exit-spot.css">
   <link rel="stylesheet" href="./mobile-topbar-compact.css">
@@ -27,6 +98,13 @@
       background: #03070d;
       color: #f8fafc;
       font-family: "Space Grotesk", "Manrope", "Segoe UI", sans-serif;
+    }
+
+    /* While an OAuth return is being exchanged, keep only the bootstrap visible.
+       This avoids rendering either the public landing or dashboard under a
+       callback that is still being finalized. */
+    html[data-oauth-callback-processing="true"] #foa-simple-app {
+      display: none !important;
     }
 
     /*
