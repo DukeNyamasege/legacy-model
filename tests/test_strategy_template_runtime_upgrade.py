@@ -48,6 +48,23 @@ class StrategyTemplateRuntimeUpgradeTests(unittest.TestCase):
         self.assertNotIn("localStorage.clear", source)
         self.assertNotIn("localStorage.removeItem(STORAGE_KEY)", source)
 
+    def test_template_picker_stays_mounted_while_user_selects(self) -> None:
+        source = (ROOT / "dashboard" / "strategy-template-library.js").read_text(
+            encoding="utf-8"
+        )
+        build = (ROOT / "scripts" / "build-netlify.mjs").read_text(encoding="utf-8")
+        loader = (ROOT / "dashboard" / "strategy-edit-authority.js").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("function syncLibraryState(section)", source)
+        self.assertIn("function refreshTemplateOptions(section)", source)
+        self.assertIn("if (current) {", source)
+        self.assertIn("syncLibraryState(current);", source)
+        self.assertNotIn("current?.remove();", source)
+        self.assertNotIn("scheduleEnhance();\n    });\n    q(\"#strategy-template-load\"", source)
+        self.assertIn("/strategy-template-library.js?v=20260814-2", build)
+        self.assertIn("/strategy-template-library.js?v=20260814-2", loader)
+
     def test_split_recovery_draft_is_not_overwritten_by_silent_get(self) -> None:
         source = (ROOT / "dashboard" / "result-based-strategy.js").read_text(
             encoding="utf-8"
