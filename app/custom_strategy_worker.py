@@ -29,6 +29,7 @@ from app.custom_strategy_runtime_lifecycle import install_custom_strategy_runtim
 from app.custom_strategy_settlement import install_custom_strategy_settlement
 from app.custom_strategy_startup_authority import install_custom_strategy_startup_authority
 from app.custom_virtual_contract_parity import install_custom_virtual_contract_parity
+from app.custom_virtual_integrity_authority import install_custom_virtual_integrity_authority
 from app.deriv_rate_limit_circuit import install_deriv_rate_limit_circuit
 from app.deriv_request_broker import install_deriv_request_broker
 from app.exact_strategy_execution_authority import install_exact_strategy_execution_authority
@@ -90,8 +91,8 @@ async def run_worker() -> None:
     install_custom_strategy_current_runtime_fix()
 
     # Exact-entry authority is installed after the current private-session fix so
-    # it wraps that same proposal+BUY path. It re-validates every condition and
-    # skips stale trigger ticks instead of purchasing one or more digits late.
+    # it wraps that same proposal+BUY path. Latched-entry compatibility may relax
+    # purchase age, but the signal remains the exact saved strategy contract.
     install_exact_strategy_execution_authority()
     install_custom_strategy_last_digit_runtime()
     install_custom_strategy_runtime_lifecycle()
@@ -124,9 +125,16 @@ async def run_worker() -> None:
     # determines when recovery routing begins and ends.
     install_custom_strategy_result_router()
 
+    # Custom Virtual Hook is a normal qualified Custom Strategy trade with zero
+    # financial stake. Install after result routing so primary and after-loss
+    # routes share the same parity. PostgreSQL OPEN rows block real execution,
+    # missed infrastructure samples are VOID+RETRY (never fake CANCELLED), and the
+    # user's configured virtual-win exit count is authoritative over legacy AIDR.
+    install_custom_virtual_integrity_authority()
+
     # Manual Stop is the final purchase authority. It is installed after result
-    # routing so both primary and after-loss routes are checked against the latest
-    # persisted account lifecycle before scheduling, proposal and BUY.
+    # routing and virtual integrity so both primary and after-loss routes are
+    # checked against the latest persisted account lifecycle before BUY.
     install_custom_strategy_manual_stop_guard()
 
     # Normal runtime/transport faults may never deliberately close a healthy
@@ -151,6 +159,8 @@ async def run_worker() -> None:
         "explicit_start_pickup=true exact_entry_guard=true manual_stop_buy_guard=true "
         "result_routing=account_outcome_debt "
         "martingale_spread=1_to_3_successful_parts "
+        "virtual_hook=exact_zero_stake_mirror persistent_open_lock=true "
+        "virtual_void_policy=retry_without_real_unlock same_tick_reentry=false "
         "runtime_fault_policy=soft_reconnect_no_forced_disconnect "
         "stop_reason_authority=durable execution_liveness_watchdog=true"
     )
