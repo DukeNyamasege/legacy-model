@@ -54,7 +54,8 @@ html = html
   .replaceAll('src="/ui/dashboard-actions-v2.js"', 'src="/dashboard-actions-v2.js"')
   .replaceAll('src="./result-based-strategy.js"', 'src="/result-based-strategy.js?v=20260814-2"')
   .replaceAll('src="./platform-default-strategy.js?v=20260813-1"', 'src="/platform-default-strategy.js?v=20260814-2"')
-  .replaceAll('src="./strategy-edit-authority.js?v=20260813-3"', 'src="/strategy-edit-authority.js?v=20260814-2"');
+  .replaceAll('src="./strategy-edit-authority.js?v=20260813-3"', 'src="/strategy-edit-authority.js?v=20260814-3"')
+  .replaceAll('src="./strategy-edit-authority.js?v=20260814-2"', 'src="/strategy-edit-authority.js?v=20260814-3"');
 
 const boundaryScript = '  <script src="/netlify-api-boundary.js"></script>\n';
 if (!html.includes('/netlify-api-boundary.js')) {
@@ -131,7 +132,7 @@ if (!html.includes('/result-ui-fixes.js')) {
 if (!html.includes('/strategy-template-library.js')) {
   html = html.replace(
     "</body>",
-    '  <script src="/strategy-template-library.js?v=20260814-1" defer></script>\n</body>',
+    '  <script src="/strategy-template-library.js?v=20260814-2" defer></script>\n</body>',
   );
 }
 if (!html.includes('/runtime-ux-authority.js')) {
