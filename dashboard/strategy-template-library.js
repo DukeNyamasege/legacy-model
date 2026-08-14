@@ -4,7 +4,7 @@
   if (window.__FOA_STRATEGY_TEMPLATE_LIBRARY__) return;
   window.__FOA_STRATEGY_TEMPLATE_LIBRARY__ = true;
 
-  const VERSION = "20260814-template-library-v1";
+  const VERSION = "20260814-template-library-v2";
   const STORAGE_KEY = "foa-user-strategy-templates-v1";
   const DRAFT_KEY = "foa-builder-draft-v2";
   const DEFAULT_ID = "golden-over1-recovery-over4";
@@ -165,6 +165,7 @@
       "under7-combined-alignment",
       "Under 7 Combined Alignment",
       "combined",
+      "under",
       "Last 3 digits <= 6 AND Under 7 > 72% in 500 ticks · trade Under 7.",
       {
         lastRule: { window: 3, operator: "<=", value: 6 },
@@ -201,6 +202,7 @@
       "even-combined-balance",
       "Even Combined Balance",
       "combined",
+      "even",
       "Last 2 digits <= 7 AND Even > 53% in 500 digits · trade Even.",
       {
         lastRule: { window: 2, operator: "<=", value: 7 },
@@ -634,7 +636,6 @@
     rows.push(item);
     writeLocalTemplates(rows.slice(-50));
     selectedId = item.id;
-    scheduleEnhance();
     return item;
   }
 
@@ -645,7 +646,6 @@
     if (!window.confirm(`Delete local template “${target.name}”?`)) return false;
     writeLocalTemplates(rows.filter((item) => item.id !== selectedId));
     selectedId = DEFAULT_ID;
-    scheduleEnhance();
     return true;
   }
 
@@ -662,11 +662,50 @@
     return built + mine;
   }
 
-  function libraryHtml() {
-    const template = selectedTemplate();
-    const isLocal = !template.builtIn;
+  function templateDisplay(template) {
     const modeLabel = template.analysis === "last_digit" ? "Last Digit" : template.analysis[0].toUpperCase() + template.analysis.slice(1);
     const recovery = template.result?.recoveryMode === "split" ? `Spread x${template.result?.splitCount || 2}` : "Multiplier";
+    return {
+      title: template.name,
+      meta: `${modeLabel} · ${String(template.side || "").toUpperCase()} · ${recovery}`,
+      summary: template.summary,
+      isLocal: !template.builtIn,
+    };
+  }
+
+  function setText(node, value) {
+    if (node && node.textContent !== String(value ?? "")) node.textContent = String(value ?? "");
+  }
+
+  function syncLibraryState(section) {
+    if (!section) return;
+    const template = selectedTemplate();
+    const display = templateDisplay(template);
+    const select = q("#strategy-template-select", section);
+    if (select && select.value !== template.id) select.value = template.id;
+    setText(q(".strategy-template-preview b", section), display.title);
+    setText(q(".strategy-template-preview span", section), display.meta);
+    setText(q(".strategy-template-preview p", section), display.summary);
+    const deleteButton = q("#strategy-template-delete", section);
+    if (deleteButton) {
+      deleteButton.hidden = !display.isLocal;
+      deleteButton.disabled = !display.isLocal;
+    }
+  }
+
+  function refreshTemplateOptions(section) {
+    if (!section) return;
+    const select = q("#strategy-template-select", section);
+    if (select) {
+      select.innerHTML = templateOptions();
+      select.value = selectedTemplate().id;
+    }
+    syncLibraryState(section);
+  }
+
+  function libraryHtml() {
+    const template = selectedTemplate();
+    const display = templateDisplay(template);
     return `<section class="strategy-template-library" id="strategy-template-library">
       <div class="strategy-template-head">
         <div><span class="eyebrow">Strategy Templates</span><h2>Load. Customize. Trade.</h2><p>24 built-in presets cover Percentage, Last Digit and Combined analysis across every supported trade type. Presets are starting logic, not profit guarantees.</p></div>
@@ -675,11 +714,11 @@
       <div class="strategy-template-picker">
         <label><span>Choose template</span><select id="strategy-template-select">${templateOptions()}</select></label>
         <button type="button" class="template-load-button" id="strategy-template-load">Load Template</button>
-        ${isLocal ? `<button type="button" class="template-delete-button" id="strategy-template-delete">Delete</button>` : ""}
+        <button type="button" class="template-delete-button" id="strategy-template-delete" ${display.isLocal ? "" : "hidden disabled"}>Delete</button>
       </div>
       <div class="strategy-template-preview">
-        <div><b>${template.name}</b><span>${modeLabel} · ${String(template.side || "").toUpperCase()} · ${recovery}</span></div>
-        <p>${template.summary}</p>
+        <div><b>${display.title}</b><span>${display.meta}</span></div>
+        <p>${display.summary}</p>
       </div>
       <div class="strategy-template-save">
         <div><strong>My Templates</strong><small>Customize any strategy, give it a name, and save the current setup locally on this device. Builder Reset does not remove saved templates.</small></div>
@@ -692,7 +731,9 @@
   function bindLibrary(section) {
     q("#strategy-template-select", section)?.addEventListener("change", (event) => {
       selectedId = String(event.currentTarget.value || DEFAULT_ID);
-      scheduleEnhance();
+      syncLibraryState(section);
+      const message = q("#strategy-template-message", section);
+      if (message) message.textContent = `${selectedTemplate().name} selected. Press Load Template to place it into the editable builder.`;
     });
     q("#strategy-template-load", section)?.addEventListener("click", () => applyTemplate(selectedTemplate()));
     q("#strategy-template-save", section)?.addEventListener("click", () => {
@@ -705,9 +746,15 @@
         return;
       }
       if (input) input.value = "";
+      refreshTemplateOptions(section);
       if (message) message.textContent = `${item.name} saved locally on this device.`;
     });
-    q("#strategy-template-delete", section)?.addEventListener("click", () => deleteSelectedLocal());
+    q("#strategy-template-delete", section)?.addEventListener("click", () => {
+      if (!deleteSelectedLocal()) return;
+      refreshTemplateOptions(section);
+      const message = q("#strategy-template-message", section);
+      if (message) message.textContent = "Local template deleted. The Golden Bot preset is selected.";
+    });
   }
 
   function enhance() {
@@ -715,13 +762,16 @@
     const card = q(".strategy-builder-card");
     if (!card) return;
     const current = q("#strategy-template-library", card);
-    const editingName = document.activeElement?.id === "strategy-template-name";
-    if (current && editingName) return;
-    current?.remove();
+    if (current) {
+      syncLibraryState(current);
+      return;
+    }
     const head = q(".builder-card-head", card);
     if (!head) return;
     head.insertAdjacentHTML("afterend", libraryHtml());
-    bindLibrary(q("#strategy-template-library", card));
+    const section = q("#strategy-template-library", card);
+    bindLibrary(section);
+    syncLibraryState(section);
   }
 
   function scheduleEnhance() {
