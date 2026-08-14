@@ -15,11 +15,13 @@ export FRONTEND_ORIGINS="http://127.0.0.1:8080,http://localhost:8080,https://der
 # malformed script must fail the same release gate that validates the worker.
 node --check dashboard/execution-status-banner.js
 node --check dashboard/builder-edit-stability.js
+node --check dashboard/runtime-ux-authority.js
 
 exec python -m unittest -q \
   tests.test_execution_stop_reason_authority \
   tests.test_builder_edit_stability \
   tests.test_custom_virtual_integrity_authority \
+  tests.test_custom_strategy_instant_start \
   tests.test_personal_token_sync \
   tests.test_multi_strategy \
   tests.test_multi_strategy_concurrency \
