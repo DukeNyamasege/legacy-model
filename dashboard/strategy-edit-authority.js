@@ -6,7 +6,7 @@
 
   // dashboard-v2.js remains the canonical builder field authority. This loader
   // adds the template library and final runtime UX without re-owning those fields.
-  window.FOA_STRATEGY_EDIT_AUTHORITY_VERSION = "20260814-template-runtime-loader-v2";
+  window.FOA_STRATEGY_EDIT_AUTHORITY_VERSION = "20260814-template-runtime-loader-v3";
   window.FOA_CANONICAL_BUILDER_EDIT_AUTHORITY = "dashboard-v2.js";
 
   function loadStyle(href, id) {
@@ -29,6 +29,6 @@
 
   loadStyle("/strategy-template-library.css?v=20260814-1", "foa-template-library-css");
   loadStyle("/runtime-ux-authority.css?v=20260814-1", "foa-runtime-ux-css");
-  loadScript("/strategy-template-library.js?v=20260814-1", "foa-template-library-js");
+  loadScript("/strategy-template-library.js?v=20260814-2", "foa-template-library-js");
   loadScript("/runtime-ux-authority.js?v=20260814-2", "foa-runtime-ux-js");
 })();
