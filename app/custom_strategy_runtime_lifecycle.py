@@ -108,6 +108,24 @@ def install_custom_strategy_runtime_lifecycle() -> None:
             ",".join(self.symbols),
         )
 
+        # Public market watching and private financial execution readiness are two
+        # different states. Once live subscriptions exist, do not leave a trader on
+        # a generic six-minute-looking STARTING banner merely because their account
+        # OTP/private stream is still completing in the background. BUY remains
+        # impossible until AccountExecutionSession.prepare() verifies that stream.
+        for token, _account_id in list(getattr(self, "valid_clients", []) or []):
+            managed_id = self._managed_account_id_for_token(token)
+            if managed_id is None:
+                continue
+            private = getattr(self, "sessions", {}).get(token)
+            if private is not None and bool(getattr(private, "is_connected", False)):
+                continue
+            self._set_account_execution_status(
+                int(managed_id),
+                "watching",
+                "Watching market now; authenticated execution stream is connecting in background",
+            )
+
     RFDir5TradingBot._refresh_runtime_accounts_if_needed = refresh_with_teardown
     RFDir5TradingBot._on_market_subscriptions_ready = custom_subscriptions_ready
     RFDir5TradingBot._on_public_history = _custom_history
