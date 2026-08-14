@@ -7,7 +7,7 @@
   // dashboard-v2.js remains the canonical builder field authority. This loader
   // adds the template library, runtime UX and final edit-stability protection
   // without re-owning those canonical Builder fields.
-  window.FOA_STRATEGY_EDIT_AUTHORITY_VERSION = "20260814-template-runtime-loader-v5";
+  window.FOA_STRATEGY_EDIT_AUTHORITY_VERSION = "20260814-template-runtime-loader-v6";
   window.FOA_CANONICAL_BUILDER_EDIT_AUTHORITY = "dashboard-v2.js";
 
   function loadStyle(href, id) {
@@ -32,5 +32,5 @@
   loadStyle("/runtime-ux-authority.css?v=20260814-1", "foa-runtime-ux-css");
   loadScript("/strategy-template-library.js?v=20260814-2", "foa-template-library-js");
   loadScript("/runtime-ux-authority.js?v=20260814-2", "foa-runtime-ux-js");
-  loadScript("/builder-edit-stability.js?v=20260814-2", "foa-builder-edit-stability-js");
+  loadScript("/builder-edit-stability.js?v=20260814-3", "foa-builder-edit-stability-js");
 })();
