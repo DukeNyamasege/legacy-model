@@ -20,6 +20,9 @@ install_custom_strategy_comparator_extension()
 install_custom_strategy_last_digit_prediction()
 
 from app.custom_split_recovery_authority import install_custom_split_recovery_authority
+from app.custom_strategy_connection_stampede_guard import (
+    install_custom_strategy_connection_stampede_guard,
+)
 from app.custom_strategy_current_runtime_fix import install_custom_strategy_current_runtime_fix
 from app.custom_strategy_direct_runtime import install_custom_strategy_direct_runtime
 from app.custom_strategy_instant_start import install_custom_strategy_instant_start
@@ -150,11 +153,14 @@ async def run_worker() -> None:
     # session is automatically repaired instead of silently becoming idle.
     install_execution_stop_reason_authority()
 
-    # FINAL STARTUP PERFORMANCE AUTHORITY. A Start click must never sit behind a
-    # sequential provider account-list sweep or N serial market-history waits.
-    # Persisted account identity is admitted immediately, public history is batched,
-    # and financial execution remains gated by the authenticated private WebSocket.
+    # Startup no longer waits for REST account discovery or serial history loads.
     install_custom_strategy_instant_start()
+
+    # FINAL CONNECTION AUTHORITY. A fresh Start admits/wakes only that account.
+    # Existing private reconnect loops own their own backoff and the watchdog may
+    # observe them but never wake every disconnected sibling or call global
+    # validate_accounts() as a repair mechanism.
+    install_custom_strategy_connection_stampede_guard()
     install_telegram_silence()
 
     bot = RFDir5TradingBot()
@@ -170,7 +176,8 @@ async def run_worker() -> None:
         "virtual_hook=exact_zero_stake_mirror persistent_open_lock=true "
         "virtual_void_policy=retry_without_real_unlock same_tick_reentry=false "
         "runtime_fault_policy=soft_reconnect_no_forced_disconnect "
-        "stop_reason_authority=durable execution_liveness_watchdog=true"
+        "stop_reason_authority=durable execution_liveness_watchdog=true "
+        "connection_repair=targeted_singleflight sibling_wake=false global_revalidation=false"
     )
     loop = asyncio.get_running_loop()
 
