@@ -6,12 +6,14 @@ import time
 from typing import Any
 
 import enhanced_bot as base_runtime
+from app import custom_strategy_direct_runtime as direct_runtime
 from app.account_mode_execution_lock import (
     STARTING_LIKE_STATUSES,
     account_allows_new_execution,
     account_lifecycle_from_row,
 )
 from app.account_scoped_websocket_runtime import _promote_embedded_oauth_payload
+from app.custom_strategy_v1 import MAX_WINDOW
 from app.rf_dir5_bot import RFDir5TradingBot
 from app.token_store import decrypt_auth_payload
 from enhanced_bot import (
@@ -25,6 +27,7 @@ from enhanced_bot import (
 _INSTALLED = False
 _ORIGINAL_VALIDATE: Any = None
 _ORIGINAL_FETCH_HISTORY: Any = None
+_ORIGINAL_HISTORY_COUNT: Any = None
 _ORIGINAL_REST_REQUEST: Any = None
 
 # Startup must never inherit aiohttp's multi-minute default timeout. These are
@@ -154,6 +157,40 @@ def _fast_runtime_accounts(bot: RFDir5TradingBot) -> tuple[list[str], dict[str, 
     return tokens, profiles
 
 
+def _select_saved_strategy_markets(
+    bot: RFDir5TradingBot,
+    profiles: dict[str, dict[str, Any]],
+) -> None:
+    """Select saved Custom Strategy markets before the private socket is ready."""
+
+    managed_ids: set[int] = set()
+    for profile in profiles.values():
+        try:
+            managed_ids.add(int(profile.get("managed_account_id")))
+        except (TypeError, ValueError):
+            continue
+    if not managed_ids:
+        return
+    try:
+        configs = direct_runtime._load_configs_for_ids(bot, managed_ids)
+        requested = direct_runtime._required_symbols(list(configs.values()))
+    except Exception as exc:
+        bot.logger.warning(
+            "CUSTOM_INSTANT_MARKET_SELECTION_DEFERRED error_type=%s",
+            type(exc).__name__,
+        )
+        return
+    if not requested:
+        return
+    bot.symbols = list(requested)
+    bot.symbol = str(requested[0])
+    bot.logger.info(
+        "CUSTOM_INSTANT_MARKETS_READY count=%s symbols=%s private_session_required_for_buy=true",
+        len(requested),
+        ",".join(requested),
+    )
+
+
 async def _instant_validate_accounts(self: RFDir5TradingBot) -> None:
     """Admit saved accounts immediately and let private OTP prove execution access."""
 
@@ -167,6 +204,7 @@ async def _instant_validate_accounts(self: RFDir5TradingBot) -> None:
         for token in tokens
         if str(profiles[token].get("account_id") or "").strip()
     ]
+    _select_saved_strategy_markets(self, profiles)
     self._sync_clients_with_runtime_accounts()
 
     if self.valid_clients:
@@ -182,6 +220,25 @@ async def _instant_validate_accounts(self: RFDir5TradingBot) -> None:
         len(self.valid_clients),
         (time.monotonic() - started) * 1000.0,
     )
+
+
+def _instant_history_count(self: RFDir5TradingBot) -> int:
+    """Warm strategy history even while the private execution socket is connecting."""
+
+    original = _ORIGINAL_HISTORY_COUNT
+    try:
+        required = int(original(self)) if original is not None else 0
+    except Exception:
+        required = 0
+    if required > 0:
+        return min(int(MAX_WINDOW), required)
+    # At first Start, _custom_direct_accounts is intentionally empty until the
+    # private WebSocket authenticates. Fetch the bounded maximum once so a 100,
+    # 500 or 1000-tick saved strategy is immediately usable when that socket comes
+    # online rather than waiting to rebuild its window from future ticks.
+    if list(getattr(self, "valid_clients", []) or []):
+        return int(MAX_WINDOW)
+    return 0
 
 
 async def _bounded_startup_rest_request(
@@ -233,6 +290,17 @@ async def _bounded_startup_rest_request(
         }
 
 
+def _clear_deferred_history(bot: RFDir5TradingBot, symbol: str) -> None:
+    """Never mix stale pre-connection digits into a deferred live strategy window."""
+
+    market = getattr(bot, "market_states", {}).get(str(symbol))
+    if market is None:
+        return
+    market.ticks_history.clear()
+    market.live_ticks_history.clear()
+    market.raw_tick_digits.clear()
+
+
 async def _fast_fetch_tick_history(self: PublicMarketDataClient) -> None:
     """Warm all strategy markets concurrently under one startup time budget.
 
@@ -248,6 +316,7 @@ async def _fast_fetch_tick_history(self: PublicMarketDataClient) -> None:
         return
 
     pending: dict[int, str] = {}
+    deferred: set[str] = set()
     for symbol in list(self.bot.symbols):
         req_id = self.next_req_id
         self.next_req_id += 1
@@ -286,6 +355,7 @@ async def _fast_fetch_tick_history(self: PublicMarketDataClient) -> None:
         if symbol is None:
             continue
         if "error" in response:
+            deferred.add(symbol)
             self.bot.logger.warning(
                 "CUSTOM_FAST_HISTORY_DEFERRED symbol=%s error=%s",
                 symbol,
@@ -297,6 +367,7 @@ async def _fast_fetch_tick_history(self: PublicMarketDataClient) -> None:
         prices = list(history.get("prices") or [])
         times = list(history.get("times") or [])
         if len(prices) != len(times) or not prices:
+            deferred.add(symbol)
             self.bot.logger.warning(
                 "CUSTOM_FAST_HISTORY_DEFERRED symbol=%s prices=%s times=%s",
                 symbol,
@@ -318,19 +389,22 @@ async def _fast_fetch_tick_history(self: PublicMarketDataClient) -> None:
             len(prices),
         )
 
-    for symbol in pending.values():
+    deferred.update(pending.values())
+    for symbol in sorted(deferred):
+        _clear_deferred_history(self.bot, symbol)
         self.bot.logger.warning(
-            "CUSTOM_FAST_HISTORY_DEFERRED symbol=%s reason=startup_budget_exhausted "
-            "live_subscription_continues=true",
+            "CUSTOM_FAST_HISTORY_DEFERRED symbol=%s reason=startup_budget_or_provider_response "
+            "stale_history_cleared=true live_subscription_continues=true",
             symbol,
         )
 
+    self.bot._custom_history_deferred_symbols = set(deferred)
     self.bot.logger.info(
         "CUSTOM_FAST_HISTORY_READY requested=%s synced=%s deferred=%s elapsed_ms=%.1f "
         "startup_budget_seconds=%.1f next_action=subscribe_live_ticks",
         len(list(self.bot.symbols)),
         synced,
-        len(pending),
+        len(deferred),
         (time.monotonic() - started) * 1000.0,
         _HISTORY_STARTUP_BUDGET_SECONDS,
     )
@@ -339,18 +413,21 @@ async def _fast_fetch_tick_history(self: PublicMarketDataClient) -> None:
 def install_custom_strategy_instant_start() -> None:
     """Make Start responsive without weakening the financial execution boundary."""
 
-    global _INSTALLED, _ORIGINAL_VALIDATE, _ORIGINAL_FETCH_HISTORY, _ORIGINAL_REST_REQUEST
+    global _INSTALLED, _ORIGINAL_VALIDATE, _ORIGINAL_FETCH_HISTORY
+    global _ORIGINAL_HISTORY_COUNT, _ORIGINAL_REST_REQUEST
     if _INSTALLED:
         return
 
     _ORIGINAL_VALIDATE = RFDir5TradingBot.validate_accounts
     _ORIGINAL_FETCH_HISTORY = PublicMarketDataClient._fetch_tick_history
+    _ORIGINAL_HISTORY_COUNT = RFDir5TradingBot._public_history_count
     _ORIGINAL_REST_REQUEST = base_runtime._rest_request
 
     # Final Custom Strategy authority: provider account-list discovery must not sit
     # between the Start click and market watching. The private account WebSocket is
     # still mandatory before proposal/BUY execution can pass prepare().
     RFDir5TradingBot.validate_accounts = _instant_validate_accounts
+    RFDir5TradingBot._public_history_count = _instant_history_count
     PublicMarketDataClient._fetch_tick_history = _fast_fetch_tick_history
     base_runtime._rest_request = _bounded_startup_rest_request
 
