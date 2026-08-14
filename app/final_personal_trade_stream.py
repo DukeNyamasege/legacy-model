@@ -133,6 +133,10 @@ def _virtual_rows_with_progress(
     streak = 0
     payloads: list[dict[str, Any]] = []
     current_required = _current_virtual_requirement(managed_account_id) if managed_account_id else 1
+    # Rows produced before progress=x/y was persisted belonged to the historical
+    # AIDR two-win presentation. Do not reinterpret that old history using today's
+    # Custom Strategy hook. New settled rows always persist their own requirement.
+    legacy_required = max(1, int(VIRTUAL_WINS_REQUIRED or 2))
     for row in ordered:
         outcome = _virtual_outcome(getattr(row, "result", "OPEN"))
         stored_progress = re.search(
@@ -142,7 +146,7 @@ def _virtual_rows_with_progress(
         if stored_progress:
             row_required = max(1, int(stored_progress.group(2)))
         elif outcome in {"WIN", "LOSS"}:
-            row_required = current_required
+            row_required = legacy_required
         else:
             row_required = current_required
 
