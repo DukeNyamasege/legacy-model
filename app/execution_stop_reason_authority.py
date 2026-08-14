@@ -121,10 +121,6 @@ def _preserve_terminal_status(
         current_reason = str(row.execution_status_reason or "").strip()
         enabled = bool(row.enabled)
 
-        # Validation used to turn actionable disabled states such as token_required,
-        # contract_unavailable or take_profit into plain `stopped`. That erased the
-        # only useful explanation the trader had. Once a terminal cause exists it
-        # survives generic housekeeping until the user explicitly starts again.
         if (
             requested in _GENERIC_STOP_STATUSES
             and not enabled
@@ -156,8 +152,6 @@ def _preserve_terminal_status(
             )
             return
 
-    # Running/start/reconnect statuses keep all existing lifecycle and manual-stop
-    # promotion guards. Only terminal transitions are centralized above.
     original(self, int(account_id), requested, reason)
 
 
@@ -195,14 +189,11 @@ def _fail_closed_with_durable_reason(
     original(bot, int(managed_id), reason, log_event=log_event)
     account = _status_snapshot(bot.repository, int(managed_id))
     if bool(account.get("enabled")):
-        # Recoverable transport/runtime faults deliberately remain enabled.
         return
 
     status = str(account.get("execution_status") or "error").strip().lower()
     persisted_reason = str(account.get("execution_status_reason") or "").strip()
     if status in _GENERIC_STOP_STATUSES:
-        # _fail_closed is never a manual Stop button. A generic stop here means
-        # the actual execution failure was lost, so promote it to a visible ERROR.
         _write_terminal_state(
             bot.repository,
             int(managed_id),
@@ -237,6 +228,13 @@ def _private_session_for_account(bot: RFDir5TradingBot, managed_id: int) -> Any 
     return None
 
 
+def _direct_runtime_for_account(bot: RFDir5TradingBot, managed_id: int) -> Any | None:
+    runtime = getattr(bot, "_custom_direct_accounts", {})
+    if not isinstance(runtime, dict):
+        return None
+    return runtime.get(int(managed_id))
+
+
 def _liveness_state(bot: RFDir5TradingBot) -> dict[int, dict[str, float]]:
     state = getattr(bot, "_execution_liveness_watchdog_state", None)
     if not isinstance(state, dict):
@@ -265,16 +263,22 @@ async def _execution_liveness_watchdog(bot: RFDir5TradingBot) -> None:
 
                 if not enabled:
                     state.pop(managed_id, None)
-                    # Do not open a second transaction for every healthy stopped
-                    # account. Only legacy/inconsistent rows missing a reason need
-                    # repair work.
                     if not reason:
                         _repair_disabled_reason(bot.repository, managed_id)
                     continue
 
                 enabled_ids.add(managed_id)
                 session = _private_session_for_account(bot, managed_id)
-                if session is not None and bool(getattr(session, "is_connected", False)):
+                runtime = _direct_runtime_for_account(bot, managed_id)
+                session_connected = bool(
+                    session is not None and getattr(session, "is_connected", False)
+                )
+                runtime_registered = runtime is not None
+
+                # A connected socket alone is not sufficient. The account must also
+                # exist in _custom_direct_accounts or the scanner has nobody to
+                # evaluate/purchase for even though transport looks healthy.
+                if session_connected and runtime_registered:
                     state.pop(managed_id, None)
                     continue
 
@@ -283,7 +287,7 @@ async def _execution_liveness_watchdog(bot: RFDir5TradingBot) -> None:
                     {"missing_since": now, "last_repair": 0.0},
                 )
                 missing_for = now - float(entry.get("missing_since") or now)
-                if session is not None:
+                if session is not None and not session_connected:
                     try:
                         private_ws.wake_private_connection(session)
                     except Exception:
@@ -296,21 +300,22 @@ async def _execution_liveness_watchdog(bot: RFDir5TradingBot) -> None:
                     continue
                 entry["last_repair"] = now
 
-                # This status write goes through the existing account-mode lock, so
-                # a manual Stop racing this watchdog can never be promoted again.
                 bot._set_account_execution_status(
                     managed_id,
                     "reconnecting",
-                    "Execution watchdog detected a missing private trading session; reconnecting automatically. Auto Trading remains active.",
+                    "Execution watchdog detected missing trading runtime state; reconnecting automatically. Auto Trading remains active.",
                 )
                 seamless._schedule_runtime_repair(bot, managed_id)
                 bot.logger.warning(
                     "ACCOUNT_EXECUTION_LIVENESS_REPAIR managed_id=%s previous_status=%s "
-                    "missing_seconds=%.1f session_object=%s lifecycle_stop=false auto_retry=true",
+                    "missing_seconds=%.1f session_object=%s session_connected=%s "
+                    "runtime_registered=%s lifecycle_stop=false auto_retry=true",
                     managed_id,
                     status,
                     missing_for,
                     session is not None,
+                    session_connected,
+                    runtime_registered,
                 )
 
             for managed_id in list(state):
