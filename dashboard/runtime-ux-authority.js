@@ -4,7 +4,7 @@
   if (window.__FOA_RUNTIME_UX_AUTHORITY__) return;
   window.__FOA_RUNTIME_UX_AUTHORITY__ = true;
 
-  const VERSION = "20260814-runtime-ux-v2";
+  const VERSION = "20260814-runtime-ux-v3";
   let pendingMode = "";
   let switchSnapshot = null;
   let switchLockUntil = 0;
@@ -95,17 +95,17 @@
       const span = line.querySelector("span");
       if (!span) return;
       const text = String(span.textContent || "").toLowerCase();
-      if (state === "STARTING" || text.includes("initializing authenticated") || text.includes("validating authenticated") || text.includes("connecting private") || text.includes("resynchronizing automatically")) {
-        span.textContent = "Starting - Connecting execution stream and preparing strategy watcher...";
+      if (state === "STARTING" || text.includes("initializing authenticated") || text.includes("validating authenticated") || text.includes("connecting private") || text.includes("resynchronizing automatically") || text.includes("execution stream connects in background")) {
+        span.textContent = "Starting - Market watcher is launching now; execution stream connects in background...";
       }
     });
     qa(".trades-control-panel").forEach((panel) => {
       const title = panel.querySelector("h2");
       const paragraphs = panel.querySelectorAll("p");
       const text = Array.from(paragraphs).map((node) => String(node.textContent || "").toLowerCase()).join(" ");
-      if (text.includes("initializing authenticated") || text.includes("validating authenticated") || text.includes("connecting private") || text.includes("resynchronizing automatically")) {
+      if (text.includes("initializing authenticated") || text.includes("validating authenticated") || text.includes("connecting private") || text.includes("resynchronizing automatically") || text.includes("execution stream connects in background")) {
         if (title) title.textContent = "Starting";
-        if (paragraphs.length > 1) paragraphs[1].textContent = "Connecting execution stream and preparing strategy watcher...";
+        if (paragraphs.length > 1) paragraphs[1].textContent = "Market watcher is launching now; execution stream connects in background...";
       }
     });
   }
