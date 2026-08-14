@@ -22,6 +22,7 @@ install_custom_strategy_last_digit_prediction()
 from app.custom_split_recovery_authority import install_custom_split_recovery_authority
 from app.custom_strategy_current_runtime_fix import install_custom_strategy_current_runtime_fix
 from app.custom_strategy_direct_runtime import install_custom_strategy_direct_runtime
+from app.custom_strategy_instant_start import install_custom_strategy_instant_start
 from app.custom_strategy_last_digit_runtime import install_custom_strategy_last_digit_runtime
 from app.custom_strategy_manual_stop_guard import install_custom_strategy_manual_stop_guard
 from app.custom_strategy_result_router import install_custom_strategy_result_router
@@ -148,6 +149,12 @@ async def run_worker() -> None:
     # housekeeping cannot erase it, and a started account with a missing private
     # session is automatically repaired instead of silently becoming idle.
     install_execution_stop_reason_authority()
+
+    # FINAL STARTUP PERFORMANCE AUTHORITY. A Start click must never sit behind a
+    # sequential provider account-list sweep or N serial market-history waits.
+    # Persisted account identity is admitted immediately, public history is batched,
+    # and financial execution remains gated by the authenticated private WebSocket.
+    install_custom_strategy_instant_start()
     install_telegram_silence()
 
     bot = RFDir5TradingBot()
@@ -156,7 +163,8 @@ async def run_worker() -> None:
         "frontend=netlify_static realtime=nonblocking_vps_websocket "
         "legacy_rf=false legacy_aidr=false multi_strategy=false cohorts=false "
         "bulk=false tick_db_persistence=false start_required=true "
-        "explicit_start_pickup=true exact_entry_guard=true manual_stop_buy_guard=true "
+        "explicit_start_pickup=true instant_start=true provider_account_sweep_blocking=false "
+        "history_startup=parallel_bounded exact_entry_guard=true manual_stop_buy_guard=true "
         "result_routing=account_outcome_debt "
         "martingale_spread=1_to_3_successful_parts "
         "virtual_hook=exact_zero_stake_mirror persistent_open_lock=true "
