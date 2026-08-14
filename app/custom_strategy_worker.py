@@ -27,6 +27,7 @@ from app.custom_strategy_manual_stop_guard import install_custom_strategy_manual
 from app.custom_strategy_result_router import install_custom_strategy_result_router
 from app.custom_strategy_runtime_lifecycle import install_custom_strategy_runtime_lifecycle
 from app.custom_strategy_settlement import install_custom_strategy_settlement
+from app.custom_strategy_startup_authority import install_custom_strategy_startup_authority
 from app.custom_virtual_contract_parity import install_custom_virtual_contract_parity
 from app.deriv_rate_limit_circuit import install_deriv_rate_limit_circuit
 from app.deriv_request_broker import install_deriv_request_broker
@@ -94,6 +95,11 @@ async def run_worker() -> None:
     install_custom_strategy_last_digit_runtime()
     install_custom_strategy_runtime_lifecycle()
 
+    # Explicit Start is a per-account state transition and must never depend only
+    # on a global MAX(updated_at) revision. Install after the runtime lifecycle so
+    # it can force-pick newly started rows into validation/session creation.
+    install_custom_strategy_startup_authority()
+
     # TP/SL are final account stops. The canonical counter is the persisted
     # AccountRiskState.session_profit for the current fresh Start session, with TP
     # positive and SL negative from the frozen settings snapshot.
@@ -135,7 +141,7 @@ async def run_worker() -> None:
         "frontend=netlify_static realtime=nonblocking_vps_websocket "
         "legacy_rf=false legacy_aidr=false multi_strategy=false cohorts=false "
         "bulk=false tick_db_persistence=false start_required=true "
-        "exact_entry_guard=true manual_stop_buy_guard=true "
+        "explicit_start_pickup=true exact_entry_guard=true manual_stop_buy_guard=true "
         "result_routing=account_outcome_debt "
         "martingale_spread=1_to_3_successful_parts "
         "runtime_fault_policy=soft_reconnect_no_forced_disconnect"
