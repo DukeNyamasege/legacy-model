@@ -19,6 +19,7 @@ node --check dashboard/runtime-ux-authority.js
 
 exec python -m unittest -q \
   tests.test_execution_stop_reason_authority \
+  tests.test_custom_execution_consistency_authority \
   tests.test_builder_edit_stability \
   tests.test_custom_virtual_integrity_authority \
   tests.test_custom_strategy_instant_start \
