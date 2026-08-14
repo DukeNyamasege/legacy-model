@@ -75,6 +75,7 @@ jobs:
           app/custom_strategy_comparator_extension.py
           app/custom_strategy_current_runtime_fix.py
           app/custom_strategy_direct_runtime.py
+          app/custom_strategy_instant_start.py
           app/custom_strategy_last_digit_prediction.py
           app/custom_strategy_last_digit_runtime.py
           app/custom_strategy_result_router.py
@@ -104,6 +105,7 @@ jobs:
           app/session_risk_stop_authority.py
           tests/test_account_bound_risk_and_ws_continuity.py
           tests/test_custom_direct_runtime.py
+          tests/test_custom_strategy_instant_start.py
           tests/test_current_custom_runtime_fix.py
           tests/test_dashboard_live_performance.py
           tests/test_exact_strategy_execution_authority.py
@@ -127,6 +129,7 @@ jobs:
           app/custom_strategy_comparator_extension.py
           app/custom_strategy_current_runtime_fix.py
           app/custom_strategy_direct_runtime.py
+          app/custom_strategy_instant_start.py
           app/custom_strategy_last_digit_prediction.py
           app/custom_strategy_last_digit_runtime.py
           app/custom_strategy_result_router.py
@@ -184,6 +187,7 @@ jobs:
         run: |
           python -m unittest -q tests.test_account_bound_risk_and_ws_continuity
           python -m unittest -q tests.test_custom_direct_runtime
+          python -m unittest -q tests.test_custom_strategy_instant_start
           python -m unittest -q tests.test_current_custom_runtime_fix
           python -m unittest -q tests.test_dashboard_live_performance
           python -m unittest -q tests.test_exact_strategy_execution_authority
@@ -239,7 +243,7 @@ jobs:
           grep -Fq '/result-based-strategy.js' dist/index.html
           grep -Fq '/result-based-strategy.css' dist/index.html
           grep -Fq '/strategy-template-library.js?v=20260814-2' dist/index.html
-          grep -Fq '/runtime-ux-authority.js?v=20260814-2' dist/index.html
+          grep -Fq '/runtime-ux-authority.js?v=20260814-3' dist/index.html
           test -f dist/global-trade-clear.js
           test -f dist/final-dashboard-authority.css
           test -f dist/trades-start-stop-toggle.css
