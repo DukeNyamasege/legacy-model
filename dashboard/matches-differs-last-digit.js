@@ -81,9 +81,12 @@
   }
 
   function optionMarkup(selected) {
-    const values = DYNAMIC_MODES.map(([value, label]) =>
-      `<option value="${value}" ${selected === value ? "selected" : ""}>${label}</option>`,
-    );
+    const values = [
+      `<option value="last_digit" ${selected === "last_digit" ? "selected" : ""}>Last digit</option>`,
+      ...DYNAMIC_MODES.filter(([value]) => value !== "last_digit").map(([value, label]) =>
+        `<option value="${value}" ${selected === value ? "selected" : ""}>${label}</option>`,
+      ),
+    ];
     for (let digit = 0; digit <= 9; digit += 1) {
       values.push(`<option value="${digit}" ${String(selected) === String(digit) ? "selected" : ""}>${digit}</option>`);
     }
@@ -305,5 +308,5 @@
     ? document.addEventListener("DOMContentLoaded", scheduleEnhance, { once: true })
     : scheduleEnhance();
 
-  window.FOA_MATCH_DIFF_LAST_DIGIT_VERSION = "20260814-6";
+  window.FOA_MATCH_DIFF_LAST_DIGIT_VERSION = "20260814-7";
 })();
