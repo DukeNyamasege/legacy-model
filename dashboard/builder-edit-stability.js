@@ -4,10 +4,11 @@
   if (window.__FOA_BUILDER_EDIT_STABILITY__) return;
   window.__FOA_BUILDER_EDIT_STABILITY__ = true;
 
-  const VERSION = "20260814-builder-edit-stability-v2";
+  const VERSION = "20260814-builder-edit-stability-v3";
   const nativeRemove = Element.prototype.remove;
   let scheduled = false;
   let recoveryChangeGuardUntil = 0;
+  let allowResultRemountUntil = 0;
   let preserveViewportUntil = 0;
   let editingScrollX = 0;
   let editingScrollY = 0;
@@ -50,30 +51,47 @@
     scrollBackToEditingViewport();
   }
 
-  // result-based-strategy.js historically removes and recreates this recovery
-  // control after each /me/custom-strategy hydration. During editing that destroys
-  // the focused input and turns a background refresh into a visible page jump.
-  // Keep the mounted recovery editor stable while any Builder field has focus.
+  function releasePostEditViewportProtection() {
+    if (programmaticScroll || isBuilderEditor()) return;
+    preserveViewportUntil = 0;
+    editingActive = false;
+  }
+
+  function isResultStructuralField(node) {
+    const path = String(node?.dataset?.resultRoute || "");
+    return [
+      "tradeType",
+      "analysisMode",
+      "lastRule.operator",
+      "percentageRule.target",
+      "tickDirectionRule.enabled",
+    ].includes(path);
+  }
+
+  // Older result-routing code removes and recreates these surfaces after every
+  // /me/custom-strategy hydration. A background refresh must never destroy a
+  // focused Builder control. Intentional structural result-routing changes are
+  // allowed through a short explicit-remount window below.
   Element.prototype.remove = function (...args) {
-    if (this?.id === "recovery-spread-control" && (isBuilderEditor() || Date.now() < recoveryChangeGuardUntil)) {
+    const isRecovery = this?.id === "recovery-spread-control";
+    const isRouting = this?.id === "result-routing-section";
+    const now = Date.now();
+    const protectedEdit = isBuilderEditor() || now < preserveViewportUntil;
+
+    if (isRecovery && (protectedEdit || now < recoveryChangeGuardUntil)) {
+      return undefined;
+    }
+    if (isRouting && protectedEdit && now >= allowResultRemountUntil) {
       return undefined;
     }
 
-    if (this?.id === "result-routing-section" || this?.id === "recovery-spread-control") {
-      const x = window.scrollX;
-      const y = window.scrollY;
+    if (isRouting || isRecovery) {
       const result = nativeRemove.apply(this, args);
-      window.requestAnimationFrame(() => {
+      if (protectedEdit) {
         window.requestAnimationFrame(() => {
-          if (isBuilderEditor() || Date.now() < preserveViewportUntil) {
-            restoreEditingViewport();
-          } else {
-            programmaticScroll = true;
-            window.scrollTo(x, y);
-            window.requestAnimationFrame(() => { programmaticScroll = false; });
-          }
+          window.requestAnimationFrame(restoreEditingViewport);
         });
-      });
+      }
       return result;
     }
 
@@ -132,8 +150,8 @@
     if (changed) {
       // The hidden selector still owns the canonical result-based state. Send one
       // committed event only after editing is complete; never on each keystroke.
-      recoveryChangeGuardUntil = Date.now() + 180;
-      preserveViewportUntil = Date.now() + 2500;
+      recoveryChangeGuardUntil = Date.now() + 220;
+      preserveViewportUntil = Date.now() + 1500;
       original.dispatchEvent(new Event("change", { bubbles: true }));
     }
     syncRecoveryPresentation(control);
@@ -156,7 +174,7 @@
 
     input.addEventListener("focus", () => {
       rememberEditingViewport();
-      recoveryChangeGuardUntil = Date.now() + 180;
+      recoveryChangeGuardUntil = Date.now() + 220;
     });
 
     input.addEventListener("input", () => {
@@ -169,8 +187,7 @@
     input.addEventListener("change", () => commitSplitInput(input, original, control));
     input.addEventListener("blur", () => {
       commitSplitInput(input, original, control);
-      preserveViewportUntil = Date.now() + 2500;
-      window.requestAnimationFrame(scrollBackToEditingViewport);
+      preserveViewportUntil = Date.now() + 1500;
     });
 
     input.addEventListener("keydown", (event) => {
@@ -203,38 +220,60 @@
     editingScrollY = window.scrollY;
     preserveViewportUntil = 0;
     if (event.target.closest?.("#recovery-spread-control")) {
-      recoveryChangeGuardUntil = Date.now() + 180;
+      recoveryChangeGuardUntil = Date.now() + 220;
     }
   }, true);
 
   document.addEventListener("focusout", (event) => {
     if (!event.target?.closest?.(".strategy-builder-card")) return;
-    preserveViewportUntil = Date.now() + 2500;
+    preserveViewportUntil = Date.now() + 1500;
     window.setTimeout(() => {
       if (!isBuilderEditor()) editingActive = false;
     }, 0);
   }, true);
 
   document.addEventListener("change", (event) => {
-    if (event.target?.id !== "recovery-style") return;
-    // Recovery style changes update visibility/copy in place. Suppress the legacy
-    // remove/recreate request from the older recovery component.
-    recoveryChangeGuardUntil = Date.now() + 180;
-    preserveViewportUntil = Date.now() + 2500;
-    window.setTimeout(() => {
-      syncRecoveryPresentation(q("#recovery-spread-control"));
-      scheduleEnhance();
-    }, 0);
+    if (event.target?.id === "recovery-style") {
+      // Recovery style changes update visibility/copy in place. Suppress the
+      // legacy remove/recreate request from the older recovery component.
+      recoveryChangeGuardUntil = Date.now() + 220;
+      preserveViewportUntil = Date.now() + 1500;
+      window.setTimeout(() => {
+        syncRecoveryPresentation(q("#recovery-spread-control"));
+        scheduleEnhance();
+      }, 0);
+      return;
+    }
+
+    if (event.target?.closest?.("#result-routing-section") && isResultStructuralField(event.target)) {
+      // These user-driven changes genuinely alter the result-routing layout. Let
+      // that one remount occur, but preserve the viewport around it.
+      allowResultRemountUntil = Date.now() + 220;
+      rememberEditingViewport();
+      preserveViewportUntil = Date.now() + 1500;
+    }
   }, true);
 
   document.addEventListener("input", (event) => {
     if (isBuilderEditor(event.target)) rememberEditingViewport();
   }, true);
 
+  document.addEventListener("pointerdown", (event) => {
+    if (!event.target?.closest?.("input, select, textarea, [contenteditable='true']")) {
+      releasePostEditViewportProtection();
+    }
+  }, true);
+
+  window.addEventListener("wheel", releasePostEditViewportProtection, { passive: true });
+  window.addEventListener("touchmove", releasePostEditViewportProtection, { passive: true });
   window.addEventListener("scroll", () => {
-    if (programmaticScroll || !isBuilderEditor()) return;
-    editingScrollX = window.scrollX;
-    editingScrollY = window.scrollY;
+    if (programmaticScroll) return;
+    if (isBuilderEditor()) {
+      editingScrollX = window.scrollX;
+      editingScrollY = window.scrollY;
+      return;
+    }
+    releasePostEditViewportProtection();
   }, { passive: true });
 
   new MutationObserver(scheduleEnhance).observe(document.documentElement, {
