@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 import json
 import time
 import unittest
@@ -13,6 +14,7 @@ from app.account_execution_session import (
     AccountExecutionSession,
 )
 import app.custom_strategy_instant_start as instant
+from app.custom_strategy_v1 import MAX_WINDOW
 
 
 class _Logger:
@@ -65,6 +67,14 @@ class _HistorySocket:
         )
 
 
+class _PartialHistorySocket(_HistorySocket):
+    async def recv(self) -> str:
+        if self.recv_count == 0:
+            return await super().recv()
+        await asyncio.sleep(0.05)
+        raise asyncio.TimeoutError
+
+
 class CustomStrategyInstantStartTests(unittest.TestCase):
     def test_fast_runtime_admission_does_not_call_provider(self) -> None:
         row = SimpleNamespace(
@@ -112,6 +122,8 @@ class CustomStrategyInstantStartTests(unittest.TestCase):
         bot = SimpleNamespace(
             repository=_RuntimeRepository([]),
             environment="real",
+            symbols=["1HZ100V"],
+            symbol="1HZ100V",
             tokens=[],
             user_profiles={},
             valid_clients=[],
@@ -125,22 +137,46 @@ class CustomStrategyInstantStartTests(unittest.TestCase):
                 "managed_account_id": 7,
             }
         }
-        with patch.object(
-            instant,
-            "_fast_runtime_accounts",
-            return_value=(["runtime-key"], profiles),
+        with (
+            patch.object(
+                instant,
+                "_fast_runtime_accounts",
+                return_value=(["runtime-key"], profiles),
+            ),
+            patch.object(
+                instant.direct_runtime,
+                "_load_configs_for_ids",
+                return_value={7: {"configured": True}},
+            ),
+            patch.object(
+                instant.direct_runtime,
+                "_required_symbols",
+                return_value=["1HZ10V", "1HZ50V"],
+            ),
         ):
             asyncio.run(instant._instant_validate_accounts(bot))
 
         self.assertEqual(bot.environment, "demo")
         self.assertEqual(bot.valid_clients, [("runtime-key", "VRTC123456")])
+        self.assertEqual(bot.symbols, ["1HZ10V", "1HZ50V"])
+        self.assertEqual(bot.symbol, "1HZ10V")
         self.assertEqual(sync_calls, ["clients", "running"])
+
+    def test_history_count_is_ready_before_private_socket_connects(self) -> None:
+        bot = SimpleNamespace(valid_clients=[("runtime-key", "VRTC123456")])
+        with patch.object(instant, "_ORIGINAL_HISTORY_COUNT", lambda _bot: 0):
+            self.assertEqual(instant._instant_history_count(bot), int(MAX_WINDOW))
+
+        bot.valid_clients = []
+        with patch.object(instant, "_ORIGINAL_HISTORY_COUNT", lambda _bot: 0):
+            self.assertEqual(instant._instant_history_count(bot), 0)
 
     def test_history_requests_are_batched_before_first_wait(self) -> None:
         history_calls: list[str] = []
         bot = SimpleNamespace(
             symbols=["1HZ10V", "1HZ50V", "1HZ100V"],
             logger=_Logger(),
+            market_states={},
             _public_history_count=lambda: 100,
             _on_public_history=lambda **kwargs: history_calls.append(str(kwargs["symbol"])),
         )
@@ -155,6 +191,37 @@ class CustomStrategyInstantStartTests(unittest.TestCase):
         self.assertEqual(socket.send_count_at_first_recv, 3)
         self.assertCountEqual(history_calls, bot.symbols)
         self.assertLess(elapsed, 1.0)
+
+    def test_deferred_history_clears_stale_digits_before_live_watching(self) -> None:
+        states = {
+            symbol: SimpleNamespace(
+                ticks_history=deque([{"last_digit": 9}]),
+                live_ticks_history=deque([{"last_digit": 9}]),
+                raw_tick_digits=deque([9, 9, 9]),
+            )
+            for symbol in ("1HZ10V", "1HZ50V")
+        }
+        history_calls: list[str] = []
+        bot = SimpleNamespace(
+            symbols=["1HZ10V", "1HZ50V"],
+            logger=_Logger(),
+            market_states=states,
+            _public_history_count=lambda: 100,
+            _on_public_history=lambda **kwargs: history_calls.append(str(kwargs["symbol"])),
+        )
+        socket = _PartialHistorySocket()
+        client = SimpleNamespace(ws=socket, bot=bot, next_req_id=1)
+
+        with patch.object(instant, "_HISTORY_STARTUP_BUDGET_SECONDS", 0.01):
+            asyncio.run(instant._fast_fetch_tick_history(client))
+
+        self.assertEqual(len(history_calls), 1)
+        deferred = set(bot._custom_history_deferred_symbols)
+        self.assertEqual(len(deferred), 1)
+        deferred_symbol = next(iter(deferred))
+        self.assertEqual(list(states[deferred_symbol].ticks_history), [])
+        self.assertEqual(list(states[deferred_symbol].live_ticks_history), [])
+        self.assertEqual(list(states[deferred_symbol].raw_tick_digits), [])
 
     def test_startup_rest_timeout_is_bounded_but_financial_paths_are_not_rewritten(self) -> None:
         calls: list[str] = []
