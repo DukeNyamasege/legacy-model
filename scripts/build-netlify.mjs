@@ -70,6 +70,18 @@ if (!html.includes('/result-ui-fixes.css')) {
     '  <link rel="stylesheet" href="/result-ui-fixes.css">\n</head>',
   );
 }
+if (!html.includes('/strategy-template-library.css')) {
+  html = html.replace(
+    "</head>",
+    '  <link rel="stylesheet" href="/strategy-template-library.css?v=20260814-1">\n</head>',
+  );
+}
+if (!html.includes('/runtime-ux-authority.css')) {
+  html = html.replace(
+    "</head>",
+    '  <link rel="stylesheet" href="/runtime-ux-authority.css?v=20260814-1">\n</head>',
+  );
+}
 
 const dashboardMarker = '<script src="/dashboard-v2.js" defer></script>';
 if (!html.includes(dashboardMarker)) {
@@ -108,6 +120,22 @@ if (!html.includes('/result-ui-fixes.js')) {
   } else {
     html = html.replace("</body>", '  <script src="/result-ui-fixes.js" defer></script>\n</body>');
   }
+}
+
+// New strategy-template and runtime UX layers are injected by the build with a
+// fresh immutable URL. strategy-edit-authority.js also loads them as a direct-VPS
+// fallback, and both scripts have idempotent global guards.
+if (!html.includes('/strategy-template-library.js')) {
+  html = html.replace(
+    "</body>",
+    '  <script src="/strategy-template-library.js?v=20260814-1" defer></script>\n</body>',
+  );
+}
+if (!html.includes('/runtime-ux-authority.js')) {
+  html = html.replace(
+    "</body>",
+    '  <script src="/runtime-ux-authority.js?v=20260814-1" defer></script>\n</body>',
+  );
 }
 
 await writeFile(indexPath, html, "utf8");
