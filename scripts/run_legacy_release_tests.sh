@@ -19,6 +19,7 @@ node --check dashboard/builder-edit-stability.js
 exec python -m unittest -q \
   tests.test_execution_stop_reason_authority \
   tests.test_builder_edit_stability \
+  tests.test_custom_virtual_integrity_authority \
   tests.test_personal_token_sync \
   tests.test_multi_strategy \
   tests.test_multi_strategy_concurrency \
