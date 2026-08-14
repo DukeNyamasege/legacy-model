@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any
 
@@ -11,8 +12,11 @@ from app.rf_dir5_bot import RFDir5TradingBot
 _INSTALLED = False
 _ORIGINAL_VALIDATE: Any = None
 _ORIGINAL_REFRESH: Any = None
+_ORIGINAL_WAIT_FOR_ACTIVE: Any = None
 _STARTUP_FAILURE_LIMIT = 3
 _STARTUP_FAILURE_WINDOW_SECONDS = 90.0
+_FAST_START_POLL_SECONDS = 0.5
+_IDLE_NO_START_POLL_SECONDS = 1.0
 
 
 def _represented_managed_ids(bot: RFDir5TradingBot) -> set[int]:
@@ -115,26 +119,26 @@ def _surface_startup_error(
 
 
 def install_custom_strategy_startup_authority() -> None:
-    """Guarantee that an explicit Start is consumed by the worker.
+    """Guarantee that an explicit Start is consumed quickly and visibly.
 
-    The base worker uses a global MAX(ManagedAccount.updated_at) value to decide
-    whether account membership changed. That optimization is insufficient for a
-    per-account Start/Stop product: a newly started row can be older than the
-    current global maximum and therefore fail to trigger a reload. An enabled
-    startup-state account without a concrete private ClientSession is now an
-    independent refresh signal and bypasses the global revision fast-path.
+    The base worker uses a global MAX(ManagedAccount.updated_at) revision and, when
+    no accounts are active, an additional 5-10 second idle sleep. Those are useful
+    housekeeping optimisations but are too slow for a manual Start button. An
+    enabled startup-state account without a concrete private ClientSession is an
+    independent refresh signal and bypasses both delays.
 
-    Startup validation failures are also bounded. The UI may show a retry state
-    for transient failures, but the original API `starting` message can never
-    survive indefinitely without either runtime progress or a visible ERROR.
+    Startup validation failures are bounded. The UI may show a retry state for
+    transient failures, but the original API `starting` message can never survive
+    indefinitely without either runtime progress or a visible ERROR.
     """
 
-    global _INSTALLED, _ORIGINAL_VALIDATE, _ORIGINAL_REFRESH
+    global _INSTALLED, _ORIGINAL_VALIDATE, _ORIGINAL_REFRESH, _ORIGINAL_WAIT_FOR_ACTIVE
     if _INSTALLED:
         return
 
     _ORIGINAL_VALIDATE = RFDir5TradingBot.validate_accounts
     _ORIGINAL_REFRESH = RFDir5TradingBot._refresh_runtime_accounts_if_needed
+    _ORIGINAL_WAIT_FOR_ACTIVE = RFDir5TradingBot._wait_for_active_execution_account
 
     async def validate_with_startup_visibility(self: RFDir5TradingBot) -> None:
         startup_ids = _unrepresented_startup_ids(self)
@@ -189,7 +193,44 @@ def install_custom_strategy_startup_authority() -> None:
         self._managed_accounts_revision = self.repository.managed_accounts_revision()
         self._runtime_mode_cache = self.repository.runtime_mode()
 
+    async def wait_for_active_execution_account_fast(self: RFDir5TradingBot) -> bool:
+        """Wake an idle worker almost immediately when the API commits Start."""
+
+        self.repository.set_status("IDLE", "NO_ACTIVE_TRADING_ACCOUNTS")
+        self.logger.info(
+            "ACCOUNT_EXECUTION_IDLE reason=no_active_auto_trading_accounts "
+            "action=waiting_for_start fast_poll_seconds=%.2f",
+            _FAST_START_POLL_SECONDS,
+        )
+        while self.is_running and not self.valid_clients:
+            startup_ids = _unrepresented_startup_ids(self)
+            if not startup_ids:
+                await asyncio.sleep(_IDLE_NO_START_POLL_SECONDS)
+                continue
+            self.logger.info(
+                "CUSTOM_RUNTIME_FAST_START_WAKEUP managed_ids=%s poll_seconds=%.2f",
+                ",".join(str(item) for item in startup_ids),
+                _FAST_START_POLL_SECONDS,
+            )
+            try:
+                # Use the final wrapped refresh so revision bypass, validation,
+                # client-state sync and concrete ClientSession creation happen as
+                # one startup operation.
+                await self._refresh_runtime_accounts_if_needed()
+            except Exception as exc:
+                self.logger.warning(
+                    "CUSTOM_RUNTIME_FAST_START_DEFERRED managed_ids=%s error_type=%s",
+                    ",".join(str(item) for item in startup_ids),
+                    type(exc).__name__,
+                )
+            if self.valid_clients:
+                break
+            await asyncio.sleep(_FAST_START_POLL_SECONDS)
+        return bool(self.valid_clients)
+
     RFDir5TradingBot.validate_accounts = validate_with_startup_visibility
     RFDir5TradingBot._refresh_runtime_accounts_if_needed = refresh_with_explicit_start_pickup
+    RFDir5TradingBot._wait_for_active_execution_account = wait_for_active_execution_account_fast
     RFDir5TradingBot._custom_strategy_startup_authority_installed = True
+    RFDir5TradingBot._custom_strategy_fast_start_poll_seconds = _FAST_START_POLL_SECONDS
     _INSTALLED = True
