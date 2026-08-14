@@ -141,7 +141,7 @@ if (!html.includes('/strategy-template-library.js')) {
 if (!html.includes('/runtime-ux-authority.js')) {
   html = html.replace(
     "</body>",
-    '  <script src="/runtime-ux-authority.js?v=20260814-2" defer></script>\n</body>',
+    '  <script src="/runtime-ux-authority.js?v=20260814-3" defer></script>\n</body>',
   );
 }
 if (!html.includes('/builder-edit-stability.js')) {
