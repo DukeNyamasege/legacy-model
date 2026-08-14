@@ -8,7 +8,6 @@ from fastapi import Request
 from sqlalchemy import or_, select
 
 import app.api as base_api
-from app.aidr_adaptive_virtual import adaptive_virtual_wins_required
 from app.ai_digit_recovery_v1 import VIRTUAL_WINS_REQUIRED
 from app.custom_strategy_comparator_extension import (
     install_custom_strategy_comparator_extension,
@@ -71,8 +70,12 @@ def _virtual_outcome(value: Any) -> str:
         return "WIN"
     if "LOSS" in raw:
         return "LOSS"
-    if "CANCEL" in raw or "STALE" in raw:
-        return "CANCELLED"
+    # Virtual Hook never purchases a Deriv contract, so an infrastructure miss is
+    # not a contract cancellation. Historical STALE/CANCEL rows and the new
+    # VIRTUAL_VOID_RETRY state are displayed as a zero-impact VOID that does not
+    # count as either a virtual win or loss.
+    if "VOID" in raw or "RETRY" in raw or "CANCEL" in raw or "STALE" in raw:
+        return "VOID"
     return "OPEN"
 
 
@@ -118,6 +121,8 @@ def _virtual_rows_with_progress(
     Settled legacy rows created before progress snapshots keep their historical
     two-win grouping. Current rows persist `progress=x/y`, so the exact hook
     requirement travels with each observation instead of being reinterpreted.
+    VOID rows have no financial or progress effect and simply require a fresh
+    qualifying zero-stake observation.
     """
 
     ordered = sorted(
@@ -137,7 +142,7 @@ def _virtual_rows_with_progress(
         if stored_progress:
             row_required = max(1, int(stored_progress.group(2)))
         elif outcome in {"WIN", "LOSS"}:
-            row_required = 2
+            row_required = current_required
         else:
             row_required = current_required
 
@@ -155,9 +160,9 @@ def _virtual_rows_with_progress(
             streak = 0
             sequence = 0
             progress_text = f"LOSS · STREAK 0/{row_required}"
-        elif outcome == "CANCELLED":
+        elif outcome == "VOID":
             sequence = streak
-            progress_text = "CANCELLED"
+            progress_text = "VOID · RETRY"
         else:
             sequence = streak
             progress_text = f"PENDING · {streak}/{row_required}"
@@ -232,22 +237,20 @@ def _aidr_summary(state: AccountRiskState | None, managed_account_id: int) -> di
     wins = int(state.virtual_win_count or 0) if state is not None else 0
     debt = round(float(state.recovery_loss_debt or 0.0), 2) if state is not None else 0.0
     split = _split_remaining(managed_account_id)
-    required = adaptive_virtual_wins_required(
-        base_api.REPOSITORY,
-        int(managed_account_id),
-        default_wins=_current_virtual_requirement(managed_account_id),
-        recovery_debt=debt,
-    )
+    # This endpoint is the final Custom Strategy personal stream. The user's saved
+    # Virtual Hook setting is authoritative; legacy AIDR trap escalation must not
+    # silently change one configured virtual win into two or three.
+    required = _current_virtual_requirement(managed_account_id)
     contract_label = _current_custom_contract_label(managed_account_id)
     if raw_mode == VIRTUAL_WAITING_FOR_WIN:
         mode = "virtual"
-        next_action = f"Virtual {contract_label} confirmation: {wins}/{required} wins."
+        next_action = f"Virtual {contract_label} mirror: {wins}/{required} wins."
     elif raw_mode == REAL_RECOVERY_PENDING and split > 0:
         mode = "full_recovery"
-        next_action = f"Next qualifying real {contract_label} trade continues recovery."
+        next_action = f"Next future qualifying real {contract_label} trade continues recovery."
     elif raw_mode == REAL_RECOVERY_PENDING:
         mode = "exact_recovery"
-        next_action = f"Next qualifying real {contract_label} trade continues recovery."
+        next_action = f"Next future qualifying real {contract_label} trade continues recovery."
     else:
         mode = "normal"
         next_action = f"Normal {contract_label} Custom Strategy execution."
@@ -369,6 +372,7 @@ def install_final_personal_trade_stream(app: Any) -> None:
                 "virtual_wins_required": int(aidr["virtual_wins_required"]),
                 "virtual_losses": int(aidr["virtual_losses"]),
                 "virtual_open": sum(row.get("outcome") == "OPEN" for row in virtual_trades),
+                "virtual_void": sum(row.get("outcome") == "VOID" for row in virtual_trades),
                 "history_rows": len(trades),
             },
         }
