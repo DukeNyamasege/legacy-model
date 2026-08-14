@@ -11,7 +11,7 @@
     "least_appearing",
   ]);
   const DYNAMIC_MODES = [
-    ["last_digit", "Last digit (trigger digit)"],
+    ["last_digit", "Last digit"],
     ["most_appearing", "Most appearing"],
     ["second_most_appearing", "Second most appearing"],
     ["least_appearing", "Least appearing"],
@@ -305,5 +305,5 @@
     ? document.addEventListener("DOMContentLoaded", scheduleEnhance, { once: true })
     : scheduleEnhance();
 
-  window.FOA_MATCH_DIFF_LAST_DIGIT_VERSION = "20260813-5";
+  window.FOA_MATCH_DIFF_LAST_DIGIT_VERSION = "20260814-6";
 })();
