@@ -238,7 +238,7 @@ jobs:
           grep -Fq '/account-bound-risk-notice.css' dist/index.html
           grep -Fq '/result-based-strategy.js' dist/index.html
           grep -Fq '/result-based-strategy.css' dist/index.html
-          grep -Fq '/strategy-template-library.js?v=20260814-1' dist/index.html
+          grep -Fq '/strategy-template-library.js?v=20260814-2' dist/index.html
           grep -Fq '/runtime-ux-authority.js?v=20260814-2' dist/index.html
           test -f dist/global-trade-clear.js
           test -f dist/final-dashboard-authority.css
