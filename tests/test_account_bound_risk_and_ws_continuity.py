@@ -56,15 +56,21 @@ class AccountBoundRiskAndWsContinuityTests(unittest.TestCase):
         self.assertIn("private_ws._normal_backoff = _continuity_backoff", source)
         self.assertNotIn("private_ws._rate_backoff =", source)
 
-    def test_continuity_installs_after_martingale_authority(self) -> None:
+    def test_continuity_and_final_consistency_install_after_martingale_authority(self) -> None:
         worker = (ROOT / "app" / "custom_strategy_worker.py").read_text(
             encoding="utf-8"
         )
         martingale = worker.rindex("install_manual_martingale_execution_authority()")
         continuity = worker.rindex("install_final_execution_continuity()")
+        consistency = worker.rindex("install_custom_execution_consistency_authority()")
         self.assertLess(martingale, continuity)
+        self.assertLess(continuity, consistency)
         self.assertIn(
-            "runtime_fault_policy=soft_reconnect_no_forced_disconnect",
+            "runtime_fault_policy=reconnect_reconcile_never_stop",
+            worker,
+        )
+        self.assertIn(
+            "ambiguous_buy_policy=reconcile_before_next_real",
             worker,
         )
 
