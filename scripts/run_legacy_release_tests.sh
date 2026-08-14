@@ -11,7 +11,12 @@ export ALLOW_LEGACY_GLOBAL_TOKENS=true
 export COPYTRADING_ALLOW_LEGACY_GLOBAL_TOKENS=true
 export FRONTEND_ORIGINS="http://127.0.0.1:8080,http://localhost:8080,https://derivadmin.site,https://legacymodel.netlify.app"
 
+# The stop-reason banner is part of the execution safety surface. A malformed
+# script must fail the same release gate that validates the worker runtime.
+node --check dashboard/execution-status-banner.js
+
 exec python -m unittest -q \
+  tests.test_execution_stop_reason_authority \
   tests.test_personal_token_sync \
   tests.test_multi_strategy \
   tests.test_multi_strategy_concurrency \
