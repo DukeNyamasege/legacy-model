@@ -4,8 +4,31 @@
   if (window.__FOA_STRATEGY_EDIT_AUTHORITY__) return;
   window.__FOA_STRATEGY_EDIT_AUTHORITY__ = true;
 
-  // Compatibility no-op. dashboard-v2.js is the only authority for the main
-  // builder controls. Result-Based Trading keeps its own scoped draft handler.
-  window.FOA_STRATEGY_EDIT_AUTHORITY_VERSION = "20260813-disabled-3";
+  // dashboard-v2.js remains the canonical builder field authority. This loader
+  // adds the template library and final runtime UX without re-owning those fields.
+  window.FOA_STRATEGY_EDIT_AUTHORITY_VERSION = "20260814-template-runtime-loader-v1";
   window.FOA_CANONICAL_BUILDER_EDIT_AUTHORITY = "dashboard-v2.js";
+
+  function loadStyle(href, id) {
+    if (document.getElementById(id)) return;
+    const link = document.createElement("link");
+    link.id = id;
+    link.rel = "stylesheet";
+    link.href = href;
+    document.head.appendChild(link);
+  }
+
+  function loadScript(src, id) {
+    if (document.getElementById(id)) return;
+    const script = document.createElement("script");
+    script.id = id;
+    script.src = src;
+    script.defer = true;
+    document.body.appendChild(script);
+  }
+
+  loadStyle("/strategy-template-library.css?v=20260814-1", "foa-template-library-css");
+  loadStyle("/runtime-ux-authority.css?v=20260814-1", "foa-runtime-ux-css");
+  loadScript("/strategy-template-library.js?v=20260814-1", "foa-template-library-js");
+  loadScript("/runtime-ux-authority.js?v=20260814-1", "foa-runtime-ux-js");
 })();
