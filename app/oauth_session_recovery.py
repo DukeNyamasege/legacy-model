@@ -151,8 +151,14 @@ def install_oauth_session_recovery(app: Any) -> None:
                 path="/",
                 domain=stale_domain,
             )
+        # OAuth authorization codes and state are one-time callback material. Even
+        # though the browser is immediately redirected to '/', never permit the
+        # callback URL to be propagated as a Referer header.
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
         response.headers["X-OAuth-Session-Policy"] = (
-            f"{proof_source};host-only-cookie"
+            f"{proof_source};host-only-cookie;clean-url"
         )
         base_api.LOGGER.info(
             "OAUTH_SESSION_RESPONSE proof=%s status=%s host=%s "
@@ -171,6 +177,7 @@ def install_oauth_session_recovery(app: Any) -> None:
             "client_session_cookie": "host-only",
             "browser_cookie_proof": True,
             "server_state_pkce_recovery": True,
+            "callback_referrer_policy": "no-referrer",
         }
 
     app.state.oauth_session_recovery_installed = True
