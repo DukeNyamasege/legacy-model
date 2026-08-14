@@ -261,10 +261,15 @@ async def _execution_liveness_watchdog(bot: RFDir5TradingBot) -> None:
                 status = str(
                     getattr(row, "execution_status", "inactive") or "inactive"
                 ).strip().lower()
+                reason = str(getattr(row, "execution_status_reason", "") or "").strip()
 
                 if not enabled:
                     state.pop(managed_id, None)
-                    _repair_disabled_reason(bot.repository, managed_id)
+                    # Do not open a second transaction for every healthy stopped
+                    # account. Only legacy/inconsistent rows missing a reason need
+                    # repair work.
+                    if not reason:
+                        _repair_disabled_reason(bot.repository, managed_id)
                     continue
 
                 enabled_ids.add(managed_id)
