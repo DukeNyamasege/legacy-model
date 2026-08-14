@@ -4,13 +4,12 @@
   if (window.__FOA_RUNTIME_UX_AUTHORITY__) return;
   window.__FOA_RUNTIME_UX_AUTHORITY__ = true;
 
-  const VERSION = "20260814-runtime-ux-v1";
+  const VERSION = "20260814-runtime-ux-v2";
   let pendingMode = "";
   let switchSnapshot = null;
   let switchLockUntil = 0;
   let scheduled = false;
 
-  const q = (selector, root = document) => root.querySelector(selector);
   const qa = (selector, root = document) => Array.from(root.querySelectorAll(selector));
 
   function parseMoney(text) {
@@ -23,7 +22,9 @@
     qa(".builder-stat").forEach((card) => {
       const label = String(card.querySelector("span")?.textContent || "").trim();
       if (!["Today's P/L", "P/L"].includes(label)) return;
-      const value = parseMoney(card.querySelector("strong")?.textContent || "0");
+      const strong = card.querySelector("strong");
+      if (!strong || String(strong.textContent || "").includes("Syncing")) return;
+      const value = parseMoney(strong.textContent || "0");
       card.classList.remove("win", "loss", "foa-pnl-positive", "foa-pnl-negative", "foa-pnl-zero");
       if (value > 0) card.classList.add("win", "foa-pnl-positive");
       else if (value < 0) card.classList.add("loss", "foa-pnl-negative");
@@ -39,6 +40,25 @@
 
   function statCard(label) {
     return qa(".builder-stat").find((card) => String(card.querySelector("span")?.textContent || "").trim() === label) || null;
+  }
+
+  function showSwitchPending(type) {
+    const mode = type === "real" ? "real" : "demo";
+    const balance = statCard("Balance");
+    if (balance) {
+      const strong = balance.querySelector("strong");
+      const small = balance.querySelector("small");
+      if (strong) strong.textContent = "Syncing…";
+      if (small) small.textContent = `${mode} account`;
+    }
+    const pnl = statCard("Today's P/L") || statCard("P/L");
+    if (pnl) {
+      const strong = pnl.querySelector("strong");
+      if (strong) strong.textContent = "Syncing…";
+      pnl.classList.remove("win", "loss", "foa-pnl-positive", "foa-pnl-negative", "foa-pnl-zero");
+    }
+    qa(".account-pill").forEach((pill) => { pill.textContent = `${mode} · syncing account…`; });
+    qa("[data-mode]").forEach((button) => button.classList.toggle("active", button.dataset.mode === mode));
   }
 
   function patchSwitchSnapshot() {
@@ -65,6 +85,7 @@
       const strong = pnlCard.querySelector("strong");
       if (strong) strong.textContent = money(pnl, me.currency || "USD");
     }
+    delete document.documentElement.dataset.accountSwitching;
     setPnlTone();
   }
 
@@ -164,6 +185,7 @@
       switchSnapshot = null;
       switchLockUntil = Date.now() + 6000;
       document.documentElement.dataset.accountSwitching = pendingMode;
+      showSwitchPending(pendingMode);
     }
 
     const main = event.target?.closest?.("[data-main-action]");
