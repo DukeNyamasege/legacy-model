@@ -25,6 +25,8 @@
     "purchase_insufficient_balance",
   ]);
 
+  let scheduled = false;
+
   function runtimeDomState() {
     const line = document.querySelector(".builder-status-line[data-runtime-state]");
     if (!line) return { state: "", reason: "" };
@@ -87,22 +89,38 @@
 
     const fatal = runtimeState === "ERROR" || FATAL.has(status);
     box.classList.toggle("error", fatal);
-    box.dataset.executionStatus = status || runtimeState.toLowerCase();
+    const executionStatus = status || runtimeState.toLowerCase();
+    if (box.dataset.executionStatus !== executionStatus) {
+      box.dataset.executionStatus = executionStatus;
+    }
 
     let prefix = "Auto trading stopped";
     if (status === "manual_pause") prefix = "Auto trading paused";
     if (status === "take_profit") prefix = "Take profit stop";
     if (status === "stop_loss") prefix = "Stop loss stop";
-    box.textContent = `${prefix}: ${reason}`;
+    const nextText = `${prefix}: ${reason}`;
+    if (box.textContent !== nextText) box.textContent = nextText;
   }
 
-  new MutationObserver(update).observe(document.documentElement, {
+  function scheduleUpdate() {
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(() => {
+      scheduled = false;
+      update();
+    });
+  }
+
+  // Coalesce DOM mutations into one animation-frame update. The banner itself
+  // may create a DOM mutation, but unchanged content is never written again, so
+  // the observer cannot recursively saturate the browser main thread.
+  new MutationObserver(scheduleUpdate).observe(document.documentElement, {
     childList: true,
     subtree: true,
     characterData: true,
   });
-  setInterval(update, 750);
+  setInterval(scheduleUpdate, 750);
   document.readyState === "loading"
-    ? document.addEventListener("DOMContentLoaded", update, { once: true })
-    : update();
+    ? document.addEventListener("DOMContentLoaded", scheduleUpdate, { once: true })
+    : scheduleUpdate();
 })();
