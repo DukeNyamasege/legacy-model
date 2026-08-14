@@ -19,6 +19,9 @@ from app.custom_strategy_last_digit_prediction import (
 install_custom_strategy_comparator_extension()
 install_custom_strategy_last_digit_prediction()
 
+from app.custom_execution_consistency_authority import (
+    install_custom_execution_consistency_authority,
+)
 from app.custom_split_recovery_authority import install_custom_split_recovery_authority
 from app.custom_strategy_connection_stampede_guard import (
     install_custom_strategy_connection_stampede_guard,
@@ -156,11 +159,16 @@ async def run_worker() -> None:
     # Startup no longer waits for REST account discovery or serial history loads.
     install_custom_strategy_instant_start()
 
-    # FINAL CONNECTION AUTHORITY. A fresh Start admits/wakes only that account.
-    # Existing private reconnect loops own their own backoff and the watchdog may
-    # observe them but never wake every disconnected sibling or call global
-    # validate_accounts() as a repair mechanism.
+    # A fresh Start admits/wakes only that account. Existing private reconnect
+    # loops own their own backoff and sibling accounts are never globally rebuilt.
     install_custom_strategy_connection_stampede_guard()
+
+    # FINAL CUSTOM EXECUTION AUTHORITY. Transport deadlines mean reconnect and
+    # provider reconciliation, never Auto Trading Stop. Multiplier Martingale is
+    # previous actual stake x multiplier only; exact loss-vs-payout sizing belongs
+    # exclusively to configured split recovery. Virtual Hook state is persisted
+    # and pushed to the dashboard immediately on entry and on every $0 mirror.
+    install_custom_execution_consistency_authority()
     install_telegram_silence()
 
     bot = RFDir5TradingBot()
@@ -172,10 +180,12 @@ async def run_worker() -> None:
         "explicit_start_pickup=true instant_start=true provider_account_sweep_blocking=false "
         "history_startup=parallel_bounded exact_entry_guard=true manual_stop_buy_guard=true "
         "result_routing=account_outcome_debt "
-        "martingale_spread=1_to_3_successful_parts "
-        "virtual_hook=exact_zero_stake_mirror persistent_open_lock=true "
+        "martingale_multiplier=previous_actual_stake_times_multiplier "
+        "martingale_split=exact_debt_by_payout_1_to_3_successful_parts hidden_buffer=false "
+        "virtual_hook=exact_zero_stake_mirror persistent_open_lock=true immediate_ui=true "
         "virtual_void_policy=retry_without_real_unlock same_tick_reentry=false "
-        "runtime_fault_policy=soft_reconnect_no_forced_disconnect "
+        "runtime_fault_policy=reconnect_reconcile_never_stop "
+        "ambiguous_buy_policy=reconcile_before_next_real duplicate_buy_retry=false "
         "stop_reason_authority=durable execution_liveness_watchdog=true "
         "connection_repair=targeted_singleflight sibling_wake=false global_revalidation=false"
     )
