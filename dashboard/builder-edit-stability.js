@@ -4,13 +4,15 @@
   if (window.__FOA_BUILDER_EDIT_STABILITY__) return;
   window.__FOA_BUILDER_EDIT_STABILITY__ = true;
 
-  const VERSION = "20260814-builder-edit-stability-v1";
+  const VERSION = "20260814-builder-edit-stability-v2";
   const nativeRemove = Element.prototype.remove;
   let scheduled = false;
   let recoveryChangeGuardUntil = 0;
+  let preserveViewportUntil = 0;
   let editingScrollX = 0;
   let editingScrollY = 0;
   let editingActive = false;
+  let programmaticScroll = false;
 
   const q = (selector, root = document) => root.querySelector(selector);
 
@@ -22,6 +24,12 @@
     );
   }
 
+  function setText(node, value) {
+    if (!node) return;
+    const next = String(value ?? "");
+    if (node.textContent !== next) node.textContent = next;
+  }
+
   function rememberEditingViewport() {
     if (!isBuilderEditor()) return;
     editingActive = true;
@@ -29,10 +37,17 @@
     editingScrollY = window.scrollY;
   }
 
-  function restoreEditingViewport() {
-    if (!editingActive || !isBuilderEditor()) return;
+  function scrollBackToEditingViewport() {
     if (Math.abs(window.scrollY - editingScrollY) < 2 && Math.abs(window.scrollX - editingScrollX) < 2) return;
+    programmaticScroll = true;
     window.scrollTo(editingScrollX, editingScrollY);
+    window.requestAnimationFrame(() => { programmaticScroll = false; });
+  }
+
+  function restoreEditingViewport() {
+    const protectedWindow = editingActive || Date.now() < preserveViewportUntil;
+    if (!protectedWindow) return;
+    scrollBackToEditingViewport();
   }
 
   // result-based-strategy.js historically removes and recreates this recovery
@@ -49,7 +64,15 @@
       const y = window.scrollY;
       const result = nativeRemove.apply(this, args);
       window.requestAnimationFrame(() => {
-        if (!isBuilderEditor()) window.scrollTo(x, y);
+        window.requestAnimationFrame(() => {
+          if (isBuilderEditor() || Date.now() < preserveViewportUntil) {
+            restoreEditingViewport();
+          } else {
+            programmaticScroll = true;
+            window.scrollTo(x, y);
+            window.requestAnimationFrame(() => { programmaticScroll = false; });
+          }
+        });
       });
       return result;
     }
@@ -74,14 +97,15 @@
     const split = style.value === "split";
     parts.hidden = !split;
     if (!split) {
-      if (note) note.textContent = "Multiplier mode uses the Martingale multiplier configured above. Choose Martingale Spread to divide the outstanding loss equally across recovery runs.";
+      setText(note, "Multiplier mode uses the Martingale multiplier configured above. Choose Martingale Spread to divide the outstanding loss equally across recovery runs.");
       return;
     }
 
     const raw = input ? String(input.value || "").trim() : String(original.value || "2");
-    if (note) {
-      if (!raw) note.textContent = "Enter how many successful recovery runs should share the outstanding loss (1–3).";
-      else note.textContent = splitCopy(raw);
+    if (!raw) {
+      setText(note, "Enter how many successful recovery runs should share the outstanding loss (1–3).");
+    } else {
+      setText(note, splitCopy(raw));
     }
   }
 
@@ -106,9 +130,10 @@
     original.value = String(next);
 
     if (changed) {
-      // The original hidden selector owns the canonical result-based state. Let it
-      // receive one committed change, but suppress its legacy remove/recreate pass.
-      recoveryChangeGuardUntil = Date.now() + 120;
+      // The hidden selector still owns the canonical result-based state. Send one
+      // committed event only after editing is complete; never on each keystroke.
+      recoveryChangeGuardUntil = Date.now() + 180;
+      preserveViewportUntil = Date.now() + 2500;
       original.dispatchEvent(new Event("change", { bubbles: true }));
     }
     syncRecoveryPresentation(control);
@@ -131,12 +156,12 @@
 
     input.addEventListener("focus", () => {
       rememberEditingViewport();
-      recoveryChangeGuardUntil = Date.now() + 120;
+      recoveryChangeGuardUntil = Date.now() + 180;
     });
 
     input.addEventListener("input", () => {
-      // Deliberately do not clamp, rewrite or dispatch change here. A number input
-      // must be allowed to be temporarily empty while the trader replaces a value.
+      // Deliberately do not clamp, rewrite or dispatch change here. The field may
+      // be temporarily empty while the trader deletes 1 and types 2 or 3.
       rememberEditingViewport();
       syncRecoveryPresentation(control);
     });
@@ -144,7 +169,8 @@
     input.addEventListener("change", () => commitSplitInput(input, original, control));
     input.addEventListener("blur", () => {
       commitSplitInput(input, original, control);
-      window.requestAnimationFrame(() => window.scrollTo(editingScrollX, editingScrollY));
+      preserveViewportUntil = Date.now() + 2500;
+      window.requestAnimationFrame(scrollBackToEditingViewport);
     });
 
     input.addEventListener("keydown", (event) => {
@@ -175,13 +201,15 @@
     editingActive = true;
     editingScrollX = window.scrollX;
     editingScrollY = window.scrollY;
+    preserveViewportUntil = 0;
     if (event.target.closest?.("#recovery-spread-control")) {
-      recoveryChangeGuardUntil = Date.now() + 120;
+      recoveryChangeGuardUntil = Date.now() + 180;
     }
   }, true);
 
   document.addEventListener("focusout", (event) => {
     if (!event.target?.closest?.(".strategy-builder-card")) return;
+    preserveViewportUntil = Date.now() + 2500;
     window.setTimeout(() => {
       if (!isBuilderEditor()) editingActive = false;
     }, 0);
@@ -189,9 +217,10 @@
 
   document.addEventListener("change", (event) => {
     if (event.target?.id !== "recovery-style") return;
-    // Recovery style changes should update visibility/copy in place. The old
-    // result-based handler may request a remount; suppress that one remount.
-    recoveryChangeGuardUntil = Date.now() + 120;
+    // Recovery style changes update visibility/copy in place. Suppress the legacy
+    // remove/recreate request from the older recovery component.
+    recoveryChangeGuardUntil = Date.now() + 180;
+    preserveViewportUntil = Date.now() + 2500;
     window.setTimeout(() => {
       syncRecoveryPresentation(q("#recovery-spread-control"));
       scheduleEnhance();
@@ -202,17 +231,16 @@
     if (isBuilderEditor(event.target)) rememberEditingViewport();
   }, true);
 
+  window.addEventListener("scroll", () => {
+    if (programmaticScroll || !isBuilderEditor()) return;
+    editingScrollX = window.scrollX;
+    editingScrollY = window.scrollY;
+  }, { passive: true });
+
   new MutationObserver(scheduleEnhance).observe(document.documentElement, {
     childList: true,
     subtree: true,
   });
-
-  window.setInterval(() => {
-    if (isBuilderEditor()) {
-      restoreEditingViewport();
-      scheduleEnhance();
-    }
-  }, 500);
 
   document.readyState === "loading"
     ? document.addEventListener("DOMContentLoaded", scheduleEnhance, { once: true })
