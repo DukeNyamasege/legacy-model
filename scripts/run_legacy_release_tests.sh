@@ -22,6 +22,7 @@ exec python -m unittest -q \
   tests.test_execution_stop_reason_authority \
   tests.test_custom_execution_consistency_authority \
   tests.test_post_loss_split_and_virtual_neutrality \
+  tests.test_clear_trades_unbounded_kpis \
   tests.test_builder_edit_stability \
   tests.test_custom_virtual_integrity_authority \
   tests.test_custom_strategy_instant_start \
