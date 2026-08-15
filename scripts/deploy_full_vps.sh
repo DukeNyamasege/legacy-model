@@ -36,7 +36,10 @@ printf '%s\n' "Architecture  : frontend + API + WebSocket + worker + PostgreSQL"
 printf '%s\n' "1. Validate full-VPS Compose and source"
 compose config --quiet || fail "Docker Compose configuration is invalid."
 python3 -m compileall -q app scripts || fail "Python syntax validation failed."
-sh -n scripts/prepare_full_vps_host.sh scripts/enable_full_vps_https.sh scripts/deploy_full_vps.sh \
+sh -n scripts/install_full_vps_caddy.sh \
+  scripts/prepare_full_vps_host.sh \
+  scripts/enable_full_vps_https.sh \
+  scripts/deploy_full_vps.sh \
   || fail "Deployment script syntax validation failed."
 
 printf '%s\n' "2. Build candidate frontend, API and worker before touching live services"
@@ -106,12 +109,19 @@ done
 curl -fsS --max-time 5 http://127.0.0.1:8081/ >/dev/null \
   || fail "Frontend index failed."
 
-printf '%s\n' "9. Validate host Nginx when installed"
-if command -v nginx >/dev/null 2>&1; then
+printf '%s\n' "9. Validate/reload public edge when already installed"
+if command -v caddy >/dev/null 2>&1 && [ -f /etc/caddy/Caddyfile ]; then
+  caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile \
+    || fail "Caddy configuration is invalid."
+  systemctl reload caddy || fail "Caddy reload failed."
+  edge="Caddy"
+elif command -v nginx >/dev/null 2>&1; then
   nginx -t || fail "Host Nginx configuration is invalid."
   systemctl reload nginx || fail "Host Nginx reload failed."
+  edge="Nginx"
 else
-  echo "NGINX_NOT_INSTALLED run=./scripts/prepare_full_vps_host.sh"
+  edge="not-installed"
+  echo "PUBLIC_EDGE_NOT_INSTALLED preferred=./scripts/install_full_vps_caddy.sh fallback=./scripts/prepare_full_vps_host.sh"
 fi
 
 printf '%s\n' "10. Final service state"
@@ -119,10 +129,11 @@ compose ps
 
 printf '%s\n' "============================================================"
 printf '%s\n' "FULL VPS DEPLOYMENT PASSED"
-printf '%s\n' "Frontend : 127.0.0.1:8081 (host Nginx publishes it)"
-printf '%s\n' "API      : 127.0.0.1:8080 (host Nginx publishes /api and /oauth)"
-printf '%s\n' "Realtime : host Nginx publishes /ws"
-printf '%s\n' "Worker   : Docker private service"
-printf '%s\n' "Database : Docker named volume preserved"
-printf 'Backup   : %s\n' "$backup"
+printf 'Public edge: %s\n' "$edge"
+printf '%s\n' "Frontend   : 127.0.0.1:8081"
+printf '%s\n' "API        : 127.0.0.1:8080"
+printf '%s\n' "Realtime   : same API container via /ws"
+printf '%s\n' "Worker     : Docker private service"
+printf '%s\n' "Database   : Docker named volume preserved"
+printf 'Backup     : %s\n' "$backup"
 printf '%s\n' "============================================================"
