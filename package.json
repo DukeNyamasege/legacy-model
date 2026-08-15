@@ -3,6 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node scripts/build-netlify.mjs"
+    "build": "node scripts/build-netlify.mjs",
+    "build:netlify": "node scripts/build-netlify.mjs",
+    "build:vps": "node scripts/build-vps.mjs"
   }
 }
