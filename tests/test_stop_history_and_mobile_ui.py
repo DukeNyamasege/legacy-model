@@ -159,10 +159,12 @@ class DashboardSessionAndReachabilityTests(unittest.TestCase):
         self.assertIn("REPOSITORY.worker_heartbeat()", ready_block)
         self.assertNotIn("REPOSITORY.summary()", ready_block)
 
-    def test_netlify_and_contabo_replace_old_vps_smoke_surface(self) -> None:
+    def test_full_vps_replaces_old_smoke_surface_while_netlify_remains_rollback(self) -> None:
         self.assertFalse((ROOT / "scripts" / "production_smoke.py").exists())
         self.assertFalse((ROOT / "scripts" / "deploy_vps.sh").exists())
-        self.assertFalse((ROOT / "docker-compose.vps.yml").exists())
+        self.assertTrue((ROOT / "docker-compose.vps.yml").exists())
+        self.assertTrue((ROOT / "scripts" / "deploy_full_vps.sh").exists())
+        self.assertTrue((ROOT / "scripts" / "install_full_vps_caddy.sh").exists())
 
         build = (ROOT / "scripts" / "build-netlify.mjs").read_text(encoding="utf-8")
         self.assertIn("BACKEND_ORIGIN", build)
@@ -171,14 +173,15 @@ class DashboardSessionAndReachabilityTests(unittest.TestCase):
         self.assertIn("/api/*", build)
         self.assertIn("/oauth/*", build)
 
-        deploy = (ROOT / "scripts" / "deploy_dedicated_backend.sh").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("NETLIFY + CONTABO BACKEND DEPLOYMENT", deploy)
-        self.assertIn('docker compose -f docker-compose.yml', deploy)
-        self.assertIn("compose build api worker", deploy)
+        vps_build = (ROOT / "scripts" / "build-vps.mjs").read_text(encoding="utf-8")
+        self.assertIn("full-vps-same-origin-v1", vps_build)
+        self.assertIn('await rm(resolve(output, "_redirects"), { force: true });', vps_build)
+
+        deploy = (ROOT / "scripts" / "deploy_full_vps.sh").read_text(encoding="utf-8")
+        self.assertIn("FULL CONTABO VPS DEPLOYMENT", deploy)
+        self.assertIn("compose build frontend api worker", deploy)
         self.assertIn("alembic upgrade head", deploy)
-        self.assertIn("CONTABO BACKEND DEPLOYMENT", deploy)
+        self.assertIn("Database   : Docker named volume preserved", deploy)
 
     def test_final_dashboard_actions_route_uses_current_actions_source(self) -> None:
         final_ui = (ROOT / "app" / "final_virtual_history_ui.py").read_text(
@@ -219,7 +222,9 @@ class DashboardSessionAndReachabilityTests(unittest.TestCase):
         self.assertIn("sh -n scripts/deploy_dedicated_backend.sh", workflow)
         self.assertIn("docker compose -f docker-compose.yml config --quiet", workflow)
         self.assertNotIn("scripts/deploy_vps.sh", workflow)
-        self.assertNotIn("docker-compose.vps.yml", workflow)
+        self.assertIn("docker-compose.vps.yml", workflow)
+        self.assertIn("Production full VPS frontend build", workflow)
+        self.assertIn("Build frontend image", workflow)
         self.assertIn('alembic heads | grep -q "20260812_0021 (head)"', workflow)
         self.assertNotIn('alembic heads | grep -q "20260805_0020 (head)"', workflow)
         self.assertIn("docker build --target api", workflow)
