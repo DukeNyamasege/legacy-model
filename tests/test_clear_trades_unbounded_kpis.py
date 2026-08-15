@@ -11,6 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 AUTHORITY = ROOT / "app" / "final_trade_history_cutoff_authority.py"
 BACKEND = ROOT / "app" / "netlify_backend_api.py"
 KPI_JS = ROOT / "dashboard" / "virtual-kpi-neutrality.js"
+REALTIME_JS = ROOT / "dashboard" / "netlify-realtime-client.js"
+INDEX = ROOT / "dashboard" / "index.html"
 
 
 class ClearTradesUnboundedKpiTests(unittest.TestCase):
@@ -66,11 +68,31 @@ class ClearTradesUnboundedKpiTests(unittest.TestCase):
         cutoff = source.index("install_final_trade_history_cutoff_authority(app)")
         self.assertLess(surface, cutoff)
 
-    def test_frontend_uses_server_summary_not_bounded_rows(self) -> None:
+    def test_frontend_kpis_never_fall_back_to_bounded_rows_after_clear(self) -> None:
         source = KPI_JS.read_text(encoding="utf-8")
-        self.assertIn("function summaryMetrics(payload)", source)
-        self.assertIn("summaryMetrics(payload) || rowFallbackMetrics(me, payload)", source)
-        self.assertIn("Never derive KPI totals from rows.length", source)
+        self.assertIn("function summaryMetrics(me, payload)", source)
+        self.assertIn("payloadCutoffTime(payload)", source)
+        self.assertIn("localCutoff ? zeroMetrics() : rowFallbackMetrics", source)
+        self.assertIn("ONLY KPI", source)
+        self.assertIn("MutationObserver", source)
+        self.assertIn('window.addEventListener("foa:global-trades-cleared"', source)
+
+    def test_realtime_writer_uses_server_summary_and_accepts_real_zero_after_clear(self) -> None:
+        source = REALTIME_JS.read_text(encoding="utf-8")
+        self.assertIn("function payloadCutoffTime(trades)", source)
+        self.assertIn("summary.total ?? me?.stats?.trades", source)
+        self.assertIn("serverCutoff + 1000 < cutoff", source)
+        self.assertIn("Never replace the", source)
+        self.assertIn("aggregate with rows.length", source)
+        self.assertIn("if (!cutoff && incomingIsEmpty && cachedHasActivity)", source)
+        self.assertNotIn("total = rows.length", source)
+        self.assertIn('window.addEventListener("foa:global-trades-cleared"', source)
+        self.assertIn("client-clear-barrier-awaiting-cutoff-server", source)
+
+    def test_cache_busted_single_kpi_assets_are_shipped(self) -> None:
+        source = INDEX.read_text(encoding="utf-8")
+        self.assertIn("virtual-kpi-neutrality.js?v=20260815-3", source)
+        self.assertIn("netlify-realtime-client.js?v=20260815-3", source)
 
 
 if __name__ == "__main__":
