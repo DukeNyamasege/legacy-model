@@ -2,9 +2,10 @@
   "use strict";
 
   if (window.FOA_VIRTUAL_KPI_NEUTRALITY) return;
-  window.FOA_VIRTUAL_KPI_NEUTRALITY = "20260815-2";
+  window.FOA_VIRTUAL_KPI_NEUTRALITY = "20260815-3";
 
   const RESET_PREFIX = "foa-trade-session-reset-v1";
+  let scheduled = false;
 
   function storageGet(key) {
     try { return localStorage.getItem(key); } catch (_) { return null; }
@@ -35,6 +36,12 @@
     return Number.isFinite(parsed) ? parsed : 0;
   }
 
+  function payloadCutoffTime(payload) {
+    const raw = payload?.history_cleared_at || payload?.session_started_at || "";
+    const parsed = Date.parse(raw);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
   function money(value, currency = "USD") {
     const amount = Number(value || 0);
     const unit = String(currency || "USD").toUpperCase();
@@ -54,8 +61,26 @@
     return Number.isFinite(number) ? number : null;
   }
 
-  function summaryMetrics(payload) {
+  function zeroMetrics() {
+    return { total: 0, wins: 0, losses: 0, profit: 0 };
+  }
+
+  function summaryMetrics(me, payload) {
     const summary = payload?.summary;
+    const localCutoff = resetTime(me);
+
+    /*
+     * A Clear Trades response is stored locally immediately. During a rolling
+     * Netlify/VPS deployment an older realtime snapshot can still arrive with the
+     * pre-clear day aggregate. Never repaint that stale aggregate. Hold the KPI
+     * cards at zero until the server payload proves that it is using the same (or
+     * newer) durable cutoff. This removes the 0 <-> old-total flicker completely.
+     */
+    if (localCutoff) {
+      const serverCutoff = payloadCutoffTime(payload);
+      if (!serverCutoff || serverCutoff + 1000 < localCutoff) return zeroMetrics();
+    }
+
     if (!summary || typeof summary !== "object") return null;
 
     const total = finiteMetric(summary.total);
@@ -65,26 +90,19 @@
     if ([total, wins, losses, profit].some((value) => value === null)) return null;
 
     /*
-     * IMPORTANT: `payload.trades` is intentionally a bounded Recent Activity
-     * window (currently 100 rows in the realtime snapshot). `payload.summary`
-     * comes from SQL aggregate COUNT/SUM queries over the complete applicable
-     * trade period and is therefore the only authority for Runs/Wins/Losses/P&L.
-     * Never derive KPI totals from rows.length: 101, 1,000 or 10,000 actual runs
-     * must remain visible even when only a small recent-history window is sent.
-     * Virtual Hook observations live outside the actual Trade aggregate, so they
-     * remain visible in history while staying financially KPI-neutral.
+     * IMPORTANT: `payload.trades` is intentionally only Recent Activity. It may
+     * contain 8, 50 or 100 rows. `payload.summary` is the unbounded PostgreSQL
+     * COUNT/SUM aggregate for the visible post-clear session and is the ONLY KPI
+     * authority. Never derive Runs/Wins/Losses/P&L from rows.length: 101, 1,000 or
+     * 10,000 actual runs must remain visible. Virtual observations live outside
+     * the actual Trade aggregate and therefore stay financially KPI-neutral.
      */
     return { total, wins, losses, profit };
   }
 
   function rowFallbackMetrics(me, payload) {
     const allRows = Array.isArray(payload?.trades) ? payload.trades : [];
-    const cutoff = resetTime(me);
-    const rows = allRows.filter((row) => {
-      if (isVirtual(row)) return false;
-      if (!cutoff) return true;
-      return rowTime(row) >= cutoff;
-    });
+    const rows = allRows.filter((row) => !isVirtual(row));
     const wins = rows.filter((row) => String(row.outcome || "").toUpperCase() === "WIN").length;
     const losses = rows.filter((row) => String(row.outcome || "").toUpperCase() === "LOSS").length;
     const profit = rows.reduce((sum, row) => sum + Number(row.profit || 0), 0);
@@ -97,8 +115,9 @@
     const payload = cache?.trades;
     if (!me?.authenticated || !payload) return null;
 
-    // Server aggregate is intentionally independent of the bounded row window.
-    const metrics = summaryMetrics(payload) || rowFallbackMetrics(me, payload);
+    const localCutoff = resetTime(me);
+    const metrics = summaryMetrics(me, payload)
+      || (localCutoff ? zeroMetrics() : rowFallbackMetrics(me, payload));
     return {
       ...metrics,
       currency: me.currency || "USD",
@@ -150,18 +169,37 @@
   }
 
   function refresh() {
+    scheduled = false;
     const metrics = actualMetrics();
     if (!metrics) return;
     updateBuilderStats(metrics);
     updateCompactStats(metrics);
   }
 
-  window.setInterval(refresh, 750);
-  window.addEventListener("pageshow", refresh);
+  function scheduleRefresh() {
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(refresh);
+  }
+
+  /*
+   * dashboard-v2 still rebuilds the shell during its slow 15-second compatibility
+   * refresh. Re-apply the single KPI authority in the same render turn, before a
+   * user can see the row-derived placeholders. setText() is change-aware, so this
+   * observer settles after one correction instead of creating a mutation loop.
+   */
+  new MutationObserver((mutations) => {
+    if (!mutations.some((item) => item.type === "childList" || item.type === "characterData")) return;
+    scheduleRefresh();
+  }).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+
+  window.setInterval(scheduleRefresh, 750);
+  window.addEventListener("pageshow", scheduleRefresh);
+  window.addEventListener("foa:global-trades-cleared", scheduleRefresh);
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) refresh();
+    if (!document.hidden) scheduleRefresh();
   });
   document.readyState === "loading"
-    ? document.addEventListener("DOMContentLoaded", refresh, { once: true })
-    : refresh();
+    ? document.addEventListener("DOMContentLoaded", scheduleRefresh, { once: true })
+    : scheduleRefresh();
 })();
