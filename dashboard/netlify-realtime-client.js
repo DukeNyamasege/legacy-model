@@ -40,6 +40,12 @@
     return Number.isFinite(value) ? value : 0;
   }
 
+  function payloadCutoffTime(trades) {
+    const raw = trades?.history_cleared_at || trades?.session_started_at || "";
+    const value = Date.parse(raw);
+    return Number.isFinite(value) ? value : 0;
+  }
+
   function rowTime(row) {
     const value = Date.parse(
       row?.purchase_time || row?.provider_purchase_time || row?.created_at || "",
@@ -152,22 +158,41 @@
   function deriveMetrics(me, trades) {
     const rows = visibleTrades(me, trades);
     const cutoff = resetTime(me);
-    const summary = trades?.summary || {};
-    let total = Number(summary.total ?? me?.stats?.trades ?? 0);
-    let wins = Number(summary.wins ?? me?.stats?.wins ?? 0);
-    let losses = Number(summary.losses ?? me?.stats?.losses ?? 0);
-    let profit = Number(summary.profit ?? me?.stats?.profit ?? 0);
-    if (cutoff) {
-      total = rows.length;
-      wins = rows.filter((row) => String(row.outcome || "").toUpperCase() === "WIN").length;
-      losses = rows.filter((row) => String(row.outcome || "").toUpperCase() === "LOSS").length;
-      profit = rows.reduce((sum, row) => sum + Number(row.profit || 0), 0);
+    const serverCutoff = payloadCutoffTime(trades);
+
+    /*
+     * After Clear Trades, never accept a snapshot that has not yet acknowledged
+     * the same durable cutoff. A rolling frontend/backend deployment can otherwise
+     * alternate between local zero and the old day aggregate. Zero is the only
+     * safe display until the cutoff-aware server snapshot arrives.
+     */
+    if (cutoff && (!serverCutoff || serverCutoff + 1000 < cutoff)) {
+      return { total: 0, wins: 0, losses: 0, profit: 0, rows, waitingForCutoffSync: true };
     }
-    return { total, wins, losses, profit, rows };
+
+    const summary = trades?.summary || {};
+    const total = Number(summary.total ?? me?.stats?.trades ?? 0);
+    const wins = Number(summary.wins ?? me?.stats?.wins ?? 0);
+    const losses = Number(summary.losses ?? me?.stats?.losses ?? 0);
+    const profit = Number(summary.profit ?? me?.stats?.profit ?? 0);
+
+    /*
+     * `rows` is Recent Activity only and may be bounded. Runs/Wins/Losses/P&L are
+     * always the server aggregate, including after Clear Trades. Never replace the
+     * aggregate with rows.length when a cutoff exists; that recreated the 100-run
+     * ceiling and caused 100 <-> true-total flicker between frontend writers.
+     */
+    return { total, wins, losses, profit, rows, waitingForCutoffSync: false };
   }
 
   function stableMetrics(me, trades) {
     const incoming = deriveMetrics(me, trades);
+    const cutoff = resetTime(me);
+
+    if (incoming.waitingForCutoffSync) {
+      return { total: 0, wins: 0, losses: 0, profit: 0 };
+    }
+
     const cached = readCachedMetrics(me, trades);
     const incomingIsEmpty = incoming.rows.length === 0
       && incoming.total === 0
@@ -180,11 +205,12 @@
         || Number(cached.losses || 0) > 0
         || Number(cached.profit || 0) !== 0);
 
-    /* A same-account refresh can briefly return an empty trade summary while the
-       next account snapshot is being assembled. Do not repaint real figures as
-       zero during that gap. A new account/date/local Clear creates a different
-       cache identity, so legitimate zero states still display immediately. */
-    if (incomingIsEmpty && cachedHasActivity) {
+    /*
+     * The anti-zero cache is useful only before a Clear Trades boundary exists.
+     * Once a cutoff exists, zero is a legitimate authoritative state and must never
+     * be replaced by an older cached activity total.
+     */
+    if (!cutoff && incomingIsEmpty && cachedHasActivity) {
       return {
         total: Number(cached.total || 0),
         wins: Number(cached.wins || 0),
@@ -234,6 +260,11 @@
 
   function snapshotWithStableTrades(snapshot) {
     if (!lastSnapshot || !snapshot?.me || !snapshot?.trades) return snapshot;
+
+    /* A Clear Trades boundary is authoritative. Never preserve an older row set
+       across it while waiting for the next cutoff-aware server snapshot. */
+    if (resetTime(snapshot.me)) return snapshot;
+
     if (metricIdentity(lastSnapshot.me, lastSnapshot.trades) !== metricIdentity(snapshot.me, snapshot.trades)) {
       return snapshot;
     }
@@ -379,12 +410,56 @@
   });
   observer.observe(document.documentElement, { childList: true, subtree: true });
 
-  document.addEventListener("click", (event) => {
-    if (!event.target?.closest?.("[data-clear-local-trades]")) return;
-    window.setTimeout(() => {
-      if (lastSnapshot) applySnapshot(lastSnapshot);
-    }, 0);
+  window.addEventListener("foa:global-trades-cleared", (event) => {
+    const detail = event?.detail || {};
+    const cutoff = String(detail.history_cleared_at || "");
+    if (lastSnapshot?.me?.authenticated) {
+      const zeroSummary = {
+        ...(lastSnapshot.trades?.summary || {}),
+        total: 0,
+        settled: 0,
+        wins: 0,
+        losses: 0,
+        open: 0,
+        profit: 0,
+        win_rate: 0,
+        virtual_observations: 0,
+        virtual_wins: 0,
+        virtual_losses: 0,
+        virtual_open: 0,
+        history_rows: 0,
+        returned_rows: 0,
+      };
+      lastSnapshot = {
+        ...lastSnapshot,
+        me: {
+          ...lastSnapshot.me,
+          history_cleared_at: cutoff || lastSnapshot.me.history_cleared_at,
+          stats: {
+            ...(lastSnapshot.me.stats || {}),
+            trades: 0,
+            settled_trades: 0,
+            open_trades: 0,
+            wins: 0,
+            losses: 0,
+            profit: 0,
+          },
+        },
+        trades: {
+          ...(lastSnapshot.trades || {}),
+          history_cleared_at: cutoff || lastSnapshot.trades?.history_cleared_at,
+          session_started_at: cutoff || lastSnapshot.trades?.session_started_at,
+          trades: [],
+          summary: zeroSummary,
+          truncated: false,
+          performance_profile: "client-clear-barrier-awaiting-cutoff-server",
+        },
+      };
+      applySnapshot(lastSnapshot);
+    }
+    fallbackSnapshot();
   });
+
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) connect();
   });
@@ -397,5 +472,5 @@
   scheduleFallback();
   fallbackSnapshot();
   connect();
-  window.FOA_NETLIFY_REALTIME_MODE = "direct-vps-websocket-ticket-v2-stable-metrics";
+  window.FOA_NETLIFY_REALTIME_MODE = "direct-vps-websocket-ticket-v3-single-kpi-source";
 })();
