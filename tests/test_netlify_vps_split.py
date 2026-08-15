@@ -11,7 +11,7 @@ def source(path: str) -> str:
 
 
 class NetlifyVpsSplitArchitectureTests(unittest.TestCase):
-    def test_netlify_is_authoritative_static_frontend(self) -> None:
+    def test_netlify_remains_a_valid_static_rollback_frontend(self) -> None:
         config = source("netlify.toml")
         build = source("scripts/build-netlify.mjs")
         self.assertIn('command = "npm run build"', config)
@@ -72,7 +72,7 @@ class NetlifyVpsSplitArchitectureTests(unittest.TestCase):
         self.assertIn("planned_restart=true", resilience.replace("%s", "true"))
         self.assertIn("if planned_restart:", resilience)
 
-    def test_vps_runs_backend_only_services(self) -> None:
+    def test_base_compose_can_still_run_backend_only_for_rollback(self) -> None:
         compose = source("docker-compose.yml")
         self.assertIn("app.netlify_backend_api:app", compose)
         self.assertIn("app.custom_strategy_worker", compose)
@@ -82,16 +82,19 @@ class NetlifyVpsSplitArchitectureTests(unittest.TestCase):
         worker = source("app/custom_strategy_worker.py")
         self.assertIn("install_netlify_worker_bridge()", worker)
 
-    def test_backend_proxy_targets_selected_contabo_host(self) -> None:
-        caddy = source("Caddyfile")
-        self.assertIn("api.derivadmin.site", caddy)
-        self.assertIn("reverse_proxy 127.0.0.1:8080", caddy)
+    def test_full_vps_environment_targets_same_origin_contabo_host(self) -> None:
+        override = source("docker-compose.vps.yml")
+        self.assertIn("app.vps_backend_api:app", override)
+        self.assertIn("frontend:", override)
+        self.assertIn('"127.0.0.1:8081:80"', override)
+
         env = source(".env.vps.example")
-        self.assertIn("FRONTEND_HOSTING_MODE=netlify", env)
+        self.assertIn("PUBLIC_ORIGIN=https://derivadmin.site", env)
+        self.assertIn("FRONTEND_HOSTING_MODE=vps", env)
         self.assertIn("DASHBOARD_FRONTEND_ORIGINS=", env)
         self.assertIn("DASHBOARD_STREAM_SIGNING_KEY=", env)
         self.assertIn("CLIENT_SESSION_SAMESITE=lax", env)
-        self.assertIn("api.derivadmin.site", env)
+        self.assertIn("TRUSTED_HOSTS=derivadmin.site,www.derivadmin.site", env)
         self.assertIn("https://derivadmin.site/oauth/callback", env)
         self.assertIn("DERIV_TRADING_ENABLED=false", env)
         self.assertIn("ALLOW_REAL_TRADING=false", env)
