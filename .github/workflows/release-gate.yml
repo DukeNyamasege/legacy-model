@@ -52,13 +52,18 @@ jobs:
           : > .env
           test -f .env
 
-      - name: Validate Contabo backend deployment, Compose and migrations
+      - name: Validate Contabo deployment, Compose and migrations
         run: |
           sh -n scripts/deploy_dedicated_backend.sh \
+            scripts/deploy_full_vps.sh \
+            scripts/prepare_full_vps_host.sh \
+            scripts/enable_full_vps_https.sh \
             scripts/run_legacy_release_tests.sh \
             scripts/cleanup_repository_state.sh \
             scripts/diagnose_vps_performance.sh
           docker compose -f docker-compose.yml config --quiet
+          PUBLIC_ORIGIN=https://release-gate.example docker compose \
+            -f docker-compose.yml -f docker-compose.vps.yml config --quiet
           python scripts/audit_bulk_execution_readiness.py --help >/dev/null
           alembic heads | grep -q "20260812_0021 (head)"
 
@@ -182,9 +187,11 @@ jobs:
           node --check dashboard/strategy-edit-authority.js
           node --check dashboard/platform-default-strategy.js
           node --check scripts/build-netlify.mjs
+          node --check scripts/build-vps.mjs
 
       - name: Run focused release tests
         run: |
+          python -m unittest -q tests.test_full_vps_hosting
           python -m unittest -q tests.test_account_bound_risk_and_ws_continuity
           python -m unittest -q tests.test_custom_direct_runtime
           python -m unittest -q tests.test_custom_strategy_instant_start
@@ -223,7 +230,7 @@ jobs:
         env:
           BACKEND_ORIGIN: https://api.release-gate.example
         run: |
-          npm run build
+          npm run build:netlify
           test -f dist/index.html
           test -f dist/_redirects
           grep -Fq '/api/* https://api.release-gate.example/:splat 200' dist/_redirects
@@ -256,6 +263,25 @@ jobs:
           test -f dist/strategy-template-library.css
           test -f dist/runtime-ux-authority.js
           test -f dist/runtime-ux-authority.css
+
+      - name: Production full VPS frontend build
+        env:
+          PUBLIC_ORIGIN: https://release-gate.example
+        run: |
+          npm run build:vps
+          test -f dist/index.html
+          test -f dist/vps-build.json
+          test ! -f dist/_redirects
+          grep -Fq 'frontend-runtime" content="full-vps-same-origin-v1"' dist/index.html
+          grep -Fq 'stream-base-url" content="wss://release-gate.example"' dist/index.html
+          grep -Fq '"api_base": "/api"' dist/vps-build.json
+          grep -Fq '"oauth_base": "/oauth"' dist/vps-build.json
+
+      - name: Build frontend image
+        run: >-
+          docker build -f Dockerfile.frontend
+          --build-arg PUBLIC_ORIGIN=https://release-gate.example
+          -t legacy-model-release-gate-frontend:${{ github.sha }} .
 
       - name: Build API image
         run: docker build --target api -t legacy-model-release-gate-api:${{ github.sha }} .
