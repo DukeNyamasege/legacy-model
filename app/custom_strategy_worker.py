@@ -22,6 +22,9 @@ install_custom_strategy_last_digit_prediction()
 from app.custom_execution_consistency_authority import (
     install_custom_execution_consistency_authority,
 )
+from app.custom_split_cap_defaults_authority import (
+    install_custom_split_cap_defaults_authority,
+)
 from app.custom_split_equal_spread_authority import (
     install_custom_split_equal_spread_authority,
 )
@@ -40,6 +43,9 @@ from app.custom_strategy_settlement import install_custom_strategy_settlement
 from app.custom_strategy_startup_authority import install_custom_strategy_startup_authority
 from app.custom_virtual_contract_parity import install_custom_virtual_contract_parity
 from app.custom_virtual_integrity_authority import install_custom_virtual_integrity_authority
+from app.custom_virtual_post_loss_barrier_authority import (
+    install_custom_virtual_post_loss_barrier_authority,
+)
 from app.deriv_rate_limit_circuit import install_deriv_rate_limit_circuit
 from app.deriv_request_broker import install_deriv_request_broker
 from app.exact_strategy_execution_authority import install_exact_strategy_execution_authority
@@ -167,10 +173,16 @@ async def run_worker() -> None:
     install_custom_strategy_connection_stampede_guard()
 
     # Transport/Virtual Hook/Multiplier consistency installs first. Split Recovery
-    # is then wrapped one final time so the configured spread width (1/2/3), not
-    # the number of remaining successful legs, is always the risk divisor.
+    # is then wrapped so the configured spread width (1/2/3), not the number of
+    # remaining successful legs, is always the risk divisor. The compatibility cap
+    # authority restores canonical 10%/$0.50 safety defaults when the generic
+    # execution session omits those optional kwargs. Finally, a real loss that
+    # enters Virtual Hook consumes its settlement tick; only a later provider tick
+    # may qualify the first zero-stake observation.
     install_custom_execution_consistency_authority()
     install_custom_split_equal_spread_authority()
+    install_custom_split_cap_defaults_authority()
+    install_custom_virtual_post_loss_barrier_authority()
     install_telegram_silence()
 
     bot = RFDir5TradingBot()
@@ -185,7 +197,9 @@ async def run_worker() -> None:
         "martingale_multiplier=previous_actual_stake_times_multiplier "
         "martingale_split=equal_loss_pool_by_configured_split_count "
         "split_payout_sized=true split_rebase_after_actual_loss=true hidden_buffer=false "
+        "split_cap_defaults=canonical_10pct_and_0_50_reserve "
         "virtual_hook=exact_zero_stake_mirror persistent_open_lock=true immediate_ui=true "
+        "virtual_entry=real_position_settled_then_future_qualified_tick "
         "virtual_void_policy=retry_without_real_unlock same_tick_reentry=false "
         "runtime_fault_policy=reconnect_reconcile_never_stop "
         "ambiguous_buy_policy=reconcile_before_next_real duplicate_buy_retry=false "
