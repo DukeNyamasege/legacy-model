@@ -130,9 +130,16 @@ class ContaboOperationsSourceTests(unittest.TestCase):
             "scripts/update_vps.sh",
             "scripts/deploy_vps.sh",
             "scripts/cleanup_vps_artifacts.sh",
-            "docker-compose.vps.yml",
         ):
             self.assertFalse((ROOT / retired).exists(), retired)
+
+        # docker-compose.vps.yml is now intentionally the Contabo full-stack
+        # override (frontend + existing backend services), not a Hostinger relic.
+        full_vps = ROOT / "docker-compose.vps.yml"
+        self.assertTrue(full_vps.exists())
+        content = full_vps.read_text(encoding="utf-8")
+        self.assertIn("frontend:", content)
+        self.assertIn("FRONTEND_HOSTING_MODE: vps", content)
 
     def test_repository_cleanup_is_safe_and_volume_preserving(self) -> None:
         source = (ROOT / "scripts" / "cleanup_repository_state.sh").read_text(
