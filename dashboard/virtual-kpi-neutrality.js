@@ -2,7 +2,7 @@
   "use strict";
 
   if (window.FOA_VIRTUAL_KPI_NEUTRALITY) return;
-  window.FOA_VIRTUAL_KPI_NEUTRALITY = "20260815-1";
+  window.FOA_VIRTUAL_KPI_NEUTRALITY = "20260815-2";
 
   const RESET_PREFIX = "foa-trade-session-reset-v1";
 
@@ -49,28 +49,58 @@
     return Math.max(0, Math.round(Number(value || 0))).toLocaleString();
   }
 
-  function actualMetrics() {
-    const cache = window.FOA_NETLIFY_LIVE_CACHE;
-    const me = cache?.me;
-    const payload = cache?.trades;
-    if (!me?.authenticated || !payload) return null;
+  function finiteMetric(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  }
 
-    const allRows = Array.isArray(payload.trades) ? payload.trades : [];
+  function summaryMetrics(payload) {
+    const summary = payload?.summary;
+    if (!summary || typeof summary !== "object") return null;
+
+    const total = finiteMetric(summary.total);
+    const wins = finiteMetric(summary.wins);
+    const losses = finiteMetric(summary.losses);
+    const profit = finiteMetric(summary.profit);
+    if ([total, wins, losses, profit].some((value) => value === null)) return null;
+
+    /*
+     * IMPORTANT: `payload.trades` is intentionally a bounded Recent Activity
+     * window (currently 100 rows in the realtime snapshot). `payload.summary`
+     * comes from SQL aggregate COUNT/SUM queries over the complete applicable
+     * trade period and is therefore the only authority for Runs/Wins/Losses/P&L.
+     * Never derive KPI totals from rows.length: 101, 1,000 or 10,000 actual runs
+     * must remain visible even when only a small recent-history window is sent.
+     * Virtual Hook observations live outside the actual Trade aggregate, so they
+     * remain visible in history while staying financially KPI-neutral.
+     */
+    return { total, wins, losses, profit };
+  }
+
+  function rowFallbackMetrics(me, payload) {
+    const allRows = Array.isArray(payload?.trades) ? payload.trades : [];
     const cutoff = resetTime(me);
     const rows = allRows.filter((row) => {
       if (isVirtual(row)) return false;
       if (!cutoff) return true;
       return rowTime(row) >= cutoff;
     });
-
     const wins = rows.filter((row) => String(row.outcome || "").toUpperCase() === "WIN").length;
     const losses = rows.filter((row) => String(row.outcome || "").toUpperCase() === "LOSS").length;
     const profit = rows.reduce((sum, row) => sum + Number(row.profit || 0), 0);
+    return { total: rows.length, wins, losses, profit };
+  }
+
+  function actualMetrics() {
+    const cache = window.FOA_NETLIFY_LIVE_CACHE;
+    const me = cache?.me;
+    const payload = cache?.trades;
+    if (!me?.authenticated || !payload) return null;
+
+    // Server aggregate is intentionally independent of the bounded row window.
+    const metrics = summaryMetrics(payload) || rowFallbackMetrics(me, payload);
     return {
-      total: rows.length,
-      wins,
-      losses,
-      profit,
+      ...metrics,
       currency: me.currency || "USD",
     };
   }
