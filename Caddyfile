@@ -1,16 +1,53 @@
-# Caddyfile - HTTPS reverse proxy for the Contabo backend only.
-# Netlify serves the browser UI at derivadmin.site.
-# Contabo exposes only FastAPI REST/OAuth and the signed realtime WebSocket.
+# Full-VPS production edge for derivadmin.site.
+# Caddy terminates HTTPS and routes the same-origin browser application to the
+# loopback-only frontend/API containers. The legacy api.derivadmin.site hostname
+# remains available during migration/rollback.
 
-api.derivadmin.site {
+derivadmin.site {
     encode zstd gzip
 
+    # Browser REST calls are generated as /api/<backend-path>. handle_path strips
+    # /api before forwarding so FastAPI continues to expose /me, /health, etc.
+    handle_path /api/* {
+        reverse_proxy 127.0.0.1:8080
+    }
+
+    # OAuth and realtime paths are already backend-native and must be preserved.
+    handle /oauth/* {
+        reverse_proxy 127.0.0.1:8080
+    }
+
+    handle /ws/* {
+        reverse_proxy 127.0.0.1:8080
+    }
+
+    handle /backend-health {
+        rewrite * /health/frontend-backend
+        reverse_proxy 127.0.0.1:8080
+    }
+
+    # Everything else is the static dashboard/SPA frontend container.
+    handle {
+        reverse_proxy 127.0.0.1:8081
+    }
+
+    header {
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy no-referrer
+        Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+    }
+}
+
+# Keep the existing backend hostname alive during the migration window and for
+# diagnostics. New browser traffic should use same-origin derivadmin.site/api/*.
+api.derivadmin.site {
+    encode zstd gzip
     reverse_proxy 127.0.0.1:8080
 
     header {
-        Strict-Transport-Security "max-age=31536000; includeSubDomains"
         X-Content-Type-Options nosniff
         X-Frame-Options DENY
-        Referrer-Policy strict-origin-when-cross-origin
+        Referrer-Policy no-referrer
     }
 }
