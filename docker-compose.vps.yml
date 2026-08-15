@@ -1,0 +1,39 @@
+services:
+  api:
+    command: >-
+      sh -ec "python scripts/wait_for_database.py --timeout 180
+      && alembic upgrade head
+      && exec uvicorn app.netlify_backend_api:app --host 0.0.0.0 --port 8080"
+    environment:
+      FRONTEND_HOSTING_MODE: vps
+      DASHBOARD_FRONTEND_ORIGINS: ${DASHBOARD_FRONTEND_ORIGINS:-https://derivadmin.site,https://www.derivadmin.site}
+
+  worker:
+    environment:
+      FRONTEND_HOSTING_MODE: vps
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-https://derivadmin.site}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8081:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: ${DOCKER_LOG_MAX_SIZE:-25m}
+        max-file: ${DOCKER_LOG_MAX_FILES:-3}
+    networks:
+      test2: {}
