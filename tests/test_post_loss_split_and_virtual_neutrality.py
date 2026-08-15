@@ -62,7 +62,7 @@ class PostLossSplitAndVirtualNeutralityTests(unittest.TestCase):
     def test_virtual_rows_remain_visible_but_are_kpi_neutral(self) -> None:
         source = KPI_JS.read_text(encoding="utf-8")
         self.assertIn("function isVirtual(row)", source)
-        self.assertIn("if (isVirtual(row)) return false", source)
+        self.assertIn("allRows.filter((row) => !isVirtual(row))", source)
         self.assertIn('row.trade_kind || ""', source)
         self.assertIn("metrics.wins", source)
         self.assertIn("metrics.losses", source)
@@ -71,17 +71,20 @@ class PostLossSplitAndVirtualNeutralityTests(unittest.TestCase):
 
     def test_run_kpis_use_unbounded_server_aggregate_not_bounded_history_rows(self) -> None:
         source = KPI_JS.read_text(encoding="utf-8")
-        self.assertIn("function summaryMetrics(payload)", source)
+        self.assertIn("function summaryMetrics(me, payload)", source)
         self.assertIn("finiteMetric(summary.total)", source)
         self.assertIn("finiteMetric(summary.wins)", source)
         self.assertIn("finiteMetric(summary.losses)", source)
         self.assertIn("finiteMetric(summary.profit)", source)
-        self.assertIn("summaryMetrics(payload) || rowFallbackMetrics(me, payload)", source)
-        self.assertIn("Never derive KPI totals from rows.length", source)
-        self.assertIn("101, 1,000 or 10,000 actual runs", source)
+        self.assertIn("localCutoff ? zeroMetrics() : rowFallbackMetrics(me, payload)", source)
+        self.assertIn("ONLY KPI", source)
+        self.assertIn("101, 1,000 or", source)
+        self.assertIn("10,000 actual runs", source)
+        self.assertIn("payloadCutoffTime(payload)", source)
 
         index = INDEX.read_text(encoding="utf-8")
-        self.assertIn("virtual-kpi-neutrality.js?v=20260815-2", index)
+        self.assertIn("virtual-kpi-neutrality.js?v=20260815-3", index)
+        self.assertIn("netlify-realtime-client.js?v=20260815-3", index)
 
 
 if __name__ == "__main__":
