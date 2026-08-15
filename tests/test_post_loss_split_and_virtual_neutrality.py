@@ -64,14 +64,24 @@ class PostLossSplitAndVirtualNeutralityTests(unittest.TestCase):
         self.assertIn("function isVirtual(row)", source)
         self.assertIn("if (isVirtual(row)) return false", source)
         self.assertIn('row.trade_kind || ""', source)
-        self.assertIn("rows.length", source)
         self.assertIn("metrics.wins", source)
         self.assertIn("metrics.losses", source)
         self.assertIn("metrics.profit", source)
         self.assertNotIn("payload.trades =", source)
 
+    def test_run_kpis_use_unbounded_server_aggregate_not_bounded_history_rows(self) -> None:
+        source = KPI_JS.read_text(encoding="utf-8")
+        self.assertIn("function summaryMetrics(payload)", source)
+        self.assertIn("finiteMetric(summary.total)", source)
+        self.assertIn("finiteMetric(summary.wins)", source)
+        self.assertIn("finiteMetric(summary.losses)", source)
+        self.assertIn("finiteMetric(summary.profit)", source)
+        self.assertIn("summaryMetrics(payload) || rowFallbackMetrics(me, payload)", source)
+        self.assertIn("Never derive KPI totals from rows.length", source)
+        self.assertIn("101, 1,000 or 10,000 actual runs", source)
+
         index = INDEX.read_text(encoding="utf-8")
-        self.assertIn("virtual-kpi-neutrality.js?v=20260815-1", index)
+        self.assertIn("virtual-kpi-neutrality.js?v=20260815-2", index)
 
 
 if __name__ == "__main__":
