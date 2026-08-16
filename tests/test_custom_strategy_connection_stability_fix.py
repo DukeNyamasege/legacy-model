@@ -48,6 +48,7 @@ class CustomStrategyConnectionStabilitySourceTests(unittest.TestCase):
         self.assertIn("public_reconnect=false", soft)
         self.assertIn("_schedule_targeted_runtime_repair", soft)
         self.assertIn("_notice_due", soft)
+        self.assertIn("ui_reason", soft)
 
     def test_account_private_failures_cannot_restart_public_market_stream(self) -> None:
         source = (
@@ -72,7 +73,7 @@ class CustomStrategyConnectionStabilitySourceTests(unittest.TestCase):
         self.assertNotIn("RFDir5TradingBot.validate_accounts =", source)
         self.assertNotIn("RFDir5TradingBot.run =", source)
 
-    def test_handshake_capacity_is_reserved_before_bounded_one_time_otp(self) -> None:
+    def test_deriv_otp_rest_no_longer_holds_websocket_handshake_slot(self) -> None:
         source = (
             ROOT / "app" / "custom_strategy_connection_stability_fix.py"
         ).read_text(encoding="utf-8")
@@ -81,18 +82,24 @@ class CustomStrategyConnectionStabilitySourceTests(unittest.TestCase):
                 "def install_custom_strategy_connection_stability_fix"
             )
         ]
-        slot = connect.index("async with gate._handshake_slots")
+        bootstrap = connect.index("async with bootstrap_slots")
         schedule = connect.index("await gate.wait_for_start_slot()")
         wait_for = connect.index("url = await asyncio.wait_for(")
         otp = connect.index("_fresh_otp_url(self)")
+        ws_slot = connect.index("async with gate._handshake_slots")
         websocket = connect.index("websocket = await websockets.connect(")
-        self.assertLess(slot, schedule)
+
+        self.assertLess(bootstrap, schedule)
         self.assertLess(schedule, wait_for)
         self.assertLess(wait_for, otp)
-        self.assertLess(otp, websocket)
+        self.assertLess(otp, ws_slot)
+        self.assertLess(ws_slot, websocket)
+        self.assertIn("handshake_slot_held_during_otp=false", source)
+        self.assertIn("handshake_slot_held=false", connect)
+        self.assertIn("PRIVATE_WS_OTP_READY", connect)
+        self.assertIn("otp_validity_seconds=120", connect)
         self.assertIn("timeout=_OTP_BOOTSTRAP_TIMEOUT_SECONDS", connect)
         self.assertIn("PRIVATE_WS_OTP_TIMEOUT", connect)
-        self.assertIn("handshake_slot_released=true", connect)
         self.assertNotIn("gate.open_websocket(url)", connect)
 
     def test_otp_rest_uses_shared_keepalive_ipv4_pool(self) -> None:
@@ -144,14 +151,27 @@ class CustomStrategyConnectionStabilitySourceTests(unittest.TestCase):
             stability_source,
         )
         self.assertIn("_private_ws_execution_wake_enabled = False", stability_source)
+        self.assertIn("_private_ws_otp_bootstrap_concurrency", stability_source)
         self.assertIn("_private_ws_otp_bootstrap_timeout_seconds", stability_source)
         self.assertIn("_private_ws_otp_http_keepalive = True", stability_source)
         self.assertIn("_private_ws_ipv4_transport = True", stability_source)
         self.assertIn("_private_ws_open_timeout_seconds", stability_source)
+        self.assertIn("_private_ws_exact_error_ui = True", stability_source)
         self.assertLess(
             worker_source.index("install_custom_strategy_connection_stability_fix()"),
             worker_source.index("bot = RFDir5TradingBot()"),
         )
+
+    def test_ui_receives_exact_private_transport_errors(self) -> None:
+        source = (
+            ROOT / "app" / "custom_strategy_connection_stability_fix.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("def _set_execution_transport_status", source)
+        self.assertIn("Scanner may be ready", source)
+        self.assertIn("BUY is blocked", source)
+        self.assertIn("ui_reason", source)
+        self.assertIn("Private Deriv execution WebSocket failed:", source)
+        self.assertIn("Deriv OTP REST request timed out", source)
 
     def test_multiplier_affordability_is_a_financial_skip_not_transport_fault(self) -> None:
         source = (
