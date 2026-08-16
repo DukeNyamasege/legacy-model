@@ -11,8 +11,9 @@ class VPSSeamlessExperienceTests(unittest.TestCase):
     def test_full_vps_build_installs_preloaded_recovery_layer(self) -> None:
         source = (ROOT / "scripts" / "build-vps.mjs").read_text(encoding="utf-8")
         self.assertIn("full-vps-same-origin-v2", source)
-        self.assertIn("vps-seamless-experience.js?v=20260816-2", source)
-        self.assertIn("vps-seamless-experience.css?v=20260816-2", source)
+        self.assertIn("netlify-api-boundary.js?v=20260816-vps3", source)
+        self.assertIn("vps-seamless-experience.js?v=20260816-3", source)
+        self.assertIn("vps-seamless-experience.css?v=20260816-3", source)
         self.assertIn("dashboardMarker", source)
 
     def test_full_vps_does_not_use_old_3_2_second_netlify_read_sla(self) -> None:
