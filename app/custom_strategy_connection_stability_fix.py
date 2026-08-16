@@ -105,17 +105,11 @@ async def _stable_execution_watchdog(bot: RFDir5TradingBot) -> None:
                 )
                 disconnected_for = now - float(entry.get("disconnected_since") or now)
 
-                # Provider penalties are authoritative. Do not shorten a 429/1015
-                # backoff by manufacturing another connection attempt.
                 if _provider_backoff_active(row):
                     continue
 
                 task_alive = connection_guard._session_task_alive(session)
 
-                # Critical invariant: an existing live session task already owns
-                # OTP scheduling, handshake timeout, backoff and reconnection.
-                # Leaving it alone prevents watchdog/recycle storms from keeping
-                # dozens of accounts forever in STARTING.
                 if session is not None and task_alive:
                     last_log = float(entry.get("last_log") or 0.0)
                     if (
@@ -179,9 +173,6 @@ def _soft_private_reconnect(
     connected = bool(session is not None and getattr(session, "is_connected", False))
     task_alive = connection_guard._session_task_alive(session)
 
-    # A qualified execution may wake an existing disconnected session. This is a
-    # soft event handled by ClientSession; it never cancels the task or closes its
-    # socket. Missing/dead sessions use the single-flight targeted repair path.
     if session is not None and task_alive and not connected:
         try:
             private_ws.wake_private_connection(session)
@@ -212,11 +203,7 @@ def _skip_execution_driven_public_reconnect(
     bot: RFDir5TradingBot,
     reason: str,
 ) -> None:
-    """Keep account-private faults from restarting the shared market stream.
-
-    Public WebSocket resilience owns genuine market-stream failures independently.
-    Direct account proposal/BUY preparation errors are private-session concerns.
-    """
+    """Keep account-private faults from restarting the shared market stream."""
 
     bot.logger.info(
         "CUSTOM_PUBLIC_RECONNECT_SKIPPED source=account_private_execution "
@@ -226,14 +213,7 @@ def _skip_execution_driven_public_reconnect(
 
 
 async def _fresh_otp_connect_and_run(self: ClientSession) -> None:
-    """Reserve handshake capacity before requesting each one-time WebSocket URL.
-
-    The previous limiter requested an OTP after only a global start-slot reservation
-    and then queued the one-time URL behind the handshake semaphore. With dozens of
-    accounts and only two handshake slots, URLs could age for minutes before use and
-    be rejected with HTTP 401. This loop acquires handshake capacity first, then
-    obtains and consumes that account's OTP immediately.
-    """
+    """Reserve handshake capacity before requesting each one-time WebSocket URL."""
 
     attempt = 0
     gate = private_ws._gate_for(self)
@@ -247,9 +227,6 @@ async def _fresh_otp_connect_and_run(self: ClientSession) -> None:
         websocket = None
         try:
             url = ""
-            # Handshake capacity is reserved before OTP generation. The slot is
-            # held only through OTP bootstrap + opening handshake, never for the
-            # lifetime of the connected WebSocket.
             async with gate._handshake_slots:
                 await gate.wait_for_start_slot()
                 url = await self.get_otp_url()
@@ -290,6 +267,10 @@ async def _fresh_otp_connect_and_run(self: ClientSession) -> None:
                     },
                 )
             else:
+                if websocket is None:
+                    raise RuntimeError(
+                        "Private WebSocket handshake completed without a connection"
+                    )
                 self.ws = websocket
                 self.is_connected = True
                 ready_event.set()
@@ -411,27 +392,14 @@ def install_custom_strategy_connection_stability_fix() -> None:
     if _INSTALLED:
         return
 
-    # vps_execution_start_recovery wraps RFDir5TradingBot.run, but resolves this
-    # module-global watchdog when run() actually starts. Replace only the watchdog;
-    # keep its OAuth refresh wrapper intact.
     vps_recovery._stalled_execution_watchdog = _stable_execution_watchdog
-
-    # custom_execution_consistency_authority installs after the earlier continuity
-    # layer and had reintroduced force-close + public reconnect behavior for
-    # private account faults. Its nested handlers resolve these globals at runtime.
     consistency._request_private_reconnect = _soft_private_reconnect
     consistency._request_public_reconnect = _skip_execution_driven_public_reconnect
 
-    # Recovery stake affordability is a financial policy outcome, not evidence of
-    # a broken WebSocket. Keep all three wrapper layers on the same classification
-    # so an unaffordable multiplier is skipped without transport recovery.
     consistency._stake_policy_reason = _financial_stake_policy_reason
     continuity._is_stake_policy_reason = _financial_stake_policy_reason
     martingale_authority._is_stake_policy_rejection = _financial_stake_policy_reason
 
-    # The original limiter queued already-issued OTP URLs behind the handshake
-    # semaphore. Rebind before the bot creates sessions so every connection task
-    # reserves handshake capacity before requesting its one-time URL.
     ClientSession.connect_and_run = _fresh_otp_connect_and_run
 
     RFDir5TradingBot._custom_strategy_connection_stability_fix_installed = True
