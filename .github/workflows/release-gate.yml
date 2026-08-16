@@ -109,6 +109,7 @@ jobs:
           app/session_risk_limits.py
           app/session_risk_stop_authority.py
           app/vps_backend_api.py
+          app/vps_execution_start_recovery.py
           app/vps_realtime_events.py
           app/vps_seamless_worker.py
           tests/test_account_bound_risk_and_ws_continuity.py
@@ -168,6 +169,7 @@ jobs:
           app/session_risk_limits.py
           app/session_risk_stop_authority.py
           app/vps_backend_api.py
+          app/vps_execution_start_recovery.py
           app/vps_realtime_events.py
           app/vps_seamless_worker.py
 
@@ -284,8 +286,8 @@ jobs:
           test ! -f dist/_redirects
           grep -Fq 'frontend-runtime" content="full-vps-same-origin-v2"' dist/index.html
           grep -Fq 'stream-base-url" content="wss://release-gate.example"' dist/index.html
-          grep -Fq '/vps-seamless-experience.js?v=20260816-1' dist/index.html
-          grep -Fq '/vps-seamless-experience.css?v=20260816-1' dist/index.html
+          grep -Fq '/vps-seamless-experience.js?v=20260816-2' dist/index.html
+          grep -Fq '/vps-seamless-experience.css?v=20260816-2' dist/index.html
           grep -Fq '"api_base": "/api"' dist/vps-build.json
           grep -Fq '"oauth_base": "/oauth"' dist/vps-build.json
           grep -Fq '"frontend_runtime": "full-vps-same-origin-v2"' dist/vps-build.json
