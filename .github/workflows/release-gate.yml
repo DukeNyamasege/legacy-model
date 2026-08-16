@@ -286,8 +286,9 @@ jobs:
           test ! -f dist/_redirects
           grep -Fq 'frontend-runtime" content="full-vps-same-origin-v2"' dist/index.html
           grep -Fq 'stream-base-url" content="wss://release-gate.example"' dist/index.html
-          grep -Fq '/vps-seamless-experience.js?v=20260816-2' dist/index.html
-          grep -Fq '/vps-seamless-experience.css?v=20260816-2' dist/index.html
+          grep -Fq '/netlify-api-boundary.js?v=20260816-vps3' dist/index.html
+          grep -Fq '/vps-seamless-experience.js?v=20260816-3' dist/index.html
+          grep -Fq '/vps-seamless-experience.css?v=20260816-3' dist/index.html
           grep -Fq '"api_base": "/api"' dist/vps-build.json
           grep -Fq '"oauth_base": "/oauth"' dist/vps-build.json
           grep -Fq '"frontend_runtime": "full-vps-same-origin-v2"' dist/vps-build.json
