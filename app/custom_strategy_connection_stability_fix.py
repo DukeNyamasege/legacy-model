@@ -32,9 +32,10 @@ _DEAD_SESSION_REPAIR_GRACE_SECONDS = 8.0
 _RECONNECT_LOG_INTERVAL_SECONDS = 60.0
 _SOFT_RECONNECT_NOTICE_INTERVAL_SECONDS = 60.0
 _PUBLIC_RECONNECT_SKIP_LOG_INTERVAL_SECONDS = 60.0
-_OTP_BOOTSTRAP_TIMEOUT_SECONDS = 20.0
-_OTP_HTTP_TOTAL_TIMEOUT_SECONDS = 18.0
-_PRIVATE_WS_OPEN_TIMEOUT_SECONDS = 35.0
+_OTP_BOOTSTRAP_CONCURRENCY = 8
+_OTP_BOOTSTRAP_TIMEOUT_SECONDS = 45.0
+_OTP_HTTP_TOTAL_TIMEOUT_SECONDS = 40.0
+_PRIVATE_WS_OPEN_TIMEOUT_SECONDS = 45.0
 
 _CONSISTENCY_STAKE_POLICY_REASON = consistency._stake_policy_reason
 _CONTINUITY_STAKE_POLICY_REASON = continuity._is_stake_policy_reason
@@ -60,6 +61,30 @@ def _row_value(row: Any, key: str, default: Any = None) -> Any:
 def _provider_backoff_active(row: Any) -> bool:
     reason = str(_row_value(row, "execution_status_reason", "") or "").lower()
     return "rate-limit" in reason or "rate limited" in reason
+
+
+def _set_execution_transport_status(
+    session: ClientSession,
+    reason: str,
+    *,
+    status: str = "reconnecting",
+) -> None:
+    """Persist the exact private-transport reason so the UI does not stay vague."""
+
+    if not private_ws._still_configured(session):
+        return
+    try:
+        session.bot._set_account_execution_status(
+            session.managed_account_id,
+            status,
+            str(reason or "Private Deriv execution transport is reconnecting")[:240],
+        )
+    except Exception:
+        session.bot.logger.exception(
+            "PRIVATE_WS_STATUS_UPDATE_FAILED account=%s",
+            mask_account_id(session.account_id),
+            extra={"token_tag": session.token_tag},
+        )
 
 
 def _financial_stake_policy_reason(reason: str) -> bool:
@@ -101,6 +126,22 @@ def _notice_due(bot: RFDir5TradingBot, managed_id: int) -> bool:
     return True
 
 
+def _otp_bootstrap_slots(bot: RFDir5TradingBot) -> asyncio.Semaphore:
+    """Bound REST OTP bootstrap separately from WebSocket handshake capacity."""
+
+    slots = getattr(bot, "_private_otp_bootstrap_slots", None)
+    if isinstance(slots, asyncio.Semaphore):
+        return slots
+    slots = asyncio.Semaphore(_OTP_BOOTSTRAP_CONCURRENCY)
+    bot._private_otp_bootstrap_slots = slots
+    bot.logger.info(
+        "PRIVATE_WS_OTP_BOOTSTRAP_POOL_ACTIVE concurrency=%s "
+        "handshake_slot_held_during_otp=false",
+        _OTP_BOOTSTRAP_CONCURRENCY,
+    )
+    return slots
+
+
 def _otp_http_session(bot: RFDir5TradingBot) -> aiohttp.ClientSession:
     """Return one keep-alive IPv4 REST client shared by every account OTP request."""
 
@@ -110,8 +151,8 @@ def _otp_http_session(bot: RFDir5TradingBot) -> aiohttp.ClientSession:
 
     connector = aiohttp.TCPConnector(
         family=socket.AF_INET,
-        limit=8,
-        limit_per_host=4,
+        limit=12,
+        limit_per_host=8,
         use_dns_cache=True,
         ttl_dns_cache=300,
         keepalive_timeout=30,
@@ -119,9 +160,9 @@ def _otp_http_session(bot: RFDir5TradingBot) -> aiohttp.ClientSession:
     )
     timeout = aiohttp.ClientTimeout(
         total=_OTP_HTTP_TOTAL_TIMEOUT_SECONDS,
-        connect=6.0,
-        sock_connect=6.0,
-        sock_read=12.0,
+        connect=10.0,
+        sock_connect=10.0,
+        sock_read=30.0,
     )
     session = aiohttp.ClientSession(
         connector=connector,
@@ -131,7 +172,7 @@ def _otp_http_session(bot: RFDir5TradingBot) -> aiohttp.ClientSession:
     bot._private_otp_http_session = session
     bot.logger.info(
         "PRIVATE_WS_OTP_HTTP_POOL_ACTIVE family=ipv4 keepalive=true "
-        "pool_limit=8 per_host=4 total_timeout_seconds=%.1f",
+        "pool_limit=12 per_host=8 total_timeout_seconds=%.1f",
         _OTP_HTTP_TOTAL_TIMEOUT_SECONDS,
     )
     return session
@@ -185,11 +226,17 @@ async def _fresh_otp_url(self: ClientSession) -> str:
                 url = str(data.get("url") or "") if isinstance(data, dict) else ""
                 if url:
                     return url
+                reason = (
+                    "Deriv OTP REST response was successful but did not include "
+                    "data.url; private execution cannot open the account WebSocket yet."
+                )
+                _set_execution_transport_status(self, reason)
                 self.bot.logger.warning(
                     "PRIVATE_WS_OTP_INVALID_RESPONSE account=%s status=%s "
-                    "data_url_present=false",
+                    "data_url_present=false ui_reason=%s",
                     mask_account_id(self.account_id),
                     response.status,
+                    reason,
                     extra={"token_tag": self.token_tag},
                 )
                 return ""
@@ -203,10 +250,14 @@ async def _fresh_otp_url(self: ClientSession) -> str:
                 raise _OtpHttpError(429, message or "Deriv OTP rate limited")
 
             permanent = response.status in {401, 403} or is_permanent_credential_error(error)
+            reason = (
+                f"Deriv OTP REST failed with HTTP {response.status}: {message}. "
+                "Private execution cannot buy until this account receives a valid OTP URL."
+            )
             self.bot._set_account_execution_status(
                 self.managed_account_id,
                 "credential_error" if permanent else "reconnecting",
-                message,
+                reason,
             )
             if permanent:
                 self.bot.valid_clients = [
@@ -223,10 +274,12 @@ async def _fresh_otp_url(self: ClientSession) -> str:
                 return ""
 
             self.bot.logger.warning(
-                "PRIVATE_WS_OTP_HTTP_ERROR account=%s status=%s reason=%s",
+                "PRIVATE_WS_OTP_HTTP_ERROR account=%s status=%s reason=%s "
+                "ui_reason=%s",
                 mask_account_id(self.account_id),
                 response.status,
                 message,
+                reason,
                 extra={"token_tag": self.token_tag},
             )
             return ""
@@ -237,10 +290,16 @@ async def _fresh_otp_url(self: ClientSession) -> str:
     except asyncio.TimeoutError:
         raise
     except aiohttp.ClientError as exc:
+        reason = (
+            f"Deriv OTP REST transport failed: {type(exc).__name__}. "
+            "Private execution is retrying this account."
+        )
+        _set_execution_transport_status(self, reason)
         self.bot.logger.warning(
-            "PRIVATE_WS_OTP_TRANSPORT_FAILED account=%s error_type=%s",
+            "PRIVATE_WS_OTP_TRANSPORT_FAILED account=%s error_type=%s ui_reason=%s",
             mask_account_id(self.account_id),
             type(exc).__name__,
+            reason,
             extra={"token_tag": self.token_tag},
         )
         return ""
@@ -368,19 +427,25 @@ def _soft_private_reconnect(
     if not repair_required and not _notice_due(bot, int(managed_id)):
         return
 
+    ui_reason = (
+        "Private Deriv execution WebSocket is not connected yet. "
+        "Scanner can detect signals, but BUY is blocked until this account's "
+        "OTP URL and private WebSocket connect successfully."
+    )
     bot._set_account_execution_status(
         int(managed_id),
         "reconnecting",
-        "Private trading connection is recovering automatically; Auto Trading remains active.",
+        ui_reason,
     )
     bot.logger.warning(
         "CUSTOM_EXECUTION_SOFT_RECONNECT managed_id=%s lifecycle_stop=false "
         "forced_disconnect=false public_reconnect=false execution_wake=false "
-        "session_task_alive=%s session_connected=%s reason=%s",
+        "session_task_alive=%s session_connected=%s reason=%s ui_reason=%s",
         int(managed_id),
         task_alive,
         connected,
         str(reason or "execution transport fault")[:140],
+        ui_reason,
     )
     try:
         consistency._dashboard_wakeup(bot)
@@ -407,12 +472,18 @@ def _skip_execution_driven_public_reconnect(
 
 
 async def _fresh_otp_connect_and_run(self: ClientSession) -> None:
-    """Reserve handshake capacity, then obtain and consume a fresh bounded OTP."""
+    """Fetch Deriv OTP over REST, then consume it promptly in the private WS.
+
+    Deriv documents this as two separate steps: REST POST returns a ready-to-use
+    WebSocket URL, then the client connects to that URL. A REST OTP wait is not a
+    WebSocket handshake and must not occupy the tiny handshake semaphore.
+    """
 
     attempt = 0
     gate = private_ws._gate_for(self)
     config = gate.config
     ready_event = private_ws._ready_event(self)
+    bootstrap_slots = _otp_bootstrap_slots(self.bot)
 
     while self.bot.is_running and (
         self.pending_contracts or private_ws._still_configured(self)
@@ -421,7 +492,7 @@ async def _fresh_otp_connect_and_run(self: ClientSession) -> None:
         websocket = None
         try:
             url = ""
-            async with gate._handshake_slots:
+            async with bootstrap_slots:
                 await gate.wait_for_start_slot()
                 try:
                     url = await asyncio.wait_for(
@@ -429,11 +500,19 @@ async def _fresh_otp_connect_and_run(self: ClientSession) -> None:
                         timeout=_OTP_BOOTSTRAP_TIMEOUT_SECONDS,
                     )
                 except asyncio.TimeoutError:
+                    reason = (
+                        "Deriv OTP REST request timed out after "
+                        f"{_OTP_BOOTSTRAP_TIMEOUT_SECONDS:.0f}s. Scanner may be ready, "
+                        "but BUY is blocked until the private execution WebSocket receives "
+                        "a fresh OTP URL. Retrying this account only."
+                    )
+                    _set_execution_transport_status(self, reason)
                     self.bot.logger.warning(
                         "PRIVATE_WS_OTP_TIMEOUT account=%s timeout_seconds=%.1f "
-                        "handshake_slot_released=true",
+                        "handshake_slot_held=false ui_reason=%s",
                         mask_account_id(self.account_id),
                         _OTP_BOOTSTRAP_TIMEOUT_SECONDS,
+                        reason,
                         extra={
                             "token_tag": self.token_tag,
                             "masked_account_id": mask_account_id(self.account_id),
@@ -443,21 +522,31 @@ async def _fresh_otp_connect_and_run(self: ClientSession) -> None:
 
                 if url:
                     self.bot.logger.info(
-                        "Connecting to private WebSocket for account %s...",
+                        "PRIVATE_WS_OTP_READY account=%s "
+                        "otp_validity_seconds=120 websocket_connect_next=true",
                         mask_account_id(self.account_id),
                         extra={
                             "token_tag": self.token_tag,
                             "masked_account_id": mask_account_id(self.account_id),
                         },
                     )
-                    websocket = await websockets.connect(
-                        url,
-                        open_timeout=_PRIVATE_WS_OPEN_TIMEOUT_SECONDS,
-                        close_timeout=5,
-                        ping_interval=20,
-                        ping_timeout=20,
-                        family=socket.AF_INET,
-                    )
+                    async with gate._handshake_slots:
+                        self.bot.logger.info(
+                            "Connecting to private WebSocket for account %s...",
+                            mask_account_id(self.account_id),
+                            extra={
+                                "token_tag": self.token_tag,
+                                "masked_account_id": mask_account_id(self.account_id),
+                            },
+                        )
+                        websocket = await websockets.connect(
+                            url,
+                            open_timeout=_PRIVATE_WS_OPEN_TIMEOUT_SECONDS,
+                            close_timeout=5,
+                            ping_interval=20,
+                            ping_timeout=20,
+                            family=socket.AF_INET,
+                        )
 
             if not url:
                 if not self.pending_contracts and not private_ws._still_configured(self):
@@ -468,8 +557,15 @@ async def _fresh_otp_connect_and_run(self: ClientSession) -> None:
                     config.otp_failure_backoff_seconds
                     * (1.5 ** min(attempt - 1, 5)),
                 ) + private_ws._jitter(config)
+                if private_ws._still_configured(self):
+                    _set_execution_transport_status(
+                        self,
+                        "Deriv OTP URL is unavailable; private execution is retrying "
+                        f"this account in {retry_delay:.1f}s.",
+                    )
                 self.bot.logger.warning(
-                    "PRIVATE_WS_OTP_RETRY account=%s attempt=%s backoff_seconds=%.1f",
+                    "PRIVATE_WS_OTP_RETRY account=%s attempt=%s backoff_seconds=%.1f "
+                    "handshake_slot_held=false",
                     mask_account_id(self.account_id),
                     attempt,
                     retry_delay,
@@ -490,7 +586,7 @@ async def _fresh_otp_connect_and_run(self: ClientSession) -> None:
                     self.bot._set_account_execution_status(
                         self.managed_account_id,
                         "active",
-                        "Private trading connection is active",
+                        "Private Deriv execution WebSocket is active; BUY is allowed.",
                     )
                 self.pending_requests.clear()
                 attempt = 0
@@ -534,7 +630,7 @@ async def _fresh_otp_connect_and_run(self: ClientSession) -> None:
                         self.bot._set_account_execution_status(
                             self.managed_account_id,
                             "reconnecting",
-                            "Private trading connection closed",
+                            "Private Deriv execution WebSocket closed; reconnecting this account.",
                         )
                     retry_delay = private_ws._normal_backoff(self, config, attempt)
 
@@ -549,13 +645,19 @@ async def _fresh_otp_connect_and_run(self: ClientSession) -> None:
             if rate_limited:
                 retry_delay = private_ws._rate_backoff(config, attempt)
                 await gate.penalize(retry_delay)
+                reason = (
+                    "Deriv private execution transport is rate-limited; "
+                    f"retrying in {retry_delay:.0f}s."
+                )
+                _set_execution_transport_status(self, reason)
                 self.bot.logger.warning(
                     "PRIVATE_WS_RATE_LIMITED account=%s status=%s attempt=%s "
-                    "global_backoff_seconds=%.1f",
+                    "global_backoff_seconds=%.1f ui_reason=%s",
                     mask_account_id(self.account_id),
                     private_ws._http_status(exc) or "unknown",
                     attempt,
                     retry_delay,
+                    reason,
                     extra={
                         "token_tag": self.token_tag,
                         "masked_account_id": mask_account_id(self.account_id),
@@ -563,27 +665,23 @@ async def _fresh_otp_connect_and_run(self: ClientSession) -> None:
                 )
             else:
                 retry_delay = private_ws._normal_backoff(self, config, attempt)
+                error_text = sanitize_account_ids(str(exc))
+                reason = (
+                    "Private Deriv execution WebSocket failed: "
+                    f"{error_text}. Retrying in {retry_delay:.1f}s."
+                )
+                _set_execution_transport_status(self, reason)
                 self.bot.logger.warning(
                     "Private connection lost for account %s: %s. "
-                    "Reconnecting in %.1fs...",
+                    "Reconnecting in %.1fs... ui_reason=%s",
                     mask_account_id(self.account_id),
-                    sanitize_account_ids(str(exc)),
+                    error_text,
                     retry_delay,
+                    reason,
                     extra={
                         "token_tag": self.token_tag,
                         "masked_account_id": mask_account_id(self.account_id),
                     },
-                )
-            if private_ws._still_configured(self):
-                self.bot._set_account_execution_status(
-                    self.managed_account_id,
-                    "reconnecting",
-                    (
-                        f"Deriv connection rate-limited; retrying in "
-                        f"{retry_delay:.0f} seconds"
-                        if rate_limited
-                        else "Private trading connection interrupted"
-                    ),
                 )
         finally:
             if websocket is not None:
@@ -618,6 +716,7 @@ def install_custom_strategy_connection_stability_fix() -> None:
     RFDir5TradingBot._vps_stalled_execution_recycle_seconds = None
     RFDir5TradingBot._private_ws_fresh_otp_before_handshake = True
     RFDir5TradingBot._private_ws_execution_wake_enabled = False
+    RFDir5TradingBot._private_ws_otp_bootstrap_concurrency = _OTP_BOOTSTRAP_CONCURRENCY
     RFDir5TradingBot._private_ws_otp_bootstrap_timeout_seconds = (
         _OTP_BOOTSTRAP_TIMEOUT_SECONDS
     )
@@ -627,5 +726,6 @@ def install_custom_strategy_connection_stability_fix() -> None:
     RFDir5TradingBot._private_ws_soft_reconnect_notice_interval_seconds = (
         _SOFT_RECONNECT_NOTICE_INTERVAL_SECONDS
     )
+    RFDir5TradingBot._private_ws_exact_error_ui = True
     RFDir5TradingBot._stake_policy_transport_isolation = True
     _INSTALLED = True
