@@ -49,14 +49,23 @@ class VPSSeamlessExperienceTests(unittest.TestCase):
         self.assertNotIn("session.add(", source)
         self.assertNotIn("session.commit(", source)
 
-    def test_api_event_bus_is_memory_only_and_corrects_vps_health_metadata(self) -> None:
+    def test_api_event_bus_is_memory_only_and_advances_signed_realtime_revision(self) -> None:
         source = (ROOT / "app" / "vps_realtime_events.py").read_text(encoding="utf-8")
         self.assertIn("/control/internal/vps-runtime-events", source)
         self.assertIn('"runtime_events"', source)
+        self.assertIn("_EVENT_REVISIONS", source)
+        self.assertIn("live_snapshot_with_runtime_revision", source)
+        self.assertIn('f"{base_revision}|vps-events:{_event_revision(managed_id)}"', source)
+        self.assertIn(
+            "realtime_gateway._live_snapshot = live_snapshot_with_runtime_revision",
+            source,
+        )
         self.assertIn('"frontend": "vps_nginx_static"', source)
         self.assertIn('"rest_transport": "vps_same_origin_caddy"', source)
         self.assertIn('"storage": "ephemeral_api_memory"', source)
         self.assertNotIn("INSERT INTO", source)
+        self.assertNotIn("session.add(", source)
+        self.assertNotIn("session.commit(", source)
 
     def test_worker_installs_monitor_after_financial_authorities(self) -> None:
         source = (ROOT / "app" / "custom_strategy_worker.py").read_text(encoding="utf-8")
