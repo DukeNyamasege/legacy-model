@@ -108,6 +108,9 @@ jobs:
           app/session_risk_api_authority.py
           app/session_risk_limits.py
           app/session_risk_stop_authority.py
+          app/vps_backend_api.py
+          app/vps_realtime_events.py
+          app/vps_seamless_worker.py
           tests/test_account_bound_risk_and_ws_continuity.py
           tests/test_custom_direct_runtime.py
           tests/test_custom_strategy_instant_start.py
@@ -115,6 +118,7 @@ jobs:
           tests/test_dashboard_live_performance.py
           tests/test_exact_strategy_execution_authority.py
           tests/test_final_readiness_tp_tablet_last_digit.py
+          tests/test_full_vps_hosting.py
           tests/test_global_trade_history_cutoff.py
           tests/test_netlify_vps_split.py
           tests/test_oauth_direct_mobile_compact.py
@@ -122,6 +126,7 @@ jobs:
           tests/test_session_risk_and_multidevice_ui.py
           tests/test_strategy_template_runtime_upgrade.py
           tests/test_trades_start_stop_toggle.py
+          tests/test_vps_seamless_experience.py
 
       - name: Typecheck direct custom runtime
         run: >-
@@ -162,6 +167,9 @@ jobs:
           app/session_risk_api_authority.py
           app/session_risk_limits.py
           app/session_risk_stop_authority.py
+          app/vps_backend_api.py
+          app/vps_realtime_events.py
+          app/vps_seamless_worker.py
 
       - name: Check dashboard JavaScript syntax
         run: |
@@ -175,6 +183,7 @@ jobs:
           node --check dashboard/oauth-direct-runtime.js
           node --check dashboard/final-dashboard-authority.js
           node --check dashboard/trades-start-stop-toggle.js
+          node --check dashboard/vps-seamless-experience.js
           node --check dashboard/last-digit-special-ui.js
           node --check dashboard/global-trade-clear.js
           node --check dashboard/matches-differs-last-digit.js
@@ -192,6 +201,7 @@ jobs:
       - name: Run focused release tests
         run: |
           python -m unittest -q tests.test_full_vps_hosting
+          python -m unittest -q tests.test_vps_seamless_experience
           python -m unittest -q tests.test_account_bound_risk_and_ws_continuity
           python -m unittest -q tests.test_custom_direct_runtime
           python -m unittest -q tests.test_custom_strategy_instant_start
@@ -226,7 +236,7 @@ jobs:
           python -m unittest -q test_aidr_recovery_v2.py tests.test_aidr_virtual_soft_gate tests.test_independent_websocket_execution tests.test_private_websocket_credentials
           sh scripts/run_legacy_release_tests.sh
 
-      - name: Production Netlify frontend build
+      - name: Legacy compiler compatibility build
         env:
           BACKEND_ORIGIN: https://api.release-gate.example
         run: |
@@ -272,10 +282,13 @@ jobs:
           test -f dist/index.html
           test -f dist/vps-build.json
           test ! -f dist/_redirects
-          grep -Fq 'frontend-runtime" content="full-vps-same-origin-v1"' dist/index.html
+          grep -Fq 'frontend-runtime" content="full-vps-same-origin-v2"' dist/index.html
           grep -Fq 'stream-base-url" content="wss://release-gate.example"' dist/index.html
+          grep -Fq '/vps-seamless-experience.js?v=20260816-1' dist/index.html
+          grep -Fq '/vps-seamless-experience.css?v=20260816-1' dist/index.html
           grep -Fq '"api_base": "/api"' dist/vps-build.json
           grep -Fq '"oauth_base": "/oauth"' dist/vps-build.json
+          grep -Fq '"frontend_runtime": "full-vps-same-origin-v2"' dist/vps-build.json
 
       - name: Build frontend image
         run: >-
