@@ -20,9 +20,9 @@ if (parsed.pathname !== "/" || parsed.search || parsed.hash || parsed.username |
 }
 
 /*
- * Reuse the proven production dashboard compiler so the legacy static fallback
- * and the VPS build receive the same core assets. In VPS mode the generated
- * _redirects file is removed because Caddy owns public routing.
+ * Reuse the proven dashboard compiler so compatibility assets and the VPS build
+ * receive the same core dashboard. In VPS mode the generated _redirects file is
+ * removed because Caddy owns public routing.
  */
 process.env.BACKEND_ORIGIN = publicOrigin;
 if (!String(process.env.DASHBOARD_WS_BASE_URL || "").trim()) {
@@ -44,15 +44,15 @@ html = html.replace(
 if (!html.includes('/vps-seamless-experience.css')) {
   html = html.replace(
     "</head>",
-    '  <link rel="stylesheet" href="/vps-seamless-experience.css?v=20260816-1">\n</head>',
+    '  <link rel="stylesheet" href="/vps-seamless-experience.css?v=20260816-2">\n</head>',
   );
 }
 
 /*
  * This small non-deferred preloader intentionally runs before dashboard-v2's
  * deferred boot. It observes the existing signed WebSocket, suppresses the old
- * 15-second full-shell refresh while realtime is healthy, and owns instant
- * unchanged Start/Resume/Stop actions without opening a second transport.
+ * 15-second full-shell refresh while realtime is healthy, owns instant unchanged
+ * Start/Resume/Stop, and repairs a transient authenticated-shell bootstrap miss.
  */
 const dashboardMarker = '<script src="/dashboard-v2.js" defer></script>';
 if (!html.includes(dashboardMarker)) {
@@ -61,7 +61,7 @@ if (!html.includes(dashboardMarker)) {
 if (!html.includes('/vps-seamless-experience.js')) {
   html = html.replace(
     dashboardMarker,
-    '  <script src="/vps-seamless-experience.js?v=20260816-1"></script>\n  ' + dashboardMarker,
+    '  <script src="/vps-seamless-experience.js?v=20260816-2"></script>\n  ' + dashboardMarker,
   );
 }
 
@@ -86,4 +86,4 @@ console.log(`Public origin: ${publicOrigin}`);
 console.log("REST: same-origin /api/* -> Caddy -> API container");
 console.log("OAuth: same-origin /oauth/* -> Caddy -> API container");
 console.log(`Realtime: ${process.env.DASHBOARD_WS_BASE_URL}/ws/me/live`);
-console.log("Live strategy monitor: private worker -> API event bus -> signed browser WebSocket");
+console.log("Live strategy scanner: private worker -> API event bus -> signed browser WebSocket");
