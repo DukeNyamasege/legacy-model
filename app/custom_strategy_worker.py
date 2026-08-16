@@ -67,6 +67,7 @@ from app.session_risk_stop_authority import install_session_risk_stop_worker
 from app.telegram_silence import install_telegram_silence
 from app.trade_registration_idempotency import install_trade_registration_idempotency
 from app.unresolved_contract_safety import install_unresolved_contract_safety
+from app.vps_seamless_worker import install_vps_seamless_worker
 
 
 async def run_worker() -> None:
@@ -183,12 +184,18 @@ async def run_worker() -> None:
     install_custom_split_equal_spread_authority()
     install_custom_split_cap_defaults_authority()
     install_custom_virtual_post_loss_barrier_authority()
+
+    # Full-VPS responsiveness is intentionally the final wrapper. It observes the
+    # already-authoritative routed condition evaluation and execution task, then
+    # emits best-effort UI progress over the private Docker network. It cannot
+    # change a signal, stake, proposal, BUY or settlement decision.
+    install_vps_seamless_worker()
     install_telegram_silence()
 
     bot = RFDir5TradingBot()
     bot.logger.warning(
         "CUSTOM_STRATEGY_WORKER_READY architecture=account_scoped_direct "
-        "frontend=netlify_static realtime=nonblocking_vps_websocket "
+        "frontend=vps_nginx realtime=same_origin_vps_websocket "
         "legacy_rf=false legacy_aidr=false multi_strategy=false cohorts=false "
         "bulk=false tick_db_persistence=false start_required=true "
         "explicit_start_pickup=true instant_start=true provider_account_sweep_blocking=false "
@@ -204,7 +211,8 @@ async def run_worker() -> None:
         "runtime_fault_policy=reconnect_reconcile_never_stop "
         "ambiguous_buy_policy=reconcile_before_next_real duplicate_buy_retry=false "
         "stop_reason_authority=durable execution_liveness_watchdog=true "
-        "connection_repair=targeted_singleflight sibling_wake=false global_revalidation=false"
+        "connection_repair=targeted_singleflight sibling_wake=false global_revalidation=false "
+        "live_strategy_monitor=ephemeral_docker_event_bus"
     )
     loop = asyncio.get_running_loop()
 
