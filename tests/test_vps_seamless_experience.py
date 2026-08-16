@@ -109,35 +109,43 @@ class VPSSeamlessExperienceTests(unittest.TestCase):
         self.assertNotIn("session.add(", source)
         self.assertNotIn("session.commit(", source)
 
-    def test_stalled_execution_recovery_is_account_scoped_and_settlement_safe(self) -> None:
+    def test_legacy_vps_recovery_keeps_oauth_refresh_and_settlement_guard(self) -> None:
         source = (ROOT / "app" / "vps_execution_start_recovery.py").read_text(
             encoding="utf-8"
         )
         self.assertIn("token_is_expiring", source)
         self.assertIn("refresh_access_token", source)
         self.assertIn("asyncio.to_thread", source)
-        self.assertIn("_STALLED_WAKE_SECONDS = 8.0", source)
-        self.assertIn("_STALLED_RECYCLE_SECONDS = 30.0", source)
-        self.assertIn("private_ws.wake_private_connection(session)", source)
-        self.assertIn("VPS_EXECUTION_STALL_RECYCLED", source)
         self.assertIn("if getattr(session, \"pending_contracts\", set()):", source)
         self.assertIn("_provider_backoff_active(row)", source)
         self.assertIn("sibling_sessions_rebuilt=false", source)
         self.assertNotIn("validate_accounts()", source)
 
-    def test_worker_installs_recovery_after_connection_guard_before_monitor(self) -> None:
-        source = (ROOT / "app" / "custom_strategy_worker.py").read_text(encoding="utf-8")
-        manual = source.index("install_custom_strategy_manual_stop_guard()")
-        continuity = source.index("install_final_execution_continuity()")
-        connection = source.index("install_custom_strategy_connection_stampede_guard()")
-        recovery = source.index("install_vps_execution_start_recovery()")
-        monitor = source.index("install_vps_seamless_worker()")
+    def test_final_connection_authority_overrides_timer_recycle_before_monitor(self) -> None:
+        worker = (ROOT / "app" / "custom_strategy_worker.py").read_text(encoding="utf-8")
+        stability = (
+            ROOT / "app" / "custom_strategy_connection_stability_fix.py"
+        ).read_text(encoding="utf-8")
+        manual = worker.index("install_custom_strategy_manual_stop_guard()")
+        continuity = worker.index("install_final_execution_continuity()")
+        connection = worker.index("install_custom_strategy_connection_stampede_guard()")
+        recovery = worker.index("install_vps_execution_start_recovery()")
+        final_stability = worker.index("install_custom_strategy_connection_stability_fix()")
+        monitor = worker.index("install_vps_seamless_worker()")
         self.assertLess(manual, monitor)
         self.assertLess(continuity, recovery)
         self.assertLess(connection, recovery)
-        self.assertLess(recovery, monitor)
-        self.assertIn("stalled_execution_recovery=bounded_account_recycle", source)
-        self.assertIn("live_strategy_monitor=ephemeral_docker_event_bus", source)
+        self.assertLess(recovery, final_stability)
+        self.assertLess(final_stability, monitor)
+        self.assertIn("stalled_execution_recovery=live_session_owned", worker)
+        self.assertIn("forced_recycle=false", worker)
+        self.assertIn("public_reconnect_owner=public_websocket_resilience", worker)
+        self.assertIn(
+            "vps_recovery._stalled_execution_watchdog = _stable_execution_watchdog",
+            stability,
+        )
+        self.assertIn("session_recycle=false", stability)
+        self.assertIn("live_strategy_monitor=ephemeral_docker_event_bus", worker)
 
     def test_vps_compose_uses_tight_local_refresh_fallback(self) -> None:
         source = (ROOT / "docker-compose.vps.yml").read_text(encoding="utf-8")
