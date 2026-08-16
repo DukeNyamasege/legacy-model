@@ -53,8 +53,8 @@ class FullVpsHostingTests(unittest.TestCase):
         self.assertIn("full-vps-same-origin-v2", source)
         self.assertIn('api_base: "/api"', source)
         self.assertIn('oauth_base: "/oauth"', source)
-        self.assertIn("vps-seamless-experience.js?v=20260816-1", source)
-        self.assertIn("vps-seamless-experience.css?v=20260816-1", source)
+        self.assertIn("vps-seamless-experience.js?v=20260816-2", source)
+        self.assertIn("vps-seamless-experience.css?v=20260816-2", source)
 
     def test_full_deploy_preserves_database_and_builds_candidate_before_cutover(self) -> None:
         source = (ROOT / "scripts/deploy_full_vps.sh").read_text(encoding="utf-8")
