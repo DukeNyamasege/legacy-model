@@ -4,9 +4,11 @@
   if (window.__FOA_VPS_SEAMLESS_EXPERIENCE__) return;
   window.__FOA_VPS_SEAMLESS_EXPERIENCE__ = true;
 
-  const VERSION = "20260816-vps-seamless-1";
+  const VERSION = "20260816-vps-seamless-2";
   const SAVED_DRAFT_KEY = "foa-vps-last-saved-builder-v1";
   const BUILDER_DRAFT_KEY = "foa-builder-draft-v2";
+  const SESSION_KEY = "foa-session-v2";
+  const AUTH_RECOVERY_KEY = "foa-vps-auth-shell-recovery-v1";
   const NativeWebSocket = window.WebSocket;
   const nativeFetch = window.fetch.bind(window);
   const nativeSetInterval = window.setInterval.bind(window);
@@ -14,6 +16,7 @@
   let actionLock = null;
   let scrollLock = null;
   let lastSnapshot = null;
+  let lastRealtimeAt = 0;
   let scheduled = false;
   let builderDirty = true;
 
@@ -25,6 +28,14 @@
     try { localStorage.setItem(key, value); } catch (_) {}
   }
 
+  function sessionGet(key) {
+    try { return sessionStorage.getItem(key); } catch (_) { return null; }
+  }
+
+  function sessionSet(key, value) {
+    try { sessionStorage.setItem(key, value); } catch (_) {}
+  }
+
   function currentDraft() {
     return storageGet(BUILDER_DRAFT_KEY) || "";
   }
@@ -32,24 +43,20 @@
   function recalculateDirty() {
     const draft = currentDraft();
     const saved = storageGet(SAVED_DRAFT_KEY);
-    // The first Start after this upgrade deliberately takes the proven Save+Start
-    // path once. After a successful save, unchanged strategies use instant Start.
     builderDirty = !saved || saved !== draft;
   }
 
   recalculateDirty();
 
   function liveSnapshotFresh() {
-    const cache = window.FOA_NETLIFY_LIVE_CACHE;
     return document.documentElement.dataset.liveTransport === "connected"
-      && cache
-      && Date.now() - Number(cache.savedAt || 0) < 30000;
+      && lastRealtimeAt > 0
+      && Date.now() - lastRealtimeAt < 35000;
   }
 
-  // dashboard-v2's legacy 15-second full-shell refresh was useful across Netlify,
-  // but on the full VPS the signed WebSocket owns hot state. Keep the old refresh
-  // only as a one-minute disconnected/stale fallback so the DOM is not rebuilt
-  // beneath the user while realtime is healthy.
+  // The old compatibility renderer rebuilt the whole dashboard every 15 seconds.
+  // A healthy same-origin signed WebSocket now owns hot state; a full refresh is
+  // only a disconnected fallback and never runs underneath normal interaction.
   window.setInterval = function vpsAwareSetInterval(callback, delay, ...args) {
     const source = String(callback || "");
     if (Number(delay) === 15000 && source.includes("refresh(false")) {
@@ -68,20 +75,61 @@
     }, 0);
   }, { once: true });
 
+  function rememberAuthenticatedSession(payload) {
+    const me = payload?.me || {};
+    if (!(payload?.authenticated === true || me?.authenticated === true)) return false;
+    const remembered = {
+      authenticated: true,
+      saved_at: Date.now(),
+      account_type: me.account_type || "demo",
+      available_account_types: Array.isArray(me.available_account_types)
+        ? me.available_account_types
+        : [me.account_type || "demo"],
+      label: me.label || me.account_id_masked || "Deriv account",
+      account_id_masked: me.account_id_masked || me.account_id || "",
+      currency: me.currency || "USD",
+      enabled: Boolean(me.enabled ?? payload?.lifecycle?.enabled),
+      has_trading_api_token: Boolean(me.has_trading_api_token),
+      requires_api_token: Boolean(me.requires_api_token),
+      trading_api_token_invalid: Boolean(me.trading_api_token_invalid),
+      settings: me.settings || {},
+    };
+    storageSet(SESSION_KEY, JSON.stringify(remembered));
+    return true;
+  }
+
+  function recoverAuthenticatedShell(payload) {
+    if (!rememberAuthenticatedSession(payload)) return;
+    const landing = document.querySelector(".foa-landing-v2, .public-builder");
+    if (!landing) return;
+
+    // A transient /me timeout may have made dashboard-v2 choose its public shell
+    // even though the signed socket already proved the HttpOnly session is valid.
+    // Persist the socket-proven session and reload once so the next first paint is
+    // authenticated. The sessionStorage guard prevents any reload loop.
+    const previous = Number(sessionGet(AUTH_RECOVERY_KEY) || 0);
+    if (Date.now() - previous < 15000) return;
+    sessionSet(AUTH_RECOVERY_KEY, String(Date.now()));
+    document.documentElement.dataset.authShellRecovery = "true";
+    window.location.reload();
+  }
+
   function emitSnapshot(payload) {
     if (!payload || payload.type !== "snapshot") return;
     lastSnapshot = payload;
+    recoverAuthenticatedShell(payload);
     window.dispatchEvent(new CustomEvent("foa:vps-live-snapshot", { detail: payload }));
   }
 
-  // Observe the exact same signed WebSocket already used by the dashboard. This
-  // adds no second socket and no polling. It simply exposes snapshots to the
-  // premium live monitor before the compatibility client paints its DOM patches.
+  // Observe the same signed WebSocket already used by the dashboard. No second
+  // socket and no polling are introduced. Heartbeats also count as realtime
+  // freshness, so an idle but healthy dashboard does not trigger HTTP refreshes.
   function VPSObservedWebSocket(url, protocols) {
     const socket = protocols === undefined
       ? new NativeWebSocket(url)
       : new NativeWebSocket(url, protocols);
     socket.addEventListener("message", (event) => {
+      lastRealtimeAt = Date.now();
       try { emitSnapshot(JSON.parse(event.data || "{}")); } catch (_) {}
     });
     return socket;
@@ -113,11 +161,14 @@
     if (response.ok && method === "POST" && url.includes("/me/custom-strategy")) {
       storageSet(SAVED_DRAFT_KEY, currentDraft());
       builderDirty = false;
-      pushLocalEvent("scanner_ready", "Strategy saved; instant Start is ready.");
+      pushLocalEvent("scanner_ready", "Strategy saved. Scanner ready.");
     }
 
     if (response.ok && method === "GET" && url.includes("/me/live-snapshot")) {
-      response.clone().json().then(emitSnapshot).catch(() => {});
+      response.clone().json().then((payload) => {
+        lastRealtimeAt = Date.now();
+        emitSnapshot(payload);
+      }).catch(() => {});
     }
 
     if (response.ok && method === "POST" && (
@@ -178,9 +229,7 @@
     };
     pushLocalEvent(
       intent === "stop" ? "execution_cancelled" : "scanner_ready",
-      intent === "stop"
-        ? "Stop requested; no new BUY may pass the persisted manual-stop barrier."
-        : "Start requested; initializing the private account execution session.",
+      intent === "stop" ? "Stopped. No new trade will be started." : "Starting scanner and execution stream...",
     );
     applyActionLock();
   }
@@ -193,9 +242,7 @@
     actionLock.expiresAt = Date.now() + 5000;
     pushLocalEvent(
       enabled ? "scanner_ready" : "execution_cancelled",
-      String(payload?.message || (enabled
-        ? "Auto trading accepted; scanner is starting."
-        : "Auto trading stopped; scanner is idle.")),
+      String(payload?.message || (enabled ? "Scanning is starting." : "Auto trading stopped.")),
     );
     applyActionLock();
   }
@@ -226,8 +273,6 @@
         throw new Error(payload?.detail || payload?.message || `Trading action failed (${response.status})`);
       }
       applyActionResult(action !== "stop", payload);
-      // One local same-origin confirmation read makes the button/status sharp even
-      // before the next worker revision arrives. It is not a recurring poll.
       window.setTimeout(async () => {
         try {
           const check = await nativeFetch("/me/live-snapshot", {
@@ -235,7 +280,10 @@
             cache: "no-store",
             headers: { Accept: "application/json" },
           });
-          if (check.ok) emitSnapshot(await check.json());
+          if (check.ok) {
+            lastRealtimeAt = Date.now();
+            emitSnapshot(await check.json());
+          }
         } catch (_) {}
       }, 120);
     } catch (error) {
@@ -271,11 +319,6 @@
     }
 
     beginAction(action);
-
-    // If the builder changed, retain the proven one-click Save+Start transaction
-    // owned by dashboard-v2. The first Start after this upgrade also takes that
-    // conservative path once. Every unchanged Start/Resume/Stop after that uses
-    // the direct same-origin VPS action and avoids a redundant save/full refresh.
     if (action === "start" && builderDirty) return;
 
     event.preventDefault();
@@ -295,7 +338,7 @@
       emitted_at: Date.now() / 1000,
       local: true,
     });
-    if (localEvents.length > 5) localEvents.length = 5;
+    if (localEvents.length > 3) localEvents.length = 3;
     schedulePaint();
   }
 
@@ -303,14 +346,14 @@
     const type = String(event?.event || "scanner_ready");
     const map = {
       scanner_ready: ["Scanning", "scan"],
-      condition_not_met: ["Condition not met", "wait"],
-      condition_met: ["Condition met", "met"],
-      trade_preparing: ["Preparing trade", "prepare"],
-      trade_open: ["Trade purchased", "open"],
-      virtual_observation: ["Virtual Hook", "virtual"],
+      condition_not_met: ["Scanning", "wait"],
+      condition_met: ["Matched", "met"],
+      trade_preparing: ["Executing", "prepare"],
+      trade_open: ["Purchased", "open"],
+      virtual_observation: ["Virtual", "virtual"],
       execution_cancelled: ["Stopped", "stop"],
     };
-    return map[type] || ["Live update", "scan"];
+    return map[type] || ["Scanning", "scan"];
   }
 
   function safe(value) {
@@ -323,22 +366,13 @@
   }
 
   function serverEvents() {
-    const rows = Array.isArray(lastSnapshot?.runtime_events)
-      ? lastSnapshot.runtime_events
-      : [];
-    return rows;
+    return Array.isArray(lastSnapshot?.runtime_events) ? lastSnapshot.runtime_events : [];
   }
 
-  function combinedEvents() {
+  function currentEvent() {
     const rows = [...localEvents, ...serverEvents()];
     rows.sort((a, b) => Number(b?.emitted_at || 0) - Number(a?.emitted_at || 0));
-    const seen = new Set();
-    return rows.filter((row) => {
-      const key = `${row.event}|${row.symbol}|${row.tick_sequence}|${row.message}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    }).slice(0, 6);
+    return rows[0] || null;
   }
 
   function monitorHost() {
@@ -363,9 +397,7 @@
     const active = runtimeActive();
     return {
       event: active ? "scanner_ready" : "execution_cancelled",
-      message: active
-        ? "Execution session is live; waiting for the next configured condition."
-        : "Auto trading is stopped. Press Start when you are ready.",
+      message: active ? "Scanning configured markets and conditions..." : "Auto trading stopped.",
       emitted_at: Date.now() / 1000,
     };
   }
@@ -373,42 +405,25 @@
   function renderMonitor() {
     const monitor = ensureMonitor();
     if (!monitor) return;
-    const events = combinedEvents();
-    const current = events[0] || defaultMonitorEvent();
+    const current = currentEvent() || defaultMonitorEvent();
     const [label, tone] = eventPresentation(current);
-    const transport = document.documentElement.dataset.liveTransport || "connecting";
     const meta = [];
     if (current.symbol) meta.push(current.symbol);
     if (current.digit !== null && current.digit !== undefined) meta.push(`digit ${current.digit}`);
-    if (Number(current.tick_sequence || 0) > 0) meta.push(`tick #${Number(current.tick_sequence).toLocaleString()}`);
 
     const signature = JSON.stringify([
-      transport,
       current.event,
       current.message,
       current.symbol,
-      current.tick_sequence,
       current.digit,
-      events.slice(0, 5).map((row) => [row.event, row.symbol, row.tick_sequence, row.message]),
     ]);
     if (monitor.dataset.signature === signature) return;
     monitor.dataset.signature = signature;
     monitor.innerHTML = `
-      <div class="foa-vps-monitor-head">
-        <div><span class="foa-vps-pulse"></span><strong>Live Strategy Monitor</strong><small>VPS realtime decision stream</small></div>
-        <span class="foa-vps-transport ${safe(transport)}">${safe(transport === "connected" ? "LIVE" : transport.toUpperCase())}</span>
-      </div>
-      <div class="foa-vps-current ${safe(tone)}">
-        <span class="foa-vps-current-icon"></span>
-        <div><strong>${safe(label)}</strong><p>${safe(current.message || "Watching the next tick.")}</p>${meta.length ? `<small>${safe(meta.join(" · "))}</small>` : ""}</div>
-      </div>
-      <div class="foa-vps-feed">
-        ${events.slice(0, 5).map((row) => {
-          const [rowLabel, rowTone] = eventPresentation(row);
-          const rowMeta = [row.symbol, Number(row.tick_sequence || 0) > 0 ? `#${row.tick_sequence}` : ""].filter(Boolean).join(" · ");
-          return `<div class="foa-vps-feed-row ${safe(rowTone)}"><i></i><strong>${safe(rowLabel)}</strong><span>${safe(row.message || "")}</span>${rowMeta ? `<small>${safe(rowMeta)}</small>` : ""}</div>`;
-        }).join("")}
-      </div>`;
+      <span class="foa-vps-current-icon ${safe(tone)}"></span>
+      <strong>${safe(label)}</strong>
+      <span class="foa-vps-scan-copy">${safe(current.message || "Scanning...")}</span>
+      ${meta.length ? `<small>${safe(meta.join(" · "))}</small>` : ""}`;
   }
 
   function handleSnapshot(snapshot) {
