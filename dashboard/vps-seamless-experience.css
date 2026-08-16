@@ -1,0 +1,266 @@
+/* Full-VPS responsiveness and live strategy monitor. */
+html {
+  scroll-behavior: auto;
+}
+
+body.foa-vps-action-inflight #smart-loader,
+body.foa-vps-action-inflight .builder-loader {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+[data-main-action],
+[data-stop-trades] {
+  min-width: 178px;
+  min-height: 44px;
+  transform: translateZ(0);
+  transition: transform .16s ease, box-shadow .16s ease, opacity .16s ease, background-color .16s ease !important;
+}
+
+[data-main-action]:active:not(:disabled),
+[data-stop-trades]:active:not(:disabled) {
+  transform: translateY(1px) scale(.995);
+}
+
+.foa-vps-action-button[aria-busy="true"] {
+  cursor: progress !important;
+  opacity: .92 !important;
+  box-shadow: 0 0 0 1px rgba(96,165,250,.22), 0 12px 34px rgba(37,99,235,.18) !important;
+}
+
+.foa-vps-live-monitor {
+  position: relative;
+  overflow: hidden;
+  margin: 14px 0 2px;
+  padding: 14px;
+  border: 1px solid rgba(96,165,250,.18);
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 0 0, rgba(59,130,246,.12), transparent 42%),
+    linear-gradient(145deg, rgba(9,18,33,.96), rgba(5,11,22,.96));
+  box-shadow: 0 16px 44px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.025);
+  contain: layout paint;
+}
+
+.foa-vps-live-monitor::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  background: linear-gradient(180deg, #60a5fa, #22d3ee 55%, transparent);
+  opacity: .75;
+}
+
+.foa-vps-monitor-head,
+.foa-vps-monitor-head > div,
+.foa-vps-current,
+.foa-vps-feed-row {
+  display: flex;
+  align-items: center;
+}
+
+.foa-vps-monitor-head {
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.foa-vps-monitor-head > div {
+  min-width: 0;
+  gap: 8px;
+}
+
+.foa-vps-monitor-head strong {
+  color: #f8fafc;
+  font-size: 13px;
+  letter-spacing: .01em;
+}
+
+.foa-vps-monitor-head small {
+  color: #718096;
+  font-size: 11px;
+}
+
+.foa-vps-pulse {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #34d399;
+  box-shadow: 0 0 0 5px rgba(52,211,153,.08), 0 0 18px rgba(52,211,153,.48);
+  animation: foa-vps-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes foa-vps-pulse {
+  50% { opacity: .56; transform: scale(.88); }
+}
+
+.foa-vps-transport {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  border: 1px solid rgba(52,211,153,.18);
+  border-radius: 999px;
+  color: #6ee7b7;
+  background: rgba(16,185,129,.08);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .12em;
+}
+
+.foa-vps-transport.reconnecting,
+.foa-vps-transport.connecting,
+.foa-vps-transport.fallback {
+  color: #fbbf24;
+  border-color: rgba(251,191,36,.2);
+  background: rgba(245,158,11,.08);
+}
+
+.foa-vps-current {
+  gap: 11px;
+  min-height: 58px;
+  padding: 10px 12px;
+  border: 1px solid rgba(148,163,184,.09);
+  border-radius: 12px;
+  background: rgba(15,23,42,.58);
+}
+
+.foa-vps-current-icon {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  border: 2px solid currentColor;
+  border-radius: 999px;
+  color: #60a5fa;
+  box-shadow: 0 0 15px currentColor;
+}
+
+.foa-vps-current.wait .foa-vps-current-icon { color: #94a3b8; }
+.foa-vps-current.met .foa-vps-current-icon,
+.foa-vps-current.open .foa-vps-current-icon { color: #34d399; }
+.foa-vps-current.prepare .foa-vps-current-icon { color: #22d3ee; }
+.foa-vps-current.virtual .foa-vps-current-icon { color: #c084fc; }
+.foa-vps-current.stop .foa-vps-current-icon { color: #f87171; }
+
+.foa-vps-current > div {
+  min-width: 0;
+}
+
+.foa-vps-current strong,
+.foa-vps-current p,
+.foa-vps-current small {
+  display: block;
+}
+
+.foa-vps-current strong {
+  margin-bottom: 3px;
+  color: #f1f5f9;
+  font-size: 12px;
+}
+
+.foa-vps-current p {
+  margin: 0;
+  color: #b8c4d6;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.foa-vps-current small {
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.foa-vps-feed {
+  display: grid;
+  gap: 5px;
+  margin-top: 9px;
+}
+
+.foa-vps-feed-row {
+  display: grid;
+  grid-template-columns: 7px 116px minmax(0,1fr) auto;
+  gap: 8px;
+  min-height: 27px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  color: #7f8da3;
+  font-size: 10px;
+}
+
+.foa-vps-feed-row:first-child {
+  color: #aebdd2;
+  background: rgba(255,255,255,.018);
+}
+
+.foa-vps-feed-row i {
+  width: 5px;
+  height: 5px;
+  align-self: center;
+  border-radius: 999px;
+  background: #64748b;
+}
+
+.foa-vps-feed-row.met i,
+.foa-vps-feed-row.open i { background: #34d399; }
+.foa-vps-feed-row.prepare i { background: #22d3ee; }
+.foa-vps-feed-row.virtual i { background: #c084fc; }
+.foa-vps-feed-row.stop i { background: #f87171; }
+
+.foa-vps-feed-row strong {
+  color: #cbd5e1;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.foa-vps-feed-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.foa-vps-feed-row small {
+  color: #536176;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+html[data-theme="light"] .foa-vps-live-monitor,
+#foa-simple-app[data-theme="light"] .foa-vps-live-monitor {
+  border-color: rgba(37,99,235,.14);
+  background: linear-gradient(145deg, rgba(248,250,252,.98), rgba(241,245,249,.98));
+  box-shadow: 0 14px 34px rgba(15,23,42,.08);
+}
+
+html[data-theme="light"] .foa-vps-monitor-head strong,
+html[data-theme="light"] .foa-vps-current strong,
+#foa-simple-app[data-theme="light"] .foa-vps-monitor-head strong,
+#foa-simple-app[data-theme="light"] .foa-vps-current strong {
+  color: #0f172a;
+}
+
+html[data-theme="light"] .foa-vps-current,
+#foa-simple-app[data-theme="light"] .foa-vps-current {
+  background: rgba(255,255,255,.72);
+}
+
+html[data-theme="light"] .foa-vps-current p,
+#foa-simple-app[data-theme="light"] .foa-vps-current p {
+  color: #475569;
+}
+
+@media (max-width: 720px) {
+  .foa-vps-live-monitor { padding: 12px; border-radius: 14px; }
+  .foa-vps-monitor-head small { display: none; }
+  .foa-vps-feed-row {
+    grid-template-columns: 7px 102px minmax(0,1fr);
+  }
+  .foa-vps-feed-row small { display: none; }
+  [data-main-action], [data-stop-trades] { min-width: 150px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .foa-vps-pulse { animation: none; }
+  [data-main-action], [data-stop-trades] { transition: none !important; }
+}
