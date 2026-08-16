@@ -186,7 +186,7 @@ async def _recycle_stalled_private_session(
     limits and handshake concurrency.
     """
 
-    pending = getattr(session, "pending_contracts", set()) or set()
+    pending: set[Any] = set(getattr(session, "pending_contracts", set()) or set())
     if pending:
         return
 
