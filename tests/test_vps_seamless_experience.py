@@ -8,12 +8,36 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class VPSSeamlessExperienceTests(unittest.TestCase):
-    def test_full_vps_build_installs_preloaded_seamless_layer(self) -> None:
+    def test_full_vps_build_installs_preloaded_recovery_layer(self) -> None:
         source = (ROOT / "scripts" / "build-vps.mjs").read_text(encoding="utf-8")
         self.assertIn("full-vps-same-origin-v2", source)
-        self.assertIn("vps-seamless-experience.js?v=20260816-1", source)
-        self.assertIn("vps-seamless-experience.css?v=20260816-1", source)
+        self.assertIn("vps-seamless-experience.js?v=20260816-2", source)
+        self.assertIn("vps-seamless-experience.css?v=20260816-2", source)
         self.assertIn("dashboardMarker", source)
+
+    def test_full_vps_does_not_use_old_3_2_second_netlify_read_sla(self) -> None:
+        source = (ROOT / "dashboard" / "netlify-api-boundary.js").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('FRONTEND_RUNTIME.startsWith("full-vps-same-origin")', source)
+        self.assertIn("const GET_TIMEOUT_MS = FULL_VPS ? 6500 : 3200", source)
+        self.assertIn("const GET_RETRY_COUNT = FULL_VPS ? 1 : 0", source)
+        self.assertIn("safeGetMethod(method)", source)
+        self.assertIn("const live = cachedPayload(sourcePath)", source)
+        self.assertIn("full-vps-same-origin-rest-v3-resilient", source)
+        self.assertIn("Writes\n  // are never retried automatically", source)
+
+    def test_frontend_recovers_authenticated_shell_from_signed_snapshot(self) -> None:
+        source = (ROOT / "dashboard" / "vps-seamless-experience.js").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('const SESSION_KEY = "foa-session-v2"', source)
+        self.assertIn("rememberAuthenticatedSession(payload)", source)
+        self.assertIn("recoverAuthenticatedShell(payload)", source)
+        self.assertIn('document.querySelector(".foa-landing-v2, .public-builder")', source)
+        self.assertIn("window.location.reload()", source)
+        self.assertIn("AUTH_RECOVERY_KEY", source)
+        self.assertIn("lastRealtimeAt = Date.now()", source)
 
     def test_frontend_is_realtime_first_and_single_click_safe(self) -> None:
         source = (ROOT / "dashboard" / "vps-seamless-experience.js").read_text(
@@ -25,9 +49,22 @@ class VPSSeamlessExperienceTests(unittest.TestCase):
         self.assertIn('"/me/resume-trading"', source)
         self.assertIn('"/me/stop-trading"', source)
         self.assertIn("foa:vps-live-snapshot", source)
-        self.assertIn("Live Strategy Monitor", source)
-        self.assertIn("condition_not_met", source)
-        self.assertIn("condition_met", source)
+        self.assertIn('condition_not_met: ["Scanning", "wait"]', source)
+        self.assertIn('condition_met: ["Matched", "met"]', source)
+        self.assertNotIn("Live Strategy Monitor", source)
+        self.assertNotIn("foa-vps-feed-row", source)
+
+    def test_strategy_scanner_is_tiny_and_stable_on_mobile(self) -> None:
+        source = (ROOT / "dashboard" / "vps-seamless-experience.css").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("min-height: 24px", source)
+        self.assertIn("padding: 4px 7px", source)
+        self.assertIn("font-size: 10px", source)
+        self.assertIn("text-overflow: ellipsis", source)
+        self.assertIn("min-height: 22px", source)
+        self.assertNotIn(".foa-vps-monitor-head", source)
+        self.assertNotIn(".foa-vps-feed-row", source)
 
     def test_trades_control_does_not_restore_800ms_http_polling(self) -> None:
         source = (ROOT / "dashboard" / "trades-start-stop-toggle.js").read_text(
@@ -38,8 +75,12 @@ class VPSSeamlessExperienceTests(unittest.TestCase):
         self.assertNotIn("const POLL_MS = 800", source)
         self.assertIn("cachedLifecycle() || await readLifecycle()", source)
 
-    def test_worker_events_are_ephemeral_and_non_financial(self) -> None:
+    def test_worker_reports_exact_saved_scan_condition_without_financial_side_effect(self) -> None:
         source = (ROOT / "app" / "vps_seamless_worker.py").read_text(encoding="utf-8")
+        self.assertIn("describe_condition", source)
+        self.assertIn("_scan_description", source)
+        self.assertIn('f"Scanning {market_scope} for {criteria}."', source)
+        self.assertIn('f"Matched on {symbol}: {criteria}."', source)
         self.assertIn("condition_not_met", source)
         self.assertIn("condition_met", source)
         self.assertIn("trade_preparing", source)
@@ -67,13 +108,34 @@ class VPSSeamlessExperienceTests(unittest.TestCase):
         self.assertNotIn("session.add(", source)
         self.assertNotIn("session.commit(", source)
 
-    def test_worker_installs_monitor_after_financial_authorities(self) -> None:
+    def test_stalled_execution_recovery_is_account_scoped_and_settlement_safe(self) -> None:
+        source = (ROOT / "app" / "vps_execution_start_recovery.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("token_is_expiring", source)
+        self.assertIn("refresh_access_token", source)
+        self.assertIn("asyncio.to_thread", source)
+        self.assertIn("_STALLED_WAKE_SECONDS = 8.0", source)
+        self.assertIn("_STALLED_RECYCLE_SECONDS = 30.0", source)
+        self.assertIn("private_ws.wake_private_connection(session)", source)
+        self.assertIn("VPS_EXECUTION_STALL_RECYCLED", source)
+        self.assertIn("if getattr(session, \"pending_contracts\", set()):", source)
+        self.assertIn("_provider_backoff_active(row)", source)
+        self.assertIn("sibling_sessions_rebuilt=false", source)
+        self.assertNotIn("validate_accounts()", source)
+
+    def test_worker_installs_recovery_after_connection_guard_before_monitor(self) -> None:
         source = (ROOT / "app" / "custom_strategy_worker.py").read_text(encoding="utf-8")
         manual = source.index("install_custom_strategy_manual_stop_guard()")
         continuity = source.index("install_final_execution_continuity()")
+        connection = source.index("install_custom_strategy_connection_stampede_guard()")
+        recovery = source.index("install_vps_execution_start_recovery()")
         monitor = source.index("install_vps_seamless_worker()")
         self.assertLess(manual, monitor)
-        self.assertLess(continuity, monitor)
+        self.assertLess(continuity, recovery)
+        self.assertLess(connection, recovery)
+        self.assertLess(recovery, monitor)
+        self.assertIn("stalled_execution_recovery=bounded_account_recycle", source)
         self.assertIn("live_strategy_monitor=ephemeral_docker_event_bus", source)
 
     def test_vps_compose_uses_tight_local_refresh_fallback(self) -> None:
