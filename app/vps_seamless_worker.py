@@ -10,7 +10,7 @@ import aiohttp
 
 from app import custom_strategy_direct_runtime as direct_runtime
 from app import custom_strategy_result_router as result_router
-from app.custom_strategy_v1 import custom_strategy_fingerprint
+from app.custom_strategy_v1 import custom_strategy_fingerprint, describe_condition
 from app.rf_dir5_bot import RFDir5TradingBot
 
 
@@ -59,12 +59,31 @@ def _event(
     return {
         "managed_account_id": int(managed_id),
         "event": str(event_type),
-        "message": str(message)[:180],
+        "message": str(message)[:220],
         "symbol": str(symbol or "")[:32],
         "tick_sequence": max(0, int(tick_sequence or 0)),
         "digit": digit if digit is None else int(digit),
         "emitted_at": time.time(),
     }
+
+
+def _scan_description(config: dict[str, Any]) -> tuple[str, str]:
+    """Return exact saved market scope and condition copy for the tiny UI strip."""
+
+    conditions: list[str] = []
+    for condition in list(config.get("conditions") or []):
+        try:
+            conditions.append(describe_condition(condition))
+        except Exception:
+            continue
+    criteria = " AND ".join(conditions) or "configured Custom Strategy conditions"
+    mode = str(config.get("market_mode") or "all").strip().lower()
+    if mode == "all":
+        market_scope = "all markets"
+    else:
+        markets = [str(value) for value in list(config.get("markets") or []) if str(value)]
+        market_scope = ", ".join(markets) or "configured markets"
+    return market_scope, criteria
 
 
 async def _flush_events(bot: RFDir5TradingBot, delay: float) -> None:
@@ -140,9 +159,6 @@ def _emit(
         digit=digit,
     )
     if event_type == "condition_not_met":
-        # Keep the newest rejected tick per account while a batch is in flight.
-        # This makes the UI feel live without turning the private Docker network
-        # or API process into a per-tick database/logging bottleneck.
         _PENDING_LATEST[int(managed_id)] = payload
         _schedule_flush(bot, delay=0.08)
         return
@@ -232,11 +248,12 @@ def install_vps_seamless_worker() -> None:
         tick = dict(context.get("tick") or {})
         sequence = _tick_sequence(tick, bot, symbol)
         digit = digits[-1] if digits else None
+        market_scope, criteria = _scan_description(config)
         event_type = "condition_met" if qualifies else "condition_not_met"
         message = (
-            "All configured conditions matched; execution is being prepared."
+            f"Matched on {symbol}: {criteria}."
             if qualifies
-            else "Conditions not met on this tick; scanner continues immediately."
+            else f"Scanning {market_scope} for {criteria}."
         )
         for managed_id in managed_ids:
             _emit(
@@ -269,7 +286,7 @@ def install_vps_seamless_worker() -> None:
             bot,
             managed_id,
             "trade_preparing",
-            "Qualified signal latched; proposal and exact account BUY are being prepared.",
+            "Condition matched; preparing proposal and exact account BUY.",
             symbol=symbol,
             tick_sequence=sequence,
         )
@@ -280,7 +297,7 @@ def install_vps_seamless_worker() -> None:
                 bot,
                 managed_id,
                 "trade_open",
-                "Purchase confirmed; contract is open and settlement monitoring is active.",
+                "Purchase confirmed; contract is open.",
                 symbol=symbol,
                 tick_sequence=sequence,
             )
