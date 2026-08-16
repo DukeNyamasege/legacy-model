@@ -26,7 +26,8 @@ class VPSSeamlessExperienceTests(unittest.TestCase):
         self.assertIn('"/me/stop-trading"', source)
         self.assertIn("foa:vps-live-snapshot", source)
         self.assertIn("Live Strategy Monitor", source)
-        self.assertIn("Conditions not met", source) if False else None
+        self.assertIn("condition_not_met", source)
+        self.assertIn("condition_met", source)
 
     def test_trades_control_does_not_restore_800ms_http_polling(self) -> None:
         source = (ROOT / "dashboard" / "trades-start-stop-toggle.js").read_text(
