@@ -78,6 +78,7 @@ jobs:
           app/backend_only_surface.py
           app/custom_split_recovery_authority.py
           app/custom_strategy_comparator_extension.py
+          app/custom_strategy_connection_stability_fix.py
           app/custom_strategy_current_runtime_fix.py
           app/custom_strategy_direct_runtime.py
           app/custom_strategy_instant_start.py
@@ -114,6 +115,7 @@ jobs:
           app/vps_seamless_worker.py
           tests/test_account_bound_risk_and_ws_continuity.py
           tests/test_custom_direct_runtime.py
+          tests/test_custom_strategy_connection_stability_fix.py
           tests/test_custom_strategy_instant_start.py
           tests/test_current_custom_runtime_fix.py
           tests/test_dashboard_live_performance.py
@@ -138,6 +140,7 @@ jobs:
           app/backend_only_surface.py
           app/custom_split_recovery_authority.py
           app/custom_strategy_comparator_extension.py
+          app/custom_strategy_connection_stability_fix.py
           app/custom_strategy_current_runtime_fix.py
           app/custom_strategy_direct_runtime.py
           app/custom_strategy_instant_start.py
@@ -204,6 +207,7 @@ jobs:
         run: |
           python -m unittest -q tests.test_full_vps_hosting
           python -m unittest -q tests.test_vps_seamless_experience
+          python -m unittest -q tests.test_custom_strategy_connection_stability_fix
           python -m unittest -q tests.test_account_bound_risk_and_ws_continuity
           python -m unittest -q tests.test_custom_direct_runtime
           python -m unittest -q tests.test_custom_strategy_instant_start
