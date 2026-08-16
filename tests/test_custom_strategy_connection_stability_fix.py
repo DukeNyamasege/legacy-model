@@ -47,6 +47,7 @@ class CustomStrategyConnectionStabilitySourceTests(unittest.TestCase):
         self.assertIn("forced_disconnect=false", soft)
         self.assertIn("public_reconnect=false", soft)
         self.assertIn("_schedule_targeted_runtime_repair", soft)
+        self.assertIn("_notice_due", soft)
 
     def test_account_private_failures_cannot_restart_public_market_stream(self) -> None:
         source = (
@@ -58,6 +59,7 @@ class CustomStrategyConnectionStabilitySourceTests(unittest.TestCase):
         )
         self.assertNotIn("request_reconnect(", source)
         self.assertIn("public_stream_owner=public_websocket_resilience", source)
+        self.assertIn("_PUBLIC_RECONNECT_SKIP_LOG_INTERVAL_SECONDS", source)
 
     def test_vps_recovery_watchdog_is_rebound_but_oauth_wrapper_is_preserved(self) -> None:
         source = (
@@ -82,7 +84,7 @@ class CustomStrategyConnectionStabilitySourceTests(unittest.TestCase):
         slot = connect.index("async with gate._handshake_slots")
         schedule = connect.index("await gate.wait_for_start_slot()")
         wait_for = connect.index("url = await asyncio.wait_for(")
-        otp = connect.index("self.get_otp_url()")
+        otp = connect.index("_fresh_otp_url(self)")
         websocket = connect.index("websocket = await websockets.connect(")
         self.assertLess(slot, schedule)
         self.assertLess(schedule, wait_for)
@@ -92,6 +94,43 @@ class CustomStrategyConnectionStabilitySourceTests(unittest.TestCase):
         self.assertIn("PRIVATE_WS_OTP_TIMEOUT", connect)
         self.assertIn("handshake_slot_released=true", connect)
         self.assertNotIn("gate.open_websocket(url)", connect)
+
+    def test_otp_rest_uses_shared_keepalive_ipv4_pool(self) -> None:
+        source = (
+            ROOT / "app" / "custom_strategy_connection_stability_fix.py"
+        ).read_text(encoding="utf-8")
+        otp_pool = source[
+            source.index("def _otp_http_session") : source.index(
+                "def _otp_error_from_payload"
+            )
+        ]
+        otp_fetch = source[
+            source.index("async def _fresh_otp_url") : source.index(
+                "async def _stable_execution_watchdog"
+            )
+        ]
+        self.assertIn("aiohttp.TCPConnector", otp_pool)
+        self.assertIn("family=socket.AF_INET", otp_pool)
+        self.assertIn("keepalive_timeout=30", otp_pool)
+        self.assertIn("ttl_dns_cache=300", otp_pool)
+        self.assertIn("aiohttp.ClientSession", otp_pool)
+        self.assertIn("PRIVATE_WS_OTP_HTTP_POOL_ACTIVE", otp_pool)
+        self.assertIn("session.post(endpoint, headers=headers)", otp_fetch)
+        self.assertIn("deriv_headers", otp_fetch)
+
+    def test_private_websocket_open_forces_ipv4_and_remains_bounded(self) -> None:
+        source = (
+            ROOT / "app" / "custom_strategy_connection_stability_fix.py"
+        ).read_text(encoding="utf-8")
+        connect = source[
+            source.index("async def _fresh_otp_connect_and_run") : source.index(
+                "def install_custom_strategy_connection_stability_fix"
+            )
+        ]
+        self.assertIn("open_timeout=_PRIVATE_WS_OPEN_TIMEOUT_SECONDS", connect)
+        self.assertIn("family=socket.AF_INET", connect)
+        self.assertIn("ping_interval=20", connect)
+        self.assertIn("ping_timeout=20", connect)
 
     def test_final_installer_rebinds_client_session_before_bot_creation(self) -> None:
         stability_source = (
@@ -106,6 +145,9 @@ class CustomStrategyConnectionStabilitySourceTests(unittest.TestCase):
         )
         self.assertIn("_private_ws_execution_wake_enabled = False", stability_source)
         self.assertIn("_private_ws_otp_bootstrap_timeout_seconds", stability_source)
+        self.assertIn("_private_ws_otp_http_keepalive = True", stability_source)
+        self.assertIn("_private_ws_ipv4_transport = True", stability_source)
+        self.assertIn("_private_ws_open_timeout_seconds", stability_source)
         self.assertLess(
             worker_source.index("install_custom_strategy_connection_stability_fix()"),
             worker_source.index("bot = RFDir5TradingBot()"),
