@@ -9,6 +9,8 @@ import websockets
 
 from app import custom_execution_consistency_authority as consistency
 from app import custom_strategy_connection_stampede_guard as connection_guard
+from app import final_execution_continuity as continuity
+from app import manual_martingale_execution_authority as martingale_authority
 from app import private_websocket_rate_limit as private_ws
 from app import vps_execution_start_recovery as vps_recovery
 from app.rf_dir5_bot import RFDir5TradingBot
@@ -21,6 +23,14 @@ _WATCHDOG_INTERVAL_SECONDS = 2.0
 _DEAD_SESSION_REPAIR_GRACE_SECONDS = 8.0
 _RECONNECT_LOG_INTERVAL_SECONDS = 60.0
 
+_CONSISTENCY_STAKE_POLICY_REASON = consistency._stake_policy_reason
+_CONTINUITY_STAKE_POLICY_REASON = continuity._is_stake_policy_reason
+_MARTINGALE_STAKE_POLICY_REASON = martingale_authority._is_stake_policy_rejection
+_EXTRA_STAKE_POLICY_MARKERS = (
+    "multiplier stake",
+    "exceeds spendable balance",
+)
+
 
 def _row_value(row: Any, key: str, default: Any = None) -> Any:
     if isinstance(row, dict):
@@ -31,6 +41,19 @@ def _row_value(row: Any, key: str, default: Any = None) -> Any:
 def _provider_backoff_active(row: Any) -> bool:
     reason = str(_row_value(row, "execution_status_reason", "") or "").lower()
     return "rate-limit" in reason or "rate limited" in reason
+
+
+def _financial_stake_policy_reason(reason: str) -> bool:
+    """Classify every deterministic unaffordable-stake outcome as a financial skip."""
+
+    text = str(reason or "").strip().lower()
+    if any(marker in text for marker in _EXTRA_STAKE_POLICY_MARKERS):
+        return True
+    return bool(
+        _CONSISTENCY_STAKE_POLICY_REASON(reason)
+        or _CONTINUITY_STAKE_POLICY_REASON(reason)
+        or _MARTINGALE_STAKE_POLICY_REASON(reason)
+    )
 
 
 def _stability_state(bot: RFDir5TradingBot) -> dict[int, dict[str, float]]:
@@ -399,6 +422,13 @@ def install_custom_strategy_connection_stability_fix() -> None:
     consistency._request_private_reconnect = _soft_private_reconnect
     consistency._request_public_reconnect = _skip_execution_driven_public_reconnect
 
+    # Recovery stake affordability is a financial policy outcome, not evidence of
+    # a broken WebSocket. Keep all three wrapper layers on the same classification
+    # so an unaffordable multiplier is skipped without transport recovery.
+    consistency._stake_policy_reason = _financial_stake_policy_reason
+    continuity._is_stake_policy_reason = _financial_stake_policy_reason
+    martingale_authority._is_stake_policy_rejection = _financial_stake_policy_reason
+
     # The original limiter queued already-issued OTP URLs behind the handshake
     # semaphore. Rebind before the bot creates sessions so every connection task
     # reserves handshake capacity before requesting its one-time URL.
@@ -407,4 +437,5 @@ def install_custom_strategy_connection_stability_fix() -> None:
     RFDir5TradingBot._custom_strategy_connection_stability_fix_installed = True
     RFDir5TradingBot._vps_stalled_execution_recycle_seconds = None
     RFDir5TradingBot._private_ws_fresh_otp_before_handshake = True
+    RFDir5TradingBot._stake_policy_transport_isolation = True
     _INSTALLED = True
