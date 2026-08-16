@@ -22,6 +22,7 @@ _INSTALLED = False
 _WATCHDOG_INTERVAL_SECONDS = 2.0
 _DEAD_SESSION_REPAIR_GRACE_SECONDS = 8.0
 _RECONNECT_LOG_INTERVAL_SECONDS = 60.0
+_OTP_BOOTSTRAP_TIMEOUT_SECONDS = 15.0
 
 _CONSISTENCY_STAKE_POLICY_REASON = consistency._stake_policy_reason
 _CONTINUITY_STAKE_POLICY_REASON = continuity._is_stake_policy_reason
@@ -157,7 +158,7 @@ def _soft_private_reconnect(
     managed_id: int,
     reason: str,
 ) -> None:
-    """Recover one private execution stream without force-closing a live session."""
+    """Recover one private execution stream without disturbing live backoff."""
 
     account = bot.repository.managed_account(int(managed_id)) or {}
     if not bool(account.get("enabled")):
@@ -173,12 +174,10 @@ def _soft_private_reconnect(
     connected = bool(session is not None and getattr(session, "is_connected", False))
     task_alive = connection_guard._session_task_alive(session)
 
-    if session is not None and task_alive and not connected:
-        try:
-            private_ws.wake_private_connection(session)
-        except Exception:
-            pass
-
+    # A live disconnected ClientSession already owns its queued startup, OTP,
+    # handshake and retry/backoff loop. Qualified strategy attempts must not set
+    # its wake event because repeated signals can collapse the intended backoff.
+    # Only a genuinely missing/dead session is reconstructed.
     if session is None or not task_alive:
         connection_guard._schedule_targeted_runtime_repair(bot, int(managed_id))
     elif connection_guard._direct_runtime_for_account(bot, int(managed_id)) is None:
@@ -186,8 +185,8 @@ def _soft_private_reconnect(
 
     bot.logger.warning(
         "CUSTOM_EXECUTION_SOFT_RECONNECT managed_id=%s lifecycle_stop=false "
-        "forced_disconnect=false public_reconnect=false session_task_alive=%s "
-        "session_connected=%s reason=%s",
+        "forced_disconnect=false public_reconnect=false execution_wake=false "
+        "session_task_alive=%s session_connected=%s reason=%s",
         int(managed_id),
         task_alive,
         connected,
@@ -213,7 +212,7 @@ def _skip_execution_driven_public_reconnect(
 
 
 async def _fresh_otp_connect_and_run(self: ClientSession) -> None:
-    """Reserve handshake capacity before requesting each one-time WebSocket URL."""
+    """Reserve handshake capacity, then obtain and consume a fresh bounded OTP."""
 
     attempt = 0
     gate = private_ws._gate_for(self)
@@ -229,7 +228,24 @@ async def _fresh_otp_connect_and_run(self: ClientSession) -> None:
             url = ""
             async with gate._handshake_slots:
                 await gate.wait_for_start_slot()
-                url = await self.get_otp_url()
+                try:
+                    url = await asyncio.wait_for(
+                        self.get_otp_url(),
+                        timeout=_OTP_BOOTSTRAP_TIMEOUT_SECONDS,
+                    )
+                except asyncio.TimeoutError:
+                    self.bot.logger.warning(
+                        "PRIVATE_WS_OTP_TIMEOUT account=%s timeout_seconds=%.1f "
+                        "handshake_slot_released=true",
+                        mask_account_id(self.account_id),
+                        _OTP_BOOTSTRAP_TIMEOUT_SECONDS,
+                        extra={
+                            "token_tag": self.token_tag,
+                            "masked_account_id": mask_account_id(self.account_id),
+                        },
+                    )
+                    url = ""
+
                 if url:
                     self.bot.logger.info(
                         "Connecting to private WebSocket for account %s...",
@@ -405,5 +421,9 @@ def install_custom_strategy_connection_stability_fix() -> None:
     RFDir5TradingBot._custom_strategy_connection_stability_fix_installed = True
     RFDir5TradingBot._vps_stalled_execution_recycle_seconds = None
     RFDir5TradingBot._private_ws_fresh_otp_before_handshake = True
+    RFDir5TradingBot._private_ws_execution_wake_enabled = False
+    RFDir5TradingBot._private_ws_otp_bootstrap_timeout_seconds = (
+        _OTP_BOOTSTRAP_TIMEOUT_SECONDS
+    )
     RFDir5TradingBot._stake_policy_transport_isolation = True
     _INSTALLED = True
