@@ -67,6 +67,7 @@ from app.session_risk_stop_authority import install_session_risk_stop_worker
 from app.telegram_silence import install_telegram_silence
 from app.trade_registration_idempotency import install_trade_registration_idempotency
 from app.unresolved_contract_safety import install_unresolved_contract_safety
+from app.vps_execution_start_recovery import install_vps_execution_start_recovery
 from app.vps_seamless_worker import install_vps_seamless_worker
 
 
@@ -173,6 +174,13 @@ async def run_worker() -> None:
     # loops own their own backoff and sibling accounts are never globally rebuilt.
     install_custom_strategy_connection_stampede_guard()
 
+    # A live-but-never-connected ClientSession must not remain in a generic
+    # 'connecting' state indefinitely. Refresh an expired OAuth credential when
+    # needed, wake a delayed account after a short grace period, and recycle only
+    # that disconnected non-financial session after a bounded stall. Provider
+    # rate-limit backoff and any open-contract settlement remain authoritative.
+    install_vps_execution_start_recovery()
+
     # Transport/Virtual Hook/Multiplier consistency installs first. Split Recovery
     # is then wrapped so the configured spread width (1/2/3), not the number of
     # remaining successful legs, is always the risk divisor. The compatibility cap
@@ -185,9 +193,9 @@ async def run_worker() -> None:
     install_custom_split_cap_defaults_authority()
     install_custom_virtual_post_loss_barrier_authority()
 
-    # Full-VPS responsiveness is intentionally the final wrapper. It observes the
-    # already-authoritative routed condition evaluation and execution task, then
-    # emits best-effort UI progress over the private Docker network. It cannot
+    # Full-VPS responsiveness is intentionally the final UI observer. It observes
+    # the already-authoritative routed condition evaluation and execution task,
+    # then emits best-effort UI progress over the private Docker network. It cannot
     # change a signal, stake, proposal, BUY or settlement decision.
     install_vps_seamless_worker()
     install_telegram_silence()
@@ -212,6 +220,7 @@ async def run_worker() -> None:
         "ambiguous_buy_policy=reconcile_before_next_real duplicate_buy_retry=false "
         "stop_reason_authority=durable execution_liveness_watchdog=true "
         "connection_repair=targeted_singleflight sibling_wake=false global_revalidation=false "
+        "stalled_execution_recovery=bounded_account_recycle oauth_refresh=on_expiry "
         "live_strategy_monitor=ephemeral_docker_event_bus"
     )
     loop = asyncio.get_running_loop()
