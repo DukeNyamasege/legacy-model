@@ -102,6 +102,26 @@ class CustomStrategyConnectionStabilitySourceTests(unittest.TestCase):
             worker_source.index("bot = RFDir5TradingBot()"),
         )
 
+    def test_multiplier_affordability_is_a_financial_skip_not_transport_fault(self) -> None:
+        source = (
+            ROOT / "app" / "custom_strategy_connection_stability_fix.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn('"multiplier stake"', source)
+        self.assertIn('"exceeds spendable balance"', source)
+        self.assertIn(
+            "consistency._stake_policy_reason = _financial_stake_policy_reason",
+            source,
+        )
+        self.assertIn(
+            "continuity._is_stake_policy_reason = _financial_stake_policy_reason",
+            source,
+        )
+        self.assertIn(
+            "martingale_authority._is_stake_policy_rejection = _financial_stake_policy_reason",
+            source,
+        )
+        self.assertIn("_stake_policy_transport_isolation = True", source)
+
 
 if __name__ == "__main__":
     unittest.main()
