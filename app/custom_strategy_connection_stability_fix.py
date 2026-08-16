@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import time
+from contextlib import suppress
 from typing import Any
+
+import websockets
 
 from app import custom_execution_consistency_authority as consistency
 from app import custom_strategy_connection_stampede_guard as connection_guard
 from app import private_websocket_rate_limit as private_ws
 from app import vps_execution_start_recovery as vps_recovery
 from app.rf_dir5_bot import RFDir5TradingBot
+from enhanced_bot import ClientSession, mask_account_id, sanitize_account_ids
 
 
 _INSTALLED = False
@@ -198,6 +202,185 @@ def _skip_execution_driven_public_reconnect(
     )
 
 
+async def _fresh_otp_connect_and_run(self: ClientSession) -> None:
+    """Reserve handshake capacity before requesting each one-time WebSocket URL.
+
+    The previous limiter requested an OTP after only a global start-slot reservation
+    and then queued the one-time URL behind the handshake semaphore. With dozens of
+    accounts and only two handshake slots, URLs could age for minutes before use and
+    be rejected with HTTP 401. This loop acquires handshake capacity first, then
+    obtains and consumes that account's OTP immediately.
+    """
+
+    attempt = 0
+    gate = private_ws._gate_for(self)
+    config = gate.config
+    ready_event = private_ws._ready_event(self)
+
+    while self.bot.is_running and (
+        self.pending_contracts or private_ws._still_configured(self)
+    ):
+        retry_delay = 0.0
+        websocket = None
+        try:
+            url = ""
+            # Handshake capacity is reserved before OTP generation. The slot is
+            # held only through OTP bootstrap + opening handshake, never for the
+            # lifetime of the connected WebSocket.
+            async with gate._handshake_slots:
+                await gate.wait_for_start_slot()
+                url = await self.get_otp_url()
+                if url:
+                    self.bot.logger.info(
+                        "Connecting to private WebSocket for account %s...",
+                        mask_account_id(self.account_id),
+                        extra={
+                            "token_tag": self.token_tag,
+                            "masked_account_id": mask_account_id(self.account_id),
+                        },
+                    )
+                    websocket = await websockets.connect(
+                        url,
+                        open_timeout=20,
+                        close_timeout=5,
+                        ping_interval=20,
+                        ping_timeout=20,
+                    )
+
+            if not url:
+                if not self.pending_contracts and not private_ws._still_configured(self):
+                    return
+                attempt += 1
+                retry_delay = min(
+                    config.maximum_backoff_seconds,
+                    config.otp_failure_backoff_seconds
+                    * (1.5 ** min(attempt - 1, 5)),
+                ) + private_ws._jitter(config)
+                self.bot.logger.warning(
+                    "PRIVATE_WS_OTP_RETRY account=%s attempt=%s backoff_seconds=%.1f",
+                    mask_account_id(self.account_id),
+                    attempt,
+                    retry_delay,
+                    extra={
+                        "token_tag": self.token_tag,
+                        "masked_account_id": mask_account_id(self.account_id),
+                    },
+                )
+            else:
+                self.ws = websocket
+                self.is_connected = True
+                ready_event.set()
+                if private_ws._still_configured(self):
+                    self.bot._set_account_execution_status(
+                        self.managed_account_id,
+                        "active",
+                        "Private trading connection is active",
+                    )
+                self.pending_requests.clear()
+                attempt = 0
+                self.bot.logger.info(
+                    "Private WebSocket connected for account %s",
+                    mask_account_id(self.account_id),
+                    extra={
+                        "token_tag": self.token_tag,
+                        "masked_account_id": mask_account_id(self.account_id),
+                    },
+                )
+                await websocket.send(
+                    '{"balance":1,"subscribe":1,"req_id":900001}'
+                )
+
+                for contract_id in list(self.pending_contracts):
+                    await self.subscribe_contract(contract_id)
+
+                self.bot._on_private_session_ready(self)
+                ping_task = asyncio.create_task(self._ping_loop())
+                self.reconcile_task = asyncio.create_task(
+                    self._reconcile_contracts_loop()
+                )
+                try:
+                    async for message in websocket:
+                        await self._on_message(message)
+                finally:
+                    if self.reconcile_task:
+                        self.reconcile_task.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await self.reconcile_task
+                        self.reconcile_task = None
+                    ping_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await ping_task
+
+                    self.is_connected = False
+                    self.ws = None
+                    ready_event.clear()
+                    if private_ws._still_configured(self):
+                        self.bot._set_account_execution_status(
+                            self.managed_account_id,
+                            "reconnecting",
+                            "Private trading connection closed",
+                        )
+                    retry_delay = private_ws._normal_backoff(self, config, attempt)
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self.is_connected = False
+            self.ws = None
+            ready_event.clear()
+            attempt += 1
+            rate_limited = private_ws._is_rate_limit(exc)
+            if rate_limited:
+                retry_delay = private_ws._rate_backoff(config, attempt)
+                await gate.penalize(retry_delay)
+                self.bot.logger.warning(
+                    "PRIVATE_WS_RATE_LIMITED account=%s status=%s attempt=%s "
+                    "global_backoff_seconds=%.1f",
+                    mask_account_id(self.account_id),
+                    private_ws._http_status(exc) or "unknown",
+                    attempt,
+                    retry_delay,
+                    extra={
+                        "token_tag": self.token_tag,
+                        "masked_account_id": mask_account_id(self.account_id),
+                    },
+                )
+            else:
+                retry_delay = private_ws._normal_backoff(self, config, attempt)
+                self.bot.logger.warning(
+                    "Private connection lost for account %s: %s. "
+                    "Reconnecting in %.1fs...",
+                    mask_account_id(self.account_id),
+                    sanitize_account_ids(str(exc)),
+                    retry_delay,
+                    extra={
+                        "token_tag": self.token_tag,
+                        "masked_account_id": mask_account_id(self.account_id),
+                    },
+                )
+            if private_ws._still_configured(self):
+                self.bot._set_account_execution_status(
+                    self.managed_account_id,
+                    "reconnecting",
+                    (
+                        f"Deriv connection rate-limited; retrying in "
+                        f"{retry_delay:.0f} seconds"
+                        if rate_limited
+                        else "Private trading connection interrupted"
+                    ),
+                )
+        finally:
+            if websocket is not None:
+                with suppress(Exception):
+                    await websocket.close()
+            self.is_connected = False
+            self.ws = None
+            ready_event.clear()
+
+        if retry_delay > 0 and self.bot.is_running:
+            await private_ws._sleep_or_wake(self, retry_delay)
+
+
 def install_custom_strategy_connection_stability_fix() -> None:
     """Final connection invariant for the full-VPS Custom Strategy worker."""
 
@@ -216,6 +399,12 @@ def install_custom_strategy_connection_stability_fix() -> None:
     consistency._request_private_reconnect = _soft_private_reconnect
     consistency._request_public_reconnect = _skip_execution_driven_public_reconnect
 
+    # The original limiter queued already-issued OTP URLs behind the handshake
+    # semaphore. Rebind before the bot creates sessions so every connection task
+    # reserves handshake capacity before requesting its one-time URL.
+    ClientSession.connect_and_run = _fresh_otp_connect_and_run
+
     RFDir5TradingBot._custom_strategy_connection_stability_fix_installed = True
     RFDir5TradingBot._vps_stalled_execution_recycle_seconds = None
+    RFDir5TradingBot._private_ws_fresh_otp_before_handshake = True
     _INSTALLED = True
