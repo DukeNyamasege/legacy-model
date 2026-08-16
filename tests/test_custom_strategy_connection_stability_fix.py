@@ -68,6 +68,40 @@ class CustomStrategyConnectionStabilitySourceTests(unittest.TestCase):
         self.assertNotIn("RFDir5TradingBot.validate_accounts =", source)
         self.assertNotIn("RFDir5TradingBot.run =", source)
 
+    def test_handshake_capacity_is_reserved_before_one_time_otp_is_requested(self) -> None:
+        source = (
+            ROOT / "app" / "custom_strategy_connection_stability_fix.py"
+        ).read_text(encoding="utf-8")
+        connect = source[
+            source.index("async def _fresh_otp_connect_and_run") : source.index(
+                "def install_custom_strategy_connection_stability_fix"
+            )
+        ]
+        slot = connect.index("async with gate._handshake_slots")
+        schedule = connect.index("await gate.wait_for_start_slot()")
+        otp = connect.index("url = await self.get_otp_url()")
+        websocket = connect.index("websocket = await websockets.connect(")
+        self.assertLess(slot, schedule)
+        self.assertLess(schedule, otp)
+        self.assertLess(otp, websocket)
+        self.assertNotIn("gate.open_websocket(url)", connect)
+
+    def test_final_installer_rebinds_client_session_before_bot_creation(self) -> None:
+        stability_source = (
+            ROOT / "app" / "custom_strategy_connection_stability_fix.py"
+        ).read_text(encoding="utf-8")
+        worker_source = (ROOT / "app" / "custom_strategy_worker.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "ClientSession.connect_and_run = _fresh_otp_connect_and_run",
+            stability_source,
+        )
+        self.assertLess(
+            worker_source.index("install_custom_strategy_connection_stability_fix()"),
+            worker_source.index("bot = RFDir5TradingBot()"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
