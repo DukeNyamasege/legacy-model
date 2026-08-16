@@ -41,10 +41,20 @@ html = html.replace(
   '<meta name="frontend-runtime" content="full-vps-same-origin-v2">',
 );
 
+/*
+ * Force a new browser URL for the local API boundary on every recovery release.
+ * The old unversioned URL could leave a mobile browser executing the Netlify-era
+ * 3.2-second timeout even after the VPS source had been corrected.
+ */
+html = html.replace(
+  '<script src="/netlify-api-boundary.js"></script>',
+  '<script src="/netlify-api-boundary.js?v=20260816-vps3"></script>',
+);
+
 if (!html.includes('/vps-seamless-experience.css')) {
   html = html.replace(
     "</head>",
-    '  <link rel="stylesheet" href="/vps-seamless-experience.css?v=20260816-2">\n</head>',
+    '  <link rel="stylesheet" href="/vps-seamless-experience.css?v=20260816-3">\n</head>',
   );
 }
 
@@ -61,7 +71,7 @@ if (!html.includes(dashboardMarker)) {
 if (!html.includes('/vps-seamless-experience.js')) {
   html = html.replace(
     dashboardMarker,
-    '  <script src="/vps-seamless-experience.js?v=20260816-2"></script>\n  ' + dashboardMarker,
+    '  <script src="/vps-seamless-experience.js?v=20260816-3"></script>\n  ' + dashboardMarker,
   );
 }
 
