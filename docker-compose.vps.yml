@@ -11,6 +11,11 @@ services:
   worker:
     environment:
       FRONTEND_HOSTING_MODE: vps
+      # Full-VPS Start/Stop changes are local PostgreSQL state transitions. Keep
+      # the account refresh fallback tight; explicit-start pickup still wakes the
+      # exact account immediately and provider reconnect backoffs remain separate.
+      ACCOUNT_REFRESH_INTERVAL_SECONDS: ${VPS_ACCOUNT_REFRESH_INTERVAL_SECONDS:-1}
+      INTERNAL_VPS_RUNTIME_EVENTS_URL: http://api:8080/control/internal/vps-runtime-events
 
   frontend:
     build:
