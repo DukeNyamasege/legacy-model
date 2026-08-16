@@ -15,8 +15,10 @@ from app.dashboard_stability_fix import _remove_route
 
 _INSTALLED = False
 _ORIGINAL_COMBINED_SNAPSHOT: Any = None
+_ORIGINAL_LIVE_SNAPSHOT: Any = None
 _EVENT_LOCK = threading.RLock()
 _RUNTIME_EVENTS: dict[int, deque[dict[str, Any]]] = {}
+_EVENT_REVISIONS: dict[int, int] = {}
 _MAX_EVENTS_PER_ACCOUNT = 12
 _ALLOWED_EVENT_TYPES = {
     "scanner_ready",
@@ -37,6 +39,11 @@ def _events_for(managed_id: int) -> list[dict[str, Any]]:
     with _EVENT_LOCK:
         rows = _RUNTIME_EVENTS.get(int(managed_id))
         return [dict(item) for item in list(rows or [])]
+
+
+def _event_revision(managed_id: int) -> int:
+    with _EVENT_LOCK:
+        return int(_EVENT_REVISIONS.get(int(managed_id), 0) or 0)
 
 
 def _store_event(raw: dict[str, Any]) -> bool:
@@ -85,6 +92,7 @@ def _store_event(raw: dict[str, Any]) -> bool:
         ):
             return False
         rows.appendleft(event)
+        _EVENT_REVISIONS[managed_id] = _EVENT_REVISIONS.get(managed_id, 0) + 1
     return True
 
 
@@ -96,20 +104,34 @@ def install_vps_realtime_events(app: Any) -> None:
     signed browser WebSocket remains the sole public realtime transport.
     """
 
-    global _INSTALLED, _ORIGINAL_COMBINED_SNAPSHOT
+    global _INSTALLED, _ORIGINAL_COMBINED_SNAPSHOT, _ORIGINAL_LIVE_SNAPSHOT
     if _INSTALLED:
         return
 
     _ORIGINAL_COMBINED_SNAPSHOT = realtime_gateway._combined_snapshot
+    _ORIGINAL_LIVE_SNAPSHOT = realtime_gateway._live_snapshot
+
+    def live_snapshot_with_runtime_revision(managed_id: int) -> dict[str, Any]:
+        original = _ORIGINAL_LIVE_SNAPSHOT
+        payload = dict(original(managed_id) or {}) if original is not None else {}
+        base_revision = str(payload.get("revision") or "")
+        payload["revision"] = f"{base_revision}|vps-events:{_event_revision(managed_id)}"
+        return payload
 
     def combined_snapshot_with_runtime_events(account: dict[str, Any]) -> dict[str, Any]:
         original = _ORIGINAL_COMBINED_SNAPSHOT
         payload = original(account) if original is not None else {}
         managed_id = int(account["id"])
         payload["runtime_events"] = _events_for(managed_id)
+        payload["runtime_event_revision"] = _event_revision(managed_id)
         payload["frontend_runtime"] = "full_vps_same_origin"
         return payload
 
+    # The realtime gateway suppresses duplicate snapshots by revision. Runtime
+    # strategy events intentionally do not touch PostgreSQL, so add a per-account
+    # in-memory revision to the same comparison. A worker event can now wake the
+    # browser immediately without a fake trade/database write.
+    realtime_gateway._live_snapshot = live_snapshot_with_runtime_revision
     realtime_gateway._combined_snapshot = combined_snapshot_with_runtime_events
 
     # Full-VPS mode still uses the lightweight signed realtime snapshot. Never
