@@ -32,7 +32,7 @@ class CustomStrategyConnectionStabilitySourceTests(unittest.TestCase):
         self.assertIn("continue", watchdog)
         self.assertIn("_schedule_targeted_runtime_repair", watchdog)
 
-    def test_account_private_reconnect_does_not_close_socket(self) -> None:
+    def test_account_private_reconnect_does_not_close_or_wake_live_socket(self) -> None:
         source = (
             ROOT / "app" / "custom_strategy_connection_stability_fix.py"
         ).read_text(encoding="utf-8")
@@ -42,9 +42,11 @@ class CustomStrategyConnectionStabilitySourceTests(unittest.TestCase):
             )
         ]
         self.assertNotIn(".close(", soft)
-        self.assertIn("wake_private_connection", soft)
+        self.assertNotIn("wake_private_connection", soft)
+        self.assertIn("execution_wake=false", soft)
         self.assertIn("forced_disconnect=false", soft)
         self.assertIn("public_reconnect=false", soft)
+        self.assertIn("_schedule_targeted_runtime_repair", soft)
 
     def test_account_private_failures_cannot_restart_public_market_stream(self) -> None:
         source = (
@@ -68,7 +70,7 @@ class CustomStrategyConnectionStabilitySourceTests(unittest.TestCase):
         self.assertNotIn("RFDir5TradingBot.validate_accounts =", source)
         self.assertNotIn("RFDir5TradingBot.run =", source)
 
-    def test_handshake_capacity_is_reserved_before_one_time_otp_is_requested(self) -> None:
+    def test_handshake_capacity_is_reserved_before_bounded_one_time_otp(self) -> None:
         source = (
             ROOT / "app" / "custom_strategy_connection_stability_fix.py"
         ).read_text(encoding="utf-8")
@@ -79,11 +81,16 @@ class CustomStrategyConnectionStabilitySourceTests(unittest.TestCase):
         ]
         slot = connect.index("async with gate._handshake_slots")
         schedule = connect.index("await gate.wait_for_start_slot()")
-        otp = connect.index("url = await self.get_otp_url()")
+        wait_for = connect.index("url = await asyncio.wait_for(")
+        otp = connect.index("self.get_otp_url()")
         websocket = connect.index("websocket = await websockets.connect(")
         self.assertLess(slot, schedule)
-        self.assertLess(schedule, otp)
+        self.assertLess(schedule, wait_for)
+        self.assertLess(wait_for, otp)
         self.assertLess(otp, websocket)
+        self.assertIn("timeout=_OTP_BOOTSTRAP_TIMEOUT_SECONDS", connect)
+        self.assertIn("PRIVATE_WS_OTP_TIMEOUT", connect)
+        self.assertIn("handshake_slot_released=true", connect)
         self.assertNotIn("gate.open_websocket(url)", connect)
 
     def test_final_installer_rebinds_client_session_before_bot_creation(self) -> None:
@@ -97,6 +104,8 @@ class CustomStrategyConnectionStabilitySourceTests(unittest.TestCase):
             "ClientSession.connect_and_run = _fresh_otp_connect_and_run",
             stability_source,
         )
+        self.assertIn("_private_ws_execution_wake_enabled = False", stability_source)
+        self.assertIn("_private_ws_otp_bootstrap_timeout_seconds", stability_source)
         self.assertLess(
             worker_source.index("install_custom_strategy_connection_stability_fix()"),
             worker_source.index("bot = RFDir5TradingBot()"),
