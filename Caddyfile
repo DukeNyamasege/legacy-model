@@ -39,6 +39,11 @@ derivadmin.site {
     }
 }
 
+# Canonicalize the browser host so sessions/OAuth stay on one origin.
+www.derivadmin.site {
+    redir https://derivadmin.site{uri} permanent
+}
+
 # Keep the existing backend hostname alive during the migration window and for
 # diagnostics. New browser traffic should use same-origin derivadmin.site/api/*.
 api.derivadmin.site {
