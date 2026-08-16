@@ -32,6 +32,9 @@ from app.custom_split_recovery_authority import install_custom_split_recovery_au
 from app.custom_strategy_connection_stampede_guard import (
     install_custom_strategy_connection_stampede_guard,
 )
+from app.custom_strategy_connection_stability_fix import (
+    install_custom_strategy_connection_stability_fix,
+)
 from app.custom_strategy_current_runtime_fix import install_custom_strategy_current_runtime_fix
 from app.custom_strategy_direct_runtime import install_custom_strategy_direct_runtime
 from app.custom_strategy_instant_start import install_custom_strategy_instant_start
@@ -174,11 +177,9 @@ async def run_worker() -> None:
     # loops own their own backoff and sibling accounts are never globally rebuilt.
     install_custom_strategy_connection_stampede_guard()
 
-    # A live-but-never-connected ClientSession must not remain in a generic
-    # 'connecting' state indefinitely. Refresh an expired OAuth credential when
-    # needed, wake a delayed account after a short grace period, and recycle only
-    # that disconnected non-financial session after a bounded stall. Provider
-    # rate-limit backoff and any open-contract settlement remain authoritative.
+    # OAuth refresh remains part of full-VPS startup recovery. The later stability
+    # authority removes its conflicting live-session wake/recycle policy while
+    # preserving targeted repair for genuinely missing/dead account sessions.
     install_vps_execution_start_recovery()
 
     # Transport/Virtual Hook/Multiplier consistency installs first. Split Recovery
@@ -192,6 +193,11 @@ async def run_worker() -> None:
     install_custom_split_equal_spread_authority()
     install_custom_split_cap_defaults_authority()
     install_custom_virtual_post_loss_barrier_authority()
+
+    # Final connection authority: account-private failures may not force-close a
+    # live reconnect task, recycle it on a timer, or restart the shared public
+    # market watcher. Missing/dead sessions still receive exact-account repair.
+    install_custom_strategy_connection_stability_fix()
 
     # Full-VPS responsiveness is intentionally the final UI observer. It observes
     # the already-authoritative routed condition evaluation and execution task,
@@ -220,7 +226,8 @@ async def run_worker() -> None:
         "ambiguous_buy_policy=reconcile_before_next_real duplicate_buy_retry=false "
         "stop_reason_authority=durable execution_liveness_watchdog=true "
         "connection_repair=targeted_singleflight sibling_wake=false global_revalidation=false "
-        "stalled_execution_recovery=bounded_account_recycle oauth_refresh=on_expiry "
+        "stalled_execution_recovery=live_session_owned forced_recycle=false "
+        "public_reconnect_owner=public_websocket_resilience oauth_refresh=on_expiry "
         "live_strategy_monitor=ephemeral_docker_event_bus"
     )
     loop = asyncio.get_running_loop()
