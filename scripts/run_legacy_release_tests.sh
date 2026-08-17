@@ -11,9 +11,11 @@ export ALLOW_LEGACY_GLOBAL_TOKENS=true
 export COPYTRADING_ALLOW_LEGACY_GLOBAL_TOKENS=true
 export FRONTEND_ORIGINS="http://127.0.0.1:8080,http://localhost:8080,https://derivadmin.site"
 
-# Action 6F-2 is the direct-VPS presentation authority. Syntax-check only the
-# runtime that will actually ship; every backend strategy, settlement, recovery
-# and execution regression below remains unchanged.
+# Action 6F-3 is the direct-VPS admission authority; the completed 6F-2 shell is
+# loaded only after Premium admission. Syntax-check only the runtime that will
+# actually ship; every backend strategy, settlement, recovery and execution
+# regression below remains unchanged.
+node --check dashboard/final-premium-6f3.js
 node --check dashboard/final-ui-shell-v2.js
 node --check dashboard/vps-api-boundary-v2.js
 node --check dashboard/vps-realtime-client-v2.js
