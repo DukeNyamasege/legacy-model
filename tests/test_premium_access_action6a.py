@@ -9,7 +9,7 @@ from app.premium_access_models import PremiumCustomer
 from app.premium_access_service import (
     WEEKLY_PERIOD_DAYS,
     WEEKLY_PRICE_KES,
-    WEEKLY_PRICE_USD,
+    access_payload,
     effective_access_state,
     premium_account_hash,
     premium_identity_fingerprint,
@@ -20,10 +20,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PremiumAccessAction6ATests(unittest.TestCase):
-    def test_weekly_prices_and_exact_seven_day_boundary(self) -> None:
+    def test_weekly_price_and_exact_seven_day_boundary(self) -> None:
         self.assertEqual(WEEKLY_PERIOD_DAYS, 7)
         self.assertEqual(WEEKLY_PRICE_KES, 250.0)
-        self.assertEqual(WEEKLY_PRICE_USD, 2.0)
 
         paid_at = datetime(2026, 8, 17, 12, 6, 0, tzinfo=timezone.utc)
         expires_at = paid_at + timedelta(days=7)
@@ -33,8 +32,9 @@ class PremiumAccessAction6ATests(unittest.TestCase):
             status="active",
             current_period_start=paid_at,
             current_period_end=expires_at,
-            renewal_preference="automatic_if_supported",
-            auto_renew_enabled=True,
+            renewal_preference="prompt_again",
+            auto_renew_enabled=False,
+            renewal_provider="lipana",
         )
         before = effective_access_state(
             customer,
@@ -50,6 +50,7 @@ class PremiumAccessAction6ATests(unittest.TestCase):
         self.assertEqual(exact.status, "expired")
         self.assertFalse(after.active)
         self.assertEqual(after.remaining_seconds, 0)
+        self.assertEqual(set(access_payload(before)["pricing"]), {"mpesa"})
 
     def test_linked_dot_rot_identity_is_stable_and_raw_ids_are_not_storage_keys(self) -> None:
         dot = "VRTC123456"
@@ -86,7 +87,7 @@ class PremiumAccessAction6ATests(unittest.TestCase):
             premium_write_requires_access("POST", "/me/premium-access/checkout")
         )
 
-    def test_database_schema_reserves_future_recurring_provider_fields(self) -> None:
+    def test_database_schema_reserves_provider_fields_without_exposing_card_checkout(self) -> None:
         model = (ROOT / "app" / "premium_access_models.py").read_text(encoding="utf-8")
         migration = (
             ROOT
@@ -97,7 +98,6 @@ class PremiumAccessAction6ATests(unittest.TestCase):
         for marker in (
             "PremiumCustomer",
             "PremiumCustomerAccount",
-            "automatic_if_supported",
             "auto_renew_enabled",
             "renewal_provider",
             "provider_customer_ref",
@@ -110,18 +110,18 @@ class PremiumAccessAction6ATests(unittest.TestCase):
         self.assertIn("premium_customers", migration)
         self.assertIn("premium_customer_accounts", migration)
 
-    def test_api_gate_is_installed_last_and_payment_adapters_are_not_in_6a(self) -> None:
+    def test_api_gate_is_installed_last_and_uses_mpesa_only_copy(self) -> None:
         entry = (ROOT / "app" / "vps_backend_api.py").read_text(encoding="utf-8")
         gate = (ROOT / "app" / "premium_access_api.py").read_text(encoding="utf-8")
         self.assertIn("install_premium_access_action6a(app)", entry)
         self.assertGreater(
             entry.index("install_premium_access_action6a(app)"),
-            entry.index("install_automation_scheduler_action5(app)"),
+            entry.index("install_premium_renewal_action6d(app)"),
         )
         self.assertIn("PREMIUM_SUBSCRIPTION_REQUIRED", gate)
         self.assertIn("status_code=402", gate)
-        self.assertIn("checkout_ready=False", gate)
-        self.assertNotIn("api.lipana", gate)
+        self.assertIn("Pay KES 250 via M-Pesa", gate)
+        self.assertNotIn("USD 2", gate)
         self.assertNotIn("flutterwave.com", gate)
 
     def test_worker_checks_entitlement_at_admission_proposal_and_buy(self) -> None:
