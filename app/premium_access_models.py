@@ -28,14 +28,14 @@ class PremiumCustomer(Base):
         DateTime(timezone=True), index=True
     )
 
-    # Payment-provider wiring is added in Actions 6B/6C. These fields let those
-    # providers attach recurring/subscription references without changing the
-    # premium identity or access semantics introduced in 6A.
+    # The current product is manual Lipana M-Pesa renewal after exact expiry.
+    # Provider reference fields remain available for future payment features, but
+    # they do not imply automatic charging or extend entitlement by themselves.
     renewal_preference: Mapped[str] = mapped_column(
-        String(32), default="automatic_if_supported"
+        String(32), default="prompt_again"
     )
-    auto_renew_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    renewal_provider: Mapped[str] = mapped_column(String(32), default="")
+    auto_renew_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    renewal_provider: Mapped[str] = mapped_column(String(32), default="lipana")
     provider_customer_ref: Mapped[str] = mapped_column(String(160), default="")
     provider_subscription_ref: Mapped[str] = mapped_column(String(160), default="")
     last_payment_provider: Mapped[str] = mapped_column(String(32), default="")
