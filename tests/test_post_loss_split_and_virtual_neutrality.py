@@ -11,7 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 CAP_AUTHORITY = ROOT / "app" / "custom_split_cap_defaults_authority.py"
 VIRTUAL_AUTHORITY = ROOT / "app" / "custom_virtual_post_loss_barrier_authority.py"
 WORKER = ROOT / "app" / "custom_strategy_worker.py"
-KPI_JS = ROOT / "dashboard" / "virtual-kpi-neutrality.js"
+LEGACY_KPI_JS = ROOT / "dashboard" / "virtual-kpi-neutrality.js"
+FINAL_UI_JS = ROOT / "dashboard" / "final-ui-shell-v1.js"
 INDEX = ROOT / "dashboard" / "index.html"
 
 
@@ -20,8 +21,6 @@ class PostLossSplitAndVirtualNeutralityTests(unittest.TestCase):
         cap = _default_recovery_cap(current_balance=8274.93, base_stake=0.50)
         self.assertGreater(cap, 0.50)
         self.assertAlmostEqual(cap, 827.493, places=3)
-        # The screenshot-size recovery stake must not be rejected merely because
-        # AccountExecutionSession omitted optional cap kwargs.
         self.assertLess(0.91, cap)
 
         source = CAP_AUTHORITY.read_text(encoding="utf-8")
@@ -59,32 +58,31 @@ class PostLossSplitAndVirtualNeutralityTests(unittest.TestCase):
         self.assertIn("split_cap_defaults=canonical_10pct_and_0_50_reserve", source)
         self.assertIn("virtual_entry=real_position_settled_then_future_qualified_tick", source)
 
-    def test_virtual_rows_remain_visible_but_are_kpi_neutral(self) -> None:
-        source = KPI_JS.read_text(encoding="utf-8")
+    def test_historical_virtual_kpi_logic_remains_available_as_reference(self) -> None:
+        source = LEGACY_KPI_JS.read_text(encoding="utf-8")
         self.assertIn("function isVirtual(row)", source)
         self.assertIn("allRows.filter((row) => !isVirtual(row))", source)
         self.assertIn('row.trade_kind || ""', source)
-        self.assertIn("metrics.wins", source)
-        self.assertIn("metrics.losses", source)
-        self.assertIn("metrics.profit", source)
         self.assertNotIn("payload.trades =", source)
 
-    def test_run_kpis_use_unbounded_server_aggregate_not_bounded_history_rows(self) -> None:
-        source = KPI_JS.read_text(encoding="utf-8")
-        self.assertIn("function summaryMetrics(me, payload)", source)
-        self.assertIn("finiteMetric(summary.total)", source)
-        self.assertIn("finiteMetric(summary.wins)", source)
-        self.assertIn("finiteMetric(summary.losses)", source)
-        self.assertIn("finiteMetric(summary.profit)", source)
-        self.assertIn("localCutoff ? zeroMetrics() : rowFallbackMetrics(me, payload)", source)
-        self.assertIn("ONLY KPI", source)
-        self.assertIn("101, 1,000 or", source)
-        self.assertIn("10,000 actual runs", source)
-        self.assertIn("payloadCutoffTime(payload)", source)
-
+    def test_new_home_kpis_use_unbounded_server_summary_not_visible_rows(self) -> None:
+        shell = FINAL_UI_JS.read_text(encoding="utf-8")
         index = INDEX.read_text(encoding="utf-8")
-        self.assertIn("virtual-kpi-neutrality.js?v=20260815-3", index)
-        self.assertIn("netlify-realtime-client.js?v=20260815-3", index)
+
+        self.assertIn("const summary = state.trades?.summary || {}", shell)
+        self.assertIn("summary.total ?? stats.trades", shell)
+        self.assertIn("summary.wins ?? stats.wins", shell)
+        self.assertIn("summary.losses ?? stats.losses", shell)
+        self.assertIn("summary.profit ?? stats.profit", shell)
+        self.assertIn('api("/me/trades/today?limit=100")', shell)
+        # Rendering the recent trade list is deliberately separate from KPI totals.
+        self.assertIn("state.trades?.trades.slice(0, 20)", shell)
+        self.assertNotIn("rows.length", shell.split("function metrics()", 1)[1].split("function greeting()", 1)[0])
+
+        self.assertNotIn("virtual-kpi-neutrality.js", index)
+        self.assertNotIn("netlify-realtime-client.js", index)
+        self.assertIn("vps-realtime-client.js?v=20260817-6f1-2", index)
+        self.assertIn("final-ui-shell-v1.js?v=20260817-6f1-1", index)
 
 
 if __name__ == "__main__":
