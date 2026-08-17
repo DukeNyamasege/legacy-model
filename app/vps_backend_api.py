@@ -13,6 +13,7 @@ from app.automation_preferences_api import install_automation_preferences_api
 from app.automation_scheduler_action5 import install_automation_scheduler_action5
 from app.lipana_mpesa_action6b import install_lipana_mpesa_action6b
 from app.premium_access_api import install_premium_access_action6a
+from app.premium_renewal_action6d import install_premium_renewal_action6d
 from app.text_to_strategy_api import install_text_to_strategy_api
 from app.vps_dashboard_latency_hotfix import install_vps_dashboard_latency_hotfix
 from app.vps_login_observability_hotfix import install_vps_login_observability_hotfix
@@ -28,6 +29,7 @@ install_text_to_strategy_api(app)
 install_automation_preferences_api(app)
 install_automation_scheduler_action5(app)
 install_lipana_mpesa_action6b(app)
+install_premium_renewal_action6d(app)
 # Install last so every personal mutation route, including future feature routes,
 # passes through one subscription authority. Payment/setup and safe stop operations
 # are explicitly exempted inside the gate.
