@@ -4,123 +4,73 @@
   if (window.__FOA_PRELOGIN_LANDING_V2__) return;
   window.__FOA_PRELOGIN_LANDING_V2__ = true;
 
+  const VERSION = "20260817-mobile-automation-1";
   const REGISTER_URL = "https://t.deriv.link?t=CZXDLJPXM38M";
   let scheduled = false;
 
-  const brainSvg = `
-    <svg class="foa-brain-svg" viewBox="0 0 760 610" role="img" aria-label="Blue and red neural trading network">
-      <defs>
-        <linearGradient id="foaBrainStroke" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stop-color="#22d3ee"/>
-          <stop offset=".48" stop-color="#2563eb"/>
-          <stop offset="1" stop-color="#ef4444"/>
-        </linearGradient>
-        <radialGradient id="foaBrainGlow" cx="48%" cy="45%" r="62%">
-          <stop offset="0" stop-color="#2563eb" stop-opacity=".22"/>
-          <stop offset=".7" stop-color="#0ea5e9" stop-opacity=".06"/>
-          <stop offset="1" stop-color="#020617" stop-opacity="0"/>
-        </radialGradient>
-        <filter id="foaGlow" x="-50%" y="-50%" width="200%" height="200%">
-          <feGaussianBlur stdDeviation="4" result="blur"/>
-          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-        </filter>
-      </defs>
-      <ellipse cx="384" cy="300" rx="325" ry="255" fill="url(#foaBrainGlow)"/>
-      <g class="foa-brain-outline" fill="none" stroke="url(#foaBrainStroke)" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" filter="url(#foaGlow)">
-        <path d="M380 88c-41-48-122-55-174-18-35 25-47 58-43 91-55 7-92 43-96 92-4 41 19 72 51 88-19 41-10 85 24 111 25 20 59 25 89 15 17 40 55 64 99 62 22-1 40-8 55-21"/>
-        <path d="M384 88c41-48 122-55 174-18 35 25 47 58 43 91 55 7 92 43 96 92 4 41-19 72-51 88 19 41 10 85-24 111-25 20-59 25-89 15-17 40-55 64-99 62-22-1-40-8-55-21"/>
-        <path d="M384 97c-17 45-18 93-4 142 12 43 10 92-6 137-13 36-12 78 10 121" opacity=".82"/>
-        <path d="M170 172c49-13 94-2 128 32 26 26 44 65 48 105M594 172c-49-13-94-2-128 32-26 26-44 65-48 105" opacity=".68"/>
-        <path d="M128 334c54-25 105-18 144 18 30 28 55 60 80 93M636 334c-54-25-105-18-144 18-30 28-55 60-80 93" opacity=".62"/>
-        <path d="M225 105c17 39 49 65 96 78M539 105c-17 39-49 65-96 78" opacity=".7"/>
-      </g>
-      <g class="foa-neural-lines" fill="none" stroke-width="1.4">
-        <path d="M137 250L232 195 315 250 390 177 475 236 601 188" stroke="#38bdf8"/>
-        <path d="M126 342L220 315 307 363 390 301 478 349 637 317" stroke="#2563eb"/>
-        <path d="M180 428L273 395 356 451 443 387 553 429" stroke="#ef4444"/>
-        <path d="M206 139L276 217 352 132 430 213 517 142" stroke="#60a5fa"/>
-        <path d="M249 491L332 421 410 484 490 413" stroke="#f43f5e"/>
-      </g>
-      <g class="foa-nodes" filter="url(#foaGlow)">
-        ${[[137,250,"#22d3ee"],[232,195,"#60a5fa"],[315,250,"#2563eb"],[390,177,"#22d3ee"],[475,236,"#60a5fa"],[601,188,"#ef4444"],[126,342,"#38bdf8"],[220,315,"#2563eb"],[307,363,"#22d3ee"],[390,301,"#60a5fa"],[478,349,"#ef4444"],[637,317,"#f43f5e"],[180,428,"#2563eb"],[273,395,"#22d3ee"],[356,451,"#60a5fa"],[443,387,"#ef4444"],[553,429,"#f43f5e"],[206,139,"#38bdf8"],[352,132,"#2563eb"],[517,142,"#ef4444"],[249,491,"#60a5fa"],[410,484,"#ef4444"]].map(([x,y,c]) => `<circle cx="${x}" cy="${y}" r="4.5" fill="${c}"/>`).join("")}
-      </g>
-      <g class="foa-candles" opacity=".95">
-        <line x1="300" y1="275" x2="300" y2="380" stroke="#22c55e" stroke-width="3"/><rect x="290" y="303" width="20" height="48" rx="2" fill="#22c55e"/>
-        <line x1="330" y1="250" x2="330" y2="348" stroke="#ef4444" stroke-width="3"/><rect x="320" y="271" width="20" height="45" rx="2" fill="#ef4444"/>
-        <line x1="360" y1="229" x2="360" y2="330" stroke="#22c55e" stroke-width="3"/><rect x="350" y="249" width="20" height="54" rx="2" fill="#22c55e"/>
-        <line x1="390" y1="206" x2="390" y2="309" stroke="#22c55e" stroke-width="3"/><rect x="380" y="225" width="20" height="52" rx="2" fill="#22c55e"/>
-        <line x1="420" y1="187" x2="420" y2="296" stroke="#ef4444" stroke-width="3"/><rect x="410" y="212" width="20" height="49" rx="2" fill="#ef4444"/>
-        <line x1="450" y1="172" x2="450" y2="270" stroke="#22c55e" stroke-width="3"/><rect x="440" y="193" width="20" height="48" rx="2" fill="#22c55e"/>
-        <line x1="480" y1="151" x2="480" y2="254" stroke="#ef4444" stroke-width="3"/><rect x="470" y="175" width="20" height="44" rx="2" fill="#ef4444"/>
-        <line x1="510" y1="135" x2="510" y2="233" stroke="#22c55e" stroke-width="3"/><rect x="500" y="157" width="20" height="51" rx="2" fill="#22c55e"/>
-      </g>
-    </svg>`;
+  const svg = (name) => {
+    const c = 'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
+    const map = {
+      logo: `<svg ${c}><path d="M5 4h6.5a7.5 7.5 0 0 1 0 15H5l5-5h1.5a2.5 2.5 0 0 0 0-5H10z"/><path d="M5 4v15"/></svg>`,
+      builder: `<svg ${c}><path d="m12 3 4 2.2v4.6L12 12l-4-2.2V5.2zM7 12l4 2.2v4.6L7 21l-4-2.2v-4.6zM17 12l4 2.2v4.6L17 21l-4-2.2v-4.6zM12 12V7.2"/></svg>`,
+      ai: `<svg ${c}><path d="M5 17a4 4 0 0 1-2-3.5V8a4 4 0 0 1 4-4h7a4 4 0 0 1 4 4v5.5a4 4 0 0 1-4 4H9l-4 3zM8 13l2-5 2 5M8.8 11h2.4M15 8v5M21 4v4M19 6h4"/></svg>`,
+      calendar: `<svg ${c}><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18"/><circle cx="17" cy="17" r="3"/><path d="M17 15.5V17l1 1"/></svg>`,
+      check: `<svg ${c}><circle cx="12" cy="12" r="9"/><path d="m8 12 2.5 2.5L16 9"/></svg>`,
+      arrow: `<svg ${c}><path d="M5 12h14M14 7l5 5-5 5"/></svg>`,
+      shield: `<svg ${c}><path d="M12 3 5 6v5c0 5 3 8 7 10 4-2 7-5 7-10V6z"/><path d="m9 12 2 2 4-4"/></svg>`,
+      pulse: `<svg ${c}><path d="M2 12h4l2-6 4 12 3-8 2 2h5"/></svg>`,
+      phone: `<svg ${c}><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M10 18h4"/></svg>`,
+    };
+    return map[name] || map.logo;
+  };
 
-  function marketCard(code, name, detail, tone = "blue") {
-    return `<article class="foa-market-card ${tone}">
-      <div class="foa-market-card-head"><span>${name}</span><b>${code}</b></div>
-      <strong>${detail}</strong>
-      <div class="foa-spark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-      <small>Deriv Volatility market</small>
-    </article>`;
+  function productCard(icon, eyebrow, title, copy, tone) {
+    return `<article class="foa-public-product ${tone}"><span class="foa-public-product-icon">${svg(icon)}</span><div><small>${eyebrow}</small><strong>${title}</strong><p>${copy}</p></div><span class="foa-public-product-arrow">${svg("arrow")}</span></article>`;
+  }
+
+  function automationPreview() {
+    return `<div class="foa-public-preview" aria-hidden="true">
+      <div class="foa-public-preview-top"><span><i></i><i></i></span><b>DERIVADMIN</b><em>LIVE</em></div>
+      <div class="foa-public-preview-balance"><small>AUTOMATION BALANCE</small><strong>$8,630.78</strong><span>Home of Automation</span></div>
+      <div class="foa-public-preview-chart"><svg viewBox="0 0 300 100" preserveAspectRatio="none"><defs><linearGradient id="foaLandingLine" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#28d6ff"/><stop offset="1" stop-color="#316cff"/></linearGradient><linearGradient id="foaLandingFill" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#1ca9ff" stop-opacity=".28"/><stop offset="1" stop-color="#1ca9ff" stop-opacity="0"/></linearGradient></defs><path d="M0 91 28 75 53 81 78 55 105 62 132 39 158 50 189 24 217 35 247 12 274 20 300 5V100H0Z" fill="url(#foaLandingFill)"/><path d="M0 91 28 75 53 81 78 55 105 62 132 39 158 50 189 24 217 35 247 12 274 20 300 5" fill="none" stroke="url(#foaLandingLine)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div class="foa-public-preview-tools"><span>${svg("builder")}<b>Build</b></span><span>${svg("ai")}<b>Describe</b></span><span>${svg("calendar")}<b>Schedule</b></span></div>
+      <div class="foa-public-preview-session"><span>${svg("check")}</span><div><small>NEXT AUTOMATION</small><strong>Risk Managers · 7:00 PM EAT</strong></div></div>
+    </div>`;
   }
 
   function landingMarkup() {
-    return `<section class="foa-landing-v2" aria-label="Derivadmin strategy automation">
-      <div class="foa-landing-grid" aria-hidden="true"></div>
-      <div class="foa-landing-glow foa-landing-glow-blue" aria-hidden="true"></div>
-      <div class="foa-landing-glow foa-landing-glow-red" aria-hidden="true"></div>
+    return `<section class="foa-landing-v2 foa-public-automation" data-public-automation-version="${VERSION}" aria-label="DerivAdmin Home of Automation">
+      <div class="foa-public-grid" aria-hidden="true"></div><div class="foa-public-glow one" aria-hidden="true"></div><div class="foa-public-glow two" aria-hidden="true"></div>
 
-      <div class="foa-landing-main">
-        <div class="foa-hero-copy">
-          <span class="foa-hero-kicker"><i></i> DERIV STRATEGY AUTOMATION</span>
-          <h1><span>BUILD.</span><span class="accent-blue">AUTOMATE.</span><span class="accent-mix">TRADE.</span></h1>
-          <h2>Create your strategy with <strong>Mr Duke</strong> on <em>Derivadmin</em>.</h2>
-          <p>Turn your trading rules into automated Custom Strategies, choose your Deriv Volatility markets, and control execution from one dashboard.</p>
+      <div class="foa-public-mobile-brand"><span>${svg("logo")}</span><div><strong>DerivAdmin</strong><small>Home of Automation</small></div><b>Powered by Deriv</b></div>
 
-          <div class="foa-landing-actions">
-            <a class="foa-landing-login" href="/oauth/start"><span>Login</span><small>Open your dashboard</small></a>
-            <a class="foa-landing-register" href="${REGISTER_URL}" target="_blank" rel="noopener noreferrer"><span>Register</span><small>Create a Deriv account</small></a>
+      <div class="foa-public-hero">
+        <div class="foa-public-hero-copy">
+          <span class="foa-public-kicker"><i></i> AUTOMATION FOR DERIV TRADERS</span>
+          <h1><span>Build it.</span><span>Describe it.</span><span>Schedule it.</span></h1>
+          <p class="foa-public-lead">Turn the way you think about trading into automation. Build advanced rules, describe a strategy in plain English, or schedule trading sessions from one mobile-first platform.</p>
+
+          <div class="foa-public-actions">
+            <a class="foa-public-login" href="/oauth/start"><span>Login with Deriv</span><small>Open Home of Automation</small>${svg("arrow")}</a>
+            <a class="foa-public-register" href="${REGISTER_URL}" target="_blank" rel="noopener noreferrer"><span>Register</span><small>Create a Deriv account</small>${svg("arrow")}</a>
           </div>
 
-          <a class="foa-register-link" href="${REGISTER_URL}" target="_blank" rel="noopener noreferrer" aria-label="Register with Deriv">
-            <span class="foa-link-icon" aria-hidden="true">↗</span>
-            <span><small>REGISTER WITH DERIV</small><strong>t.deriv.link?t=CZXDLJPXM38M</strong></span>
-          </a>
-
-          <div class="foa-feature-row" aria-label="Platform capabilities">
-            <span><b>01</b><strong>Build Rules</strong><small>Custom conditions</small></span>
-            <span><b>02</b><strong>Choose Markets</strong><small>Volatility indices</small></span>
-            <span><b>03</b><strong>Automate</strong><small>Account execution</small></span>
-          </div>
+          <div class="foa-public-micro-trust"><span>${svg("check")}No coding required</span><span>${svg("phone")}Built for mobile</span><span>${svg("shield")}Account scoped</span></div>
         </div>
 
-        <div class="foa-hero-visual">
-          <div class="foa-brain-wrap">${brainSvg}</div>
-          <div class="foa-floating-tag tag-one"><i></i> Pattern detected</div>
-          <div class="foa-floating-tag tag-two"><i></i> Automation ready</div>
-
-          <div class="foa-market-stack">
-            ${marketCard("V10", "Volatility 10 Index", "1s · Digits", "blue")}
-            <div class="foa-market-mini-grid">
-              ${marketCard("V25", "Volatility 25", "Digits", "cyan")}
-              ${marketCard("V75", "Volatility 75", "Digits", "red")}
-            </div>
-          </div>
-
-          <article class="foa-signal-card">
-            <div class="foa-signal-orb" aria-hidden="true"><i></i></div>
-            <div><small>STRATEGY ENGINE</small><strong>READY TO AUTOMATE</strong><span>Custom conditions · Account scoped · Risk controls</span></div>
-          </article>
-        </div>
+        <div class="foa-public-hero-visual">${automationPreview()}</div>
       </div>
 
-      <div class="foa-trust-strip">
-        <span><b>◇</b><strong>Custom Strategies</strong></span>
-        <span><b>⌁</b><strong>Volatility Markets</strong></span>
-        <span><b>◎</b><strong>Account Scoped</strong></span>
-        <span><b>⚡</b><strong>Fast Execution</strong></span>
-      </div>
+      <section class="foa-public-products"><div class="foa-public-section-copy"><small>HOME OF AUTOMATION</small><h2>Three ways to automate.</h2><p>Choose how much control you want. Every path feeds the same validated DerivAdmin strategy engine.</p></div><div class="foa-public-product-grid">
+        ${productCard("builder", "ADVANCED", "Strategy Builder", "Create precise conditions with the full rule Builder.", "blue")}
+        ${productCard("ai", "EASIEST", "Text to Strategy", "Explain your idea naturally. DerivAdmin converts it into supported rules.", "cyan")}
+        ${productCard("calendar", "AUTOMATIC", "Schedule Trading", "Choose a strategy, date, time, stake, TP and SL, then let the VPS run the session.", "purple")}
+      </div></section>
+
+      <section class="foa-public-mobile-first"><span class="foa-public-mobile-icon">${svg("phone")}</span><div><small>MOBILE FIRST</small><h2>Your automation desk fits in your hand.</h2><p>Designed around the traders who use DerivAdmin from their phones every day: large controls, clear actions, fast navigation and a consistent dark-blue automation interface.</p><div><span>EAT ready</span><span>Global timezone support</span><span>Demo & Real</span></div></div></section>
+
+      <div class="foa-public-trust"><span>${svg("pulse")}<b>Live trading controls</b></span><span>${svg("shield")}<b>Deterministic execution</b></span><span>${svg("ai")}<b>Plain-language strategies</b></span><span>${svg("calendar")}<b>Scheduled sessions</b></span></div>
+      <p class="foa-public-risk">Automated trading involves financial risk. Strategy templates, generated rules and displayed statistics do not guarantee profit.</p>
     </section>`;
   }
 
@@ -129,10 +79,9 @@
     if (brand) {
       const strong = brand.querySelector("strong");
       const span = brand.querySelector("span");
-      if (strong) strong.textContent = "Derivadmin";
-      if (span) span.textContent = "Mr Duke · Strategy Automation";
+      if (strong) strong.textContent = "DerivAdmin";
+      if (span) span.textContent = "Home of Automation";
     }
-
     const actions = root.querySelector(".builder-head-actions");
     if (actions && !actions.querySelector(".foa-header-register")) {
       const register = document.createElement("a");
@@ -149,14 +98,12 @@
     scheduled = false;
     const root = document.getElementById("foa-simple-app");
     if (!root) return;
-
     const old = root.querySelector(".public-builder");
-    const current = root.querySelector(".foa-landing-v2");
+    const current = root.querySelector(".foa-public-automation");
     if (!old && !current) {
       document.body.classList.remove("foa-prelogin-landing-v2");
       return;
     }
-
     document.body.classList.add("foa-prelogin-landing-v2");
     enhanceHeader(root);
     if (old) old.outerHTML = landingMarkup();
@@ -174,5 +121,5 @@
     ? document.addEventListener("DOMContentLoaded", schedule, { once: true })
     : schedule();
 
-  window.FOA_PRELOGIN_LANDING_VERSION = "20260814-1";
+  window.FOA_PRELOGIN_LANDING_VERSION = VERSION;
 })();
