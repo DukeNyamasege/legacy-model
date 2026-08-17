@@ -4,7 +4,8 @@
   if (window.__DERIVADMIN_FINAL_PREMIUM_6F3__) return;
   window.__DERIVADMIN_FINAL_PREMIUM_6F3__ = true;
 
-  const VERSION = "20260817-6f3-1";
+  const VERSION = "20260818-testing-free-3";
+  const TESTING_FREE_ACCESS = true;
   const IDEMPOTENCY_KEY = "derivadmin-premium-mpesa-idempotency-6f3";
   const POLL_MS = 2500;
   const PASSIVE_MS = 15000;
@@ -125,14 +126,14 @@
 
   async function loadFinalApp({ realtime = true } = {}) {
     state.locked = false;
-    document.documentElement.dataset.premiumState = "active";
+    document.documentElement.dataset.premiumState = state.premium?.active ? "active" : TESTING_FREE_ACCESS ? "testing-free" : "active";
     document.documentElement.dataset.premiumBoot = "ready";
     if (realtime && !state.realtimeLoaded) {
-      await loadScript("/vps-realtime-client-v2.js?v=20260817-6f2-1", "vps-realtime-v2");
+      await loadScript("/vps-realtime-client-v2.js?v=20260817-local-ui-2", "vps-realtime-v2");
       state.realtimeLoaded = true;
     }
     if (!state.shellLoaded) {
-      await loadScript("/final-ui-shell-v2.js?v=20260817-6f2-1", "final-ui-shell-v2");
+      await loadScript("/final-ui-shell-v2.js?v=20260818-local-ui-11", "final-ui-shell-v2");
       state.shellLoaded = true;
     } else if (window.FOA_FINAL_UI?.refresh) {
       await window.FOA_FINAL_UI.refresh({ quiet: true });
@@ -315,7 +316,7 @@
       const renewal = await api("/me/premium-access/renewal-status");
       state.premium = renewal.premium || state.premium;
       state.renewal = renewal.renewal || null;
-      if (!state.premium?.active) { location.reload(); return; }
+      if (!state.premium?.active) return;
       scheduleExactExpiry(); injectActivePremiumUi();
     } catch (_) {}
   }
@@ -329,7 +330,16 @@
         await loadFinalApp({ realtime: false });
         return;
       }
-      await loadPremiumData();
+      try { await loadPremiumData(); } catch (_) { state.premium = { active: false, testing_free_access: true }; }
+      if (state.premium?.active) {
+        await loadHistory();
+        scheduleExactExpiry();
+      }
+      if (TESTING_FREE_ACCESS) {
+        document.documentElement.dataset.premiumState = state.premium?.active ? "active" : "testing-free";
+        await loadFinalApp({ realtime: true });
+        return;
+      }
       if (state.premium?.local_dev_preview || state.premium?.active) {
         await loadHistory();
         scheduleExactExpiry();

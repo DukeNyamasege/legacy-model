@@ -37,12 +37,14 @@ await rm(output, { recursive: true, force: true });
 await rm(bundledIconExporter, { force: true });
 await mkdir(output, { recursive: true });
 
-// 6F-3 ships one final presentation system. The premium bootstrap is the admission
-// gate; the authenticated shell and realtime client are loaded only after the
-// server reports an active entitlement (or for the anonymous login landing page).
+// 6F-3 ships one final presentation system. During testing, the bootstrap loads
+// the authenticated shell and realtime client without requiring payment; billing
+// is announced in-app and can be re-enabled later.
 const productionAssets = [
   "index.html",
   "final-ui-shell-v2.css",
+  "mobile-reference-ui.css",
+  "real-account-flag.webp",
   "final-ui-shell-v2.js",
   "final-premium-6f3.css",
   "final-premium-6f3.js",
@@ -85,11 +87,12 @@ const required = [
   '<meta name="frontend-runtime" content="full-vps-final-ui-6f3">',
   '<meta name="frontend-authority" content="final-ui-shell-v2">',
   'meta name="stream-base-url"',
-  '/vps-api-boundary-v2.js?v=20260817-6f2-1',
+  '/vps-api-boundary-v2.js?v=20260818-local-ui-11',
   '/deriv-quill-icons-v2.js?v=2.4.18',
   '/final-ui-shell-v2.css?v=20260817-6f2-1',
   '/final-premium-6f3.css?v=20260817-6f3-1',
-  '/final-premium-6f3.js?v=20260817-6f3-1',
+  '/mobile-reference-ui.css?v=20260818-local-ui-11',
+  '/final-premium-6f3.js?v=20260818-local-ui-11',
 ];
 for (const marker of required) {
   if (!html.includes(marker)) throw new Error(`Action 6F-3 VPS marker missing: ${marker}`);
@@ -129,7 +132,7 @@ await writeFile(
     deployment_topology: "direct-vps-only",
     ui_authority: "final-ui-shell-v2",
     premium_bootstrap: "final-premium-6f3",
-    authenticated_ui: "six-screen-reconstruction-6f2-with-premium-admission-6f3",
+    authenticated_ui: "six-screen-reconstruction-6f2-with-testing-free-access-6f3",
     production_asset_policy: "final-authority-whitelist-only",
     legacy_ui_loaded: false,
     legacy_ui_shipped: false,
@@ -146,20 +149,20 @@ await writeFile(
     oauth_base: "/oauth",
     websocket_base: streamBase,
     api_boundary: "direct-vps-same-origin-rest-6f2",
-    realtime_client: "premium-admitted-vps-realtime-client-v2",
+    realtime_client: "testing-admitted-vps-realtime-client-v2",
     account_switching: "specific-linked-account-post-me-switch-account",
     text_to_strategy: "250-word-nearest-supported-review-first-v1",
     builder_execution: "canonical-custom-strategy-existing-worker-authority",
     schedule_execution: "persistent-server-scheduler-existing-worker-authority-v1",
     schedule_persistence: "postgres-restart-safe-exactly-once-claim-v1",
     schedule_ui_and_library: "reconstructed-6f2-v1",
-    premium_access: "weekly-linked-options-server-gate-action6a-v1",
+    premium_access: "testing-free-access-with-weekly-price-notice-v1",
     premium_period: "exact-7-days-no-grace-v1",
     premium_prices: "KES250-mpesa-only-v1",
     premium_payment: "lipana-stk-verified-webhook-v1",
     premium_renewal: "manual-mpesa-after-exact-expiry-v1",
     premium_ui: "same-language-root-gate-and-profile-6f3-v1",
-    premium_runtime_admission: "unpaid-users-do-not-load-shell-or-realtime-v1",
+    premium_runtime_admission: "testing-users-load-shell-and-realtime-v1",
     premium_unlock_authority: "verified-server-entitlement-only-v1",
     final_product_qa: "oauth-accounts-premium-builder-ai-schedule-trades-mobile-v1",
     generated_at: new Date().toISOString(),
@@ -169,7 +172,7 @@ await writeFile(
 
 console.log("Direct VPS Action 6F-3 frontend built.");
 console.log(`Public origin: ${publicOrigin}`);
-console.log(`Realtime: ${streamBase}/ws/me/live (loaded only after Premium admission)`);
-console.log("UI authority: final-ui-shell-v2 with final-premium-6f3 admission gate");
-console.log("Premium: Login -> linked DOT/ROT -> KES250 M-Pesa -> verified unlock -> exact 7-day expiry -> renewal");
+console.log(`Realtime: ${streamBase}/ws/me/live (loaded immediately after authenticated testing access)`);
+console.log("UI authority: final-ui-shell-v2 with final-premium-6f3 testing bootstrap");
+console.log("Premium: weekly KES250 billing is announced in-app and disabled during testing");
 console.log("No Netlify or retired Action UI is shipped in the production artifact");

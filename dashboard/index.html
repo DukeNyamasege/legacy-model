@@ -56,14 +56,15 @@
   </script>
   <link rel="stylesheet" href="/final-ui-shell-v2.css?v=20260817-6f2-1">
   <link rel="stylesheet" href="/final-premium-6f3.css?v=20260817-6f3-1">
-  <script src="/vps-api-boundary-v2.js?v=20260817-6f2-1"></script>
+  <link rel="stylesheet" href="/mobile-reference-ui.css?v=20260818-local-ui-11">
+  <script src="/vps-api-boundary-v2.js?v=20260818-local-ui-11"></script>
   <script src="/deriv-quill-icons-v2.js?v=2.4.18"></script>
 </head>
 <body>
   <div id="derivadmin-root" aria-live="polite"></div>
   <noscript>DerivAdmin requires JavaScript.</noscript>
-  <!-- 6F-3 premium bootstrap decides whether the authenticated app and realtime
-       client may load. Unpaid/expired users never start the heavy app runtime. -->
-  <script src="/final-premium-6f3.js?v=20260817-6f3-1" defer></script>
+  <!-- 6F-3 bootstrap loads the authenticated app during testing. Billing is
+       announced in-app and can be re-enabled server-side later. -->
+  <script src="/final-premium-6f3.js?v=20260818-local-ui-11" defer></script>
 </body>
 </html>

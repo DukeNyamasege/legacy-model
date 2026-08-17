@@ -7,6 +7,7 @@
   const explicitStream = String(document.querySelector('meta[name="stream-base-url"]')?.content || "").trim().replace(/\/+$/, "");
   const streamBase = explicitStream || `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}`;
   const FALLBACK_MS = 5000;
+  const LOCAL_PREVIEW = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
   let socket = null;
   let reconnectTimer = null;
   let fallbackTimer = null;
@@ -54,6 +55,11 @@
   }
 
   async function connect() {
+    if (LOCAL_PREVIEW) {
+      document.documentElement.dataset.liveTransport = "local-preview";
+      await fallbackSnapshot();
+      return;
+    }
     if (connecting || document.hidden) return;
     if (socket && [WebSocket.CONNECTING, WebSocket.OPEN].includes(socket.readyState)) return;
     connecting = true;
