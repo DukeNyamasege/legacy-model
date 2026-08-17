@@ -237,25 +237,23 @@ class PersistentSchedulerAction5Tests(unittest.TestCase):
         self.assertIn("/me/automation-schedules?limit=20", final_ui)
         self.assertIn("final-ui-shell-v1", html)
 
-    def test_vps_build_exposes_full_built_in_strategy_snapshots(self) -> None:
+    def test_6f1_defers_new_schedule_library_ui_without_changing_server_authority(self) -> None:
         build = (ROOT / "scripts" / "build-vps.mjs").read_text(encoding="utf-8")
-        self.assertIn(
-            '"builtIns: BUILT_INS.map((item) => clone(item)),"',
-            build,
+        scheduler = (ROOT / "app" / "automation_scheduler_action5.py").read_text(
+            encoding="utf-8"
         )
-        self.assertIn(
-            'schedule_built_ins: "full-frozen-template-snapshots-v1"',
-            build,
-        )
-        self.assertIn(
-            "refusing an unsafe Action 5 build",
-            build,
-        )
+        self.assertIn('schedule_ui_and_library: "reconstructed-in-6f2"', build)
+        self.assertIn('production_asset_policy: "new-shell-whitelist-only"', build)
+        self.assertNotIn("strategy-template-library.js", build)
+        self.assertIn("def canonical_strategy_snapshot", scheduler)
+        self.assertIn("strategy_snapshot", scheduler)
+        self.assertIn("with_for_update(skip_locked=True)", scheduler)
 
     def test_vps_build_marks_scheduler_persistent_without_restoring_old_ui(self) -> None:
         build = (ROOT / "scripts" / "build-vps.mjs").read_text(encoding="utf-8")
         self.assertIn('ui_authority: "final-ui-shell-v1"', build)
         self.assertIn('legacy_ui_loaded: false', build)
+        self.assertIn('legacy_ui_shipped: false', build)
         self.assertIn('schedule_execution: "persistent-server-scheduler-existing-worker-authority-v1"', build)
         self.assertIn('schedule_persistence: "postgres-restart-safe-exactly-once-claim-v1"', build)
         self.assertNotIn("/automation-scheduler-action5.css?v=20260817-1", build)
