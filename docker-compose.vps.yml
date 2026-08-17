@@ -7,9 +7,14 @@ services:
     environment:
       FRONTEND_HOSTING_MODE: vps
       DASHBOARD_FRONTEND_ORIGINS: ${DASHBOARD_FRONTEND_ORIGINS:-https://derivadmin.site,https://www.derivadmin.site}
-      # Private admin alerts are explicitly enabled for the fresh-session rollout.
-      # This overrides an old .env suspension without enabling hourly channel spam.
+      # Private admin alerts and the single Telegram poller are explicitly enabled
+      # on Full VPS. This overrides an old .env suspension left from the pause.
       TELEGRAM_NOTIFICATIONS_SUSPENDED: ${VPS_TELEGRAM_NOTIFICATIONS_SUSPENDED:-false}
+    volumes:
+      # API owns getUpdates/private admin control. Sharing the durable Telegram
+      # cache lets it reuse the already-discovered channel without asking for a
+      # numeric channel/chat ID again.
+      - test2_models:/app/model_artifacts
 
   worker:
     environment:
