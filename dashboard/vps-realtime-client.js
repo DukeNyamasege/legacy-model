@@ -25,6 +25,9 @@
       trades: raw.trades || null,
     };
     window.DERIVADMIN_LIVE_CACHE = snapshot;
+    // Temporary compatibility alias for the existing VPS boundary during 6F-1.
+    // No Netlify file or Netlify runtime is loaded by the final UI.
+    window.FOA_NETLIFY_LIVE_CACHE = snapshot;
     document.documentElement.dataset.liveTransport = "connected";
     document.dispatchEvent(new CustomEvent("derivadmin:live-snapshot", { detail: snapshot }));
   }
@@ -116,5 +119,5 @@
   fallbackSnapshot();
   connect();
 
-  window.DERIVADMIN_VPS_REALTIME_VERSION = "20260817-6f1-1";
+  window.DERIVADMIN_VPS_REALTIME_VERSION = "20260817-6f1-2";
 })();
