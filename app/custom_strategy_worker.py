@@ -57,6 +57,7 @@ from app.manual_martingale_execution_authority import (
 from app.manual_martingale_v2 import install_manual_martingale_v2_worker
 from app.netlify_worker_bridge import install_netlify_worker_bridge
 from app.per_account_virtual_runtime import install_account_isolation_invariants
+from app.premium_worker_guard import install_premium_worker_guard
 from app.private_websocket_rate_limit import install_private_websocket_rate_limit
 from app.profit_accuracy_guard import install_profit_accuracy_guard
 from app.public_websocket_resilience import install_public_websocket_resilience
@@ -193,6 +194,12 @@ async def run_worker() -> None:
     install_custom_virtual_post_loss_barrier_authority()
     install_telegram_silence()
 
+    # Action 6A installs last. The current subscription timestamp is therefore
+    # checked outside every previously-installed execution wrapper, including at
+    # task entry, proposal, and immediately before BUY. Settlement-only work is
+    # preserved, but an unpaid/expired account cannot create a new contract.
+    install_premium_worker_guard()
+
     bot = RFDir5TradingBot()
     bot.logger.warning(
         "CUSTOM_STRATEGY_WORKER_READY architecture=account_scoped_direct "
@@ -201,6 +208,8 @@ async def run_worker() -> None:
         "bulk=false tick_db_persistence=false start_required=true "
         "explicit_start_pickup=true instant_start=true provider_account_sweep_blocking=false "
         "history_startup=parallel_bounded exact_entry_guard=true manual_stop_buy_guard=true "
+        "premium_access_gate=exact_timestamp_before_proposal_and_buy "
+        "premium_settlement_preserved=true "
         "result_routing=account_outcome_debt "
         "martingale_multiplier=previous_actual_stake_times_multiplier "
         "martingale_split=equal_loss_pool_by_configured_split_count "
