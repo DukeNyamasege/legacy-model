@@ -4,7 +4,6 @@ WORKDIR /app
 
 COPY package.json ./
 COPY dashboard ./dashboard
-COPY scripts/build-netlify.mjs ./scripts/build-netlify.mjs
 COPY scripts/build-vps.mjs ./scripts/build-vps.mjs
 
 ARG PUBLIC_ORIGIN=https://derivadmin.site
