@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -356,7 +357,7 @@ def install_vps_telegram_control(app: Any) -> None:
     _seed_channel(channel_client)
     controller = VpsTelegramController(
         base_api.REPOSITORY,
-        base_api.CONFIG,
+        base_api.CONFIG.telegram,
         LOGGER,
         channel_client,
     )
@@ -393,9 +394,24 @@ def install_vps_telegram_control(app: Any) -> None:
             await task
         except asyncio.CancelledError:
             pass
+        finally:
+            app.state.vps_telegram_control_task = None
 
-    app.add_event_handler("startup", startup)
-    app.add_event_handler("shutdown", shutdown)
+    # Starlette 1.x removed add_event_handler()/on_event(). Compose the Telegram
+    # lifecycle around whatever lifespan the already-built FastAPI app currently
+    # owns so every earlier installer keeps its startup/shutdown semantics.
+    previous_lifespan = app.router.lifespan_context
+
+    @asynccontextmanager
+    async def telegram_lifespan(lifespan_app: Any):
+        async with previous_lifespan(lifespan_app) as state:
+            await startup()
+            try:
+                yield state
+            finally:
+                await shutdown()
+
+    app.router.lifespan_context = telegram_lifespan
     app.state.vps_telegram_control_installed = True
     app.state.vps_telegram_channel_client = channel_client
     _INSTALLED = True
