@@ -140,14 +140,15 @@ def install_final_linked_accounts_6f2(app: Any) -> None:
             ],
         }
 
-    # This endpoint can deliberately return either a normal JSON mapping or a
-    # JSONResponse carrying the local-preview account cookie. FastAPI must not try
-    # to synthesize a Pydantic response model from that union at application import.
-    @app.post("/me/switch-account", response_model=None)
+    @app.post("/me/switch-account")
     def switch_linked_personal_account(
         request: Request,
         body: LinkedAccountSwitchRequest,
-    ) -> dict[str, Any] | JSONResponse:
+    ) -> Any:
+        # The endpoint intentionally has two response shapes: a normal mapping in
+        # production and a JSONResponse when local preview must set its account
+        # cookie. Keep the return annotation as Any so FastAPI does not attempt to
+        # build an invalid Pydantic model for a dict | JSONResponse union at import.
         session_token = request.cookies.get(base_api.CLIENT_SESSION_COOKIE)
         account = base_api.get_current_account(request)
         requested_type = (
