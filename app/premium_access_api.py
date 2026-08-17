@@ -64,7 +64,9 @@ def premium_write_requires_access(method: str, path: str) -> bool:
     return True
 
 
-def _selected_managed_payload(account: dict[str, Any]) -> tuple[ManagedAccount | None, dict[str, Any]]:
+def _selected_managed_payload(
+    account: dict[str, Any],
+) -> tuple[ManagedAccount | None, dict[str, Any]]:
     managed_id = int(account.get("id") or 0)
     if managed_id <= 0:
         return None, {}
@@ -82,7 +84,10 @@ def _selected_managed_payload(account: dict[str, Any]) -> tuple[ManagedAccount |
         return row, payload
 
 
-def _account_context(row: ManagedAccount, payload: dict[str, Any]) -> LinkedPremiumAccount | None:
+def _account_context(
+    row: ManagedAccount,
+    payload: dict[str, Any],
+) -> LinkedPremiumAccount | None:
     account_id = str(payload.get("account_id") or "").strip()
     if not account_id:
         return None
@@ -128,7 +133,9 @@ def _discover_linked_accounts(account: dict[str, Any]) -> list[LinkedPremiumAcco
     return sorted(linked.values(), key=lambda item: (item.account_type, item.account_hash))
 
 
-def _customer_by_fast_mapping(managed_account_id: int) -> tuple[PremiumCustomer | None, int]:
+def _customer_by_fast_mapping(
+    managed_account_id: int,
+) -> tuple[PremiumCustomer | None, int]:
     with base_api.DATABASE.session() as session:
         mapping = session.scalar(
             select(PremiumCustomerAccount).where(
@@ -150,7 +157,9 @@ def _customer_by_fast_mapping(managed_account_id: int) -> tuple[PremiumCustomer 
         return customer, count
 
 
-def _persist_customer_links(linked: list[LinkedPremiumAccount]) -> tuple[PremiumCustomer, int]:
+def _persist_customer_links(
+    linked: list[LinkedPremiumAccount],
+) -> tuple[PremiumCustomer, int]:
     account_ids = [item.account_id for item in linked]
     fingerprint = premium_identity_fingerprint(account_ids)
     deterministic_customer_id = str(
@@ -189,8 +198,9 @@ def _persist_customer_links(linked: list[LinkedPremiumAccount]) -> tuple[Premium
                     identity_fingerprint=fingerprint,
                     status="unpaid",
                     plan_code="weekly_access",
-                    renewal_preference="automatic_if_supported",
-                    auto_renew_enabled=True,
+                    renewal_preference="prompt_again",
+                    auto_renew_enabled=False,
+                    renewal_provider="lipana",
                     created_at=now,
                     updated_at=now,
                 )
@@ -236,12 +246,12 @@ def _persist_customer_links(linked: list[LinkedPremiumAccount]) -> tuple[Premium
     try:
         return write_once()
     except IntegrityError:
-        # Simultaneous first requests can race on the deterministic customer or
-        # account hash. The winning transaction is authoritative; retry as a read.
         return write_once()
 
 
-def ensure_premium_customer(request: Request) -> tuple[PremiumCustomer, int, dict[str, Any]]:
+def ensure_premium_customer(
+    request: Request,
+) -> tuple[PremiumCustomer, int, dict[str, Any]]:
     account = base_api.get_current_account(request)
     if not account:
         raise HTTPException(status_code=401, detail="Log in with Deriv first.")
@@ -319,7 +329,7 @@ def _premium_payload_for_request(request: Request) -> dict[str, Any]:
             linked_account_count=linked_count,
             checkout_ready=False,
         ),
-        "payment_setup_phase": "action6a_access_gate_only",
+        "payment_setup_phase": "action6d_lipana_mpesa_weekly_renewal",
     }
 
 
@@ -374,7 +384,7 @@ def install_premium_access_action6a(app: Any) -> None:
             content={
                 "detail": (
                     "DerivAdmin is available for premium use only. "
-                    "Pay KES 250 or USD 2 for 7 days of access."
+                    "Pay KES 250 via M-Pesa for 7 days of access."
                 ),
                 "code": "PREMIUM_SUBSCRIPTION_REQUIRED",
                 "premium": payload,
@@ -387,6 +397,6 @@ def install_premium_access_action6a(app: Any) -> None:
     app.state.premium_access_enforcement = _enforcement_enabled()
     LOGGER.warning(
         "PREMIUM_ACCESS_ACTION6A_ACTIVE scope=linked_dot_rot period_days=7 "
-        "price_kes=250 price_usd=2 backend_gate=true payment_adapters=false"
+        "price_kes=250 payment_method=mpesa backend_gate=true"
     )
     _INSTALLED = True
