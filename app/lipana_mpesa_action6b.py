@@ -29,12 +29,9 @@ from app.premium_access_service import (
 from app.premium_payment_models import PremiumPaymentAttempt, PremiumWebhookEvent
 
 try:
-    from lipana import Lipana, LipanaError
+    from lipana import Lipana
 except Exception:  # pragma: no cover - release images install the pinned SDK
     Lipana = None  # type: ignore[assignment]
-
-    class LipanaError(Exception):
-        pass
 
 
 LOGGER = logging.getLogger("legacy_model.lipana_action6b")
@@ -44,8 +41,22 @@ METHOD = "mpesa"
 CURRENCY = "KES"
 AMOUNT_MINOR = int(Decimal(str(WEEKLY_PRICE_KES)) * 100)
 PENDING_TTL_MINUTES = 10
-SUCCESS_STATUS_VALUES = {"success", "successful", "succeeded", "paid", "completed", "complete"}
-FAILED_STATUS_VALUES = {"failed", "failure", "cancelled", "canceled", "rejected", "declined"}
+SUCCESS_STATUS_VALUES = {
+    "success",
+    "successful",
+    "succeeded",
+    "paid",
+    "completed",
+    "complete",
+}
+FAILED_STATUS_VALUES = {
+    "failed",
+    "failure",
+    "cancelled",
+    "canceled",
+    "rejected",
+    "declined",
+}
 
 
 class MpesaStkPushRequest(BaseModel):
@@ -90,9 +101,13 @@ def normalize_kenyan_mpesa_phone(value: str) -> str:
     elif len(compact) == 9 and compact[:1] in {"7", "1"}:
         normalized = "+254" + compact
     else:
-        raise ValueError("Enter a valid Kenyan M-Pesa number, for example 0712345678.")
+        raise ValueError(
+            "Enter a valid Kenyan M-Pesa number, for example 0712345678."
+        )
     if not re.fullmatch(r"\+254[17]\d{8}", normalized):
-        raise ValueError("Enter a valid Kenyan M-Pesa number, for example 0712345678.")
+        raise ValueError(
+            "Enter a valid Kenyan M-Pesa number, for example 0712345678."
+        )
     return normalized
 
 
@@ -129,34 +144,41 @@ def _normalized_key(value: str) -> str:
     return re.sub(r"[^a-z0-9]", "", str(value).lower())
 
 
+def _present(value: Any) -> bool:
+    return value is not None and value != ""
+
+
 def _find_value(payload: Any, candidates: set[str]) -> Any:
     wanted = {_normalized_key(item) for item in candidates}
     if isinstance(payload, dict):
         for key, value in payload.items():
-            if _normalized_key(str(key)) in wanted and value not in {None, ""}:
+            if _normalized_key(str(key)) in wanted and _present(value):
                 return value
         for preferred in ("data", "transaction", "payment", "result"):
             nested = payload.get(preferred)
             if isinstance(nested, (dict, list)):
                 found = _find_value(nested, candidates)
-                if found not in {None, ""}:
+                if _present(found):
                     return found
         for value in payload.values():
             if isinstance(value, (dict, list)):
                 found = _find_value(value, candidates)
-                if found not in {None, ""}:
+                if _present(found):
                     return found
     elif isinstance(payload, list):
         for item in payload:
             found = _find_value(item, candidates)
-            if found not in {None, ""}:
+            if _present(found):
                 return found
     return None
 
 
 def _transaction_id(payload: Any) -> str:
-    value = _find_value(payload, {"transactionId", "transaction_id", "transactionRef", "transaction_ref"})
-    if value not in {None, ""}:
+    value = _find_value(
+        payload,
+        {"transactionId", "transaction_id", "transactionRef", "transaction_ref"},
+    )
+    if _present(value):
         return str(value).strip()
     generic = _find_value(payload, {"id"})
     generic_text = str(generic or "").strip()
@@ -169,20 +191,28 @@ def _event_type(payload: dict[str, Any]) -> str:
 
 def _event_kind(event_type: str) -> str:
     normalized = str(event_type or "").strip().lower()
-    payment_event = any(term in normalized for term in ("payment", "transaction", "stk"))
-    if payment_event and normalized.endswith((".success", ".successful", ".succeeded", ".paid")):
+    payment_event = any(
+        term in normalized for term in ("payment", "transaction", "stk")
+    )
+    if payment_event and normalized.endswith(
+        (".success", ".successful", ".succeeded", ".paid")
+    ):
         return "success"
-    if payment_event and normalized.endswith((".failed", ".failure", ".cancelled", ".canceled", ".rejected", ".declined")):
+    if payment_event and normalized.endswith(
+        (".failed", ".failure", ".cancelled", ".canceled", ".rejected", ".declined")
+    ):
         return "failed"
     return "other"
 
 
 def _amount_minor(payload: Any) -> int | None:
     raw = _find_value(payload, {"amount", "paidAmount", "paid_amount"})
-    if raw in {None, ""}:
+    if not _present(raw):
         return None
     try:
-        amount = Decimal(str(raw)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        amount = Decimal(str(raw)).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
     except (InvalidOperation, ValueError):
         return None
     return int(amount * 100)
@@ -194,19 +224,32 @@ def _currency(payload: Any) -> str:
 
 
 def _provider_status(payload: Any) -> str:
-    raw = _find_value(payload, {"status", "paymentStatus", "payment_status", "transactionStatus", "transaction_status"})
+    raw = _find_value(
+        payload,
+        {
+            "status",
+            "paymentStatus",
+            "payment_status",
+            "transactionStatus",
+            "transaction_status",
+        },
+    )
     return str(raw or "").strip().lower()
 
 
 def _parse_datetime(value: Any) -> datetime | None:
-    if value in {None, ""}:
+    if not _present(value):
         return None
     if isinstance(value, datetime):
-        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
     text = str(value).strip()
     if re.fullmatch(r"\d{14}", text):
         try:
-            return datetime.strptime(text, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+            return datetime.strptime(text, "%Y%m%d%H%M%S").replace(
+                tzinfo=timezone.utc
+            )
         except ValueError:
             return None
     try:
@@ -219,12 +262,18 @@ def _parse_datetime(value: Any) -> datetime | None:
         pass
     try:
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
     except ValueError:
         return None
 
 
-def _payment_time(provider_transaction: Any, webhook_payload: Any, fallback: datetime) -> tuple[datetime, str]:
+def _payment_time(
+    provider_transaction: Any,
+    webhook_payload: Any,
+    fallback: datetime,
+) -> tuple[datetime, str]:
     keys = {
         "paidAt",
         "paid_at",
@@ -236,19 +285,19 @@ def _payment_time(provider_transaction: Any, webhook_payload: Any, fallback: dat
         "transaction_date",
         "timestamp",
     }
-    provider_value = _find_value(provider_transaction, keys)
-    parsed = _parse_datetime(provider_value)
+    parsed = _parse_datetime(_find_value(provider_transaction, keys))
     if parsed is not None:
         return parsed, "provider_transaction"
-    webhook_value = _find_value(webhook_payload, keys)
-    parsed = _parse_datetime(webhook_value)
+    parsed = _parse_datetime(_find_value(webhook_payload, keys))
     if parsed is not None:
         return parsed, "signed_webhook"
     return fallback, "webhook_received_fallback"
 
 
 def _safe_error(exc: Exception) -> str:
-    message = str(getattr(exc, "message", "") or str(exc) or type(exc).__name__).strip()
+    message = str(
+        getattr(exc, "message", "") or str(exc) or type(exc).__name__
+    ).strip()
     return message[:500]
 
 
@@ -263,7 +312,11 @@ def _is_definitive_provider_error(exc: Exception) -> bool:
     return False
 
 
-def _attempt_payload(row: PremiumPaymentAttempt, *, reused: bool = False) -> dict[str, Any]:
+def _attempt_payload(
+    row: PremiumPaymentAttempt,
+    *,
+    reused: bool = False,
+) -> dict[str, Any]:
     return {
         "id": row.id,
         "provider": row.provider,
@@ -276,7 +329,11 @@ def _attempt_payload(row: PremiumPaymentAttempt, *, reused: bool = False) -> dic
         "status": row.status,
         "provider_status": row.provider_status or None,
         "requested_at": row.requested_at.isoformat(),
-        "provider_accepted_at": row.provider_accepted_at.isoformat() if row.provider_accepted_at else None,
+        "provider_accepted_at": (
+            row.provider_accepted_at.isoformat()
+            if row.provider_accepted_at
+            else None
+        ),
         "confirmed_at": row.confirmed_at.isoformat() if row.confirmed_at else None,
         "expires_at": row.expires_at.isoformat(),
         "activated": bool(row.activated_at),
@@ -303,7 +360,11 @@ def _create_or_reuse_attempt(
     now = utc_now()
     clean_key = str(idempotency_key or "").strip() or None
     with base_api.DATABASE.session() as session:
-        customer = session.get(PremiumCustomer, str(customer_id), with_for_update=True)
+        customer = session.get(
+            PremiumCustomer,
+            str(customer_id),
+            with_for_update=True,
+        )
         if customer is None:
             raise ValueError("Premium customer was not found")
 
@@ -321,7 +382,9 @@ def _create_or_reuse_attempt(
             select(PremiumPaymentAttempt)
             .where(
                 PremiumPaymentAttempt.customer_id == str(customer_id),
-                PremiumPaymentAttempt.status.in_(["initiating", "pending", "provider_uncertain"]),
+                PremiumPaymentAttempt.status.in_(
+                    ["initiating", "pending", "provider_uncertain"]
+                ),
                 PremiumPaymentAttempt.expires_at > now,
             )
             .order_by(PremiumPaymentAttempt.requested_at.desc())
@@ -352,7 +415,12 @@ def _create_or_reuse_attempt(
         return row, False
 
 
-def _initiate_stk_push(client: Any, *, phone: str, merchant_reference: str) -> dict[str, Any]:
+def _initiate_stk_push(
+    client: Any,
+    *,
+    phone: str,
+    merchant_reference: str,
+) -> dict[str, Any]:
     method = client.transactions.initiate_stk_push
     kwargs: dict[str, Any] = {
         "phone": phone,
@@ -382,7 +450,11 @@ def _set_attempt_provider_result(
     failure_reason: str = "",
 ) -> PremiumPaymentAttempt:
     with base_api.DATABASE.session() as session:
-        row = session.get(PremiumPaymentAttempt, str(attempt_id), with_for_update=True)
+        row = session.get(
+            PremiumPaymentAttempt,
+            str(attempt_id),
+            with_for_update=True,
+        )
         if row is None:
             raise ValueError("Payment attempt was not found")
         now = utc_now()
@@ -401,14 +473,21 @@ def _set_attempt_provider_result(
         return row
 
 
-def _verified_provider_transaction(client: Any, transaction_id: str) -> dict[str, Any]:
+def _verified_provider_transaction(
+    client: Any,
+    transaction_id: str,
+) -> dict[str, Any]:
     retrieved = _mapping(client.transactions.retrieve(str(transaction_id)))
     retrieved_id = _transaction_id(retrieved)
     if retrieved_id and retrieved_id != str(transaction_id):
-        raise ValueError("Lipana transaction reference did not match the initiated payment")
+        raise ValueError(
+            "Lipana transaction reference did not match the initiated payment"
+        )
     amount_minor = _amount_minor(retrieved)
     if amount_minor is None:
-        raise ValueError("Lipana transaction verification did not include an amount")
+        raise ValueError(
+            "Lipana transaction verification did not include an amount"
+        )
     if amount_minor != AMOUNT_MINOR:
         raise ValueError("Lipana transaction amount did not match KES 250")
     if _currency(retrieved) != CURRENCY:
@@ -463,7 +542,11 @@ def _update_webhook_event(
     processed: bool = False,
 ) -> None:
     with base_api.DATABASE.session() as session:
-        row = session.get(PremiumWebhookEvent, int(event_id), with_for_update=True)
+        row = session.get(
+            PremiumWebhookEvent,
+            int(event_id),
+            with_for_update=True,
+        )
         if row is None:
             return
         row.status = str(status)[:32]
@@ -474,19 +557,29 @@ def _update_webhook_event(
             row.processed_at = utc_now()
 
 
-def _attempt_by_transaction_id(transaction_id: str) -> PremiumPaymentAttempt | None:
+def _attempt_by_transaction_id(
+    transaction_id: str,
+) -> PremiumPaymentAttempt | None:
     with base_api.DATABASE.session() as session:
         return session.scalar(
             select(PremiumPaymentAttempt).where(
                 PremiumPaymentAttempt.provider == PROVIDER,
-                PremiumPaymentAttempt.provider_transaction_id == str(transaction_id),
+                PremiumPaymentAttempt.provider_transaction_id
+                == str(transaction_id),
             )
         )
 
 
-def _mark_failed_from_webhook(attempt_id: str, provider_status: str) -> None:
+def _mark_failed_from_webhook(
+    attempt_id: str,
+    provider_status: str,
+) -> None:
     with base_api.DATABASE.session() as session:
-        row = session.get(PremiumPaymentAttempt, str(attempt_id), with_for_update=True)
+        row = session.get(
+            PremiumPaymentAttempt,
+            str(attempt_id),
+            with_for_update=True,
+        )
         if row is None or row.activated_at is not None:
             return
         now = utc_now()
@@ -504,7 +597,11 @@ def _activate_verified_attempt(
     webhook_payload: dict[str, Any],
     received_at: datetime,
 ) -> dict[str, Any]:
-    paid_at, time_source = _payment_time(provider_transaction, webhook_payload, received_at)
+    paid_at, time_source = _payment_time(
+        provider_transaction,
+        webhook_payload,
+        received_at,
+    )
     state = activate_weekly_access(
         base_api.DATABASE,
         str(attempt.customer_id),
@@ -515,7 +612,11 @@ def _activate_verified_attempt(
         renewal_preference="prompt_again",
     )
     with base_api.DATABASE.session() as session:
-        row = session.get(PremiumPaymentAttempt, str(attempt.id), with_for_update=True)
+        row = session.get(
+            PremiumPaymentAttempt,
+            str(attempt.id),
+            with_for_update=True,
+        )
         if row is None:
             raise ValueError("Payment attempt disappeared before activation")
         if row.activated_at is None:
@@ -538,7 +639,9 @@ def install_lipana_mpesa_action6b(app: Any) -> None:
     def premium_payment_options(request: Request) -> dict[str, Any]:
         customer, linked_count, _ = ensure_premium_customer(request)
         state = effective_access_state(customer)
-        public_origin = str(os.getenv("PUBLIC_ORIGIN", "https://derivadmin.site")).rstrip("/")
+        public_origin = str(
+            os.getenv("PUBLIC_ORIGIN", "https://derivadmin.site")
+        ).rstrip("/")
         return {
             "authenticated": True,
             "premium": access_payload(
@@ -581,12 +684,14 @@ def install_lipana_mpesa_action6b(app: Any) -> None:
         customer, linked_count, account = ensure_premium_customer(request)
         state = effective_access_state(customer)
         if state.active:
+            expiry = (
+                state.current_period_end.isoformat()
+                if state.current_period_end
+                else "the current expiry"
+            )
             raise HTTPException(
                 status_code=409,
-                detail=(
-                    "Premium access is already active until "
-                    f"{state.current_period_end.isoformat() if state.current_period_end else 'the current expiry'}"
-                ),
+                detail=f"Premium access is already active until {expiry}",
             )
         if not _configured():
             raise HTTPException(
@@ -607,8 +712,10 @@ def install_lipana_mpesa_action6b(app: Any) -> None:
             return {
                 "success": attempt.status in {"pending", "success"},
                 "message": (
-                    "An M-Pesa payment request is already pending. Complete it on your phone."
-                    if attempt.status in {"initiating", "pending", "provider_uncertain"}
+                    "An M-Pesa payment request is already pending. "
+                    "Complete it on your phone."
+                    if attempt.status
+                    in {"initiating", "pending", "provider_uncertain"}
                     else "This payment request has already been processed."
                 ),
                 "payment": _attempt_payload(attempt, reused=True),
@@ -631,12 +738,18 @@ def install_lipana_mpesa_action6b(app: Any) -> None:
                 row = _set_attempt_provider_result(
                     attempt.id,
                     status="provider_uncertain",
-                    failure_reason="Lipana accepted the request without returning a transaction ID",
+                    failure_reason=(
+                        "Lipana accepted the request without returning a "
+                        "transaction ID"
+                    ),
                 )
                 raise HTTPException(
                     status_code=502,
                     detail={
-                        "message": "Lipana did not return a transaction reference. Do not retry immediately; wait for payment status.",
+                        "message": (
+                            "Lipana did not return a transaction reference. "
+                            "Do not retry immediately; wait for payment status."
+                        ),
                         "payment": _attempt_payload(row),
                     },
                 )
@@ -656,7 +769,8 @@ def install_lipana_mpesa_action6b(app: Any) -> None:
                 failure_reason=_safe_error(exc),
             )
             LOGGER.warning(
-                "LIPANA_STK_INITIATION_FAILED managed_account_id=%s attempt_id=%s definitive=%s error_type=%s",
+                "LIPANA_STK_INITIATION_FAILED managed_account_id=%s "
+                "attempt_id=%s definitive=%s error_type=%s",
                 int(account.get("id") or 0),
                 attempt.id,
                 definitive,
@@ -668,7 +782,10 @@ def install_lipana_mpesa_action6b(app: Any) -> None:
                     "message": (
                         "M-Pesa request could not be started."
                         if definitive
-                        else "M-Pesa request status is uncertain. Do not retry immediately."
+                        else (
+                            "M-Pesa request status is uncertain. "
+                            "Do not retry immediately."
+                        )
                     ),
                     "payment": _attempt_payload(row),
                 },
@@ -693,7 +810,10 @@ def install_lipana_mpesa_action6b(app: Any) -> None:
 
         return {
             "success": True,
-            "message": "M-Pesa prompt sent. Enter your PIN on the phone to complete KES 250 payment.",
+            "message": (
+                "M-Pesa prompt sent. Enter your PIN on the phone to complete "
+                "KES 250 payment."
+            ),
             "payment": _attempt_payload(row),
             "premium": access_payload(
                 state,
@@ -718,12 +838,18 @@ def install_lipana_mpesa_action6b(app: Any) -> None:
         }
 
     @app.get("/me/premium-access/mpesa/payments/{attempt_id}")
-    def get_mpesa_payment(request: Request, attempt_id: str) -> dict[str, Any]:
+    def get_mpesa_payment(
+        request: Request,
+        attempt_id: str,
+    ) -> dict[str, Any]:
         customer, linked_count, _ = ensure_premium_customer(request)
         with base_api.DATABASE.session() as session:
             row = session.get(PremiumPaymentAttempt, str(attempt_id))
             if row is None or str(row.customer_id) != str(customer.id):
-                raise HTTPException(status_code=404, detail="Payment attempt not found")
+                raise HTTPException(
+                    status_code=404,
+                    detail="Payment attempt not found",
+                )
             payment = _attempt_payload(row)
         state = effective_access_state(customer)
         return {
@@ -738,29 +864,52 @@ def install_lipana_mpesa_action6b(app: Any) -> None:
 
     @app.post("/webhooks/lipana")
     async def lipana_webhook(request: Request) -> dict[str, Any]:
-        signature = str(request.headers.get("x-lipana-signature") or "").strip()
+        signature = str(
+            request.headers.get("x-lipana-signature") or ""
+        ).strip()
         secret = _webhook_secret()
         if not secret or not _secret_key():
-            raise HTTPException(status_code=503, detail="Lipana webhook verification is not configured")
+            raise HTTPException(
+                status_code=503,
+                detail="Lipana webhook verification is not configured",
+            )
         if not signature:
-            raise HTTPException(status_code=401, detail="Missing Lipana webhook signature")
+            raise HTTPException(
+                status_code=401,
+                detail="Missing Lipana webhook signature",
+            )
 
         raw_body = await request.body()
         try:
             payload = json.loads(raw_body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise HTTPException(status_code=400, detail="Invalid webhook JSON") from exc
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid webhook JSON",
+            ) from exc
         if not isinstance(payload, dict):
-            raise HTTPException(status_code=400, detail="Invalid webhook payload")
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid webhook payload",
+            )
 
         client = _client()
         try:
             valid = bool(client.webhooks.verify(payload, signature, secret))
         except Exception as exc:
-            LOGGER.warning("LIPANA_WEBHOOK_SIGNATURE_CHECK_FAILED error_type=%s", type(exc).__name__)
-            raise HTTPException(status_code=401, detail="Invalid Lipana webhook signature") from exc
+            LOGGER.warning(
+                "LIPANA_WEBHOOK_SIGNATURE_CHECK_FAILED error_type=%s",
+                type(exc).__name__,
+            )
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid Lipana webhook signature",
+            ) from exc
         if not valid:
-            raise HTTPException(status_code=401, detail="Invalid Lipana webhook signature")
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid Lipana webhook signature",
+            )
 
         received_at = utc_now()
         event_type = _event_type(payload)
@@ -779,7 +928,9 @@ def install_lipana_mpesa_action6b(app: Any) -> None:
             _update_webhook_event(
                 event_id,
                 status="ignored",
-                detail="Webhook event is not a premium M-Pesa terminal event",
+                detail=(
+                    "Webhook event is not a premium M-Pesa terminal event"
+                ),
                 processed=True,
             )
             return {"received": True, "ignored": True}
@@ -797,7 +948,10 @@ def install_lipana_mpesa_action6b(app: Any) -> None:
             _update_webhook_event(
                 event_id,
                 status="ignored",
-                detail="Transaction does not belong to a DerivAdmin premium payment attempt",
+                detail=(
+                    "Transaction does not belong to a DerivAdmin premium "
+                    "payment attempt"
+                ),
                 processed=True,
             )
             return {"received": True, "ignored": True}
@@ -813,7 +967,9 @@ def install_lipana_mpesa_action6b(app: Any) -> None:
             _update_webhook_event(
                 event_id,
                 status="processed",
-                detail="Payment failure recorded; premium access was not extended",
+                detail=(
+                    "Payment failure recorded; premium access was not extended"
+                ),
                 payment_attempt_id=attempt.id,
                 processed=True,
             )
@@ -823,14 +979,24 @@ def install_lipana_mpesa_action6b(app: Any) -> None:
             _update_webhook_event(
                 event_id,
                 status="processed",
-                detail="Payment had already activated the same seven-day entitlement",
+                detail=(
+                    "Payment had already activated the same seven-day "
+                    "entitlement"
+                ),
                 payment_attempt_id=attempt.id,
                 processed=True,
             )
-            return {"received": True, "payment_status": "success", "duplicate": True}
+            return {
+                "received": True,
+                "payment_status": "success",
+                "duplicate": True,
+            }
 
         try:
-            provider_transaction = _verified_provider_transaction(client, transaction_id)
+            provider_transaction = _verified_provider_transaction(
+                client,
+                transaction_id,
+            )
         except RuntimeError as exc:
             _update_webhook_event(
                 event_id,
@@ -838,7 +1004,10 @@ def install_lipana_mpesa_action6b(app: Any) -> None:
                 detail=str(exc),
                 payment_attempt_id=attempt.id,
             )
-            raise HTTPException(status_code=503, detail="Lipana transaction is not final yet") from exc
+            raise HTTPException(
+                status_code=503,
+                detail="Lipana transaction is not final yet",
+            ) from exc
         except Exception as exc:
             _set_attempt_provider_result(
                 attempt.id,
@@ -854,12 +1023,16 @@ def install_lipana_mpesa_action6b(app: Any) -> None:
                 processed=True,
             )
             LOGGER.error(
-                "LIPANA_PAYMENT_VERIFICATION_REJECTED attempt_id=%s transaction_id=%s reason=%s",
+                "LIPANA_PAYMENT_VERIFICATION_REJECTED attempt_id=%s "
+                "transaction_id=%s reason=%s",
                 attempt.id,
                 transaction_id,
                 str(exc)[:300],
             )
-            return {"received": True, "payment_status": "verification_failed"}
+            return {
+                "received": True,
+                "payment_status": "verification_failed",
+            }
 
         premium = _activate_verified_attempt(
             attempt,
@@ -902,6 +1075,7 @@ def install_lipana_mpesa_action6b(app: Any) -> None:
     app.state.lipana_mpesa_configured = _configured()
     LOGGER.warning(
         "LIPANA_MPESA_ACTION6B_ACTIVE amount_kes=250 webhook_signature=true "
-        "server_transaction_reverification=true raw_phone_persisted=false renewal=prompt_again"
+        "server_transaction_reverification=true raw_phone_persisted=false "
+        "renewal=prompt_again"
     )
     _INSTALLED = True
