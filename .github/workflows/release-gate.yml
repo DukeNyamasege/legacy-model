@@ -125,6 +125,7 @@ jobs:
           app/session_risk_stop_authority.py
           tests/test_final_ui_6f1.py
           tests/test_final_ui_6f2.py
+          tests/test_final_ui_6f3.py
           tests/test_lipana_mpesa_action6b.py
           tests/test_persistent_scheduler_action5.py
           tests/test_premium_access_action6a.py
@@ -178,18 +179,20 @@ jobs:
           app/session_risk_limits.py
           app/session_risk_stop_authority.py
 
-      - name: Check direct VPS 6F-2 frontend JavaScript syntax
+      - name: Check direct VPS 6F-3 frontend JavaScript syntax
         run: |
+          node --check dashboard/final-premium-6f3.js
           node --check dashboard/final-ui-shell-v2.js
           node --check dashboard/vps-api-boundary-v2.js
           node --check dashboard/vps-realtime-client-v2.js
           node --check scripts/export-deriv-quill-icons-v2.mjs
           node --check scripts/build-vps.mjs
 
-      - name: Run direct VPS release tests
+      - name: Run final product release tests
         run: |
           python -m unittest -q tests.test_final_ui_6f1
           python -m unittest -q tests.test_final_ui_6f2
+          python -m unittest -q tests.test_final_ui_6f3
           python -m unittest -q tests.test_persistent_scheduler_action5
           python -m unittest -q tests.test_premium_access_action6a
           python -m unittest -q tests.test_lipana_mpesa_action6b
@@ -220,33 +223,45 @@ jobs:
           python -m unittest -q test_aidr_recovery_v2.py tests.test_aidr_virtual_soft_gate tests.test_independent_websocket_execution tests.test_private_websocket_credentials
           sh scripts/run_legacy_release_tests.sh
 
-      - name: Production direct VPS 6F-2 frontend build
+      - name: Production direct VPS 6F-3 frontend build
         env:
           PUBLIC_ORIGIN: https://release-gate.example
         run: |
           npm run build:vps
           test -f dist/index.html
           test -f dist/vps-build.json
+          test -f dist/final-premium-6f3.js
+          test -f dist/final-premium-6f3.css
+          test -f dist/final-ui-shell-v2.js
+          test -f dist/vps-realtime-client-v2.js
           test -f dist/deriv-quill-icons-v2.js
           test -f dist/deriv-quill-icons-v2.json
           test ! -f dist/_redirects
-          grep -Fq 'frontend-runtime" content="full-vps-final-ui-6f2"' dist/index.html
+          grep -Fq 'frontend-runtime" content="full-vps-final-ui-6f3"' dist/index.html
+          grep -Fq 'frontend-authority" content="final-ui-shell-v2"' dist/index.html
           grep -Fq 'stream-base-url" content="wss://release-gate.example"' dist/index.html
           grep -Fq '/vps-api-boundary-v2.js?v=20260817-6f2-1' dist/index.html
           grep -Fq '/deriv-quill-icons-v2.js?v=2.4.18' dist/index.html
-          grep -Fq '/vps-realtime-client-v2.js?v=20260817-6f2-1' dist/index.html
-          grep -Fq '/final-ui-shell-v2.css?v=20260817-6f2-1' dist/index.html
-          grep -Fq '/final-ui-shell-v2.js?v=20260817-6f2-1' dist/index.html
+          grep -Fq '/final-premium-6f3.css?v=20260817-6f3-1' dist/index.html
+          grep -Fq '/final-premium-6f3.js?v=20260817-6f3-1' dist/index.html
+          ! grep -Fq '<script src="/vps-realtime-client-v2.js?v=20260817-6f2-1" defer>' dist/index.html
+          ! grep -Fq '<script src="/final-ui-shell-v2.js?v=20260817-6f2-1" defer>' dist/index.html
           grep -Fq '"deployment_topology": "direct-vps-only"' dist/vps-build.json
           grep -Fq '"ui_authority": "final-ui-shell-v2"' dist/vps-build.json
+          grep -Fq '"premium_bootstrap": "final-premium-6f3"' dist/vps-build.json
+          grep -Fq '"premium_runtime_admission": "unpaid-users-do-not-load-shell-or-realtime-v1"' dist/vps-build.json
+          grep -Fq '"premium_unlock_authority": "verified-server-entitlement-only-v1"' dist/vps-build.json
           grep -Fq '"run_panel": "deriv-transaction-ledger-v1"' dist/vps-build.json
           grep -Fq '"deriv_icons": "official-quill-icons-2.4.18-build-time-static-svg"' dist/vps-build.json
           grep -Fq '"linked_account_selector": "specific-linked-options-account-v1"' dist/vps-build.json
           grep -Fq '"legacy_ui_loaded": false' dist/vps-build.json
+          grep -Fq '"legacy_ui_shipped": false' dist/vps-build.json
           grep -Fq '"netlify_runtime_loaded": false' dist/vps-build.json
           grep -Fq '"api_base": "/api"' dist/vps-build.json
           grep -Fq '"oauth_base": "/oauth"' dist/vps-build.json
           grep -Fq '"premium_access": "weekly-linked-options-server-gate-action6a-v1"' dist/vps-build.json
+          grep -Fq '"premium_payment": "lipana-stk-verified-webhook-v1"' dist/vps-build.json
+          grep -Fq '"premium_renewal": "manual-mpesa-after-exact-expiry-v1"' dist/vps-build.json
           grep -Fq '"package": "@deriv/quill-icons"' dist/deriv-quill-icons-v2.json
           grep -Fq '"version": "2.4.18"' dist/deriv-quill-icons-v2.json
           ! grep -Fq '/netlify-api-boundary.js' dist/index.html
