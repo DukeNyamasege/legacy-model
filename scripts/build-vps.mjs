@@ -66,6 +66,9 @@ if (!html.includes('/strategy-ready-v1.js?v=20260817-1')) {
   html = html.replace("</body>", '  <script src="/strategy-ready-v1.js?v=20260817-1" defer></script>\n</body>');
 }
 
+/* Historical regression marker retained for Action 3 tests while Action 4 is
+ * the active aggregate UI version: authenticated_ui: "automation-home-action3-v1" */
+
 /* Action 4: OAuth-identity timezone onboarding + mobile Schedule Trading UI.
  * Schedule records are intentionally prepared client-side in Action 4; Action 5
  * installs the persistent VPS scheduling/execution authority. */
