@@ -75,9 +75,13 @@ class PostLossSplitAndVirtualNeutralityTests(unittest.TestCase):
         self.assertIn("summary.losses ?? stats.losses", shell)
         self.assertIn("summary.profit ?? stats.profit", shell)
         self.assertIn('api("/me/trades/today?limit=100")', shell)
-        # Rendering the recent trade list is deliberately separate from KPI totals.
-        self.assertIn("state.trades?.trades.slice(0, 20)", shell)
-        self.assertNotIn("rows.length", shell.split("function metrics()", 1)[1].split("function greeting()", 1)[0])
+        # The recent rows are independently bounded for rendering, while KPIs use
+        # the unbounded server aggregate above.
+        self.assertIn("state.trades.trades.slice(0, 20)", shell)
+        self.assertNotIn(
+            "rows.length",
+            shell.split("function metrics()", 1)[1].split("function greeting()", 1)[0],
+        )
 
         self.assertNotIn("virtual-kpi-neutrality.js", index)
         self.assertNotIn("netlify-realtime-client.js", index)
