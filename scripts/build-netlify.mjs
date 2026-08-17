@@ -43,40 +43,122 @@ await cp(resolve(root, "dashboard"), output, { recursive: true });
 
 const indexPath = resolve(output, "index.html");
 let html = await readFile(indexPath, "utf8");
-html = html.replace(
-  '<meta name="api-base-url" content="">',
-  `<meta name="api-base-url" content="/api">\n  <meta name="stream-base-url" content="${streamBase}">\n  <meta name="frontend-runtime" content="netlify-final-ui-6f1">`,
-);
+html = html
+  .replace('<meta name="api-base-url" content="">', '<meta name="api-base-url" content="/api">')
+  .replace(
+    '<meta name="api-base-url" content="/api">',
+    `<meta name="api-base-url" content="/api">\n  <meta name="stream-base-url" content="${streamBase}">\n  <meta name="frontend-runtime" content="netlify-vps-split-v1">`,
+  )
+  .replaceAll('href="/ui/dashboard-v2.css"', 'href="/dashboard-v2.css"')
+  .replaceAll('src="/ui/dashboard-v2.js"', 'src="/dashboard-v2.js"')
+  .replaceAll('src="/ui/dashboard-actions-v2.js"', 'src="/dashboard-actions-v2.js"')
+  .replaceAll('src="./result-based-strategy.js"', 'src="/result-based-strategy.js?v=20260814-2"')
+  .replaceAll('src="./platform-default-strategy.js?v=20260813-1"', 'src="/platform-default-strategy.js?v=20260814-2"')
+  .replaceAll('src="./strategy-edit-authority.js?v=20260813-3"', 'src="/strategy-edit-authority.js?v=20260814-6"')
+  .replaceAll('src="./strategy-edit-authority.js?v=20260814-2"', 'src="/strategy-edit-authority.js?v=20260814-6"')
+  .replaceAll('src="./strategy-edit-authority.js?v=20260814-3"', 'src="/strategy-edit-authority.js?v=20260814-6"')
+  .replaceAll('src="./strategy-edit-authority.js?v=20260814-4"', 'src="/strategy-edit-authority.js?v=20260814-6"')
+  .replaceAll('src="./strategy-edit-authority.js?v=20260814-5"', 'src="/strategy-edit-authority.js?v=20260814-6"');
 
-const required = [
-  "/netlify-api-boundary.js",
-  "/final-ui-shell-v1.css?v=20260817-6f1-1",
-  "/final-ui-shell-v1.js?v=20260817-6f1-1",
-  "/netlify-realtime-client.js?v=20260817-6f1-1",
-];
-for (const marker of required) {
-  if (!html.includes(marker)) throw new Error(`Action 6F-1 frontend marker missing: ${marker}`);
+const boundaryScript = '  <script src="/netlify-api-boundary.js"></script>\n';
+if (!html.includes('/netlify-api-boundary.js')) {
+  html = html.replace("</head>", `${boundaryScript}</head>`);
 }
 
-const forbiddenLegacyUi = [
-  "/ui/dashboard-v2.css",
-  "/ui/dashboard-v2.js",
-  "/ui/dashboard-actions-v2.js",
-  "automation-home-v1",
-  "text-to-strategy-v1",
-  "strategy-ready-v1",
-  "timezone-schedule-v1",
-  "automation-scheduler-action5",
-  "premium-subscription-action6e",
-  "final-dashboard-authority",
-  "mobile-topbar-compact",
-  "tablet-navigation-fix",
-];
-for (const marker of forbiddenLegacyUi) {
-  if (html.includes(marker)) throw new Error(`Legacy presentation authority leaked into 6F-1 build: ${marker}`);
+if (!html.includes('/result-based-mobile-compact.css')) {
+  html = html.replace(
+    "</head>",
+    '  <link rel="stylesheet" href="/result-based-mobile-compact.css">\n</head>',
+  );
+}
+if (!html.includes('/result-ui-fixes.css')) {
+  html = html.replace(
+    "</head>",
+    '  <link rel="stylesheet" href="/result-ui-fixes.css">\n</head>',
+  );
+}
+if (!html.includes('/strategy-template-library.css')) {
+  html = html.replace(
+    "</head>",
+    '  <link rel="stylesheet" href="/strategy-template-library.css?v=20260814-1">\n</head>',
+  );
+}
+if (!html.includes('/runtime-ux-authority.css')) {
+  html = html.replace(
+    "</head>",
+    '  <link rel="stylesheet" href="/runtime-ux-authority.css?v=20260814-1">\n</head>',
+  );
+}
+
+const dashboardMarker = '<script src="/dashboard-v2.js" defer></script>';
+if (!html.includes(dashboardMarker)) {
+  throw new Error("Static dashboard-v2 script marker was not found");
+}
+const runtimeScript = '  <script src="/custom-runtime-client.js" defer></script>\n';
+if (!html.includes('/custom-runtime-client.js')) {
+  html = html.replace(dashboardMarker, `${runtimeScript}  ${dashboardMarker}`);
+}
+const oauthScript = '\n  <script src="/oauth-direct-runtime.js" defer></script>';
+if (!html.includes('/oauth-direct-runtime.js')) {
+  html = html.replace(dashboardMarker, `${dashboardMarker}${oauthScript}`);
+}
+const realtimeScript = '  <script src="/netlify-realtime-client.js" defer></script>\n';
+if (!html.includes('/netlify-realtime-client.js')) {
+  html = html.replace("</body>", `${realtimeScript}</body>`);
+}
+
+const resultScriptMarker = '<script src="/result-based-strategy.js?v=20260814-2" defer></script>';
+if (!html.includes('/prediction-ui-fix.js')) {
+  if (html.includes(resultScriptMarker)) {
+    html = html.replace(
+      resultScriptMarker,
+      '  <script src="/prediction-ui-fix.js" defer></script>\n  ' + resultScriptMarker,
+    );
+  } else {
+    html = html.replace("</body>", '  <script src="/prediction-ui-fix.js" defer></script>\n</body>');
+  }
+}
+if (!html.includes('/result-ui-fixes.js')) {
+  if (html.includes(resultScriptMarker)) {
+    html = html.replace(
+      resultScriptMarker,
+      resultScriptMarker + '\n  <script src="/result-ui-fixes.js" defer></script>',
+    );
+  } else {
+    html = html.replace("</body>", '  <script src="/result-ui-fixes.js" defer></script>\n</body>');
+  }
+}
+
+// New strategy-template and runtime UX layers are injected by the build with a
+// fresh immutable URL. strategy-edit-authority.js also loads them as a direct-VPS
+// fallback, and all scripts have idempotent global guards.
+if (!html.includes('/strategy-template-library.js')) {
+  html = html.replace(
+    "</body>",
+    '  <script src="/strategy-template-library.js?v=20260814-2" defer></script>\n</body>',
+  );
+}
+if (!html.includes('/runtime-ux-authority.js')) {
+  html = html.replace(
+    "</body>",
+    '  <script src="/runtime-ux-authority.js?v=20260814-3" defer></script>\n</body>',
+  );
+}
+if (!html.includes('/builder-edit-stability.js')) {
+  html = html.replace(
+    "</body>",
+    '  <script src="/builder-edit-stability.js?v=20260814-3" defer></script>\n</body>',
+  );
 }
 
 await writeFile(indexPath, html, "utf8");
+
+const cssPath = resolve(output, "dashboard-v2.css");
+const [desktopCss, mobileCss] = await Promise.all([
+  readFile(resolve(root, "dashboard", "dashboard-v2.css"), "utf8"),
+  readFile(resolve(root, "dashboard", "mobile-first-compact.css"), "utf8"),
+]);
+await writeFile(cssPath, `${desktopCss}\n\n/* NETLIFY FINAL MOBILE LAYER */\n${mobileCss}\n`, "utf8");
 
 const redirects = [];
 if (backendOrigin) {
@@ -87,20 +169,6 @@ if (backendOrigin) {
 redirects.push("/* /index.html 200");
 await writeFile(resolve(output, "_redirects"), `${redirects.join("\n")}\n`, "utf8");
 
-await writeFile(
-  resolve(output, "frontend-build.json"),
-  `${JSON.stringify({
-    frontend_runtime: "netlify-final-ui-6f1",
-    ui_authority: "final-ui-shell-v1",
-    legacy_ui_loaded: false,
-    backend_origin: backendOrigin || null,
-    websocket_base: streamBase || null,
-    generated_at: new Date().toISOString(),
-  }, null, 2)}\n`,
-  "utf8",
-);
-
-console.log("Netlify Action 6F-1 frontend built.");
-console.log("UI authority: final-ui-shell-v1 (legacy dashboard presentation not loaded)");
+console.log("Netlify production frontend built.");
 console.log(`REST/OAuth backend: ${backendOrigin || "not configured (static preview only)"}`);
 console.log(`Realtime backend: ${streamBase || "not configured (HTTP fallback only)"}`);
