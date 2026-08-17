@@ -17,8 +17,12 @@ node --check dashboard/execution-status-banner.js
 node --check dashboard/builder-edit-stability.js
 node --check dashboard/runtime-ux-authority.js
 node --check dashboard/virtual-kpi-neutrality.js
+node --check dashboard/automation-home-v1.js
+node --check dashboard/text-to-strategy-v1.js
+node --check dashboard/prelogin-landing-v2.js
 
 exec python -m unittest -q \
+  tests.test_text_to_strategy_action2 \
   tests.test_execution_stop_reason_authority \
   tests.test_custom_execution_consistency_authority \
   tests.test_post_loss_split_and_virtual_neutrality \
