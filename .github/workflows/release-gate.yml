@@ -25,8 +25,9 @@ jobs:
       DERIV_TRADING_ENABLED: "false"
       TRADING_MODE: demo
       ALLOW_REAL_TRADING: "false"
-      TELEGRAM_ALERTS_ENABLED: "false"
+      TELEGRAM_ALERTS_ENABLED: false
       TELEGRAM_NOTIFICATIONS_SUSPENDED: "true"
+      PREMIUM_ACCESS_ENFORCEMENT: "true"
     steps:
       - uses: actions/checkout@v6
 
@@ -65,7 +66,7 @@ jobs:
           PUBLIC_ORIGIN=https://release-gate.example docker compose \
             -f docker-compose.yml -f docker-compose.vps.yml config --quiet
           python scripts/audit_bulk_execution_readiness.py --help >/dev/null
-          alembic heads | grep -q "20260817_0022 (head)"
+          alembic heads | grep -q "20260817_0023 (head)"
 
       - name: Compile Python
         run: python -m compileall -q app scripts tests migrations
@@ -103,6 +104,10 @@ jobs:
           app/netlify_worker_bridge.py
           app/oauth_client.py
           app/oauth_direct_account_authority.py
+          app/premium_access_api.py
+          app/premium_access_models.py
+          app/premium_access_service.py
+          app/premium_worker_guard.py
           app/public_websocket_resilience.py
           app/real_demo_trading_support.py
           app/seamless_account_switch.py
@@ -121,6 +126,7 @@ jobs:
           tests/test_netlify_vps_split.py
           tests/test_oauth_direct_mobile_compact.py
           tests/test_persistent_scheduler_action5.py
+          tests/test_premium_access_action6a.py
           tests/test_result_routing_and_recovery_spread.py
           tests/test_session_risk_and_multidevice_ui.py
           tests/test_strategy_template_runtime_upgrade.py
@@ -160,6 +166,10 @@ jobs:
           app/netlify_worker_bridge.py
           app/oauth_client.py
           app/oauth_direct_account_authority.py
+          app/premium_access_api.py
+          app/premium_access_models.py
+          app/premium_access_service.py
+          app/premium_worker_guard.py
           app/public_websocket_resilience.py
           app/real_demo_trading_support.py
           app/seamless_account_switch.py
@@ -199,6 +209,7 @@ jobs:
         run: |
           python -m unittest -q tests.test_full_vps_hosting
           python -m unittest -q tests.test_persistent_scheduler_action5
+          python -m unittest -q tests.test_premium_access_action6a
           python -m unittest -q tests.test_account_bound_risk_and_ws_continuity
           python -m unittest -q tests.test_custom_direct_runtime
           python -m unittest -q tests.test_custom_strategy_instant_start
@@ -285,6 +296,7 @@ jobs:
           grep -Fq '"oauth_base": "/oauth"' dist/vps-build.json
           grep -Fq '"authenticated_ui": "automation-home-action5-v1"' dist/vps-build.json
           grep -Fq '"schedule_execution": "persistent-server-scheduler-existing-worker-authority-v1"' dist/vps-build.json
+          grep -Fq '"premium_access": "weekly-linked-options-server-gate-action6a-v1"' dist/vps-build.json
           grep -Fq '/automation-scheduler-action5.js?v=20260817-1' dist/index.html
           grep -Fq '/automation-scheduler-action5.css?v=20260817-1' dist/index.html
           test -f dist/automation-scheduler-action5.js
