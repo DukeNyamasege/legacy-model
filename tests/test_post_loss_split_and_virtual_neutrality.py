@@ -10,9 +10,10 @@ from app.custom_virtual_post_loss_barrier_authority import _tick_epoch
 ROOT = Path(__file__).resolve().parents[1]
 CAP_AUTHORITY = ROOT / "app" / "custom_split_cap_defaults_authority.py"
 VIRTUAL_AUTHORITY = ROOT / "app" / "custom_virtual_post_loss_barrier_authority.py"
+TRADE_CUTOFF_AUTHORITY = ROOT / "app" / "final_trade_history_cutoff_authority.py"
 WORKER = ROOT / "app" / "custom_strategy_worker.py"
-LEGACY_KPI_JS = ROOT / "dashboard" / "virtual-kpi-neutrality.js"
 FINAL_UI_JS = ROOT / "dashboard" / "final-ui-shell-v2.js"
+PREMIUM_JS = ROOT / "dashboard" / "final-premium-6f3.js"
 INDEX = ROOT / "dashboard" / "index.html"
 
 
@@ -58,15 +59,17 @@ class PostLossSplitAndVirtualNeutralityTests(unittest.TestCase):
         self.assertIn("split_cap_defaults=canonical_10pct_and_0_50_reserve", source)
         self.assertIn("virtual_entry=real_position_settled_then_future_qualified_tick", source)
 
-    def test_historical_virtual_kpi_logic_remains_available_as_reference(self) -> None:
-        source = LEGACY_KPI_JS.read_text(encoding="utf-8")
-        self.assertIn("function isVirtual(row)", source)
-        self.assertIn("allRows.filter((row) => !isVirtual(row))", source)
-        self.assertIn('row.trade_kind || ""', source)
-        self.assertNotIn("payload.trades =", source)
+    def test_virtual_kpi_overlay_is_removed_and_server_summary_is_authoritative(self) -> None:
+        source = TRADE_CUTOFF_AUTHORITY.read_text(encoding="utf-8")
+        self.assertFalse((ROOT / "dashboard" / "virtual-kpi-neutrality.js").exists())
+        self.assertIn("cutoff_fast_trade_payload", source)
+        self.assertIn("cutoff_me_payload", source)
+        self.assertIn("VirtualTrade.created_at >= cutoff", source)
+        self.assertIn('"unbounded_post_cutoff_database_aggregate"', source)
 
     def test_new_home_kpis_use_unbounded_server_summary_not_visible_rows(self) -> None:
         shell = FINAL_UI_JS.read_text(encoding="utf-8")
+        premium = PREMIUM_JS.read_text(encoding="utf-8")
         index = INDEX.read_text(encoding="utf-8")
         metrics = shell.split("function metrics()", 1)[1].split("function home()", 1)[0]
 
@@ -83,8 +86,10 @@ class PostLossSplitAndVirtualNeutralityTests(unittest.TestCase):
 
         self.assertNotIn("virtual-kpi-neutrality.js", index)
         self.assertNotIn("netlify-realtime-client.js", index)
-        self.assertIn("vps-realtime-client-v2.js?v=20260817-6f2-1", index)
-        self.assertIn("final-ui-shell-v2.js?v=20260817-6f2-1", index)
+        self.assertNotIn('<script src="/vps-realtime-client-v2.js?v=20260817-6f2-1" defer>', index)
+        self.assertNotIn('<script src="/final-ui-shell-v2.js?v=20260817-6f2-1" defer>', index)
+        self.assertIn("vps-realtime-client-v2.js?v=20260817-6f2-1", premium)
+        self.assertIn("final-ui-shell-v2.js?v=20260817-6f2-1", premium)
         self.assertNotIn("final-ui-shell-v1.js", index)
 
 
