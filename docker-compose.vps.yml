@@ -12,6 +12,21 @@ services:
     environment:
       FRONTEND_HOSTING_MODE: vps
 
+      # All components now live on the same VPS. The base Compose values were
+      # deliberately conservative for the older remote frontend/backend split and
+      # allowed only two simultaneous private WebSocket handshakes. With 75
+      # accounts and 10-20s provider handshakes that serialized startup into
+      # minutes. Use bounded VPS-specific capacity while keeping the provider
+      # 429/1015 rate-limit circuit unchanged.
+      ACCOUNT_REFRESH_INTERVAL_SECONDS: ${VPS_ACCOUNT_REFRESH_INTERVAL_SECONDS:-1}
+      DERIV_HTTP_CONNECTOR_LIMIT: ${VPS_DERIV_HTTP_CONNECTOR_LIMIT:-24}
+      DERIV_HTTP_LIMIT_PER_HOST: ${VPS_DERIV_HTTP_LIMIT_PER_HOST:-12}
+      DERIV_HTTP_CONCURRENCY: ${VPS_DERIV_HTTP_CONCURRENCY:-12}
+      PRIVATE_WS_CONNECT_INTERVAL_SECONDS: ${VPS_PRIVATE_WS_CONNECT_INTERVAL_SECONDS:-0.10}
+      PRIVATE_WS_HANDSHAKE_CONCURRENCY: ${VPS_PRIVATE_WS_HANDSHAKE_CONCURRENCY:-12}
+      PRIVATE_WS_OTP_FAILURE_BACKOFF_SECONDS: ${VPS_PRIVATE_WS_OTP_FAILURE_BACKOFF_SECONDS:-1.5}
+      VPS_PRIVATE_WS_TRANSIENT_BACKOFF_MAX_SECONDS: ${VPS_PRIVATE_WS_TRANSIENT_BACKOFF_MAX_SECONDS:-12}
+
   frontend:
     build:
       context: .
