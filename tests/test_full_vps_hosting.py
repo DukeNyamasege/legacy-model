@@ -133,6 +133,36 @@ class FullVpsHostingTests(unittest.TestCase):
         self.assertLess(stampede, low_latency)
         self.assertLess(low_latency, bot)
 
+    def test_clean_reset_preserves_history_and_invalidates_sessions(self) -> None:
+        reset = (ROOT / "scripts" / "reset_all_user_sessions.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("delete(ClientSession)", reset)
+        self.assertIn("delete(OAuthLoginState)", reset)
+        self.assertIn("_hard_stop(", reset)
+        self.assertIn("mark_history_reset=False", reset)
+        self.assertIn("trade_history_preserved=true", reset)
+        self.assertNotIn("delete(Trade)", reset)
+        self.assertNotIn("delete(ManagedAccount)", reset)
+
+    def test_vps_login_and_autotrade_telegram_observability_is_final(self) -> None:
+        source = (ROOT / "app" / "vps_session_observability.py").read_text(
+            encoding="utf-8"
+        )
+        entry = (ROOT / "app" / "vps_backend_api.py").read_text(encoding="utf-8")
+        compose = (ROOT / "docker-compose.vps.yml").read_text(encoding="utf-8")
+
+        self.assertIn("DERIV USER LOGGED IN", source)
+        self.assertIn("DEMO/DOT", source)
+        self.assertIn("REAL/ROT", source)
+        self.assertIn("AUTO TRADE STARTED", source)
+        self.assertIn("/oauth/callback", source)
+        self.assertIn("/me/auto-trade", source)
+        self.assertIn("/me/resume-trading", source)
+        self.assertIn("FRESH_USER_LOGIN_SESSION_CREATED", source)
+        self.assertIn("install_vps_session_observability(app)", entry)
+        self.assertIn("VPS_TELEGRAM_NOTIFICATIONS_SUSPENDED:-false", compose)
+
 
 if __name__ == "__main__":
     unittest.main()
