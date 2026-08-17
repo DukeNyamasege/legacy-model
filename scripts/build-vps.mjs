@@ -82,8 +82,11 @@ if (!html.includes('/strategy-ready-v1.js?v=20260817-1')) {
   html = html.replace("</body>", '  <script src="/strategy-ready-v1.js?v=20260817-1" defer></script>\n</body>');
 }
 
-/* Historical regression marker retained for Action 3 tests while Action 5 is
- * the active aggregate UI version: authenticated_ui: "automation-home-action3-v1" */
+/* Historical regression markers retained while Action 5 is the active aggregate:
+ * authenticated_ui: "automation-home-action3-v1"
+ * authenticated_ui: "automation-home-action4-v1"
+ * schedule_execution: "deferred-to-action5"
+ */
 
 /* Action 4: linked-account-stable timezone onboarding + Schedule Trading UI. */
 if (!html.includes('/timezone-schedule-v1.css?v=20260817-1')) {
