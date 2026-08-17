@@ -293,6 +293,8 @@
     runPanelTab: "summary",
     scheduleDraft: null,
     editingUntil: 0,
+    renderedRoute: "",
+    scrollPositions: {},
   };
   applyTheme(state.theme);
 
@@ -341,6 +343,27 @@
       && ["builder", "ai", "schedule", "timezone"].includes(state.route)
       && (Date.now() < state.editingUntil || activeEditable())
     );
+  }
+
+  function scrollHost() {
+    return root.querySelector(".app-main") || document.scrollingElement || document.documentElement;
+  }
+
+  function rememberScroll(route = state.renderedRoute || state.route) {
+    if (!route) return 0;
+    const top = Number(scrollHost()?.scrollTop || 0);
+    state.scrollPositions[route] = top;
+    return top;
+  }
+
+  function restoreScroll(route, top) {
+    const target = Number.isFinite(Number(top)) ? Number(top) : 0;
+    const apply = () => {
+      const host = scrollHost();
+      if (host) host.scrollTop = target;
+    };
+    apply();
+    requestAnimationFrame(apply);
   }
 
   function esc(value) {
@@ -1612,16 +1635,23 @@
   }
 
   function render() {
+    const previousRoute = state.renderedRoute || state.route;
+    const previousScroll = rememberScroll(previousRoute);
     if (!state.loaded) {
       root.innerHTML = `<div class="boot-screen"><span class="brand-mark">D</span><b>DerivAdmin</b><small>Loading automation workspace…</small></div>`;
+      state.renderedRoute = "";
       return;
     }
-    if (!state.me?.authenticated) { root.innerHTML = landing(); bind(); return; }
+    if (!state.me?.authenticated) { root.innerHTML = landing(); bind(); state.renderedRoute = "landing"; return; }
     const shouldOnboard = state.preferences?.requires_timezone_onboarding && state.route !== "timezone";
     if (shouldOnboard) state.route = "timezone";
     const pages = { home, builder: builderPage, ai: aiPage, ready: readyPage, schedule: schedulePage, profile: profilePage, trades: tradesPage, timezone: timezonePage };
     root.innerHTML = pages[state.route]();
     bind();
+    const nextRoute = state.route;
+    const nextScroll = previousRoute === nextRoute ? previousScroll : (state.scrollPositions[nextRoute] || 0);
+    state.renderedRoute = nextRoute;
+    restoreScroll(nextRoute, nextScroll);
   }
 
   async function refresh({ quiet = false } = {}) {
@@ -1788,6 +1818,8 @@
   }
 
   function bind() {
+    const host = root.querySelector(".app-main");
+    if (host) host.addEventListener("scroll", () => { state.scrollPositions[state.route] = host.scrollTop; }, { passive: true });
     root.querySelectorAll("[data-route]").forEach((el) => el.addEventListener("click", () => go(el.dataset.route)));
     root.querySelectorAll("input, textarea, select").forEach((field) => {
       field.addEventListener("focus", markEditing);
@@ -2017,5 +2049,5 @@
 
   render();
   refresh();
-  window.FOA_FINAL_UI = Object.freeze({ version: "20260818-local-ui-11", refresh, go });
+  window.FOA_FINAL_UI = Object.freeze({ version: "20260818-local-ui-12", refresh, go });
 })();

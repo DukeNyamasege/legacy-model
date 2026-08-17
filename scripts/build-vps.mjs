@@ -87,12 +87,12 @@ const required = [
   '<meta name="frontend-runtime" content="full-vps-final-ui-6f3">',
   '<meta name="frontend-authority" content="final-ui-shell-v2">',
   'meta name="stream-base-url"',
-  '/vps-api-boundary-v2.js?v=20260818-local-ui-11',
+  '/vps-api-boundary-v2.js?v=20260818-local-ui-12',
   '/deriv-quill-icons-v2.js?v=2.4.18',
   '/final-ui-shell-v2.css?v=20260817-6f2-1',
   '/final-premium-6f3.css?v=20260817-6f3-1',
-  '/mobile-reference-ui.css?v=20260818-local-ui-11',
-  '/final-premium-6f3.js?v=20260818-local-ui-11',
+  '/mobile-reference-ui.css?v=20260818-local-ui-12',
+  '/final-premium-6f3.js?v=20260818-local-ui-12',
 ];
 for (const marker of required) {
   if (!html.includes(marker)) throw new Error(`Action 6F-3 VPS marker missing: ${marker}`);

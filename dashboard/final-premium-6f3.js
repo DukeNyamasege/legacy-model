@@ -4,7 +4,7 @@
   if (window.__DERIVADMIN_FINAL_PREMIUM_6F3__) return;
   window.__DERIVADMIN_FINAL_PREMIUM_6F3__ = true;
 
-  const VERSION = "20260818-testing-free-3";
+  const VERSION = "20260818-testing-free-4";
   const TESTING_FREE_ACCESS = true;
   const IDEMPOTENCY_KEY = "derivadmin-premium-mpesa-idempotency-6f3";
   const POLL_MS = 2500;
@@ -133,7 +133,7 @@
       state.realtimeLoaded = true;
     }
     if (!state.shellLoaded) {
-      await loadScript("/final-ui-shell-v2.js?v=20260818-local-ui-11", "final-ui-shell-v2");
+      await loadScript("/final-ui-shell-v2.js?v=20260818-local-ui-12", "final-ui-shell-v2");
       state.shellLoaded = true;
     } else if (window.FOA_FINAL_UI?.refresh) {
       await window.FOA_FINAL_UI.refresh({ quiet: true });
