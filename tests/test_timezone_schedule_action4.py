@@ -24,18 +24,20 @@ class TimezoneScheduleAction4Tests(unittest.TestCase):
         self.assertEqual(meta["utc_offset"], "UTC+03:00")
 
     def test_timezone_preference_key_is_stable_and_bounded(self) -> None:
-        identity = "oauth_refresh:example-user-identity"
-        first = _preference_key(identity)
-        second = _preference_key(identity)
+        account_id = "CR1234567"
+        first = _preference_key(account_id)
+        second = _preference_key(account_id.lower())
         self.assertEqual(first, second)
         self.assertTrue(first.startswith("automation_timezone:"))
         self.assertLessEqual(len(first), 80)
 
-    def test_backend_preferences_are_oauth_identity_scoped(self) -> None:
+    def test_backend_preferences_are_stable_across_linked_options_accounts(self) -> None:
         source = (ROOT / "app" / "automation_preferences_api.py").read_text(encoding="utf-8")
         entry = (ROOT / "app" / "vps_backend_api.py").read_text(encoding="utf-8")
         self.assertIn("base_api.login_identity_from_payload(payload)", source)
-        self.assertIn('scope": "oauth_identity"', source)
+        self.assertIn('scope": "linked_options_accounts"', source)
+        self.assertIn("OAuth tokens can rotate at a later login", source)
+        self.assertIn("for account_id in account_ids", source)
         self.assertIn('@app.get("/me/automation-preferences")', source)
         self.assertIn('@app.post("/me/automation-preferences/timezone")', source)
         self.assertIn("ZoneInfo(name)", source)
@@ -99,7 +101,7 @@ class TimezoneScheduleAction4Tests(unittest.TestCase):
         self.assertIn("/timezone-schedule-v1.js?v=20260817-2", build)
         self.assertIn("/timezone-home-sync-v1.js?v=20260817-1", build)
         self.assertIn('authenticated_ui: "automation-home-action4-v1"', build)
-        self.assertIn('automation_timezone: "oauth-identity-global-africa-nairobi-default-v1"', build)
+        self.assertIn('automation_timezone: "linked-options-global-africa-nairobi-default-v1"', build)
         self.assertIn('schedule_execution: "deferred-to-action5"', build)
         self.assertIn("Africa/Nairobi (EAT) default", build)
 
