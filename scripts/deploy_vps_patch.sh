@@ -97,6 +97,7 @@ deploy_api_blue_green() {
 
   log "Starting green API candidate on loopback port $GREEN_PORT"
   "${COMPOSE[@]}" run -d --name "$GREEN_NAME" --no-deps \
+    -e TELEGRAM_NOTIFICATIONS_SUSPENDED=true \
     -p "127.0.0.1:${GREEN_PORT}:8080" api >/dev/null
 
   if ! wait_http "http://127.0.0.1:${GREEN_PORT}/health/live" 60 1; then
