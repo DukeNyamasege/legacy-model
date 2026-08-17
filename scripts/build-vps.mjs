@@ -1,10 +1,12 @@
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { build as esbuild } from "esbuild";
 
 const root = resolve(import.meta.dirname, "..");
 const dashboard = resolve(root, "dashboard");
 const output = resolve(root, "dist");
 const indexPath = resolve(output, "index.html");
+const bundledIconExporter = resolve(root, "scripts", ".quill-export-bundle-6f2.mjs");
 
 const publicOrigin = String(
   process.env.PUBLIC_ORIGIN
@@ -32,6 +34,7 @@ if (parsedStream.protocol !== "wss:" && parsedStream.hostname !== "localhost") {
 }
 
 await rm(output, { recursive: true, force: true });
+await rm(bundledIconExporter, { force: true });
 await mkdir(output, { recursive: true });
 
 // 6F-2 remains a direct-VPS clean shell. Historical dashboard sources can stay in
@@ -47,9 +50,25 @@ for (const asset of productionAssets) {
   await copyFile(resolve(dashboard, asset), resolve(output, asset));
 }
 
-// Export the official pinned Deriv Quill React components to static SVG markup.
-// The browser receives local VPS assets only; it has no npm/CDN runtime dependency.
-await import("./export-deriv-quill-icons-v2.mjs");
+// @deriv/quill-icons is the official ESM package. Its generated category barrels
+// contain extensionless internal specifiers which Node 24 does not execute
+// directly. Bundle the build-time exporter first so esbuild resolves those
+// official modules exactly; no substitute SVGs or browser CDN are introduced.
+await esbuild({
+  entryPoints: [resolve(root, "scripts", "export-deriv-quill-icons-v2.mjs")],
+  outfile: bundledIconExporter,
+  bundle: true,
+  platform: "node",
+  format: "esm",
+  target: "node22",
+  packages: "bundle",
+  logLevel: "warning",
+});
+try {
+  await import(`${new URL(`file://${bundledIconExporter}`).href}?build=${Date.now()}`);
+} finally {
+  await rm(bundledIconExporter, { force: true });
+}
 
 let html = await readFile(indexPath, "utf8");
 html = html
@@ -121,6 +140,7 @@ await writeFile(
     run_panel_source: "me-trades-today-real-and-virtual-stream",
     deriv_icons: "official-quill-icons-2.4.18-build-time-static-svg",
     deriv_icon_repository: "deriv-com/quill-icons",
+    deriv_icon_build_resolution: "esbuild-bundled-official-esm-v1",
     linked_account_selector: "specific-linked-options-account-v1",
     public_origin: publicOrigin,
     api_base: "/api",
