@@ -11,8 +11,8 @@ export ALLOW_LEGACY_GLOBAL_TOKENS=true
 export COPYTRADING_ALLOW_LEGACY_GLOBAL_TOKENS=true
 export FRONTEND_ORIGINS="http://127.0.0.1:8080,http://localhost:8080,https://derivadmin.site,https://legacymodel.netlify.app"
 
-# These dashboard guards are part of the execution/editing safety surface. A
-# malformed script must fail the same release gate that validates the worker.
+# These dashboard guards are part of the execution/editing/scheduling safety
+# surface. A malformed script must fail the same release gate as the worker.
 node --check dashboard/execution-status-banner.js
 node --check dashboard/builder-edit-stability.js
 node --check dashboard/runtime-ux-authority.js
@@ -22,12 +22,14 @@ node --check dashboard/text-to-strategy-v1.js
 node --check dashboard/strategy-ready-v1.js
 node --check dashboard/timezone-schedule-v1.js
 node --check dashboard/timezone-home-sync-v1.js
+node --check dashboard/automation-scheduler-action5.js
 node --check dashboard/prelogin-landing-v2.js
 
 exec python -m unittest -q \
   tests.test_text_to_strategy_action2 \
   tests.test_strategy_ready_action3 \
   tests.test_timezone_schedule_action4 \
+  tests.test_persistent_scheduler_action5 \
   tests.test_execution_stop_reason_authority \
   tests.test_custom_execution_consistency_authority \
   tests.test_post_loss_split_and_virtual_neutrality \
