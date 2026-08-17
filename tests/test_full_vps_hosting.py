@@ -74,6 +74,50 @@ class FullVpsHostingTests(unittest.TestCase):
         self.assertIn("TRUSTED_HOSTS=derivadmin.site,www.derivadmin.site", env)
         self.assertNotIn("https://your-site.netlify.app", env)
 
+    def test_full_vps_uses_bounded_parallel_private_bootstrap(self) -> None:
+        compose = (ROOT / "docker-compose.vps.yml").read_text(encoding="utf-8")
+        self.assertIn("VPS_ACCOUNT_REFRESH_INTERVAL_SECONDS:-1", compose)
+        self.assertIn("VPS_DERIV_HTTP_CONNECTOR_LIMIT:-24", compose)
+        self.assertIn("VPS_DERIV_HTTP_LIMIT_PER_HOST:-12", compose)
+        self.assertIn("VPS_DERIV_HTTP_CONCURRENCY:-12", compose)
+        self.assertIn("VPS_PRIVATE_WS_CONNECT_INTERVAL_SECONDS:-0.10", compose)
+        self.assertIn("VPS_PRIVATE_WS_HANDSHAKE_CONCURRENCY:-12", compose)
+        self.assertIn("VPS_PRIVATE_WS_OTP_FAILURE_BACKOFF_SECONDS:-1.5", compose)
+        self.assertIn("VPS_PRIVATE_WS_TRANSIENT_BACKOFF_MAX_SECONDS:-12", compose)
+
+        # The old base values remain as conservative non-VPS fallbacks. Full VPS
+        # must override them rather than deleting rate-limit protection globally.
+        base = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        self.assertIn("PRIVATE_WS_HANDSHAKE_CONCURRENCY", base)
+        self.assertIn("PRIVATE_WS_RATE_LIMIT_BACKOFF_SECONDS", base)
+        self.assertIn("PRIVATE_WS_MAX_BACKOFF_SECONDS", base)
+
+    def test_low_latency_authority_preserves_b315_and_rate_limit_safety(self) -> None:
+        source = (ROOT / "app" / "vps_low_latency_runtime.py").read_text(
+            encoding="utf-8"
+        )
+        worker = (ROOT / "app" / "custom_strategy_worker.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("happy_eyeballs_delay=0.25", source)
+        self.assertIn("interleave=1", source)
+        self.assertIn("_low_latency_normal_backoff", source)
+        self.assertIn("VPS_PRIVATE_WS_TRANSIENT_BACKOFF_MAX_SECONDS", source)
+        self.assertIn("provider_rate_limit_backoff=preserved", source)
+        self.assertNotIn("private_ws._rate_backoff =", source)
+        self.assertIn("_low_latency_fast_runtime_accounts", source)
+        self.assertIn('current_status in {"starting", "validating"}', source)
+        self.assertIn("market_selection_deduplicated=true", source)
+        self.assertIn("_low_latency_contract_snapshot_once", source)
+        self.assertIn("CONTRACT_SNAPSHOT_RESPONSE_TIMEOUT_SECONDS = 5.0", source)
+
+        stampede = worker.index("install_custom_strategy_connection_stampede_guard()")
+        low_latency = worker.index("install_vps_low_latency_runtime()")
+        bot = worker.index("bot = RFDir5TradingBot()")
+        self.assertLess(stampede, low_latency)
+        self.assertLess(low_latency, bot)
+
 
 if __name__ == "__main__":
     unittest.main()
