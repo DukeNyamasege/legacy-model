@@ -20,11 +20,14 @@ node --check dashboard/virtual-kpi-neutrality.js
 node --check dashboard/automation-home-v1.js
 node --check dashboard/text-to-strategy-v1.js
 node --check dashboard/strategy-ready-v1.js
+node --check dashboard/timezone-schedule-v1.js
+node --check dashboard/timezone-home-sync-v1.js
 node --check dashboard/prelogin-landing-v2.js
 
 exec python -m unittest -q \
   tests.test_text_to_strategy_action2 \
   tests.test_strategy_ready_action3 \
+  tests.test_timezone_schedule_action4 \
   tests.test_execution_stop_reason_authority \
   tests.test_custom_execution_consistency_authority \
   tests.test_post_loss_split_and_virtual_neutrality \
