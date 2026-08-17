@@ -78,7 +78,6 @@ class FinalUi6F2Tests(unittest.TestCase):
             "managed_account_id",
         ):
             self.assertIn(text, js)
-        # Account icons are selected dynamically from the linked account type.
         self.assertIn('state.me?.account_type === "real" ? "realAccount" : "demoAccount"', js)
         self.assertIn('selected.account_type === "real" ? "realAccount" : "demoAccount"', js)
         self.assertIn('type === "real" ? "realAccount" : "demoAccount"', js)
@@ -108,7 +107,10 @@ class FinalUi6F2Tests(unittest.TestCase):
         for key in ("over", "under", "demoAccount", "realAccount", "usd", "volatility"):
             self.assertIn(f"{key}:", exporter)
         self.assertIn('deriv_icons: "official-quill-icons-2.4.18-build-time-static-svg"', build)
-        self.assertIn('await import("./export-deriv-quill-icons-v2.mjs")', build)
+        self.assertIn('import { build as esbuild } from "esbuild"', build)
+        self.assertIn('entryPoints: [resolve(root, "scripts", "export-deriv-quill-icons-v2.mjs")]', build)
+        self.assertIn('packages: "bundle"', build)
+        self.assertIn('deriv_icon_build_resolution: "esbuild-bundled-official-esm-v1"', build)
 
     def test_specific_linked_account_switch_is_selection_only(self) -> None:
         source = (ROOT / "app" / "final_linked_accounts_6f2.py").read_text(encoding="utf-8")
