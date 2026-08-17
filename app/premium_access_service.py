@@ -184,32 +184,49 @@ def activate_weekly_access(
     auto_renew_enabled: bool,
     provider_customer_ref: str = "",
     provider_subscription_ref: str = "",
+    renewal_preference: str | None = None,
 ) -> PremiumAccessState:
-    """Future payment adapters call this only after server-side verification.
+    """Activate exactly seven days after a server-verified payment.
 
-    Every successful payment owns exactly seven days measured from the verified
-    payment timestamp. There is no grace period and no browser-controlled clock.
+    The provider/payment reference pair is idempotent. A webhook replay can never
+    grant a second week or move the expiry timestamp, even if the provider retries
+    the same successful transaction with a slightly different delivery timestamp.
     """
 
     starts_at = _as_utc(paid_at)
     if starts_at is None:
         raise ValueError("A verified payment timestamp is required")
+    normalized_provider = str(provider or "")[:32]
+    normalized_reference = str(payment_reference or "")[:160]
+    if not normalized_provider or not normalized_reference:
+        raise ValueError("Verified provider and payment reference are required")
     ends_at = starts_at + timedelta(days=WEEKLY_PERIOD_DAYS)
     now = utc_now()
     with database.session() as session:
         customer = session.get(PremiumCustomer, str(customer_id), with_for_update=True)
         if customer is None:
             raise ValueError("Premium customer was not found")
+
+        if (
+            str(customer.last_payment_provider or "") == normalized_provider
+            and str(customer.last_payment_reference or "") == normalized_reference
+            and customer.current_period_start is not None
+            and customer.current_period_end is not None
+        ):
+            return effective_access_state(customer, now=now)
+
         customer.status = "active"
         customer.plan_code = PLAN_CODE
         customer.current_period_start = starts_at
         customer.current_period_end = ends_at
         customer.auto_renew_enabled = bool(auto_renew_enabled)
-        customer.renewal_provider = str(provider or "")[:32]
+        customer.renewal_provider = normalized_provider
+        if renewal_preference is not None:
+            customer.renewal_preference = str(renewal_preference or "")[:32]
         customer.provider_customer_ref = str(provider_customer_ref or "")[:160]
         customer.provider_subscription_ref = str(provider_subscription_ref or "")[:160]
-        customer.last_payment_provider = str(provider or "")[:32]
-        customer.last_payment_reference = str(payment_reference or "")[:160]
+        customer.last_payment_provider = normalized_provider
+        customer.last_payment_reference = normalized_reference
         customer.renewal_failed_at = None
         customer.cancellation_requested_at = None
         customer.updated_at = now
