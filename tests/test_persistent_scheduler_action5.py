@@ -45,13 +45,39 @@ class PersistentSchedulerAction5Tests(unittest.TestCase):
                         "operator": ">",
                         "threshold": 72,
                     },
-                    "tickDirectionRule": {"enabled": False, "window": 3, "direction": "rising"},
-                    "trade": {"group": "over_under", "side": "over", "prediction": 2},
-                    "reanalyze": {"mode": "after_every_trade", "losses": 1, "wins": 1},
-                    "money": {"stake": 0.5, "takeProfit": 10, "stopLoss": 20, "martingale": 1.5, "ticks": 1},
-                    "virtualHook": {"enabled": True, "enterAfterLosses": 2, "exitAfterConsecutiveWins": 2},
+                    "tickDirectionRule": {
+                        "enabled": False,
+                        "window": 3,
+                        "direction": "rising",
+                    },
+                    "trade": {
+                        "group": "over_under",
+                        "side": "over",
+                        "prediction": 2,
+                    },
+                    "reanalyze": {
+                        "mode": "after_every_trade",
+                        "losses": 1,
+                        "wins": 1,
+                    },
+                    "money": {
+                        "stake": 0.5,
+                        "takeProfit": 10,
+                        "stopLoss": 20,
+                        "martingale": 1.5,
+                        "ticks": 1,
+                    },
+                    "virtualHook": {
+                        "enabled": True,
+                        "enterAfterLosses": 2,
+                        "exitAfterConsecutiveWins": 2,
+                    },
                 },
-                "result": {"routingEnabled": False, "recoveryMode": "split", "splitCount": 2},
+                "result": {
+                    "routingEnabled": False,
+                    "recoveryMode": "split",
+                    "splitCount": 2,
+                },
             },
             stake=0.75,
             take_profit=12.0,
@@ -76,12 +102,22 @@ class PersistentSchedulerAction5Tests(unittest.TestCase):
                     "strategyMode": "percentage",
                     "marketMode": "all",
                     "markets": [],
-                    "percentageRule": {"target": "over", "value": 1, "window": 1000, "operator": ">", "threshold": 80},
+                    "percentageRule": {
+                        "target": "over",
+                        "value": 1,
+                        "window": 1000,
+                        "operator": ">",
+                        "threshold": 80,
+                    },
                     "tickDirectionRule": {"enabled": False},
                     "trade": {"side": "over", "prediction": 1},
                     "reanalyze": {"mode": "after_every_trade"},
                     "money": {"martingale": 2.1, "ticks": 1},
-                    "virtualHook": {"enabled": True, "enterAfterLosses": 2, "exitAfterConsecutiveWins": 1},
+                    "virtualHook": {
+                        "enabled": True,
+                        "enterAfterLosses": 2,
+                        "exitAfterConsecutiveWins": 1,
+                    },
                 },
                 "result": {
                     "routingEnabled": True,
@@ -92,7 +128,11 @@ class PersistentSchedulerAction5Tests(unittest.TestCase):
                         "prediction": 4,
                         "durationTicks": 1,
                         "analysisMode": "last_digit",
-                        "lastRule": {"window": 5, "operator": "<=", "value": 5},
+                        "lastRule": {
+                            "window": 5,
+                            "operator": "<=",
+                            "value": 5,
+                        },
                         "tickDirectionRule": {"enabled": False},
                     },
                 },
@@ -108,78 +148,135 @@ class PersistentSchedulerAction5Tests(unittest.TestCase):
         self.assertEqual(routing["after_loss"]["conditions"][0]["window"], 5)
 
     def test_persistent_model_and_migration_are_restart_safe(self) -> None:
-        model = (ROOT / "app" / "automation_schedule_models.py").read_text(encoding="utf-8")
-        migration = (ROOT / "migrations" / "versions" / "20260817_0022_persistent_automation_schedules.py").read_text(encoding="utf-8")
-        self.assertIn('class AutomationSchedule(Base)', model)
-        self.assertIn('status: Mapped[str]', model)
-        self.assertIn('claim_expires_at', model)
-        self.assertIn('scheduled_for_utc', model)
+        model = (ROOT / "app" / "automation_schedule_models.py").read_text(
+            encoding="utf-8"
+        )
+        migration = (
+            ROOT
+            / "migrations"
+            / "versions"
+            / "20260817_0022_persistent_automation_schedules.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("class AutomationSchedule(Base)", model)
+        self.assertIn("status: Mapped[str]", model)
+        self.assertIn("claim_expires_at", model)
+        self.assertIn("scheduled_for_utc", model)
         self.assertIn('revision = "20260817_0022"', migration)
         self.assertIn('down_revision = "20260812_0021"', migration)
-        self.assertIn('ix_automation_schedule_due', migration)
+        self.assertIn("ix_automation_schedule_due", migration)
 
     def test_scheduler_uses_existing_execution_authority_and_overlap_policies(self) -> None:
-        source = (ROOT / "app" / "automation_scheduler_action5.py").read_text(encoding="utf-8")
+        source = (ROOT / "app" / "automation_scheduler_action5.py").read_text(
+            encoding="utf-8"
+        )
         for marker in (
             'VALID_OVERLAP_POLICIES = {"wait", "skip", "replace"}',
-            'write_custom_strategy',
-            '_write_custom_martingale',
-            'write_result_routing',
-            '_reset_risk_state',
+            "write_custom_strategy",
+            "_write_custom_martingale",
+            "write_result_routing",
+            "_reset_risk_state",
+            "_set_stopped(session, account)",
             'account.execution_status = "starting"',
-            'account.enabled = True',
-            'existing_custom_strategy_worker',
-            'existing_session_risk_stop_authority',
-            'with_for_update(skip_locked=True)',
-            'AUTOMATION_SCHEDULE_LATE_GRACE_SECONDS',
+            "account.enabled = True",
+            "existing_custom_strategy_worker",
+            "existing_session_risk_stop_authority",
+            "with_for_update(skip_locked=True)",
+            "AUTOMATION_SCHEDULE_LATE_GRACE_SECONDS",
+            "execution_requires_new_token",
+            "execution_token_was_rejected",
         ):
             self.assertIn(marker, source)
+        # Replace must remain in the same SQLAlchemy transaction. A nested call
+        # to account_lifecycle.stop_account would self-block on PostgreSQL.
+        self.assertNotIn("stop_account(", source)
         self.assertNotIn('requests.post("https://api.deriv', source)
-        self.assertNotIn('proposal_open_contract', source)
+        self.assertNotIn("proposal_open_contract", source)
 
     def test_scheduler_api_is_server_owned_and_cancel_is_account_scoped(self) -> None:
-        source = (ROOT / "app" / "automation_scheduler_action5.py").read_text(encoding="utf-8")
+        source = (ROOT / "app" / "automation_scheduler_action5.py").read_text(
+            encoding="utf-8"
+        )
         entry = (ROOT / "app" / "vps_backend_api.py").read_text(encoding="utf-8")
         self.assertIn('@app.get("/me/automation-schedules")', source)
         self.assertIn('@app.post("/me/automation-schedules")', source)
-        self.assertIn('@app.post("/me/automation-schedules/{schedule_id}/cancel")', source)
-        self.assertIn('int(row.managed_account_id) != int(account["id"])', source)
-        self.assertIn('app.router.lifespan_context = automation_scheduler_lifespan', source)
-        self.assertNotIn('add_event_handler(', source)
-        self.assertIn('install_automation_scheduler_action5(app)', entry)
+        self.assertIn(
+            '@app.post("/me/automation-schedules/{schedule_id}/cancel")',
+            source,
+        )
+        self.assertIn(
+            'int(row.managed_account_id) != int(account["id"])',
+            source,
+        )
+        self.assertIn(
+            "app.router.lifespan_context = automation_scheduler_lifespan",
+            source,
+        )
+        self.assertNotIn("add_event_handler(", source)
+        self.assertIn("install_automation_scheduler_action5(app)", entry)
+        # The complete API stack must exist before Action 5 imports/installs its
+        # final lifespan wrapper and route layer.
+        self.assertLess(
+            entry.index("from app.netlify_backend_api import app"),
+            entry.index("from app.automation_scheduler_action5 import"),
+        )
 
     def test_telegram_schedule_notifications_are_private_only(self) -> None:
-        source = (ROOT / "app" / "automation_scheduler_action5.py").read_text(encoding="utf-8")
-        self.assertIn('telegram_admin._send_private_sync', source)
-        self.assertIn('SCHEDULED TRADING SESSION STARTED', source)
-        self.assertIn('SCHEDULED TRADING SESSION FINISHED', source)
-        self.assertNotIn('/publish', source)
-        self.assertNotIn('send_channel', source)
+        source = (ROOT / "app" / "automation_scheduler_action5.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("telegram_admin._send_private_sync", source)
+        self.assertIn("SCHEDULED TRADING SESSION STARTED", source)
+        self.assertIn("SCHEDULED TRADING SESSION FINISHED", source)
+        self.assertIn("SCHEDULED TRADING SESSION CANCELLED", source)
+        self.assertNotIn("/publish", source)
+        self.assertNotIn("send_channel", source)
 
     def test_action5_frontend_replaces_local_staging_with_server_persistence(self) -> None:
-        js = (ROOT / "dashboard" / "automation-scheduler-action5.js").read_text(encoding="utf-8")
-        css = (ROOT / "dashboard" / "automation-scheduler-action5.css").read_text(encoding="utf-8")
-        self.assertIn('/me/automation-schedules', js)
-        self.assertIn('event.stopImmediatePropagation()', js)
-        self.assertIn('It will run even if this browser is closed', js)
-        self.assertIn('data-action5-cancel', js)
-        self.assertIn('foa-action5-trades-session', js)
-        self.assertIn('window.FOA_AUTOMATION_SCHEDULES', js)
-        self.assertNotIn('foa-staged-schedules-action4-v1', js)
-        self.assertIn('@media(max-width:500px)', css)
+        js = (ROOT / "dashboard" / "automation-scheduler-action5.js").read_text(
+            encoding="utf-8"
+        )
+        css = (ROOT / "dashboard" / "automation-scheduler-action5.css").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("/me/automation-schedules", js)
+        self.assertIn("event.stopImmediatePropagation()", js)
+        self.assertIn("It will run even if this browser is closed", js)
+        self.assertIn("data-action5-cancel", js)
+        self.assertIn("foa-action5-trades-session", js)
+        self.assertIn("window.FOA_AUTOMATION_SCHEDULES", js)
+        self.assertNotIn("foa-staged-schedules-action4-v1", js)
+        self.assertIn("@media(max-width:500px)", css)
+
+    def test_vps_build_exposes_full_built_in_strategy_snapshots(self) -> None:
+        build = (ROOT / "scripts" / "build-vps.mjs").read_text(encoding="utf-8")
+        self.assertIn(
+            '"builtIns: BUILT_INS.map((item) => clone(item)),"',
+            build,
+        )
+        self.assertIn(
+            'schedule_built_ins: "full-frozen-template-snapshots-v1"',
+            build,
+        )
+        self.assertIn(
+            "refusing an unsafe Action 5 build",
+            build,
+        )
 
     def test_vps_build_marks_action5_as_persistent_but_does_not_deploy(self) -> None:
         build = (ROOT / "scripts" / "build-vps.mjs").read_text(encoding="utf-8")
-        self.assertIn('/automation-scheduler-action5.css?v=20260817-1', build)
-        self.assertIn('/automation-scheduler-action5.js?v=20260817-1', build)
+        self.assertIn("/automation-scheduler-action5.css?v=20260817-1", build)
+        self.assertIn("/automation-scheduler-action5.js?v=20260817-1", build)
         self.assertIn('authenticated_ui: "automation-home-action5-v1"', build)
-        self.assertIn('persistent-server-scheduler-existing-worker-authority-v1', build)
-        self.assertIn('postgres-restart-safe-exactly-once-claim-v1', build)
-        # Build metadata may describe a future VPS runtime, but Action 5 code must
-        # never invoke deployment itself.
-        scheduler = (ROOT / "app" / "automation_scheduler_action5.py").read_text(encoding="utf-8")
-        self.assertNotIn('docker compose', scheduler)
-        self.assertNotIn('deploy_full_vps.sh', scheduler)
+        self.assertIn(
+            "persistent-server-scheduler-existing-worker-authority-v1",
+            build,
+        )
+        self.assertIn("postgres-restart-safe-exactly-once-claim-v1", build)
+        scheduler = (ROOT / "app" / "automation_scheduler_action5.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("docker compose", scheduler)
+        self.assertNotIn("deploy_full_vps.sh", scheduler)
 
 
 if __name__ == "__main__":
