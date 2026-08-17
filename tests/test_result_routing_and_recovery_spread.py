@@ -175,34 +175,35 @@ class ResultRoutingAndRecoverySpreadTests(unittest.TestCase):
             self.assertEqual(settings["split_count"], parts)
             self.assertEqual(settings["policy"], "split_exact_debt_recovery")
 
-    def test_final_ui_layers_are_wired_into_production_build(self) -> None:
+    def test_result_routing_backend_remains_but_retired_ui_is_not_loaded(self) -> None:
         worker = (ROOT / "app" / "custom_strategy_worker.py").read_text(encoding="utf-8")
         index = (ROOT / "dashboard" / "index.html").read_text(encoding="utf-8")
         ui = (ROOT / "dashboard" / "result-based-strategy.js").read_text(encoding="utf-8")
         ui_fix = (ROOT / "dashboard" / "result-ui-fixes.js").read_text(encoding="utf-8")
-        css_fix = (ROOT / "dashboard" / "result-ui-fixes.css").read_text(encoding="utf-8")
-        compact = (ROOT / "dashboard" / "result-based-mobile-compact.css").read_text(encoding="utf-8")
         prediction_ui = (ROOT / "dashboard" / "prediction-ui-fix.js").read_text(encoding="utf-8")
-        build = (ROOT / "scripts" / "build-netlify.mjs").read_text(encoding="utf-8")
+        build = (ROOT / "scripts" / "build-vps.mjs").read_text(encoding="utf-8")
 
+        # Execution/recovery authorities remain installed in the worker.
         self.assertIn("install_custom_strategy_result_router()", worker)
         self.assertIn("install_custom_split_recovery_authority()", worker)
-        self.assertIn("result-based-strategy.js", index)
-        self.assertIn("result-based-strategy.css", index)
+
+        # Historical UI source stays available as a reference during 6F, but the
+        # wiped presentation must never be loaded by the direct-VPS document.
         self.assertIn("Use a different strategy after a loss", ui)
         self.assertIn("Martingale Spread — exact debt", ui)
         self.assertIn("Recover loss in how many splits", ui_fix)
-        self.assertIn("recovered equally", ui_fix)
-        self.assertIn("result-routing-enabled:not(:checked)", compact)
-        self.assertIn("result-routing-toggle", css_fix)
-        self.assertIn("data-theme=light", css_fix)
         self.assertIn("most_appearing", prediction_ui)
         self.assertIn("second_most_appearing", prediction_ui)
-        self.assertIn("prediction-ui-fix.js", build)
-        self.assertIn("result-ui-fixes.js", build)
-        self.assertIn("result-ui-fixes.css", build)
-        self.assertIn("result-based-mobile-compact.css", build)
+        self.assertNotIn("result-based-strategy.js", index)
+        self.assertNotIn("result-based-strategy.css", index)
+        self.assertNotIn("result-ui-fixes.js", index)
+        self.assertNotIn("prediction-ui-fix.js", index)
+        self.assertIn('deployment_topology: "direct-vps-only"', build)
+        self.assertIn('ui_authority: "final-ui-shell-v1"', build)
+        self.assertNotIn("build-netlify.mjs", build)
 
+        # Keep the historical parsers syntactically valid until their controls are
+        # rebuilt into the new 6F-2 Strategy Builder.
         for relative in (
             "dashboard/prediction-ui-fix.js",
             "dashboard/result-ui-fixes.js",
