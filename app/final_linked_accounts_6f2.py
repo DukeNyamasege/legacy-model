@@ -140,7 +140,10 @@ def install_final_linked_accounts_6f2(app: Any) -> None:
             ],
         }
 
-    @app.post("/me/switch-account")
+    # This endpoint can deliberately return either a normal JSON mapping or a
+    # JSONResponse carrying the local-preview account cookie. FastAPI must not try
+    # to synthesize a Pydantic response model from that union at application import.
+    @app.post("/me/switch-account", response_model=None)
     def switch_linked_personal_account(
         request: Request,
         body: LinkedAccountSwitchRequest,
