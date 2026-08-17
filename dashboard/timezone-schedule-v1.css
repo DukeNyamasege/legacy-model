@@ -1,0 +1,339 @@
+/* Action 4 — mobile-first timezone onboarding + Schedule Trading */
+:root {
+  --sched-bg: #07111f;
+  --sched-panel: rgba(13, 27, 47, .92);
+  --sched-panel-soft: rgba(18, 36, 62, .72);
+  --sched-line: rgba(117, 165, 224, .18);
+  --sched-text: #f7fbff;
+  --sched-muted: #91a8c5;
+  --sched-blue: #168cff;
+  --sched-cyan: #1fd2ff;
+  --sched-purple: #8b5cff;
+  --sched-green: #24df8b;
+  --sched-red: #ff6683;
+}
+
+.foa-timezone-onboarding {
+  position: fixed;
+  inset: 0;
+  z-index: 100000;
+  overflow-y: auto;
+  background:
+    radial-gradient(circle at 15% -5%, rgba(31,210,255,.17), transparent 34%),
+    radial-gradient(circle at 100% 15%, rgba(139,92,255,.18), transparent 35%),
+    linear-gradient(180deg, #071220 0%, #081427 54%, #07111f 100%);
+  color: var(--sched-text);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.foa-timezone-onboarding::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: .22;
+  background-image:
+    linear-gradient(rgba(74,130,190,.09) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(74,130,190,.09) 1px, transparent 1px);
+  background-size: 36px 36px;
+  mask-image: linear-gradient(to bottom, #000, transparent 76%);
+}
+.foa-timezone-onboarding-glow {
+  position: fixed;
+  width: 260px;
+  height: 260px;
+  left: 50%;
+  top: -140px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  filter: blur(30px);
+  background: rgba(31,210,255,.24);
+  pointer-events: none;
+}
+.foa-timezone-onboarding-card {
+  position: relative;
+  width: min(100%, 520px);
+  min-height: 100%;
+  margin: 0 auto;
+  padding: max(28px, env(safe-area-inset-top)) 20px calc(30px + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+.foa-timezone-step {
+  align-self: center;
+  padding: 7px 12px;
+  border: 1px solid rgba(31,210,255,.22);
+  border-radius: 999px;
+  background: rgba(16,45,73,.62);
+  color: #7bdfff;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .14em;
+}
+.foa-timezone-hero-icon {
+  width: 74px;
+  height: 74px;
+  display: grid;
+  place-items: center;
+  align-self: center;
+  margin-top: 28px;
+  border-radius: 24px;
+  color: #7ce7ff;
+  background: linear-gradient(145deg, rgba(20,143,255,.3), rgba(65,46,177,.28));
+  border: 1px solid rgba(76,191,255,.32);
+  box-shadow: 0 20px 45px rgba(5,30,70,.42), inset 0 1px 0 rgba(255,255,255,.12);
+}
+.foa-timezone-hero-icon svg { width: 34px; height: 34px; }
+.foa-timezone-onboarding-card > small {
+  margin-top: 22px;
+  text-align: center;
+  color: #67cfff;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .14em;
+}
+.foa-timezone-onboarding-card h1 {
+  margin: 6px 0 8px;
+  text-align: center;
+  color: #fff;
+  font-size: clamp(28px, 8vw, 38px);
+  line-height: 1.08;
+  letter-spacing: -.035em;
+}
+.foa-timezone-onboarding-card > p {
+  margin: 0 auto 22px;
+  max-width: 410px;
+  text-align: center;
+  color: var(--sched-muted);
+  line-height: 1.55;
+  font-size: 13px;
+}
+.foa-timezone-default-card {
+  display: grid;
+  grid-template-columns: 44px 1fr 26px;
+  gap: 12px;
+  align-items: center;
+  padding: 15px;
+  border-radius: 18px;
+  border: 1px solid rgba(36,223,139,.34);
+  background: linear-gradient(130deg, rgba(19,77,72,.55), rgba(12,34,55,.82));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+}
+.foa-timezone-default-card > span {
+  width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center;
+  color: var(--sched-green); background: rgba(36,223,139,.11);
+}
+.foa-timezone-default-card svg { width: 21px; height: 21px; }
+.foa-timezone-default-card div { min-width: 0; display: grid; gap: 3px; }
+.foa-timezone-default-card small { color: #79a6aa; font-size: 9px; font-weight: 800; letter-spacing: .12em; }
+.foa-timezone-default-card strong { font-size: 15px; color: #f2ffff; }
+.foa-timezone-default-card strong b { margin-left: 5px; color: var(--sched-green); }
+.foa-timezone-default-card em { color: #9fc6c0; font-size: 10px; font-style: normal; }
+.foa-timezone-default-card > i { color: var(--sched-green); font-style: normal; }
+.foa-timezone-search {
+  height: 52px;
+  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  border-radius: 16px;
+  border: 1px solid var(--sched-line);
+  background: rgba(9,24,43,.9);
+}
+.foa-timezone-search svg { width: 19px; color: #7798bd; }
+.foa-timezone-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: #fff; font: inherit; font-size: 13px; }
+.foa-timezone-select-label { display: grid; gap: 8px; margin-top: 12px; }
+.foa-timezone-select-label > span { color: #9fb5cf; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
+.foa-timezone-select-label select,
+.foa-schedule-field select,
+.foa-schedule-field input,
+.foa-profile-timezone select {
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: 14px;
+  border: 1px solid rgba(117,165,224,.18);
+  outline: none;
+  background: #0a1b30;
+  color: #f8fbff;
+  font: inherit;
+}
+.foa-timezone-select-label select { height: 52px; padding: 0 13px; font-size: 13px; }
+.foa-timezone-note {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 12px 13px;
+  border: 1px solid rgba(31,210,255,.18);
+  border-radius: 14px;
+  background: rgba(20,78,112,.18);
+  color: #9bbbd4;
+  font-size: 11px;
+  line-height: 1.45;
+}
+.foa-timezone-note svg { width: 18px; min-width: 18px; color: var(--sched-cyan); }
+.foa-timezone-continue,
+.foa-timezone-default {
+  min-height: 52px;
+  margin-top: 16px;
+  border: 0;
+  border-radius: 16px;
+  color: #fff;
+  font-weight: 800;
+  cursor: pointer;
+}
+.foa-timezone-continue {
+  background: linear-gradient(90deg, #147cf4, #17b8ff);
+  box-shadow: 0 12px 30px rgba(12,119,255,.27);
+}
+.foa-timezone-default { margin-top: 8px; color: #89cfff; background: transparent; }
+.foa-timezone-error { color: #ff8ba0 !important; font-size: 11px !important; margin: 8px 0 0 !important; }
+
+.foa-schedule-page {
+  width: min(100%, 920px);
+  margin: 0 auto;
+  box-sizing: border-box;
+  color: var(--sched-text);
+  padding: 18px 16px 112px;
+}
+.foa-schedule-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.foa-schedule-header button {
+  width: 42px; height: 42px; display: grid; place-items: center; flex: 0 0 auto;
+  border: 1px solid var(--sched-line); border-radius: 14px; background: rgba(13,29,50,.82); color: #d8eaff;
+}
+.foa-schedule-header button svg { width: 20px; }
+.foa-schedule-header h1 { margin: 0; font-size: 22px; line-height: 1.1; letter-spacing: -.02em; }
+.foa-schedule-header p { margin: 4px 0 0; color: var(--sched-muted); font-size: 11px; }
+.foa-schedule-form-card,
+.foa-schedule-overlap,
+.foa-schedule-preview,
+.foa-schedule-upcoming,
+.foa-profile-timezone {
+  border: 1px solid var(--sched-line);
+  border-radius: 20px;
+  background: linear-gradient(145deg, rgba(14,31,54,.94), rgba(8,22,39,.93));
+  box-shadow: 0 16px 38px rgba(0,9,25,.22), inset 0 1px 0 rgba(255,255,255,.035);
+}
+.foa-schedule-form-card { padding: 16px; }
+.foa-schedule-card-title { display: flex; gap: 11px; align-items: center; margin-bottom: 16px; }
+.foa-schedule-card-title > span {
+  width: 42px; height: 42px; border-radius: 14px; display: grid; place-items: center;
+  color: #7ce3ff; background: linear-gradient(135deg, rgba(22,140,255,.22), rgba(139,92,255,.18));
+}
+.foa-schedule-card-title svg { width: 21px; }
+.foa-schedule-card-title div { display: grid; gap: 2px; }
+.foa-schedule-card-title small { color: #68cfff; font-size: 9px; font-weight: 800; letter-spacing: .11em; }
+.foa-schedule-card-title strong { font-size: 14px; }
+.foa-schedule-grid { display: grid; gap: 10px; }
+.foa-schedule-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.foa-schedule-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.foa-schedule-field { position: relative; display: grid; gap: 7px; margin-top: 11px; min-width: 0; }
+.foa-schedule-field > span { display: flex; align-items: center; gap: 6px; color: #9db2cb; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .055em; }
+.foa-schedule-field > span svg { width: 14px; height: 14px; color: #6ecfff; }
+.foa-schedule-field select,
+.foa-schedule-field input { min-height: 48px; padding: 0 12px; font-size: 12px; }
+.foa-schedule-field small { color: #728aa8; font-size: 9px; line-height: 1.35; }
+.foa-schedule-field b { position: absolute; right: 11px; bottom: 15px; color: #607a99; font-size: 9px; letter-spacing: .05em; }
+.foa-schedule-field.money input { padding-right: 40px; }
+.foa-schedule-field.tp input { border-color: rgba(36,223,139,.25); }
+.foa-schedule-field.sl input { border-color: rgba(255,102,131,.23); }
+.foa-schedule-field.timezone select { border-color: rgba(31,210,255,.27); }
+.foa-schedule-overlap { margin-top: 14px; padding: 15px; }
+.foa-schedule-overlap > div:first-child { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; }
+.foa-schedule-overlap > div:first-child > span { width: 37px; height: 37px; border-radius: 12px; display: grid; place-items: center; background: rgba(139,92,255,.13); color: #a992ff; }
+.foa-schedule-overlap > div:first-child svg { width: 18px; }
+.foa-schedule-overlap > div:first-child div { display: grid; gap: 3px; }
+.foa-schedule-overlap strong { font-size: 12px; }
+.foa-schedule-overlap small { color: #7790ad; font-size: 9px; }
+.foa-schedule-overlap > label {
+  display: flex; align-items: center; gap: 10px; margin-top: 8px; padding: 11px;
+  border: 1px solid rgba(117,165,224,.11); border-radius: 14px; background: rgba(8,22,39,.55); cursor: pointer;
+}
+.foa-schedule-overlap input { accent-color: var(--sched-blue); }
+.foa-schedule-overlap label span { display: grid; gap: 2px; }
+.foa-schedule-overlap label b { font-size: 11px; font-weight: 700; }
+.foa-schedule-overlap label:has(input:checked) { border-color: rgba(22,140,255,.42); background: rgba(20,83,145,.16); }
+.foa-schedule-preview { margin-top: 14px; padding: 15px; border-color: rgba(31,210,255,.24); background: linear-gradient(145deg, rgba(10,41,67,.94), rgba(8,25,43,.95)); }
+.foa-schedule-preview-head { display: grid; grid-template-columns: 40px 1fr auto; gap: 10px; align-items: center; }
+.foa-schedule-preview-head > span { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 13px; background: rgba(31,210,255,.11); color: var(--sched-cyan); }
+.foa-schedule-preview-head svg { width: 19px; }
+.foa-schedule-preview-head div { min-width: 0; display: grid; gap: 2px; }
+.foa-schedule-preview-head small { font-size: 8px; color: #6ecfff; font-weight: 800; letter-spacing: .12em; }
+.foa-schedule-preview-head strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.foa-schedule-preview-head > b { padding: 5px 8px; border-radius: 999px; color: var(--sched-green); background: rgba(36,223,139,.1); font-size: 8px; letter-spacing: .08em; }
+.foa-schedule-preview-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 13px; }
+.foa-schedule-preview-grid > span { display: grid; gap: 3px; padding: 10px; border-radius: 12px; background: rgba(7,22,39,.58); }
+.foa-schedule-preview-grid small { color: #6f8aa8; font-size: 8px; text-transform: uppercase; letter-spacing: .07em; }
+.foa-schedule-preview-grid strong { font-size: 10px; color: #dcecff; line-height: 1.35; }
+.foa-schedule-actions { display: grid; gap: 9px; margin-top: 14px; }
+.foa-schedule-actions button { min-height: 52px; border-radius: 15px; border: 0; display: flex; align-items: center; justify-content: center; gap: 9px; color: #fff; font-weight: 800; cursor: pointer; }
+.foa-schedule-actions button svg { width: 19px; }
+.foa-schedule-primary { background: linear-gradient(90deg, #127cf2, #14b9ff); box-shadow: 0 11px 28px rgba(12,116,245,.24); }
+.foa-schedule-secondary { color: #a9cfff !important; border: 1px solid var(--sched-line) !important; background: rgba(11,28,48,.8); }
+.foa-schedule-actions p { margin: 0; padding: 10px 12px; border-radius: 12px; font-size: 10px; line-height: 1.4; background: rgba(36,223,139,.1); color: #8ff1bc; }
+.foa-schedule-actions p[data-tone="error"] { color: #ff9caf; background: rgba(255,102,131,.1); }
+.foa-schedule-upcoming { margin-top: 18px; padding: 15px; }
+.foa-schedule-section-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 10px; margin-bottom: 11px; }
+.foa-schedule-section-head small { color: #6ecfff; font-size: 8px; font-weight: 800; letter-spacing: .12em; }
+.foa-schedule-section-head h2 { margin: 2px 0 0; font-size: 15px; }
+.foa-schedule-section-head > span { color: #7895b6; font-size: 9px; }
+.foa-schedule-upcoming [data-schedule-upcoming] { display: grid; gap: 8px; }
+.foa-schedule-upcoming article { display: grid; grid-template-columns: 38px 1fr auto; gap: 10px; align-items: center; padding: 11px; border-radius: 14px; background: rgba(8,23,41,.7); border: 1px solid rgba(117,165,224,.1); }
+.foa-schedule-upcoming article > span { width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; color: #7cdbff; background: rgba(22,140,255,.12); }
+.foa-schedule-upcoming article svg { width: 18px; }
+.foa-schedule-upcoming article div { min-width: 0; display: grid; gap: 2px; }
+.foa-schedule-upcoming article small { color: #7590af; font-size: 8px; }
+.foa-schedule-upcoming article strong { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 11px; }
+.foa-schedule-upcoming article em { color: #87a0bc; font-style: normal; font-size: 8px; }
+.foa-schedule-upcoming article > b { color: #7ecfff; font-size: 8px; font-weight: 800; }
+.foa-schedule-empty { padding: 20px 10px; text-align: center; color: #7188a5; font-size: 10px; }
+
+.foa-profile-timezone { margin-top: 14px; padding: 16px; color: var(--sched-text); }
+.foa-profile-timezone-head { display: flex; align-items: flex-start; gap: 11px; }
+.foa-profile-timezone-head > span { width: 42px; height: 42px; border-radius: 14px; display: grid; place-items: center; color: var(--sched-cyan); background: rgba(31,210,255,.11); }
+.foa-profile-timezone-head svg { width: 20px; }
+.foa-profile-timezone-head small { color: #68cfff; font-size: 8px; font-weight: 800; letter-spacing: .11em; }
+.foa-profile-timezone-head h2 { margin: 2px 0; font-size: 16px; }
+.foa-profile-timezone-head p { margin: 0; color: #849bb7; font-size: 10px; }
+.foa-profile-timezone > label { display: grid; gap: 7px; margin-top: 15px; }
+.foa-profile-timezone label > span { color: #9fb4cb; font-size: 9px; font-weight: 800; text-transform: uppercase; }
+.foa-profile-timezone select { min-height: 48px; padding: 0 12px; }
+.foa-profile-timezone label small { color: #7290ae; font-size: 9px; }
+.foa-profile-timezone-default { display: flex; gap: 9px; margin-top: 12px; padding: 11px; border: 1px solid rgba(36,223,139,.16); border-radius: 13px; background: rgba(36,223,139,.06); }
+.foa-profile-timezone-default svg { width: 17px; color: var(--sched-green); }
+.foa-profile-timezone-default p { margin: 0; color: #91adac; font-size: 9px; line-height: 1.45; }
+.foa-profile-timezone > p[data-profile-timezone-message] { padding: 9px 11px; margin: 11px 0 0; border-radius: 11px; color: #8ff1bc; background: rgba(36,223,139,.08); font-size: 9px; }
+.foa-profile-timezone > p[data-profile-timezone-message][data-tone="error"] { color: #ff9caf; background: rgba(255,102,131,.08); }
+
+@media (max-width: 640px) {
+  .foa-schedule-page { padding: 15px 12px 108px; }
+  .foa-schedule-form-card,
+  .foa-schedule-overlap,
+  .foa-schedule-preview,
+  .foa-schedule-upcoming { border-radius: 18px; }
+}
+
+@media (max-width: 430px) {
+  .foa-timezone-onboarding-card { padding-left: 16px; padding-right: 16px; }
+  .foa-timezone-hero-icon { margin-top: 22px; width: 66px; height: 66px; border-radius: 21px; }
+  .foa-timezone-onboarding-card h1 { font-size: 30px; }
+  .foa-schedule-header h1 { font-size: 20px; }
+  .foa-schedule-grid.three.money { grid-template-columns: 1fr; }
+  .foa-schedule-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .foa-schedule-preview-grid { grid-template-columns: 1fr 1fr; }
+  .foa-schedule-field input,
+  .foa-schedule-field select { min-height: 46px; }
+}
+
+@media (max-width: 350px) {
+  .foa-schedule-grid.two,
+  .foa-schedule-preview-grid { grid-template-columns: 1fr; }
+  .foa-timezone-default-card { grid-template-columns: 38px 1fr 22px; }
+  .foa-timezone-default-card > span { width: 38px; height: 38px; }
+}
