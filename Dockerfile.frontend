@@ -3,8 +3,11 @@ FROM node:22-alpine AS build
 WORKDIR /app
 
 COPY package.json ./
+RUN npm install --ignore-scripts --no-audit --no-fund
+
 COPY dashboard ./dashboard
 COPY scripts/build-vps.mjs ./scripts/build-vps.mjs
+COPY scripts/export-deriv-quill-icons-v2.mjs ./scripts/export-deriv-quill-icons-v2.mjs
 
 ARG PUBLIC_ORIGIN=https://derivadmin.site
 ENV PUBLIC_ORIGIN=${PUBLIC_ORIGIN}
