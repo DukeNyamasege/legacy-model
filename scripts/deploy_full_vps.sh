@@ -79,9 +79,9 @@ compose run --rm --no-deps api sh -ec '
   alembic upgrade head
 ' || fail "Database migration failed."
 
-printf '%s\n' "6. Recreate API, worker and frontend"
-compose up -d --force-recreate api worker frontend \
-  || fail "Application cutover failed."
+printf '%s\n' "6. Recreate API"
+compose up -d --force-recreate --no-deps api \
+  || fail "API cutover failed."
 
 printf '%s\n' "7. Wait for API health"
 attempt=0
@@ -96,7 +96,11 @@ done
 curl -fsS --max-time 5 http://127.0.0.1:8080/health >/dev/null \
   || fail "API liveness endpoint failed."
 
-printf '%s\n' "8. Wait for frontend health"
+printf '%s\n' "8. Recreate worker and frontend"
+compose up -d --force-recreate --no-deps worker frontend \
+  || fail "Worker/frontend cutover failed."
+
+printf '%s\n' "9. Wait for frontend health"
 attempt=0
 while [ "$attempt" -lt 30 ]; do
   attempt=$((attempt + 1))
@@ -109,7 +113,7 @@ done
 curl -fsS --max-time 5 http://127.0.0.1:8081/ >/dev/null \
   || fail "Frontend index failed."
 
-printf '%s\n' "9. Validate/reload public edge when already installed"
+printf '%s\n' "10. Validate/reload public edge when already installed"
 if command -v caddy >/dev/null 2>&1 && [ -f /etc/caddy/Caddyfile ]; then
   caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile \
     || fail "Caddy configuration is invalid."
@@ -124,7 +128,7 @@ else
   echo "PUBLIC_EDGE_NOT_INSTALLED preferred=./scripts/install_full_vps_caddy.sh fallback=./scripts/prepare_full_vps_host.sh"
 fi
 
-printf '%s\n' "10. Final service state"
+printf '%s\n' "11. Final service state"
 compose ps
 
 printf '%s\n' "============================================================"

@@ -66,9 +66,9 @@ compose run --rm --no-deps api sh -ec '
   alembic upgrade head
 ' || fail "Database migration failed."
 
-printf '%s\n' "6. Recreate backend API and worker only"
-compose up -d --force-recreate --remove-orphans api worker \
-  || fail "API/worker cutover failed."
+printf '%s\n' "6. Recreate backend API"
+compose up -d --force-recreate --remove-orphans --no-deps api \
+  || fail "API cutover failed."
 
 printf '%s\n' "7. Wait for backend health"
 attempt=0
@@ -86,7 +86,11 @@ curl -fsS --max-time 5 http://127.0.0.1:8080/health >/dev/null \
 curl -fsS --max-time 5 http://127.0.0.1:8080/health/frontend-backend >/dev/null \
   || fail "Netlify/backend architecture health endpoint failed."
 
-printf '%s\n' "8. Final service state"
+printf '%s\n' "8. Recreate worker"
+compose up -d --force-recreate --remove-orphans --no-deps worker \
+  || fail "Worker cutover failed."
+
+printf '%s\n' "9. Final service state"
 compose ps
 
 printf '%s\n' "============================================================"
