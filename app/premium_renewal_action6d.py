@@ -12,6 +12,7 @@ from sqlalchemy import select
 
 import app.api as base_api
 from app import automation_scheduler_action5 as scheduler
+from app import lipana_mpesa_action6b as lipana
 from app.automation_schedule_models import AutomationSchedule
 from app.models import ManagedAccount, utc_now
 from app.premium_access_api import ensure_premium_customer
@@ -21,13 +22,16 @@ from app.premium_access_service import (
     access_payload,
     effective_access_state,
     premium_access_period_history,
+    record_renewal_failure,
     renewal_reminder_payload,
 )
+from app.premium_payment_models import PremiumPaymentAttempt
 
 
 LOGGER = logging.getLogger("legacy_model.premium_renewal_action6d")
 _INSTALLED = False
 _ORIGINAL_SCHEDULE_APPLY: Callable[[str], tuple[bool, str]] | None = None
+_ORIGINAL_LIPANA_FAILURE: Callable[[str, str], None] | None = None
 
 
 def _as_utc(value: datetime | None) -> datetime | None:
@@ -115,7 +119,11 @@ def run_premium_expiry_cycle(*, now: datetime | None = None) -> dict[str, int]:
     }
 
 
-def _premium_state_for_schedule(session: Any, managed_account_id: int, now: datetime) -> Any:
+def _premium_state_for_schedule(
+    session: Any,
+    managed_account_id: int,
+    now: datetime,
+) -> Any:
     mapping = session.scalar(
         select(PremiumCustomerAccount).where(
             PremiumCustomerAccount.managed_account_id == int(managed_account_id)
@@ -194,6 +202,34 @@ def _premium_schedule_apply(schedule_id: str) -> tuple[bool, str]:
     return original(str(schedule_id))
 
 
+def _premium_lipana_failure(attempt_id: str, provider_status: str) -> None:
+    """Persist renewal failure without granting or extending any paid time."""
+
+    customer_id = ""
+    with base_api.DATABASE.session() as session:
+        attempt = session.get(PremiumPaymentAttempt, str(attempt_id))
+        if attempt is not None:
+            customer_id = str(attempt.customer_id)
+
+    original = _ORIGINAL_LIPANA_FAILURE
+    if original is None:
+        raise RuntimeError("Lipana failure authority was not available")
+    original(str(attempt_id), str(provider_status))
+
+    if customer_id:
+        try:
+            record_renewal_failure(
+                base_api.DATABASE,
+                customer_id,
+                failed_at=utc_now(),
+            )
+        except Exception:
+            LOGGER.exception(
+                "PREMIUM_RENEWAL_FAILURE_RECORD_FAILED attempt_id=%s",
+                attempt_id,
+            )
+
+
 async def _premium_expiry_loop(stop_event: asyncio.Event) -> None:
     interval = max(
         1.0,
@@ -217,12 +253,14 @@ async def _premium_expiry_loop(stop_event: asyncio.Event) -> None:
 
 
 def install_premium_renewal_action6d(app: Any) -> None:
-    global _INSTALLED, _ORIGINAL_SCHEDULE_APPLY
+    global _INSTALLED, _ORIGINAL_SCHEDULE_APPLY, _ORIGINAL_LIPANA_FAILURE
     if _INSTALLED:
         return
 
     _ORIGINAL_SCHEDULE_APPLY = scheduler._apply_schedule_strategy
     scheduler._apply_schedule_strategy = _premium_schedule_apply
+    _ORIGINAL_LIPANA_FAILURE = lipana._mark_failed_from_webhook
+    lipana._mark_failed_from_webhook = _premium_lipana_failure
 
     @app.get("/me/premium-access/renewal-status")
     def premium_renewal_status(request: Request) -> dict[str, Any]:
