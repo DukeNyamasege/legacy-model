@@ -12,7 +12,7 @@ CAP_AUTHORITY = ROOT / "app" / "custom_split_cap_defaults_authority.py"
 VIRTUAL_AUTHORITY = ROOT / "app" / "custom_virtual_post_loss_barrier_authority.py"
 WORKER = ROOT / "app" / "custom_strategy_worker.py"
 LEGACY_KPI_JS = ROOT / "dashboard" / "virtual-kpi-neutrality.js"
-FINAL_UI_JS = ROOT / "dashboard" / "final-ui-shell-v1.js"
+FINAL_UI_JS = ROOT / "dashboard" / "final-ui-shell-v2.js"
 INDEX = ROOT / "dashboard" / "index.html"
 
 
@@ -68,25 +68,24 @@ class PostLossSplitAndVirtualNeutralityTests(unittest.TestCase):
     def test_new_home_kpis_use_unbounded_server_summary_not_visible_rows(self) -> None:
         shell = FINAL_UI_JS.read_text(encoding="utf-8")
         index = INDEX.read_text(encoding="utf-8")
+        metrics = shell.split("function metrics()", 1)[1].split("function home()", 1)[0]
 
-        self.assertIn("const summary = state.trades?.summary || {}", shell)
-        self.assertIn("summary.total ?? stats.trades", shell)
-        self.assertIn("summary.wins ?? stats.wins", shell)
-        self.assertIn("summary.losses ?? stats.losses", shell)
-        self.assertIn("summary.profit ?? stats.profit", shell)
-        self.assertIn('api("/me/trades/today?limit=100")', shell)
-        # The recent rows are independently bounded for rendering, while KPIs use
-        # the unbounded server aggregate above.
-        self.assertIn("state.trades.trades.slice(0, 20)", shell)
-        self.assertNotIn(
-            "rows.length",
-            shell.split("function metrics()", 1)[1].split("function greeting()", 1)[0],
-        )
+        self.assertIn("const summary = state.trades?.summary || {}", metrics)
+        self.assertIn("const meStats = state.me?.stats || {}", metrics)
+        self.assertIn("summary.total ?? meStats.trades", metrics)
+        self.assertIn("summary.wins ?? meStats.wins", metrics)
+        self.assertIn("summary.losses ?? meStats.losses", metrics)
+        self.assertIn("summary.profit ?? meStats.profit", metrics)
+        self.assertNotIn("state.trades?.trades", metrics)
+        # 6F-2 may request a large row window for the dedicated Run ledger, but
+        # Home KPI values still come exclusively from the unbounded server summary.
+        self.assertIn('json("/me/trades/today?limit=5000")', shell)
 
         self.assertNotIn("virtual-kpi-neutrality.js", index)
         self.assertNotIn("netlify-realtime-client.js", index)
-        self.assertIn("vps-realtime-client.js?v=20260817-6f1-2", index)
-        self.assertIn("final-ui-shell-v1.js?v=20260817-6f1-1", index)
+        self.assertIn("vps-realtime-client-v2.js?v=20260817-6f2-1", index)
+        self.assertIn("final-ui-shell-v2.js?v=20260817-6f2-1", index)
+        self.assertNotIn("final-ui-shell-v1.js", index)
 
 
 if __name__ == "__main__":
