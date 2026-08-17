@@ -50,6 +50,9 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install ruff mypy
 
+      - name: Install direct VPS frontend dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+
       - name: Create CI-only Compose environment file
         run: |
           umask 077
@@ -101,6 +104,7 @@ jobs:
           app/dashboard_live_events.py
           app/exact_strategy_execution_authority.py
           app/final_execution_continuity.py
+          app/final_linked_accounts_6f2.py
           app/global_trade_history_cutoff.py
           app/lipana_mpesa_action6b.py
           app/oauth_client.py
@@ -120,6 +124,7 @@ jobs:
           app/session_risk_limits.py
           app/session_risk_stop_authority.py
           tests/test_final_ui_6f1.py
+          tests/test_final_ui_6f2.py
           tests/test_lipana_mpesa_action6b.py
           tests/test_persistent_scheduler_action5.py
           tests/test_premium_access_action6a.py
@@ -153,6 +158,7 @@ jobs:
           app/dashboard_live_events.py
           app/exact_strategy_execution_authority.py
           app/final_execution_continuity.py
+          app/final_linked_accounts_6f2.py
           app/global_trade_history_cutoff.py
           app/lipana_mpesa_action6b.py
           app/oauth_client.py
@@ -172,16 +178,18 @@ jobs:
           app/session_risk_limits.py
           app/session_risk_stop_authority.py
 
-      - name: Check direct VPS frontend JavaScript syntax
+      - name: Check direct VPS 6F-2 frontend JavaScript syntax
         run: |
-          node --check dashboard/final-ui-shell-v1.js
-          node --check dashboard/vps-api-boundary.js
-          node --check dashboard/vps-realtime-client.js
+          node --check dashboard/final-ui-shell-v2.js
+          node --check dashboard/vps-api-boundary-v2.js
+          node --check dashboard/vps-realtime-client-v2.js
+          node --check scripts/export-deriv-quill-icons-v2.mjs
           node --check scripts/build-vps.mjs
 
       - name: Run direct VPS release tests
         run: |
           python -m unittest -q tests.test_final_ui_6f1
+          python -m unittest -q tests.test_final_ui_6f2
           python -m unittest -q tests.test_persistent_scheduler_action5
           python -m unittest -q tests.test_premium_access_action6a
           python -m unittest -q tests.test_lipana_mpesa_action6b
@@ -212,29 +220,38 @@ jobs:
           python -m unittest -q test_aidr_recovery_v2.py tests.test_aidr_virtual_soft_gate tests.test_independent_websocket_execution tests.test_private_websocket_credentials
           sh scripts/run_legacy_release_tests.sh
 
-      - name: Production direct VPS frontend build
+      - name: Production direct VPS 6F-2 frontend build
         env:
           PUBLIC_ORIGIN: https://release-gate.example
         run: |
           npm run build:vps
           test -f dist/index.html
           test -f dist/vps-build.json
+          test -f dist/deriv-quill-icons-v2.js
+          test -f dist/deriv-quill-icons-v2.json
           test ! -f dist/_redirects
-          grep -Fq 'frontend-runtime" content="full-vps-final-ui-6f1"' dist/index.html
+          grep -Fq 'frontend-runtime" content="full-vps-final-ui-6f2"' dist/index.html
           grep -Fq 'stream-base-url" content="wss://release-gate.example"' dist/index.html
-          grep -Fq '/vps-api-boundary.js?v=20260817-1' dist/index.html
-          grep -Fq '/vps-realtime-client.js?v=20260817-6f1-2' dist/index.html
-          grep -Fq '/final-ui-shell-v1.css?v=20260817-6f1-1' dist/index.html
-          grep -Fq '/final-ui-shell-v1.js?v=20260817-6f1-1' dist/index.html
+          grep -Fq '/vps-api-boundary-v2.js?v=20260817-6f2-1' dist/index.html
+          grep -Fq '/deriv-quill-icons-v2.js?v=2.4.18' dist/index.html
+          grep -Fq '/vps-realtime-client-v2.js?v=20260817-6f2-1' dist/index.html
+          grep -Fq '/final-ui-shell-v2.css?v=20260817-6f2-1' dist/index.html
+          grep -Fq '/final-ui-shell-v2.js?v=20260817-6f2-1' dist/index.html
           grep -Fq '"deployment_topology": "direct-vps-only"' dist/vps-build.json
-          grep -Fq '"ui_authority": "final-ui-shell-v1"' dist/vps-build.json
+          grep -Fq '"ui_authority": "final-ui-shell-v2"' dist/vps-build.json
+          grep -Fq '"run_panel": "deriv-transaction-ledger-v1"' dist/vps-build.json
+          grep -Fq '"deriv_icons": "official-quill-icons-2.4.18-build-time-static-svg"' dist/vps-build.json
+          grep -Fq '"linked_account_selector": "specific-linked-options-account-v1"' dist/vps-build.json
           grep -Fq '"legacy_ui_loaded": false' dist/vps-build.json
           grep -Fq '"netlify_runtime_loaded": false' dist/vps-build.json
           grep -Fq '"api_base": "/api"' dist/vps-build.json
           grep -Fq '"oauth_base": "/oauth"' dist/vps-build.json
           grep -Fq '"premium_access": "weekly-linked-options-server-gate-action6a-v1"' dist/vps-build.json
+          grep -Fq '"package": "@deriv/quill-icons"' dist/deriv-quill-icons-v2.json
+          grep -Fq '"version": "2.4.18"' dist/deriv-quill-icons-v2.json
           ! grep -Fq '/netlify-api-boundary.js' dist/index.html
           ! grep -Fq '/netlify-realtime-client.js' dist/index.html
+          ! grep -Fq '/final-ui-shell-v1.js' dist/index.html
           ! grep -Fq '/ui/dashboard-v2.js' dist/index.html
           ! grep -Fq 'automation-home-v1' dist/index.html
           ! grep -Fq 'premium-subscription-action6e' dist/index.html
