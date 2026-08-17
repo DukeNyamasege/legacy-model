@@ -163,6 +163,29 @@ class FullVpsHostingTests(unittest.TestCase):
         self.assertIn("install_vps_session_observability(app)", entry)
         self.assertIn("VPS_TELEGRAM_NOTIFICATIONS_SUSPENDED:-false", compose)
 
+    def test_vps_telegram_inbox_autodiscovery_and_one_update_delivery(self) -> None:
+        source = (ROOT / "app" / "vps_telegram_control.py").read_text(
+            encoding="utf-8"
+        )
+        entry = (ROOT / "app" / "vps_backend_api.py").read_text(encoding="utf-8")
+        compose = (ROOT / "docker-compose.vps.yml").read_text(encoding="utf-8")
+        config = (ROOT / "config.yaml").read_text(encoding="utf-8")
+        env = (ROOT / ".env.vps.example").read_text(encoding="utf-8")
+
+        self.assertIn("install_vps_telegram_control(app)", entry)
+        self.assertIn("class VpsTelegramController", source)
+        self.assertIn('"/update message', source)
+        self.assertIn("SUBSCRIBER_PREFIX", source)
+        self.assertIn("ADMIN_CHAT_KEY", source)
+        self.assertIn("getUpdates", source)
+        self.assertIn("Direct Model Updater alerts enabled", source)
+        self.assertIn("force_mention_all=false", source)
+        self.assertIn("await asyncio.sleep(0.05)", source)
+        self.assertIn("test2_models:/app/model_artifacts", compose)
+        self.assertIn("enabled: true", config[config.index("telegram:") :])
+        self.assertIn("does NOT require a numeric chat ID", env)
+        self.assertIn("TELEGRAM_BOT_USERNAME=modellegacyupdaterbot", env)
+
 
 if __name__ == "__main__":
     unittest.main()
