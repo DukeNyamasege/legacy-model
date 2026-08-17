@@ -74,25 +74,26 @@ class FullVpsHostingTests(unittest.TestCase):
         self.assertIn("TRUSTED_HOSTS=derivadmin.site,www.derivadmin.site", env)
         self.assertNotIn("https://your-site.netlify.app", env)
 
-    def test_full_vps_uses_bounded_parallel_private_bootstrap(self) -> None:
+    def test_full_vps_uses_atomic_bounded_private_bootstrap(self) -> None:
         compose = (ROOT / "docker-compose.vps.yml").read_text(encoding="utf-8")
         self.assertIn("VPS_ACCOUNT_REFRESH_INTERVAL_SECONDS:-1", compose)
         self.assertIn("VPS_DERIV_HTTP_CONNECTOR_LIMIT:-24", compose)
         self.assertIn("VPS_DERIV_HTTP_LIMIT_PER_HOST:-12", compose)
         self.assertIn("VPS_DERIV_HTTP_CONCURRENCY:-12", compose)
-        self.assertIn("VPS_PRIVATE_WS_CONNECT_INTERVAL_SECONDS:-0.10", compose)
-        self.assertIn("VPS_PRIVATE_WS_HANDSHAKE_CONCURRENCY:-12", compose)
+        self.assertIn("VPS_PRIVATE_WS_CONNECT_INTERVAL_SECONDS:-0.15", compose)
+        self.assertIn("VPS_PRIVATE_WS_HANDSHAKE_CONCURRENCY:-6", compose)
+        self.assertIn("VPS_PRIVATE_WS_BOOTSTRAP_CONCURRENCY:-6", compose)
+        self.assertIn("VPS_OTP_HTTP_CONCURRENCY:-8", compose)
         self.assertIn("VPS_PRIVATE_WS_OTP_FAILURE_BACKOFF_SECONDS:-1.5", compose)
         self.assertIn("VPS_PRIVATE_WS_TRANSIENT_BACKOFF_MAX_SECONDS:-12", compose)
 
-        # The old base values remain as conservative non-VPS fallbacks. Full VPS
-        # must override them rather than deleting rate-limit protection globally.
+        # Base Compose keeps conservative fallbacks and provider rate-limit safety.
         base = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
         self.assertIn("PRIVATE_WS_HANDSHAKE_CONCURRENCY", base)
         self.assertIn("PRIVATE_WS_RATE_LIMIT_BACKOFF_SECONDS", base)
         self.assertIn("PRIVATE_WS_MAX_BACKOFF_SECONDS", base)
 
-    def test_low_latency_authority_preserves_b315_and_rate_limit_safety(self) -> None:
+    def test_low_latency_authority_matches_current_deriv_otp_contract(self) -> None:
         source = (ROOT / "app" / "vps_low_latency_runtime.py").read_text(
             encoding="utf-8"
         )
@@ -111,6 +112,20 @@ class FullVpsHostingTests(unittest.TestCase):
         self.assertIn("market_selection_deduplicated=true", source)
         self.assertIn("_low_latency_contract_snapshot_once", source)
         self.assertIn("CONTRACT_SNAPSHOT_RESPONSE_TIMEOUT_SECONDS = 5.0", source)
+
+        # Deriv's current Options API uses plural `errors`; the VPS authority must
+        # classify that payload instead of turning it into an unexplained OTP retry.
+        self.assertIn('response.get("errors")', source)
+        self.assertIn("HTTP_500", source)
+        self.assertIn("PRIVATE_WS_OTP_PROVIDER_ERROR", source)
+
+        # OTP and the returned private WSS URL are one atomic bootstrap operation.
+        self.assertIn("class _VpsBootstrapScheduler", source)
+        self.assertIn("otp_and_wss_atomic=true", source)
+        self.assertIn("atomic_otp_wss=true", source)
+        self.assertIn("urgent_priority=true", source)
+        self.assertIn("ClientSession.connect_and_run = _vps_connect_and_run", source)
+        self.assertIn("ClientSession.get_otp_url = _vps_get_otp_url", source)
 
         stampede = worker.index("install_custom_strategy_connection_stampede_guard()")
         low_latency = worker.index("install_vps_low_latency_runtime()")
