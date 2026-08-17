@@ -78,8 +78,10 @@ class FinalUi6F2Tests(unittest.TestCase):
             "managed_account_id",
         ):
             self.assertIn(text, js)
-        self.assertIn('quill("demoAccount")', js)
-        self.assertIn('quill("realAccount")', js)
+        # Account icons are selected dynamically from the linked account type.
+        self.assertIn('state.me?.account_type === "real" ? "realAccount" : "demoAccount"', js)
+        self.assertIn('selected.account_type === "real" ? "realAccount" : "demoAccount"', js)
+        self.assertIn('type === "real" ? "realAccount" : "demoAccount"', js)
         self.assertIn('quill("usd"', js)
         self.assertIn('quill("volatility")', js)
         self.assertIn("quill(contractKey(trade))", js)
