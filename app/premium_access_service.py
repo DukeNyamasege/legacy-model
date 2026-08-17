@@ -4,19 +4,21 @@ import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from uuid import uuid4
 
 from sqlalchemy import select
 
 from app.models import ManagedAccount, utc_now
 from app.premium_access_models import PremiumCustomer, PremiumCustomerAccount
+from app.premium_renewal_models import PremiumAccessPeriod
 
 
 WEEKLY_PERIOD_DAYS = 7
 WEEKLY_PRICE_KES = 250.0
-WEEKLY_PRICE_USD = 2.0
+WEEKLY_AMOUNT_MINOR_KES = 25000
 PLAN_CODE = "weekly_access"
 PREMIUM_REQUIRED_REASON = (
-    "Premium access is required. Renew KES 250 or USD 2 for another 7 days."
+    "Premium access expired. Renew KES 250 via M-Pesa for another 7 days."
 )
 
 
@@ -76,9 +78,9 @@ def effective_access_state(
             current_period_start=None,
             current_period_end=None,
             remaining_seconds=0,
-            renewal_preference="automatic_if_supported",
-            auto_renew_enabled=True,
-            renewal_provider="",
+            renewal_preference="prompt_again",
+            auto_renew_enabled=False,
+            renewal_provider="lipana",
             provider_subscription_ref="",
         )
 
@@ -101,16 +103,56 @@ def effective_access_state(
         current_period_start=starts_at,
         current_period_end=ends_at,
         remaining_seconds=remaining,
-        renewal_preference=str(
-            customer.renewal_preference or "automatic_if_supported"
-        ),
+        renewal_preference=str(customer.renewal_preference or "prompt_again"),
         auto_renew_enabled=bool(customer.auto_renew_enabled),
-        renewal_provider=str(customer.renewal_provider or ""),
+        renewal_provider=str(customer.renewal_provider or "lipana"),
         provider_subscription_ref=str(customer.provider_subscription_ref or ""),
     )
 
 
-def _customer_for_mapping(session: Any, mapping: PremiumCustomerAccount | None) -> PremiumCustomer | None:
+def renewal_reminder_payload(state: PremiumAccessState) -> dict[str, Any]:
+    """Return the exact UI/API renewal stage without changing entitlement state."""
+
+    seconds = max(0, int(state.remaining_seconds))
+    if state.active:
+        if seconds <= 3600:
+            stage = "one_hour"
+            message = "Less than 1 hour of Premium remains. Renew after expiry to continue."
+        elif seconds <= 6 * 3600:
+            stage = "six_hours"
+            message = "Less than 6 hours of Premium remains."
+        elif seconds <= 24 * 3600:
+            stage = "twenty_four_hours"
+            message = "Less than 24 hours of Premium remains."
+        else:
+            stage = "active"
+            message = "Premium access is active."
+        return {
+            "stage": stage,
+            "message": message,
+            "renewal_required": False,
+            "renewal_available": False,
+            "remaining_seconds": seconds,
+        }
+
+    expired = state.status == "expired"
+    return {
+        "stage": "expired" if expired else "payment_required",
+        "message": (
+            "Premium has expired. Pay KES 250 via M-Pesa to start a new 7-day period."
+            if expired
+            else "Pay KES 250 via M-Pesa to activate Premium for 7 days."
+        ),
+        "renewal_required": expired,
+        "renewal_available": True,
+        "remaining_seconds": 0,
+    }
+
+
+def _customer_for_mapping(
+    session: Any,
+    mapping: PremiumCustomerAccount | None,
+) -> PremiumCustomer | None:
     if mapping is None:
         return None
     return session.get(PremiumCustomer, str(mapping.customer_id))
@@ -174,6 +216,40 @@ def expire_customer_if_needed(
         return state
 
 
+def _ensure_access_period(
+    session: Any,
+    *,
+    customer_id: str,
+    provider: str,
+    payment_reference: str,
+    starts_at: datetime,
+    ends_at: datetime,
+) -> PremiumAccessPeriod:
+    existing = session.scalar(
+        select(PremiumAccessPeriod).where(
+            PremiumAccessPeriod.provider == str(provider),
+            PremiumAccessPeriod.payment_reference == str(payment_reference),
+        )
+    )
+    if existing is not None:
+        return existing
+    row = PremiumAccessPeriod(
+        id=str(uuid4()),
+        customer_id=str(customer_id),
+        provider=str(provider)[:32],
+        payment_method="mpesa",
+        payment_reference=str(payment_reference)[:160],
+        amount_minor=WEEKLY_AMOUNT_MINOR_KES,
+        currency="KES",
+        period_start=starts_at,
+        period_end=ends_at,
+        created_at=utc_now(),
+    )
+    session.add(row)
+    session.flush()
+    return row
+
+
 def activate_weekly_access(
     database: Any,
     customer_id: str,
@@ -186,11 +262,11 @@ def activate_weekly_access(
     provider_subscription_ref: str = "",
     renewal_preference: str | None = None,
 ) -> PremiumAccessState:
-    """Activate exactly seven days after a server-verified payment.
+    """Activate one exact seven-day period after a server-verified payment.
 
     The provider/payment reference pair is idempotent. A webhook replay can never
-    grant a second week or move the expiry timestamp, even if the provider retries
-    the same successful transaction with a slightly different delivery timestamp.
+    grant a second week or move the expiry timestamp. Lipana renewal is manual:
+    the next STK request is accepted only after the prior exact period has ended.
     """
 
     starts_at = _as_utc(paid_at)
@@ -213,6 +289,14 @@ def activate_weekly_access(
             and customer.current_period_start is not None
             and customer.current_period_end is not None
         ):
+            _ensure_access_period(
+                session,
+                customer_id=str(customer.id),
+                provider=normalized_provider,
+                payment_reference=normalized_reference,
+                starts_at=_as_utc(customer.current_period_start) or starts_at,
+                ends_at=_as_utc(customer.current_period_end) or ends_at,
+            )
             return effective_access_state(customer, now=now)
 
         customer.status = "active"
@@ -230,6 +314,14 @@ def activate_weekly_access(
         customer.renewal_failed_at = None
         customer.cancellation_requested_at = None
         customer.updated_at = now
+        _ensure_access_period(
+            session,
+            customer_id=str(customer.id),
+            provider=normalized_provider,
+            payment_reference=normalized_reference,
+            starts_at=starts_at,
+            ends_at=ends_at,
+        )
         return effective_access_state(customer, now=starts_at)
 
 
@@ -250,8 +342,51 @@ def record_renewal_failure(
         customer.updated_at = failure_time
         state = effective_access_state(customer, now=failure_time)
         if not state.active:
-            customer.status = "expired"
+            customer.status = "expired" if customer.current_period_end else "unpaid"
         return effective_access_state(customer, now=failure_time)
+
+
+def premium_access_period_history(
+    database: Any,
+    customer_id: str,
+    *,
+    limit: int = 50,
+    now: datetime | None = None,
+) -> list[dict[str, Any]]:
+    current = _as_utc(now) or utc_now()
+    safe_limit = max(1, min(200, int(limit)))
+    with database.session() as session:
+        rows = list(
+            session.scalars(
+                select(PremiumAccessPeriod)
+                .where(PremiumAccessPeriod.customer_id == str(customer_id))
+                .order_by(PremiumAccessPeriod.period_start.desc())
+                .limit(safe_limit)
+            ).all()
+        )
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        starts_at = _as_utc(row.period_start) or current
+        ends_at = _as_utc(row.period_end) or starts_at
+        if current < starts_at:
+            status = "upcoming"
+        elif current < ends_at:
+            status = "active"
+        else:
+            status = "expired"
+        result.append(
+            {
+                "id": str(row.id),
+                "provider": str(row.provider),
+                "payment_method": str(row.payment_method),
+                "amount": float(row.amount_minor) / 100.0,
+                "currency": str(row.currency),
+                "period_start": starts_at.isoformat(),
+                "period_end": ends_at.isoformat(),
+                "status": status,
+            }
+        )
+    return result
 
 
 def pause_managed_account_for_premium(
@@ -292,7 +427,6 @@ def access_payload(
         },
         "pricing": {
             "mpesa": {"amount": WEEKLY_PRICE_KES, "currency": "KES"},
-            "card": {"amount": WEEKLY_PRICE_USD, "currency": "USD"},
         },
         "current_period_start": (
             state.current_period_start.isoformat()
@@ -307,12 +441,13 @@ def access_payload(
         "remaining_seconds": int(state.remaining_seconds),
         "linked_account_count": int(linked_account_count),
         "renewal": {
+            "mode": "manual_mpesa_after_exact_expiry",
             "preference": state.renewal_preference,
-            "automatic_if_supported": True,
-            "auto_renew_enabled": bool(state.auto_renew_enabled),
-            "provider": state.renewal_provider or None,
-            "provider_subscription_attached": bool(state.provider_subscription_ref),
-            "failure_policy": "expire_and_require_successful_payment",
+            "auto_renew_enabled": False,
+            "provider": "lipana",
+            "payment_method": "mpesa",
+            "failure_policy": "expire_and_require_successful_mpesa_payment",
+            **renewal_reminder_payload(state),
         },
         "checkout_ready": bool(checkout_ready),
     }
