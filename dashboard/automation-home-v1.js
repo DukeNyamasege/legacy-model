@@ -4,12 +4,12 @@
   if (window.__FOA_AUTOMATION_HOME_ACTION1__) return;
   window.__FOA_AUTOMATION_HOME_ACTION1__ = true;
 
-  const VERSION = "20260817-action1-2";
+  const VERSION = "20260817-action3-1";
   const ROUTE_KEY = "foa-automation-route-session-v1";
   const ROUTE_ACCOUNT_KEY = "foa-automation-route-account-v1";
   const BUILDER_KEY = "foa-builder-draft-v2";
   const USER_TEMPLATE_KEY = "foa-user-strategy-templates-v1";
-  const VALID_ROUTES = new Set(["home", "builder", "ai", "schedule", "profile", "trades"]);
+  const VALID_ROUTES = new Set(["home", "builder", "ai", "ready", "schedule", "profile", "trades"]);
 
   let scheduled = false;
   let syncingLegacy = false;
@@ -175,6 +175,7 @@
     setBodyRoute(next);
     syncLegacyView(next);
     scheduleRender();
+    window.dispatchEvent(new CustomEvent("foa:automation-route", { detail: { route: next } }));
   }
 
   function stat(icon, label, value, tone = "") {
@@ -198,9 +199,13 @@
     if (libraryTab === "my") {
       const user = readUserTemplates();
       if (!user.length) return `<div class="foa-automation-empty-library">Your saved strategies will appear here.</div>`;
-      return user.slice(0, 4).map((item, index) => templateCard({ name: item.name || item.label || `My Strategy ${index + 1}`, subtitle: "Saved strategy", tone: index % 2 ? "#a864ff" : "#25df8c" }, index)).join("");
+      return user.slice(-4).reverse().map((item, index) => templateCard({ name: item.name || item.label || `My Strategy ${index + 1}`, subtitle: item.source === "ai" ? "AI generated · Saved strategy" : "Saved strategy", tone: index % 2 ? "#a864ff" : "#25df8c" }, index)).join("");
     }
-    if (libraryTab === "ai") return `<div class="foa-automation-empty-library">AI-generated strategies will appear here after Text to Strategy is activated.</div>`;
+    if (libraryTab === "ai") {
+      const generated = readUserTemplates().filter((item) => item?.source === "ai");
+      if (!generated.length) return `<div class="foa-automation-empty-library">Generate a strategy with Text to Strategy, review it, then Save Strategy. It will appear here.</div>`;
+      return generated.slice(-4).reverse().map((item, index) => templateCard({ name: item.name || `AI Strategy ${index + 1}`, subtitle: item.summary || "AI generated strategy", tone: index % 2 ? "#1fd2ff" : "#a864ff" }, index)).join("");
+    }
     return [
       { name: "Over 1 Recovery Over 4 Golden Bot", subtitle: "Percentage · Over · Multiplier", tone: "#25df8c" },
       { name: "Over 3 Spread Recovery x2", subtitle: "Last Digit · Over · Split Recovery", tone: "#9b62ff" },
@@ -242,7 +247,10 @@
   }
 
   function bottomNav(route) {
-    const item = (name, icon, label) => `<button type="button" class="foa-automation-nav-button ${route === name ? "active" : ""}" data-automation-route="${name}">${svg(icon)}<span>${esc(label)}</span></button>`;
+    const item = (name, icon, label) => {
+      const active = route === name || (name === "ai" && route === "ready");
+      return `<button type="button" class="foa-automation-nav-button ${active ? "active" : ""}" data-automation-route="${name}">${svg(icon)}<span>${esc(label)}</span></button>`;
+    };
     return `<nav class="foa-automation-bottom-nav" aria-label="Main navigation" data-automation-bottom-nav="${VERSION}" data-automation-active-route="${route}">${item("home", "home", "Home")}${item("builder", "cubes", "Builder")}${item("ai", "star", "AI")}${item("schedule", "calendar", "Schedule")}${item("profile", "profile", "Profile")}</nav>`;
   }
 
@@ -272,6 +280,8 @@
       if (!main.querySelector(`.foa-automation-home[data-automation-home-version="${VERSION}"]`)) main.innerHTML = homeMarkup();
     } else if (["ai", "schedule", "profile"].includes(route)) {
       if (!main.querySelector(`.foa-automation-scaffold[data-automation-scaffold="${route}"]`)) main.innerHTML = scaffoldMarkup(route);
+    } else if (route === "ready") {
+      // Action 3 Strategy Ready owns the main content for this route.
     } else if (route === "builder") {
       if (main.querySelector(".foa-automation-page")) { syncLegacyView("builder"); scheduleRender(); return; }
     } else if (route === "trades") {
@@ -281,6 +291,7 @@
     ensureBottomNav(route);
     window.FOA_AUTOMATION_HOME_ACTION1_VERSION = VERSION;
     window.FOA_AUTOMATION_CURRENT_ROUTE = route;
+    window.FOA_AUTOMATION_NAVIGATE = navigate;
   }
 
   function scheduleRender() {
@@ -327,6 +338,13 @@
     const start = event.target?.closest?.("[data-main-action]");
     if (start) handleStartToTrades(start);
   }, true);
+
+  document.addEventListener("foa:strategy-library-updated", () => {
+    if (currentRoute() !== "home") return;
+    const main = q("#telegram-dashboard-snapshot > main");
+    if (main) main.innerHTML = homeMarkup();
+    ensureBottomNav("home");
+  });
 
   function syncHistoryRoute() {
     const route = routeFromHash();
