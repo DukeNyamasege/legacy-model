@@ -126,6 +126,14 @@ class FinalUi6F2Tests(unittest.TestCase):
         vps = (ROOT / "app" / "vps_backend_api.py").read_text(encoding="utf-8")
         self.assertIn('@app.get("/me/accounts")', source)
         self.assertIn('@app.post("/me/switch-account")', source)
+        self.assertIn(
+            "def switch_linked_personal_account(\n"
+            "        request: Request,\n"
+            "        body: LinkedAccountSwitchRequest,\n"
+            "    ) -> Any:",
+            source,
+        )
+        self.assertNotIn(") -> dict[str, Any] | JSONResponse:", source)
         self.assertIn("managed_account_id", source)
         self.assertIn("login_identity_from_payload", source)
         self.assertIn("set_client_session_account", source)
