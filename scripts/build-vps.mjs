@@ -29,6 +29,22 @@ if (!String(process.env.DASHBOARD_WS_BASE_URL || "").trim()) {
 await import(`./build-netlify.mjs?vps=${Date.now()}`);
 await rm(resolve(output, "_redirects"), { force: true });
 
+/* The pre-Action-5 library exposed only built-in labels/IDs. Scheduling must
+ * freeze the complete builder/result configuration, not reconstruct trading
+ * logic from a label. Upgrade only the built Full-VPS asset so Action 5 receives
+ * an immutable copy of the same proven built-in object used by Load Template. */
+const strategyLibraryPath = resolve(output, "strategy-template-library.js");
+let strategyLibrary = await readFile(strategyLibraryPath, "utf8");
+const compactBuiltInExport = "builtIns: BUILT_INS.map((item) => ({ id: item.id, name: item.name, analysis: item.analysis, side: item.side })),";
+if (!strategyLibrary.includes(compactBuiltInExport)) {
+  throw new Error("Strategy Library built-in export contract changed; refusing an unsafe Action 5 build");
+}
+strategyLibrary = strategyLibrary.replace(
+  compactBuiltInExport,
+  "builtIns: BUILT_INS.map((item) => clone(item)),",
+);
+await writeFile(strategyLibraryPath, strategyLibrary, "utf8");
+
 let html = await readFile(indexPath, "utf8");
 html = html
   .replace(
@@ -121,6 +137,7 @@ await writeFile(
     schedule_persistence: "postgres-restart-safe-exactly-once-claim-v1",
     schedule_overlap: "wait-skip-replace-v1",
     schedule_history: "server-lifecycle-history-v1",
+    schedule_built_ins: "full-frozen-template-snapshots-v1",
     public_landing: "mobile-automation-action2-v1",
     generated_at: new Date().toISOString(),
   }, null, 2)}\n`,
@@ -135,7 +152,7 @@ console.log("API boundary: full-vps-same-origin-rest-v3 (no 3.2s false timeout)"
 console.log("Authenticated UI: automation-home-action5-v1");
 console.log("Text to Strategy: nearest-supported-v1, maximum 250 words, review required");
 console.log("Strategy Ready: review -> save / trade now / schedule; existing execution APIs only");
-console.log("Strategy Library: Built-in + My Strategies + AI Generated");
+console.log("Strategy Library: Built-in + My Strategies + AI Generated; complete built-in snapshots are available to scheduler");
 console.log("Timezone: Africa/Nairobi (EAT) default, mirrored across linked Options account IDs, changeable worldwide");
 console.log("Schedule Trading: persistent server strategy + date + time + timezone + stake + TP + SL + overlap policy");
 console.log("Schedule execution: restart-safe server scheduler -> existing Custom Strategy worker; no browser timer and no second BUY engine");
