@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class AccountBoundRiskAndWsContinuityTests(unittest.TestCase):
-    def test_risk_notice_requires_current_account_state_and_exact_target(self) -> None:
+    def test_historical_risk_notice_logic_remains_account_bound(self) -> None:
         source = (ROOT / "dashboard" / "account-bound-risk-notice.js").read_text(
             encoding="utf-8"
         )
@@ -21,19 +21,23 @@ class AccountBoundRiskAndWsContinuityTests(unittest.TestCase):
         self.assertIn("[data-mode]", source)
         self.assertIn("invalidateForAccountSwitch", source)
 
-    def test_legacy_limit_notices_are_never_allowed_to_surface(self) -> None:
+    def test_retired_risk_notice_ui_cannot_surface_in_6f1(self) -> None:
         css = (ROOT / "dashboard" / "account-bound-risk-notice.css").read_text(
             encoding="utf-8"
         )
         index = (ROOT / "dashboard" / "index.html").read_text(encoding="utf-8")
+        final_ui = (ROOT / "dashboard" / "final-ui-shell-v1.js").read_text(
+            encoding="utf-8"
+        )
+        # Keep the old asset available as historical source/reference, but 6F-1
+        # has one UI authority and must never load or recreate the old notifier.
         self.assertIn(".limit-notifier", css)
         self.assertIn("display: none !important", css)
-        self.assertIn("account-bound-risk-notice.css", index)
-        self.assertIn("account-bound-risk-notice.js", index)
-        self.assertGreater(
-            index.index("account-bound-risk-notice.js"),
-            index.index("signed-risk-limit-display.js"),
-        )
+        self.assertNotIn("account-bound-risk-notice.css", index)
+        self.assertNotIn("account-bound-risk-notice.js", index)
+        self.assertNotIn("signed-risk-limit-display.js", index)
+        self.assertNotIn("limit-notifier", final_ui)
+        self.assertIn("final-ui-shell-v1", index)
 
     def test_final_execution_continuity_never_forces_websocket_close(self) -> None:
         source = (ROOT / "app" / "final_execution_continuity.py").read_text(
