@@ -12,7 +12,6 @@
   let lastMe = null;
 
   window.FOA_FULL_VPS_FRONTEND = true;
-
   try { window.EventSource = undefined; } catch (_) {}
 
   function asURL(input) {
@@ -21,20 +20,16 @@
       return new URL(String(input), window.location.origin);
     } catch (_) { return null; }
   }
-
   function pathOf(input) {
     const url = asURL(input);
     return url ? `${url.pathname}${url.search}` : "";
   }
-
   function routeOf(path) { return String(path || "").split("?", 1)[0]; }
-
   function shouldProxy(path) {
     const route = routeOf(path);
     if (!route || route.startsWith(`${API_PREFIX}/`)) return false;
     return route === "/health" || route.startsWith("/health/") || route === "/me" || route.startsWith("/me/") || route === "/metrics" || route.startsWith("/metrics/");
   }
-
   function rewrittenURL(input) {
     const url = asURL(input);
     if (!url || url.origin !== window.location.origin) return input;
@@ -58,14 +53,12 @@
       duplex: input.duplex,
     });
   }
-
   function responseJSON(payload, status = 200, headers = {}) {
     return new Response(JSON.stringify(payload), {
       status,
       headers: { "Content-Type": "application/json", "Cache-Control": "no-store", ...headers },
     });
   }
-
   function livePayload(path) {
     const cache = window.FOA_VPS_LIVE_CACHE;
     if (!cache || Date.now() - Number(cache.savedAt || 0) > LIVE_CACHE_MAX_AGE_MS) return null;
@@ -75,32 +68,26 @@
     if (route === "/me/trades/today") return cache.trades || null;
     return null;
   }
-
   function transformedBody(route, options) {
     if (!options?.body || typeof options.body !== "string") return options;
     let payload;
     try { payload = JSON.parse(options.body); } catch (_) { return options; }
 
-    // The 6F-2 Builder intentionally has no martingale control. Preserve whatever
-    // the account already has instead of silently changing recovery configuration.
+    // 6F-2 exposes stake/TP/SL but not a martingale editor. Preserve the account's
+    // existing recovery toggle instead of changing it implicitly during Save.
     if (route === "/me/custom-strategy" && payload?.execution_settings) {
       const current = lastMe?.settings?.martingale_enabled;
       if (typeof current === "boolean") payload.execution_settings.martingale_enabled = current;
     }
 
-    // Action 5 accepts a frozen custom_strategy wrapper. 6F-2 may hand it the
-    // canonical Custom Strategy directly, so normalize only that browser payload.
+    // Action 5 accepts a frozen custom_strategy wrapper. Normalize a direct
+    // canonical strategy from Builder/AI without changing scheduler authority.
     if (route === "/me/automation-schedules" && payload?.strategy_snapshot?.market_mode && Array.isArray(payload.strategy_snapshot.conditions)) {
       payload.strategy_snapshot = { custom_strategy: payload.strategy_snapshot };
     }
-
     return { ...options, body: JSON.stringify(payload) };
   }
-
-  function timeoutFor(method) {
-    return method === "GET" || method === "HEAD" ? READ_TIMEOUT_MS : WRITE_TIMEOUT_MS;
-  }
-
+  function timeoutFor(method) { return method === "GET" || method === "HEAD" ? READ_TIMEOUT_MS : WRITE_TIMEOUT_MS; }
   async function boundedFetch(input, options = {}) {
     const method = String(options.method || (input instanceof Request ? input.method : "GET") || "GET").toUpperCase();
     const controller = new AbortController();
@@ -130,7 +117,6 @@
       }
     }
   }
-
   async function transformResponse(route, response) {
     if (!response.ok) return response;
     if (!["/me", "/me/text-to-strategy/compile", "/me/automation-schedules"].includes(route)) return response;
@@ -144,7 +130,16 @@
       }
     }
     if (route === "/me/text-to-strategy/compile" && payload?.custom_strategy) {
-      payload.canonical = payload.custom_strategy;
+      const settings = payload.settings || {};
+      payload.canonical = {
+        ...payload.custom_strategy,
+        execution_settings: {
+          stake_amount: Number(settings.stake_amount ?? lastMe?.settings?.stake_amount ?? 0.5),
+          take_profit: Number(settings.take_profit ?? lastMe?.settings?.take_profit ?? 0),
+          stop_loss: Number(settings.stop_loss ?? lastMe?.settings?.stop_loss ?? 0),
+          martingale_enabled: Boolean(lastMe?.settings?.martingale_enabled ?? true),
+        },
+      };
       payload.best_possible_interpretation = payload.rules?.length
         ? `${payload.market_label || "Selected market"} · ${payload.contract_label || "Selected contract"} · ${payload.rules.join("; ")}`
         : "Compiled to the nearest supported deterministic strategy.";
@@ -161,7 +156,6 @@
     const path = pathOf(input);
     const route = routeOf(path);
     const method = String(options.method || (input instanceof Request ? input.method : "GET") || "GET").toUpperCase();
-
     if (method === "GET") {
       const live = livePayload(path);
       if (live) {
@@ -172,7 +166,6 @@
     } else if (window.FOA_VPS_LIVE_CACHE) {
       window.FOA_VPS_LIVE_CACHE.savedAt = 0;
     }
-
     const nextOptions = transformedBody(route, options);
     const response = await boundedFetch(rewrittenURL(input), nextOptions);
     return transformResponse(route, response);
@@ -184,5 +177,5 @@
     return shouldProxy(value) ? `${API_PREFIX}${value}` : value;
   };
   window.FOA_BACKEND_PROXY_MODE = "direct-vps-same-origin-rest-6f2";
-  window.FOA_VPS_API_BOUNDARY_VERSION = "20260817-6f2-1";
+  window.FOA_VPS_API_BOUNDARY_VERSION = "20260817-6f2-2";
 })();
