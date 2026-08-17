@@ -34,6 +34,21 @@ await rm(output, { recursive: true, force: true });
 await mkdir(output, { recursive: true });
 await cp(resolve(root, "dashboard"), output, { recursive: true });
 
+/* Keep the server scheduler's proven built-in snapshot contract even though the
+ * old Action 5 presentation is no longer loaded. 6F-2 will consume the same
+ * complete strategy objects through the new UI. */
+const strategyLibraryPath = resolve(output, "strategy-template-library.js");
+let strategyLibrary = await readFile(strategyLibraryPath, "utf8");
+const compactBuiltInExport = "builtIns: BUILT_INS.map((item) => ({ id: item.id, name: item.name, analysis: item.analysis, side: item.side })),";
+if (!strategyLibrary.includes(compactBuiltInExport)) {
+  throw new Error("Strategy Library built-in export contract changed; refusing an unsafe Action 5 build");
+}
+strategyLibrary = strategyLibrary.replace(
+  compactBuiltInExport,
+  "builtIns: BUILT_INS.map((item) => clone(item)),",
+);
+await writeFile(strategyLibraryPath, strategyLibrary, "utf8");
+
 let html = await readFile(indexPath, "utf8");
 html = html
   .replace(
@@ -47,15 +62,14 @@ html = html
 
 const required = [
   '<meta name="frontend-runtime" content="full-vps-final-ui-6f1">',
-  `/meta name="stream-base-url"`,
+  'meta name="stream-base-url"',
   '/vps-api-boundary.js?v=20260817-1',
   '/vps-realtime-client.js?v=20260817-6f1-2',
   '/final-ui-shell-v1.css?v=20260817-6f1-1',
   '/final-ui-shell-v1.js?v=20260817-6f1-1',
 ];
 for (const marker of required) {
-  const normalized = marker === `/meta name="stream-base-url"` ? 'meta name="stream-base-url"' : marker;
-  if (!html.includes(normalized)) throw new Error(`Action 6F-1 VPS marker missing: ${normalized}`);
+  if (!html.includes(marker)) throw new Error(`Action 6F-1 VPS marker missing: ${marker}`);
 }
 
 const forbiddenProductionUi = [
@@ -96,12 +110,14 @@ await writeFile(
     api_boundary: "full-vps-same-origin-rest-v3",
     realtime_client: "vps-realtime-client-v1",
     account_switching: "demo-real-post-me-switch-account",
+    schedule_execution: "persistent-server-scheduler-existing-worker-authority-v1",
+    schedule_persistence: "postgres-restart-safe-exactly-once-claim-v1",
+    schedule_built_ins: "full-frozen-template-snapshots-v1",
     premium_access: "weekly-linked-options-server-gate-action6a-v1",
     premium_period: "exact-7-days-no-grace-v1",
     premium_prices: "KES250-mpesa-only-v1",
     premium_payment: "lipana-stk-verified-webhook-v1",
     premium_renewal: "manual-mpesa-after-exact-expiry-v1",
-    schedule_execution: "persistent-server-scheduler-existing-worker-authority-v1",
     generated_at: new Date().toISOString(),
   }, null, 2)}\n`,
   "utf8",
