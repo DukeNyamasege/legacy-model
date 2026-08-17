@@ -29,157 +29,79 @@ if (!String(process.env.DASHBOARD_WS_BASE_URL || "").trim()) {
 await import(`./build-netlify.mjs?vps=${Date.now()}`);
 await rm(resolve(output, "_redirects"), { force: true });
 
-/* The pre-Action-5 library exposed only built-in labels/IDs. Scheduling must
- * freeze the complete builder/result configuration, not reconstruct trading
- * logic from a label. Upgrade only the built Full-VPS asset so Action 5 receives
- * an immutable copy of the same proven built-in object used by Load Template. */
-const strategyLibraryPath = resolve(output, "strategy-template-library.js");
-let strategyLibrary = await readFile(strategyLibraryPath, "utf8");
-const compactBuiltInExport = "builtIns: BUILT_INS.map((item) => ({ id: item.id, name: item.name, analysis: item.analysis, side: item.side })),";
-if (!strategyLibrary.includes(compactBuiltInExport)) {
-  throw new Error("Strategy Library built-in export contract changed; refusing an unsafe Action 5 build");
-}
-strategyLibrary = strategyLibrary.replace(
-  compactBuiltInExport,
-  "builtIns: BUILT_INS.map((item) => clone(item)),",
-);
-await writeFile(strategyLibraryPath, strategyLibrary, "utf8");
-
 let html = await readFile(indexPath, "utf8");
 html = html
   .replace(
-    '<meta name="frontend-runtime" content="netlify-vps-split-v1">',
-    '<meta name="frontend-runtime" content="full-vps-same-origin-v1">',
+    '<meta name="frontend-runtime" content="netlify-final-ui-6f1">',
+    '<meta name="frontend-runtime" content="full-vps-final-ui-6f1">',
   )
   .replace(
     '<script src="/netlify-api-boundary.js"></script>',
     '<script src="/vps-api-boundary.js?v=20260817-1"></script>',
-  )
-  .replaceAll('prelogin-landing-v2.css?v=20260814-2', 'prelogin-landing-v2.css?v=20260817-2')
-  .replaceAll('prelogin-landing-v2.js?v=20260814-2', 'prelogin-landing-v2.js?v=20260817-2');
+  );
 
-/* Action 1 foundation + Action 3 route/library extensions. */
-if (!html.includes('/automation-home-v1.css?v=20260817-1')) {
-  html = html.replace("</head>", '  <link rel="stylesheet" href="/automation-home-v1.css?v=20260817-1">\n</head>');
-}
-if (!html.includes('/automation-home-v1.js?v=20260817-3')) {
-  html = html.replace("</body>", '  <script src="/automation-home-v1.js?v=20260817-3" defer></script>\n</body>');
-}
-
-/* Action 2: 250-word Text-to-Strategy mobile workspace. */
-if (!html.includes('/text-to-strategy-v1.css?v=20260817-1')) {
-  html = html.replace("</head>", '  <link rel="stylesheet" href="/text-to-strategy-v1.css?v=20260817-1">\n</head>');
-}
-if (!html.includes('/text-to-strategy-v1.js?v=20260817-1')) {
-  html = html.replace("</body>", '  <script src="/text-to-strategy-v1.js?v=20260817-1" defer></script>\n</body>');
+const required = [
+  '<meta name="frontend-runtime" content="full-vps-final-ui-6f1">',
+  '/vps-api-boundary.js?v=20260817-1',
+  '/final-ui-shell-v1.css?v=20260817-6f1-1',
+  '/final-ui-shell-v1.js?v=20260817-6f1-1',
+  '/netlify-realtime-client.js?v=20260817-6f1-1',
+];
+for (const marker of required) {
+  if (!html.includes(marker)) throw new Error(`Action 6F-1 VPS marker missing: ${marker}`);
 }
 
-/* Action 3: generated Strategy Ready review + save/trade/schedule handoff. */
-if (!html.includes('/strategy-ready-v1.css?v=20260817-1')) {
-  html = html.replace("</head>", '  <link rel="stylesheet" href="/strategy-ready-v1.css?v=20260817-1">\n</head>');
+const forbiddenLegacyUi = [
+  '/ui/dashboard-v2.css',
+  '/ui/dashboard-v2.js',
+  '/ui/dashboard-actions-v2.js',
+  'automation-home-v1',
+  'text-to-strategy-v1',
+  'strategy-ready-v1',
+  'timezone-schedule-v1',
+  'automation-scheduler-action5',
+  'premium-subscription-action6e',
+  'final-dashboard-authority',
+  'mobile-topbar-compact',
+  'tablet-navigation-fix',
+];
+for (const marker of forbiddenLegacyUi) {
+  if (html.includes(marker)) throw new Error(`Legacy presentation authority leaked into 6F-1 VPS build: ${marker}`);
 }
-if (!html.includes('/strategy-ready-v1.js?v=20260817-1')) {
-  html = html.replace("</body>", '  <script src="/strategy-ready-v1.js?v=20260817-1" defer></script>\n</body>');
+if (html.includes('<script src="/netlify-api-boundary.js"></script>')) {
+  throw new Error("Netlify API boundary must not remain active on the full VPS build");
 }
-
-/* Historical regression markers retained while Action 5 is the active aggregate:
- * authenticated_ui: "automation-home-action3-v1"
- * authenticated_ui: "automation-home-action4-v1"
- * schedule_execution: "deferred-to-action5"
- */
-
-/* Action 4: linked-account-stable timezone onboarding + Schedule Trading UI. */
-if (!html.includes('/timezone-schedule-v1.css?v=20260817-1')) {
-  html = html.replace("</head>", '  <link rel="stylesheet" href="/timezone-schedule-v1.css?v=20260817-1">\n</head>');
-}
-if (!html.includes('/timezone-schedule-v1.js?v=20260817-2')) {
-  html = html.replace("</body>", '  <script src="/timezone-schedule-v1.js?v=20260817-2" defer></script>\n</body>');
-}
-if (!html.includes('/timezone-home-sync-v1.js?v=20260817-1')) {
-  html = html.replace("</body>", '  <script src="/timezone-home-sync-v1.js?v=20260817-1" defer></script>\n</body>');
-}
-
-/* Action 5: browser-independent persistent scheduler, lifecycle/history status,
- * Home/Trades integration and server-backed cancel/upcoming controls. */
-if (!html.includes('/automation-scheduler-action5.css?v=20260817-1')) {
-  html = html.replace("</head>", '  <link rel="stylesheet" href="/automation-scheduler-action5.css?v=20260817-1">\n</head>');
-}
-if (!html.includes('/automation-scheduler-action5.js?v=20260817-1')) {
-  html = html.replace("</body>", '  <script src="/automation-scheduler-action5.js?v=20260817-1" defer></script>\n</body>');
-}
-
-/* Action 6E: Premium Access Required, Lipana M-Pesa STK flow, provider-verified
- * success, live exact-expiry countdown/reminders and Profile subscription history.
- * This is UI only; Actions 6A/6B/6D remain the access/payment/expiry authorities. */
-if (!html.includes('/premium-subscription-action6e.css?v=20260817-1')) {
-  html = html.replace("</head>", '  <link rel="stylesheet" href="/premium-subscription-action6e.css?v=20260817-1">\n</head>');
-}
-if (!html.includes('/premium-subscription-action6e.js?v=20260817-2')) {
-  html = html.replace("</body>", '  <script src="/premium-subscription-action6e.js?v=20260817-2" defer></script>\n</body>');
-}
-
-if (!html.includes('/vps-api-boundary.js?v=20260817-1')) throw new Error("Full VPS API boundary was not installed into the production HTML");
-if (html.includes('<script src="/netlify-api-boundary.js"></script>')) throw new Error("Netlify 3.2-second API boundary must not remain active on full VPS");
-if (!html.includes('/automation-home-v1.css?v=20260817-1')) throw new Error("Automation Home stylesheet was not installed");
-if (!html.includes('/automation-home-v1.js?v=20260817-3')) throw new Error("Action 3 Automation Home controller was not installed");
-if (!html.includes('/text-to-strategy-v1.css?v=20260817-1') || !html.includes('/text-to-strategy-v1.js?v=20260817-1')) throw new Error("Action 2 Text-to-Strategy assets were not installed");
-if (!html.includes('/strategy-ready-v1.css?v=20260817-1') || !html.includes('/strategy-ready-v1.js?v=20260817-1')) throw new Error("Action 3 Strategy Ready assets were not installed");
-if (!html.includes('/timezone-schedule-v1.css?v=20260817-1') || !html.includes('/timezone-schedule-v1.js?v=20260817-2')) throw new Error("Action 4 timezone/schedule assets were not installed");
-if (!html.includes('/timezone-home-sync-v1.js?v=20260817-1')) throw new Error("Action 4 Automation Home timezone sync was not installed");
-if (!html.includes('/automation-scheduler-action5.css?v=20260817-1') || !html.includes('/automation-scheduler-action5.js?v=20260817-1')) throw new Error("Action 5 persistent scheduler assets were not installed");
-if (!html.includes('/premium-subscription-action6e.css?v=20260817-1') || !html.includes('/premium-subscription-action6e.js?v=20260817-2')) throw new Error("Action 6E Premium subscription UI assets were not installed");
-if (!html.includes('prelogin-landing-v2.css?v=20260817-2') || !html.includes('prelogin-landing-v2.js?v=20260817-2')) throw new Error("Action 2 mobile public landing assets were not installed");
 
 await writeFile(indexPath, html, "utf8");
 
 await writeFile(
   resolve(output, "vps-build.json"),
   `${JSON.stringify({
-    frontend_runtime: "full-vps-same-origin-v1",
+    frontend_runtime: "full-vps-final-ui-6f1",
+    ui_authority: "final-ui-shell-v1",
+    legacy_ui_loaded: false,
+    mockup_contract: "six-approved-mobile-screens-authoritative",
     public_origin: publicOrigin,
     api_base: "/api",
     oauth_base: "/oauth",
     websocket_base: process.env.DASHBOARD_WS_BASE_URL,
     api_boundary: "full-vps-same-origin-rest-v3",
-    authenticated_ui: "automation-home-action5-v1",
-    text_to_strategy: "nearest-supported-v1-250-words",
-    strategy_ready: "review-save-trade-schedule-v1",
-    strategy_library: "built-in-my-ai-unified-v1",
-    automation_timezone: "linked-options-global-africa-nairobi-default-v1",
-    schedule_workspace: "mobile-date-time-strategy-risk-overlap-action5-v1",
-    schedule_execution: "persistent-server-scheduler-existing-worker-authority-v1",
-    schedule_persistence: "postgres-restart-safe-exactly-once-claim-v1",
-    schedule_overlap: "wait-skip-replace-v1",
-    schedule_history: "server-lifecycle-history-v1",
-    schedule_built_ins: "full-frozen-template-snapshots-v1",
+    account_switching: "demo-real-post-me-switch-account",
     premium_access: "weekly-linked-options-server-gate-action6a-v1",
     premium_period: "exact-7-days-no-grace-v1",
     premium_prices: "KES250-mpesa-only-v1",
     premium_payment: "lipana-stk-verified-webhook-v1",
     premium_renewal: "manual-mpesa-after-exact-expiry-v1",
-    premium_ui: "mpesa-weekly-subscription-action6e-v1",
-    premium_worker_gate: "admission-proposal-buy-settlement-preserved-v1",
-    public_landing: "mobile-automation-action2-v1",
+    schedule_execution: "persistent-server-scheduler-existing-worker-authority-v1",
     generated_at: new Date().toISOString(),
   }, null, 2)}\n`,
   "utf8",
 );
 
-console.log("Full VPS frontend built.");
+console.log("Full VPS Action 6F-1 frontend built.");
 console.log(`Public origin: ${publicOrigin}`);
-console.log("REST: same-origin /api/* -> host Nginx -> API container");
-console.log("OAuth: same-origin /oauth/* -> host Nginx -> API container");
-console.log("API boundary: full-vps-same-origin-rest-v3 (no 3.2s false timeout)");
-console.log("Authenticated UI: automation-home-action5-v1 + Action 6E Premium subscription authority");
-console.log("Text to Strategy: nearest-supported-v1, maximum 250 words, review required");
-console.log("Strategy Ready: review -> save / trade now / schedule; existing execution APIs only");
-console.log("Strategy Library: Built-in + My Strategies + AI Generated; complete built-in snapshots are available to scheduler");
-console.log("Timezone: Africa/Nairobi (EAT) default, mirrored across linked Options account IDs, changeable worldwide");
-console.log("Schedule Trading: persistent server strategy + date + time + timezone + stake + TP + SL + overlap policy");
-console.log("Schedule execution: restart-safe server scheduler -> existing Custom Strategy worker; no browser timer and no second BUY engine");
-console.log("Schedule lifecycle: scheduled / waiting / starting / running / completed / skipped / cancelled / failed");
-console.log("Premium: KES 250 by Lipana M-Pesa only, exactly 7 days from verified payment, manual renewal after exact expiry");
-console.log("Premium UI Action 6E: access gate + STK waiting + verified success + countdown/reminders + Profile history");
-console.log("Premium worker gate: fresh admission + proposal + BUY; open-contract settlement preserved");
-console.log("Public landing: mobile-automation-action2-v1");
-console.log(`Realtime: ${process.env.DASHBOARD_WS_BASE_URL}/ws/me/live`);
+console.log("UI authority: final-ui-shell-v1; legacy dashboard presentation is not loaded");
+console.log("REST/OAuth: same-origin /api/* and /oauth/* through the VPS edge");
+console.log("Realtime: existing signed WebSocket snapshot client retained as data transport only");
+console.log("Demo/Real switching: /me/switch-account retained in the new shell");
+console.log("Backend strategy, scheduler, premium and Lipana authorities remain unchanged");
