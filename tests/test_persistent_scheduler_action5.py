@@ -229,29 +229,35 @@ class PersistentSchedulerAction5Tests(unittest.TestCase):
 
     def test_retired_action5_frontend_is_not_a_runtime_authority(self) -> None:
         html = (ROOT / "dashboard" / "index.html").read_text(encoding="utf-8")
-        final_ui = (ROOT / "dashboard" / "final-ui-shell-v1.js").read_text(
+        final_ui = (ROOT / "dashboard" / "final-ui-shell-v2.js").read_text(
             encoding="utf-8"
         )
         self.assertNotIn("automation-scheduler-action5.js", html)
         self.assertNotIn("automation-scheduler-action5.css", html)
-        self.assertIn("/me/automation-schedules?limit=20", final_ui)
-        self.assertIn("final-ui-shell-v1", html)
+        self.assertIn('json("/me/automation-schedules?limit=80")', final_ui)
+        self.assertIn("Schedule Trading", final_ui)
+        self.assertIn("final-ui-shell-v2", html)
 
-    def test_6f1_defers_new_schedule_library_ui_without_changing_server_authority(self) -> None:
+    def test_6f2_reconstructs_schedule_library_without_changing_server_authority(self) -> None:
         build = (ROOT / "scripts" / "build-vps.mjs").read_text(encoding="utf-8")
         scheduler = (ROOT / "app" / "automation_scheduler_action5.py").read_text(
             encoding="utf-8"
         )
-        self.assertIn('schedule_ui_and_library: "reconstructed-in-6f2"', build)
+        final_ui = (ROOT / "dashboard" / "final-ui-shell-v2.js").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('schedule_ui_and_library: "reconstructed-6f2-v1"', build)
         self.assertIn('production_asset_policy: "new-shell-whitelist-only"', build)
         self.assertNotIn("strategy-template-library.js", build)
+        self.assertIn('json("/me/automation-schedules"', final_ui)
+        self.assertIn("overlap_policy", final_ui)
         self.assertIn("def canonical_strategy_snapshot", scheduler)
         self.assertIn("strategy_snapshot", scheduler)
         self.assertIn("with_for_update(skip_locked=True)", scheduler)
 
     def test_vps_build_marks_scheduler_persistent_without_restoring_old_ui(self) -> None:
         build = (ROOT / "scripts" / "build-vps.mjs").read_text(encoding="utf-8")
-        self.assertIn('ui_authority: "final-ui-shell-v1"', build)
+        self.assertIn('ui_authority: "final-ui-shell-v2"', build)
         self.assertIn('legacy_ui_loaded: false', build)
         self.assertIn('legacy_ui_shipped: false', build)
         self.assertIn('schedule_execution: "persistent-server-scheduler-existing-worker-authority-v1"', build)
