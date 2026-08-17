@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="dark" data-premium-boot="pending">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -9,7 +9,8 @@
   <meta name="referrer" content="no-referrer">
   <meta name="api-base-url" content="/api">
   <meta name="stream-base-url" content="">
-  <meta name="frontend-runtime" content="direct-vps-final-ui-6f2">
+  <meta name="frontend-runtime" content="direct-vps-final-ui-6f3">
+  <meta name="frontend-authority" content="final-ui-shell-v2">
   <title>DerivAdmin · Home of Automation</title>
   <script>
     (function () {
@@ -54,13 +55,15 @@
     })();
   </script>
   <link rel="stylesheet" href="/final-ui-shell-v2.css?v=20260817-6f2-1">
+  <link rel="stylesheet" href="/final-premium-6f3.css?v=20260817-6f3-1">
   <script src="/vps-api-boundary-v2.js?v=20260817-6f2-1"></script>
   <script src="/deriv-quill-icons-v2.js?v=2.4.18"></script>
 </head>
 <body>
   <div id="derivadmin-root" aria-live="polite"></div>
   <noscript>DerivAdmin requires JavaScript.</noscript>
-  <script src="/vps-realtime-client-v2.js?v=20260817-6f2-1" defer></script>
-  <script src="/final-ui-shell-v2.js?v=20260817-6f2-1" defer></script>
+  <!-- 6F-3 premium bootstrap decides whether the authenticated app and realtime
+       client may load. Unpaid/expired users never start the heavy app runtime. -->
+  <script src="/final-premium-6f3.js?v=20260817-6f3-1" defer></script>
 </body>
 </html>
