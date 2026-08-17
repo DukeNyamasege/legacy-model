@@ -10,14 +10,21 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class FinalUi6F2Tests(unittest.TestCase):
-    def test_direct_vps_document_has_only_6f2_runtime(self) -> None:
+    def test_6f2_shell_is_final_authority_behind_6f3_admission(self) -> None:
         html = (ROOT / "dashboard" / "index.html").read_text(encoding="utf-8")
-        self.assertIn('frontend-runtime" content="direct-vps-final-ui-6f2"', html)
+        premium = (ROOT / "dashboard" / "final-premium-6f3.js").read_text(encoding="utf-8")
+        self.assertIn('frontend-runtime" content="direct-vps-final-ui-6f3"', html)
+        self.assertIn('frontend-authority" content="final-ui-shell-v2"', html)
         self.assertIn('/vps-api-boundary-v2.js?v=20260817-6f2-1', html)
         self.assertIn('/deriv-quill-icons-v2.js?v=2.4.18', html)
-        self.assertIn('/vps-realtime-client-v2.js?v=20260817-6f2-1', html)
         self.assertIn('/final-ui-shell-v2.css?v=20260817-6f2-1', html)
-        self.assertIn('/final-ui-shell-v2.js?v=20260817-6f2-1', html)
+        self.assertIn('/final-premium-6f3.css?v=20260817-6f3-1', html)
+        self.assertIn('/final-premium-6f3.js?v=20260817-6f3-1', html)
+        # The heavy F2 runtime is admitted dynamically only after Premium passes.
+        self.assertNotIn('<script src="/vps-realtime-client-v2.js?v=20260817-6f2-1" defer>', html)
+        self.assertNotIn('<script src="/final-ui-shell-v2.js?v=20260817-6f2-1" defer>', html)
+        self.assertIn('/vps-realtime-client-v2.js?v=20260817-6f2-1', premium)
+        self.assertIn('/final-ui-shell-v2.js?v=20260817-6f2-1', premium)
         for retired in (
             "/netlify-api-boundary.js",
             "/netlify-realtime-client.js",
@@ -154,20 +161,23 @@ class FinalUi6F2Tests(unittest.TestCase):
         self.assertIn("payload.execution_settings.martingale_enabled = current", boundary)
         self.assertIn("custom_strategy: payload.strategy_snapshot", boundary)
 
-    def test_direct_vps_build_whitelists_only_6f2_assets(self) -> None:
+    def test_direct_vps_build_whitelists_final_authority_assets(self) -> None:
         build = (ROOT / "scripts" / "build-vps.mjs").read_text(encoding="utf-8")
         dockerfile = (ROOT / "Dockerfile.frontend").read_text(encoding="utf-8")
         self.assertIn('deployment_topology: "direct-vps-only"', build)
         self.assertIn('ui_authority: "final-ui-shell-v2"', build)
+        self.assertIn('premium_bootstrap: "final-premium-6f3"', build)
         self.assertIn('run_panel: "deriv-transaction-ledger-v1"', build)
         self.assertIn('linked_account_selector: "specific-linked-options-account-v1"', build)
-        self.assertIn('production_asset_policy: "new-shell-whitelist-only"', build)
+        self.assertIn('production_asset_policy: "final-authority-whitelist-only"', build)
         self.assertIn('legacy_ui_shipped: false', build)
         self.assertIn('netlify_runtime_loaded: false', build)
         for asset in (
             '"index.html"',
             '"final-ui-shell-v2.css"',
             '"final-ui-shell-v2.js"',
+            '"final-premium-6f3.css"',
+            '"final-premium-6f3.js"',
             '"vps-api-boundary-v2.js"',
             '"vps-realtime-client-v2.js"',
         ):
