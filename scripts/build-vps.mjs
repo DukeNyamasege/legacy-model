@@ -108,6 +108,16 @@ if (!html.includes('/automation-scheduler-action5.js?v=20260817-1')) {
   html = html.replace("</body>", '  <script src="/automation-scheduler-action5.js?v=20260817-1" defer></script>\n</body>');
 }
 
+/* Action 6E: Premium Access Required, Lipana M-Pesa STK flow, provider-verified
+ * success, live exact-expiry countdown/reminders and Profile subscription history.
+ * This is UI only; Actions 6A/6B/6D remain the access/payment/expiry authorities. */
+if (!html.includes('/premium-subscription-action6e.css?v=20260817-1')) {
+  html = html.replace("</head>", '  <link rel="stylesheet" href="/premium-subscription-action6e.css?v=20260817-1">\n</head>');
+}
+if (!html.includes('/premium-subscription-action6e.js?v=20260817-2')) {
+  html = html.replace("</body>", '  <script src="/premium-subscription-action6e.js?v=20260817-2" defer></script>\n</body>');
+}
+
 if (!html.includes('/vps-api-boundary.js?v=20260817-1')) throw new Error("Full VPS API boundary was not installed into the production HTML");
 if (html.includes('<script src="/netlify-api-boundary.js"></script>')) throw new Error("Netlify 3.2-second API boundary must not remain active on full VPS");
 if (!html.includes('/automation-home-v1.css?v=20260817-1')) throw new Error("Automation Home stylesheet was not installed");
@@ -117,6 +127,7 @@ if (!html.includes('/strategy-ready-v1.css?v=20260817-1') || !html.includes('/st
 if (!html.includes('/timezone-schedule-v1.css?v=20260817-1') || !html.includes('/timezone-schedule-v1.js?v=20260817-2')) throw new Error("Action 4 timezone/schedule assets were not installed");
 if (!html.includes('/timezone-home-sync-v1.js?v=20260817-1')) throw new Error("Action 4 Automation Home timezone sync was not installed");
 if (!html.includes('/automation-scheduler-action5.css?v=20260817-1') || !html.includes('/automation-scheduler-action5.js?v=20260817-1')) throw new Error("Action 5 persistent scheduler assets were not installed");
+if (!html.includes('/premium-subscription-action6e.css?v=20260817-1') || !html.includes('/premium-subscription-action6e.js?v=20260817-2')) throw new Error("Action 6E Premium subscription UI assets were not installed");
 if (!html.includes('prelogin-landing-v2.css?v=20260817-2') || !html.includes('prelogin-landing-v2.js?v=20260817-2')) throw new Error("Action 2 mobile public landing assets were not installed");
 
 await writeFile(indexPath, html, "utf8");
@@ -141,9 +152,12 @@ await writeFile(
     schedule_overlap: "wait-skip-replace-v1",
     schedule_history: "server-lifecycle-history-v1",
     schedule_built_ins: "full-frozen-template-snapshots-v1",
-    premium_access: "weekly-linked-options-server-gate-action6a-v1",
+    premium_access: "weekly-linked-options-server-gate-action6d-v1",
     premium_period: "exact-7-days-no-grace-v1",
-    premium_prices: "KES250-or-USD2-v1",
+    premium_prices: "KES250-mpesa-only-v1",
+    premium_payment: "lipana-stk-verified-webhook-v1",
+    premium_renewal: "manual-mpesa-after-exact-expiry-v1",
+    premium_ui: "mpesa-weekly-subscription-action6e-v1",
     premium_worker_gate: "admission-proposal-buy-settlement-preserved-v1",
     public_landing: "mobile-automation-action2-v1",
     generated_at: new Date().toISOString(),
@@ -156,7 +170,7 @@ console.log(`Public origin: ${publicOrigin}`);
 console.log("REST: same-origin /api/* -> host Nginx -> API container");
 console.log("OAuth: same-origin /oauth/* -> host Nginx -> API container");
 console.log("API boundary: full-vps-same-origin-rest-v3 (no 3.2s false timeout)");
-console.log("Authenticated UI: automation-home-action5-v1");
+console.log("Authenticated UI: automation-home-action5-v1 + Action 6E Premium subscription authority");
 console.log("Text to Strategy: nearest-supported-v1, maximum 250 words, review required");
 console.log("Strategy Ready: review -> save / trade now / schedule; existing execution APIs only");
 console.log("Strategy Library: Built-in + My Strategies + AI Generated; complete built-in snapshots are available to scheduler");
@@ -164,7 +178,8 @@ console.log("Timezone: Africa/Nairobi (EAT) default, mirrored across linked Opti
 console.log("Schedule Trading: persistent server strategy + date + time + timezone + stake + TP + SL + overlap policy");
 console.log("Schedule execution: restart-safe server scheduler -> existing Custom Strategy worker; no browser timer and no second BUY engine");
 console.log("Schedule lifecycle: scheduled / waiting / starting / running / completed / skipped / cancelled / failed");
-console.log("Premium access Action 6A: linked DOT/ROT entitlement, KES 250 or USD 2, exact 7-day server boundary, no payment adapters yet");
+console.log("Premium: KES 250 by Lipana M-Pesa only, exactly 7 days from verified payment, manual renewal after exact expiry");
+console.log("Premium UI Action 6E: access gate + STK waiting + verified success + countdown/reminders + Profile history");
 console.log("Premium worker gate: fresh admission + proposal + BUY; open-contract settlement preserved");
 console.log("Public landing: mobile-automation-action2-v1");
 console.log(`Realtime: ${process.env.DASHBOARD_WS_BASE_URL}/ws/me/live`);
