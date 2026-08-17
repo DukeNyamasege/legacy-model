@@ -11,8 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 AUTHORITY = ROOT / "app" / "final_trade_history_cutoff_authority.py"
 BACKEND = ROOT / "app" / "netlify_backend_api.py"
 LEGACY_KPI_JS = ROOT / "dashboard" / "virtual-kpi-neutrality.js"
-FINAL_UI_JS = ROOT / "dashboard" / "final-ui-shell-v1.js"
-VPS_REALTIME_JS = ROOT / "dashboard" / "vps-realtime-client.js"
+FINAL_UI_JS = ROOT / "dashboard" / "final-ui-shell-v2.js"
+VPS_REALTIME_JS = ROOT / "dashboard" / "vps-realtime-client-v2.js"
 INDEX = ROOT / "dashboard" / "index.html"
 
 
@@ -81,13 +81,14 @@ class ClearTradesUnboundedKpiTests(unittest.TestCase):
         realtime = VPS_REALTIME_JS.read_text(encoding="utf-8")
         index = INDEX.read_text(encoding="utf-8")
 
-        metrics = shell.split("function metrics()", 1)[1].split("function greeting()", 1)[0]
+        metrics = shell.split("function metrics()", 1)[1].split("function home()", 1)[0]
         self.assertIn("const summary = state.trades?.summary || {}", metrics)
-        self.assertIn("summary.total ?? stats.trades", metrics)
-        self.assertIn("summary.wins ?? stats.wins", metrics)
-        self.assertIn("summary.losses ?? stats.losses", metrics)
-        self.assertIn("summary.profit ?? stats.profit", metrics)
-        self.assertNotIn("rows.length", metrics)
+        self.assertIn("const meStats = state.me?.stats || {}", metrics)
+        self.assertIn("summary.total ?? meStats.trades", metrics)
+        self.assertIn("summary.wins ?? meStats.wins", metrics)
+        self.assertIn("summary.losses ?? meStats.losses", metrics)
+        self.assertIn("summary.profit ?? meStats.profit", metrics)
+        self.assertNotIn("state.trades?.trades", metrics)
 
         self.assertIn("/me/live-snapshot", realtime)
         self.assertIn("raw.trades || null", realtime)
@@ -95,8 +96,9 @@ class ClearTradesUnboundedKpiTests(unittest.TestCase):
         self.assertNotIn("querySelectorAll", realtime)
         self.assertNotIn("innerHTML", realtime)
 
-        self.assertIn("vps-realtime-client.js?v=20260817-6f1-2", index)
-        self.assertIn("final-ui-shell-v1.js?v=20260817-6f1-1", index)
+        self.assertIn("vps-realtime-client-v2.js?v=20260817-6f2-1", index)
+        self.assertIn("final-ui-shell-v2.js?v=20260817-6f2-1", index)
+        self.assertNotIn("final-ui-shell-v1.js", index)
         self.assertNotIn("virtual-kpi-neutrality.js", index)
         self.assertNotIn("netlify-realtime-client.js", index)
 
