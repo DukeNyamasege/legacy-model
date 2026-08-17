@@ -69,7 +69,7 @@ jobs:
           PUBLIC_ORIGIN=https://release-gate.example docker compose \
             -f docker-compose.yml -f docker-compose.vps.yml config --quiet
           python scripts/audit_bulk_execution_readiness.py --help >/dev/null
-          alembic heads | grep -q "20260817_0024 (head)"
+          alembic heads | grep -q "20260817_0025 (head)"
 
       - name: Compile Python
         run: python -m compileall -q app scripts tests migrations
@@ -112,6 +112,8 @@ jobs:
           app/premium_access_models.py
           app/premium_access_service.py
           app/premium_payment_models.py
+          app/premium_renewal_action6d.py
+          app/premium_renewal_models.py
           app/premium_worker_guard.py
           app/public_websocket_resilience.py
           app/real_demo_trading_support.py
@@ -133,6 +135,7 @@ jobs:
           tests/test_oauth_direct_mobile_compact.py
           tests/test_persistent_scheduler_action5.py
           tests/test_premium_access_action6a.py
+          tests/test_premium_renewal_action6d.py
           tests/test_result_routing_and_recovery_spread.py
           tests/test_session_risk_and_multidevice_ui.py
           tests/test_strategy_template_runtime_upgrade.py
@@ -177,6 +180,8 @@ jobs:
           app/premium_access_models.py
           app/premium_access_service.py
           app/premium_payment_models.py
+          app/premium_renewal_action6d.py
+          app/premium_renewal_models.py
           app/premium_worker_guard.py
           app/public_websocket_resilience.py
           app/real_demo_trading_support.py
@@ -219,6 +224,7 @@ jobs:
           python -m unittest -q tests.test_persistent_scheduler_action5
           python -m unittest -q tests.test_premium_access_action6a
           python -m unittest -q tests.test_lipana_mpesa_action6b
+          python -m unittest -q tests.test_premium_renewal_action6d
           python -m unittest -q tests.test_account_bound_risk_and_ws_continuity
           python -m unittest -q tests.test_custom_direct_runtime
           python -m unittest -q tests.test_custom_strategy_instant_start
