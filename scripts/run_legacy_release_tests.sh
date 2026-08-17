@@ -11,12 +11,13 @@ export ALLOW_LEGACY_GLOBAL_TOKENS=true
 export COPYTRADING_ALLOW_LEGACY_GLOBAL_TOKENS=true
 export FRONTEND_ORIGINS="http://127.0.0.1:8080,http://localhost:8080,https://derivadmin.site"
 
-# Action 6F-1 replaces the former dashboard presentation with one direct-VPS UI
-# authority. Keep syntax checks only for the new shell/transport; backend
-# strategy, settlement, recovery and execution tests remain in force.
-node --check dashboard/final-ui-shell-v1.js
-node --check dashboard/vps-api-boundary.js
-node --check dashboard/vps-realtime-client.js
+# Action 6F-2 is the direct-VPS presentation authority. Syntax-check only the
+# runtime that will actually ship; every backend strategy, settlement, recovery
+# and execution regression below remains unchanged.
+node --check dashboard/final-ui-shell-v2.js
+node --check dashboard/vps-api-boundary-v2.js
+node --check dashboard/vps-realtime-client-v2.js
+node --check scripts/export-deriv-quill-icons-v2.mjs
 node --check scripts/build-vps.mjs
 
 exec python -m unittest -q \
