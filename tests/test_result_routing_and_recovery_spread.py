@@ -199,11 +199,11 @@ class ResultRoutingAndRecoverySpreadTests(unittest.TestCase):
         self.assertNotIn("result-ui-fixes.js", index)
         self.assertNotIn("prediction-ui-fix.js", index)
         self.assertIn('deployment_topology: "direct-vps-only"', build)
-        self.assertIn('ui_authority: "final-ui-shell-v1"', build)
+        self.assertIn('ui_authority: "final-ui-shell-v2"', build)
         self.assertNotIn("build-netlify.mjs", build)
 
-        # Keep the historical parsers syntactically valid until their controls are
-        # rebuilt into the new 6F-2 Strategy Builder.
+        # Keep the historical parsers syntactically valid while the new direct-VPS
+        # Builder remains the only presentation authority.
         for relative in (
             "dashboard/prediction-ui-fix.js",
             "dashboard/result-ui-fixes.js",
