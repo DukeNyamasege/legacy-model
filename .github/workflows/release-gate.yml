@@ -126,6 +126,7 @@ jobs:
           tests/test_final_ui_6f1.py
           tests/test_final_ui_6f2.py
           tests/test_final_ui_6f3.py
+          tests/test_retired_ui_cleanup_6f3.py
           tests/test_lipana_mpesa_action6b.py
           tests/test_persistent_scheduler_action5.py
           tests/test_premium_access_action6a.py
@@ -193,6 +194,7 @@ jobs:
           python -m unittest -q tests.test_final_ui_6f1
           python -m unittest -q tests.test_final_ui_6f2
           python -m unittest -q tests.test_final_ui_6f3
+          python -m unittest -q tests.test_retired_ui_cleanup_6f3
           python -m unittest -q tests.test_persistent_scheduler_action5
           python -m unittest -q tests.test_premium_access_action6a
           python -m unittest -q tests.test_lipana_mpesa_action6b
