@@ -58,6 +58,62 @@ class FullVpsHostingTests(unittest.TestCase):
         self.assertIn('api_base: "/api"', source)
         self.assertIn('oauth_base: "/oauth"', source)
 
+    def test_action1_automation_home_matches_approved_shell_and_preserves_trades(self) -> None:
+        js = (ROOT / "dashboard" / "automation-home-v1.js").read_text(encoding="utf-8")
+        css = (ROOT / "dashboard" / "automation-home-v1.css").read_text(encoding="utf-8")
+        build = (ROOT / "scripts" / "build-vps.mjs").read_text(encoding="utf-8")
+
+        # Approved Action 1 information architecture.
+        self.assertIn("Home of Automation", js)
+        self.assertIn("Strategy Builder", js)
+        self.assertIn("Text to Strategy", js)
+        self.assertIn("Schedule Trading", js)
+        self.assertIn("My Automation", js)
+        self.assertIn("Strategy Library", js)
+        self.assertIn("Built-in", js)
+        self.assertIn("My Strategies", js)
+        self.assertIn("AI Generated", js)
+        self.assertIn('item("home", "home", "Home")', js)
+        self.assertIn('item("builder", "cubes", "Builder")', js)
+        self.assertIn('item("ai", "star", "AI")', js)
+        self.assertIn('item("schedule", "calendar", "Schedule")', js)
+        self.assertIn('item("profile", "profile", "Profile")', js)
+
+        # Immediate execution remains owned by the existing data-main-action
+        # controller; the new shell only routes the successful UX into Trades.
+        self.assertIn("[data-main-action]", js)
+        self.assertIn('navigate("trades")', js)
+        self.assertIn('const desired = route === "trades" ? "trades" : "main";', js)
+        self.assertNotIn("/me/resume-trading", js)
+        self.assertNotIn("/me/stop-trading", js)
+
+        # The exact mobile-first dark blue/cyan design language is a dedicated
+        # authority and does not rewrite the worker or backend.
+        self.assertIn("--automation-blue: #168cff", css)
+        self.assertIn("--automation-cyan: #1fd2ff", css)
+        self.assertIn(".foa-automation-features", css)
+        self.assertIn(".foa-automation-bottom-nav", css)
+        self.assertIn("@media (max-width: 720px)", css)
+
+        # Full-VPS build installs the new shell with immutable cache-busting.
+        self.assertIn("/automation-home-v1.css?v=20260817-1", build)
+        self.assertIn("/automation-home-v1.js?v=20260817-1", build)
+        self.assertIn('authenticated_ui: "automation-home-action1-v1"', build)
+
+        syntax = subprocess.run(
+            ["node", "--check", str(ROOT / "dashboard" / "automation-home-v1.js")],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+        self.assertEqual(
+            syntax.returncode,
+            0,
+            msg=f"stdout:\n{syntax.stdout}\nstderr:\n{syntax.stderr}",
+        )
+
     def test_full_deploy_preserves_database_and_builds_candidate_before_cutover(self) -> None:
         source = (ROOT / "scripts/deploy_full_vps.sh").read_text(encoding="utf-8")
         build = source.index("compose build frontend api worker")
