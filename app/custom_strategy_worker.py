@@ -67,6 +67,7 @@ from app.session_risk_stop_authority import install_session_risk_stop_worker
 from app.telegram_silence import install_telegram_silence
 from app.trade_registration_idempotency import install_trade_registration_idempotency
 from app.unresolved_contract_safety import install_unresolved_contract_safety
+from app.vps_low_latency_runtime import install_vps_low_latency_runtime
 
 
 async def run_worker() -> None:
@@ -172,6 +173,13 @@ async def run_worker() -> None:
     # loops own their own backoff and sibling accounts are never globally rebuilt.
     install_custom_strategy_connection_stampede_guard()
 
+    # Full-VPS latency correction stays on top of the proven b315 ownership model:
+    # faster bounded connection capacity, dual-stack racing, deduplicated local
+    # admission/market work, and bounded open-contract reconciliation. It does not
+    # alter strategy qualification, stake, proposal, BUY, settlement or rate-limit
+    # protection.
+    install_vps_low_latency_runtime()
+
     # Transport/Virtual Hook/Multiplier consistency installs first. Split Recovery
     # is then wrapped so the configured spread width (1/2/3), not the number of
     # remaining successful legs, is always the risk divisor. The compatibility cap
@@ -188,7 +196,7 @@ async def run_worker() -> None:
     bot = RFDir5TradingBot()
     bot.logger.warning(
         "CUSTOM_STRATEGY_WORKER_READY architecture=account_scoped_direct "
-        "frontend=netlify_static realtime=nonblocking_vps_websocket "
+        "frontend=full_vps_same_origin realtime=nonblocking_vps_websocket "
         "legacy_rf=false legacy_aidr=false multi_strategy=false cohorts=false "
         "bulk=false tick_db_persistence=false start_required=true "
         "explicit_start_pickup=true instant_start=true provider_account_sweep_blocking=false "
@@ -204,7 +212,8 @@ async def run_worker() -> None:
         "runtime_fault_policy=reconnect_reconcile_never_stop "
         "ambiguous_buy_policy=reconcile_before_next_real duplicate_buy_retry=false "
         "stop_reason_authority=durable execution_liveness_watchdog=true "
-        "connection_repair=targeted_singleflight sibling_wake=false global_revalidation=false"
+        "connection_repair=targeted_singleflight sibling_wake=false global_revalidation=false "
+        "vps_low_latency=true provider_rate_limit_backoff=preserved"
     )
     loop = asyncio.get_running_loop()
 
