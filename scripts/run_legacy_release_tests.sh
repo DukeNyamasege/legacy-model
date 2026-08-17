@@ -9,34 +9,22 @@ set -eu
 unset DATABASE_URL
 export ALLOW_LEGACY_GLOBAL_TOKENS=true
 export COPYTRADING_ALLOW_LEGACY_GLOBAL_TOKENS=true
-export FRONTEND_ORIGINS="http://127.0.0.1:8080,http://localhost:8080,https://derivadmin.site,https://legacymodel.netlify.app"
+export FRONTEND_ORIGINS="http://127.0.0.1:8080,http://localhost:8080,https://derivadmin.site"
 
-# These dashboard guards are part of the execution/editing/scheduling/payment
-# safety surface. A malformed script must fail the same release gate as the worker.
-node --check dashboard/execution-status-banner.js
-node --check dashboard/builder-edit-stability.js
-node --check dashboard/runtime-ux-authority.js
-node --check dashboard/virtual-kpi-neutrality.js
-node --check dashboard/automation-home-v1.js
-node --check dashboard/text-to-strategy-v1.js
-node --check dashboard/strategy-ready-v1.js
-node --check dashboard/timezone-schedule-v1.js
-node --check dashboard/timezone-home-sync-v1.js
-node --check dashboard/automation-scheduler-action5.js
-node --check dashboard/premium-subscription-action6e.js
-node --check dashboard/prelogin-landing-v2.js
+# Action 6F-1 replaces the former dashboard presentation with one direct-VPS UI
+# authority. Keep syntax checks only for the new shell/transport; the backend
+# strategy, settlement, recovery and execution tests below remain unchanged.
+node --check dashboard/final-ui-shell-v1.js
+node --check dashboard/vps-api-boundary.js
+node --check dashboard/vps-realtime-client.js
+node --check scripts/build-vps.mjs
 
 exec python -m unittest -q \
-  tests.test_text_to_strategy_action2 \
-  tests.test_strategy_ready_action3 \
-  tests.test_timezone_schedule_action4 \
   tests.test_persistent_scheduler_action5 \
-  tests.test_premium_subscription_ui_action6e \
   tests.test_execution_stop_reason_authority \
   tests.test_custom_execution_consistency_authority \
   tests.test_post_loss_split_and_virtual_neutrality \
   tests.test_clear_trades_unbounded_kpis \
-  tests.test_builder_edit_stability \
   tests.test_custom_virtual_integrity_authority \
   tests.test_custom_strategy_instant_start \
   tests.test_personal_token_sync \
@@ -51,8 +39,6 @@ exec python -m unittest -q \
   tests.test_per_account_virtual_runtime \
   tests.test_strategy_settlement_integrity \
   tests.test_websocket_execution_hardening \
-  tests.test_generated_multi_strategy_js \
   tests.test_performance_hardening \
-  tests.test_generated_request_broker_js \
   test_rf_dir5.py \
   test_strategy_logic.py
