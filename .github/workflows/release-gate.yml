@@ -65,7 +65,7 @@ jobs:
           PUBLIC_ORIGIN=https://release-gate.example docker compose \
             -f docker-compose.yml -f docker-compose.vps.yml config --quiet
           python scripts/audit_bulk_execution_readiness.py --help >/dev/null
-          alembic heads | grep -q "20260812_0021 (head)"
+          alembic heads | grep -q "20260817_0022 (head)"
 
       - name: Compile Python
         run: python -m compileall -q app scripts tests migrations
@@ -75,6 +75,8 @@ jobs:
           ruff check --output-format=github --select E9,F63,F7,F82
           app/account_execution_session.py
           app/account_scoped_websocket_runtime.py
+          app/automation_schedule_models.py
+          app/automation_scheduler_action5.py
           app/backend_only_surface.py
           app/custom_split_recovery_authority.py
           app/custom_strategy_comparator_extension.py
@@ -118,6 +120,7 @@ jobs:
           tests/test_global_trade_history_cutoff.py
           tests/test_netlify_vps_split.py
           tests/test_oauth_direct_mobile_compact.py
+          tests/test_persistent_scheduler_action5.py
           tests/test_result_routing_and_recovery_spread.py
           tests/test_session_risk_and_multidevice_ui.py
           tests/test_strategy_template_runtime_upgrade.py
@@ -129,6 +132,8 @@ jobs:
           --disable-error-code=misc --disable-error-code=arg-type
           app/account_execution_session.py
           app/account_scoped_websocket_runtime.py
+          app/automation_schedule_models.py
+          app/automation_scheduler_action5.py
           app/backend_only_surface.py
           app/custom_split_recovery_authority.py
           app/custom_strategy_comparator_extension.py
@@ -186,12 +191,14 @@ jobs:
           node --check dashboard/runtime-ux-authority.js
           node --check dashboard/strategy-edit-authority.js
           node --check dashboard/platform-default-strategy.js
+          node --check dashboard/automation-scheduler-action5.js
           node --check scripts/build-netlify.mjs
           node --check scripts/build-vps.mjs
 
       - name: Run focused release tests
         run: |
           python -m unittest -q tests.test_full_vps_hosting
+          python -m unittest -q tests.test_persistent_scheduler_action5
           python -m unittest -q tests.test_account_bound_risk_and_ws_continuity
           python -m unittest -q tests.test_custom_direct_runtime
           python -m unittest -q tests.test_custom_strategy_instant_start
@@ -276,6 +283,12 @@ jobs:
           grep -Fq 'stream-base-url" content="wss://release-gate.example"' dist/index.html
           grep -Fq '"api_base": "/api"' dist/vps-build.json
           grep -Fq '"oauth_base": "/oauth"' dist/vps-build.json
+          grep -Fq '"authenticated_ui": "automation-home-action5-v1"' dist/vps-build.json
+          grep -Fq '"schedule_execution": "persistent-server-scheduler-existing-worker-authority-v1"' dist/vps-build.json
+          grep -Fq '/automation-scheduler-action5.js?v=20260817-1' dist/index.html
+          grep -Fq '/automation-scheduler-action5.css?v=20260817-1' dist/index.html
+          test -f dist/automation-scheduler-action5.js
+          test -f dist/automation-scheduler-action5.css
 
       - name: Build frontend image
         run: >-
