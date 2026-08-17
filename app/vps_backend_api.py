@@ -10,11 +10,13 @@ trading worker runtime.
 
 from app.netlify_backend_api import app
 from app.vps_dashboard_latency_hotfix import install_vps_dashboard_latency_hotfix
+from app.vps_login_observability_hotfix import install_vps_login_observability_hotfix
 from app.vps_session_observability import install_vps_session_observability
 from app.vps_telegram_control import install_vps_telegram_control
 
 
 install_vps_session_observability(app)
+install_vps_login_observability_hotfix()
 install_vps_telegram_control(app)
 install_vps_dashboard_latency_hotfix(app)
 
