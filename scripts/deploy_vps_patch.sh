@@ -15,6 +15,7 @@ wait_http() {
   local url="$1"
   local attempts="${2:-45}"
   local delay="${3:-1}"
+  local i
   for ((i=1; i<=attempts; i++)); do
     if curl -fsS --max-time 2 "$url" >/dev/null 2>&1; then
       return 0
@@ -51,11 +52,15 @@ deploy_frontend_hot() {
 
   candidate="legacy-model-frontend-patch-$$"
   tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp" >/dev/null 2>&1 || true; docker rm -f "$candidate" >/dev/null 2>&1 || true' RETURN
-
+  docker rm -f "$candidate" >/dev/null 2>&1 || true
   docker create --name "$candidate" legacy-model-frontend:latest >/dev/null
   mkdir -p "$tmp/html"
-  docker cp "$candidate:/usr/share/nginx/html/." "$tmp/html/"
+
+  if ! docker cp "$candidate:/usr/share/nginx/html/." "$tmp/html/"; then
+    docker rm -f "$candidate" >/dev/null 2>&1 || true
+    rm -rf "$tmp"
+    exit 1
+  fi
   docker rm "$candidate" >/dev/null
 
   log "Atomically replacing static frontend files inside the running Nginx container"
@@ -73,9 +78,12 @@ deploy_frontend_hot() {
       mv /usr/share/nginx/html /usr/share/nginx/html.failed
       mv /usr/share/nginx/html.previous /usr/share/nginx/html
     '
+    rm -rf "$tmp"
     exit 1
   fi
+
   docker exec "$live" sh -ec 'rm -rf /usr/share/nginx/html.previous'
+  rm -rf "$tmp"
   log "Frontend hot patch active; no container restart occurred"
 }
 
@@ -104,53 +112,45 @@ deploy_api_blue_green() {
     exit 1
   fi
 
-  local backup temp switched
+  local backup temp
   backup="$(mktemp)"
   temp="$(mktemp)"
-  switched=0
   cp "$CADDY_RUNTIME_FILE" "$backup"
-
-  cleanup_api_patch() {
-    if [[ "$switched" == "1" ]]; then
-      if wait_http http://127.0.0.1:8080/health/live 2 1; then
-        cp "$backup" "$CADDY_RUNTIME_FILE"
-        caddy validate --config "$CADDY_RUNTIME_FILE" >/dev/null 2>&1 || true
-        systemctl reload caddy >/dev/null 2>&1 || true
-        switched=0
-      else
-        echo "PRIMARY_API_NOT_HEALTHY_GREEN_LEFT_SERVING=true" >&2
-        return
-      fi
-    fi
-    docker rm -f "$GREEN_NAME" >/dev/null 2>&1 || true
-    rm -f "$backup" "$temp" >/dev/null 2>&1 || true
-  }
-  trap cleanup_api_patch RETURN
-
   sed "s#127\.0\.0\.1:8080#127.0.0.1:${GREEN_PORT}#g" "$backup" > "$temp"
-  caddy validate --config "$temp" >/dev/null
+
+  if ! caddy validate --adapter caddyfile --config "$temp" >/dev/null; then
+    echo "GREEN_CADDY_CONFIG_INVALID" >&2
+    docker rm -f "$GREEN_NAME" >/dev/null 2>&1 || true
+    rm -f "$backup" "$temp"
+    exit 1
+  fi
+
   cp "$temp" "$CADDY_RUNTIME_FILE"
   systemctl reload caddy
-  switched=1
+  log "Public API traffic switched to healthy green API"
 
-  log "Public API traffic is on the healthy green candidate; recreating primary API in the background"
-  "${COMPOSE[@]}" up -d --no-deps --force-recreate api
+  # At this point failures intentionally leave Caddy on green. Traders continue in
+  # the worker and browser/API traffic continues on the candidate until repaired.
+  if ! "${COMPOSE[@]}" up -d --no-deps --force-recreate api; then
+    echo "PRIMARY_API_RECREATE_FAILED_GREEN_STILL_SERVING=true" >&2
+    echo "CADDY_BACKUP_FILE=$backup" >&2
+    exit 1
+  fi
 
   if ! wait_http http://127.0.0.1:8080/health/live 60 1; then
     "${COMPOSE[@]}" logs --tail=250 --no-color api || true
     echo "PRIMARY_API_FAILED_HEALTH_CHECK_GREEN_STILL_SERVING=true" >&2
+    echo "CADDY_BACKUP_FILE=$backup" >&2
     exit 1
   fi
 
-  log "Switching Caddy back to the healthy primary API"
+  log "Primary API is healthy; switching Caddy back without dropping public traffic"
   cp "$backup" "$CADDY_RUNTIME_FILE"
-  caddy validate --config "$CADDY_RUNTIME_FILE" >/dev/null
+  caddy validate --adapter caddyfile --config "$CADDY_RUNTIME_FILE" >/dev/null
   systemctl reload caddy
-  switched=0
-  docker rm -f "$GREEN_NAME" >/dev/null 2>&1 || true
-  rm -f "$backup" "$temp" >/dev/null 2>&1 || true
-  trap - RETURN
 
+  docker rm -f "$GREEN_NAME" >/dev/null 2>&1 || true
+  rm -f "$backup" "$temp"
   log "API blue-green patch complete; worker was never restarted"
 }
 
@@ -162,7 +162,7 @@ Usage:
   scripts/deploy_vps_patch.sh api frontend
 
 The script never restarts the worker. Frontend files are hot-swapped inside the
-running Nginx container. API changes use a temporary green API and a graceful Caddy
+running Nginx container. API changes use a temporary green API and graceful Caddy
 switch so the primary API can be recreated while public traffic remains served.
 EOF
 }
@@ -178,7 +178,7 @@ for target in "$@"; do
     api) deploy_api_blue_green ;;
     worker)
       echo "Worker hot deployment is intentionally blocked: duplicate execution is unsafe." >&2
-      echo "Use the controlled worker restart procedure only when worker code actually changes." >&2
+      echo "Use a controlled worker handoff only when worker code actually changes." >&2
       exit 3
       ;;
     *) usage; exit 2 ;;
