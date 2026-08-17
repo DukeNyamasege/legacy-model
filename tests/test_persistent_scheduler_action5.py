@@ -238,7 +238,7 @@ class PersistentSchedulerAction5Tests(unittest.TestCase):
         self.assertIn("Schedule Trading", final_ui)
         self.assertIn("final-ui-shell-v2", html)
 
-    def test_6f2_reconstructs_schedule_library_without_changing_server_authority(self) -> None:
+    def test_6f2_schedule_library_survives_final_6f3_admission(self) -> None:
         build = (ROOT / "scripts" / "build-vps.mjs").read_text(encoding="utf-8")
         scheduler = (ROOT / "app" / "automation_scheduler_action5.py").read_text(
             encoding="utf-8"
@@ -247,7 +247,8 @@ class PersistentSchedulerAction5Tests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn('schedule_ui_and_library: "reconstructed-6f2-v1"', build)
-        self.assertIn('production_asset_policy: "new-shell-whitelist-only"', build)
+        self.assertIn('production_asset_policy: "final-authority-whitelist-only"', build)
+        self.assertIn('premium_bootstrap: "final-premium-6f3"', build)
         self.assertNotIn("strategy-template-library.js", build)
         self.assertIn('json("/me/automation-schedules"', final_ui)
         self.assertIn("overlap_policy", final_ui)
