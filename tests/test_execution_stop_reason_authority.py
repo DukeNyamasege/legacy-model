@@ -103,26 +103,28 @@ class ExecutionStopReasonAuthorityTests(unittest.TestCase):
             guard,
         )
 
-    def test_new_direct_vps_ui_reads_lifecycle_without_old_banner(self) -> None:
-        old = (ROOT / "dashboard" / "execution-status-banner.js").read_text(
+    def test_final_ui_reads_durable_lifecycle_without_retired_banner(self) -> None:
+        reason = (ROOT / "app" / "execution_stop_reason_authority.py").read_text(
             encoding="utf-8"
         )
         index = (ROOT / "dashboard" / "index.html").read_text(encoding="utf-8")
         shell = (ROOT / "dashboard" / "final-ui-shell-v2.js").read_text(
             encoding="utf-8"
         )
+        premium = (ROOT / "dashboard" / "final-premium-6f3.js").read_text(
+            encoding="utf-8"
+        )
 
-        # Durable reason semantics remain protected by the backend assertions
-        # above. 6F-2 consumes the authoritative lifecycle in its Run panel and
-        # does not restore the retired banner presentation.
-        self.assertIn("REASONED_TERMINAL", old)
-        self.assertIn("Take profit stop", old)
-        self.assertIn("Stop loss stop", old)
+        self.assertIn("ACCOUNT_STOP_REASON_PRESERVED", reason)
+        self.assertIn("take_profit", reason)
+        self.assertIn("stop_loss", reason)
+        self.assertFalse((ROOT / "dashboard" / "execution-status-banner.js").exists())
         self.assertNotIn("execution-status-banner.js", index)
         self.assertIn('json("/me/trading-lifecycle")', shell)
         self.assertIn("state.lifecycle", shell)
         self.assertIn("state.lifecycle?.lifecycle", shell)
-        self.assertIn('/final-ui-shell-v2.js?v=20260817-6f2-1', index)
+        self.assertNotIn('<script src="/final-ui-shell-v2.js?v=20260817-6f2-1" defer>', index)
+        self.assertIn('/final-ui-shell-v2.js?v=20260817-6f2-1', premium)
         self.assertNotIn('/final-ui-shell-v1.js', index)
 
 
