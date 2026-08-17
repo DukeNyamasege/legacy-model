@@ -90,7 +90,7 @@ class FinalUi6F2Tests(unittest.TestCase):
         self.assertIn("entry_tick", js)
         self.assertIn("exit_tick", js)
         self.assertIn("trade.profit", js)
-        self.assertIn("trade.payout", js)
+        self.assertIn("row.payout", js)
         self.assertIn(".run-ledger", css)
         self.assertIn(".run-summary", css)
         self.assertIn(".run-row", css)
