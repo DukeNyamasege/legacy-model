@@ -152,7 +152,7 @@ await writeFile(
     schedule_overlap: "wait-skip-replace-v1",
     schedule_history: "server-lifecycle-history-v1",
     schedule_built_ins: "full-frozen-template-snapshots-v1",
-    premium_access: "weekly-linked-options-server-gate-action6d-v1",
+    premium_access: "weekly-linked-options-server-gate-action6a-v1",
     premium_period: "exact-7-days-no-grace-v1",
     premium_prices: "KES250-mpesa-only-v1",
     premium_payment: "lipana-stk-verified-webhook-v1",
