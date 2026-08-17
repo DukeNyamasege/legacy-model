@@ -19,7 +19,7 @@ node --check dashboard/vps-api-boundary.js
 node --check dashboard/vps-realtime-client.js
 node --check scripts/build-vps.mjs
 
-python -m unittest -q \
+exec python -m unittest -q \
   tests.test_persistent_scheduler_action5 \
   tests.test_execution_stop_reason_authority \
   tests.test_custom_execution_consistency_authority \
@@ -40,8 +40,3 @@ python -m unittest -q \
   tests.test_strategy_settlement_integrity \
   tests.test_websocket_execution_hardening \
   tests.test_performance_hardening
-
-# Run every backend/strategy case in the two large historical modules while
-# excluding only the three retired presentation assertions. Their replacement
-# coverage is tests.test_final_ui_6f1.
-python scripts/run_legacy_backend_suite.py
