@@ -48,22 +48,23 @@ html = html
   .replaceAll('prelogin-landing-v2.css?v=20260814-2', 'prelogin-landing-v2.css?v=20260817-2')
   .replaceAll('prelogin-landing-v2.js?v=20260814-2', 'prelogin-landing-v2.js?v=20260817-2');
 
-/* Action 1: authenticated Automation Home + universal mobile app shell. */
+/* Action 1 foundation: authenticated Automation Home + universal mobile shell.
+ * Action 3 advances only the JS cache key because routing/library behavior now
+ * includes the Strategy Ready review path. */
 if (!html.includes('/automation-home-v1.css?v=20260817-1')) {
   html = html.replace(
     "</head>",
     '  <link rel="stylesheet" href="/automation-home-v1.css?v=20260817-1">\n</head>',
   );
 }
-if (!html.includes('/automation-home-v1.js?v=20260817-1')) {
+if (!html.includes('/automation-home-v1.js?v=20260817-3')) {
   html = html.replace(
     "</body>",
-    '  <script src="/automation-home-v1.js?v=20260817-1" defer></script>\n</body>',
+    '  <script src="/automation-home-v1.js?v=20260817-3" defer></script>\n</body>',
   );
 }
 
-/* Action 2: 250-word Text-to-Strategy mobile workspace. It is a UI/compiler
- * layer only. The trading worker remains the sole execution authority. */
+/* Action 2: 250-word Text-to-Strategy mobile workspace. */
 if (!html.includes('/text-to-strategy-v1.css?v=20260817-1')) {
   html = html.replace(
     "</head>",
@@ -77,6 +78,21 @@ if (!html.includes('/text-to-strategy-v1.js?v=20260817-1')) {
   );
 }
 
+/* Action 3: generated Strategy Ready review + save/trade/schedule handoff.
+ * This remains a frontend activation layer over the existing Custom Strategy API. */
+if (!html.includes('/strategy-ready-v1.css?v=20260817-1')) {
+  html = html.replace(
+    "</head>",
+    '  <link rel="stylesheet" href="/strategy-ready-v1.css?v=20260817-1">\n</head>',
+  );
+}
+if (!html.includes('/strategy-ready-v1.js?v=20260817-1')) {
+  html = html.replace(
+    "</body>",
+    '  <script src="/strategy-ready-v1.js?v=20260817-1" defer></script>\n</body>',
+  );
+}
+
 if (!html.includes('/vps-api-boundary.js?v=20260817-1')) {
   throw new Error("Full VPS API boundary was not installed into the production HTML");
 }
@@ -84,16 +100,22 @@ if (html.includes('<script src="/netlify-api-boundary.js"></script>')) {
   throw new Error("Netlify 3.2-second API boundary must not remain active on full VPS");
 }
 if (!html.includes('/automation-home-v1.css?v=20260817-1')) {
-  throw new Error("Action 1 Automation Home stylesheet was not installed");
+  throw new Error("Automation Home stylesheet was not installed");
 }
-if (!html.includes('/automation-home-v1.js?v=20260817-1')) {
-  throw new Error("Action 1 Automation Home controller was not installed");
+if (!html.includes('/automation-home-v1.js?v=20260817-3')) {
+  throw new Error("Action 3 Automation Home controller was not installed");
 }
 if (!html.includes('/text-to-strategy-v1.css?v=20260817-1')) {
   throw new Error("Action 2 Text-to-Strategy stylesheet was not installed");
 }
 if (!html.includes('/text-to-strategy-v1.js?v=20260817-1')) {
   throw new Error("Action 2 Text-to-Strategy controller was not installed");
+}
+if (!html.includes('/strategy-ready-v1.css?v=20260817-1')) {
+  throw new Error("Action 3 Strategy Ready stylesheet was not installed");
+}
+if (!html.includes('/strategy-ready-v1.js?v=20260817-1')) {
+  throw new Error("Action 3 Strategy Ready controller was not installed");
 }
 if (!html.includes('prelogin-landing-v2.css?v=20260817-2')) {
   throw new Error("Action 2 mobile public landing stylesheet cache bust was not installed");
@@ -113,8 +135,10 @@ await writeFile(
     oauth_base: "/oauth",
     websocket_base: process.env.DASHBOARD_WS_BASE_URL,
     api_boundary: "full-vps-same-origin-rest-v3",
-    authenticated_ui: "automation-home-action2-v1",
+    authenticated_ui: "automation-home-action3-v1",
     text_to_strategy: "nearest-supported-v1-250-words",
+    strategy_ready: "review-save-trade-schedule-v1",
+    strategy_library: "built-in-my-ai-unified-v1",
     public_landing: "mobile-automation-action2-v1",
     generated_at: new Date().toISOString(),
   }, null, 2)}\n`,
@@ -126,7 +150,9 @@ console.log(`Public origin: ${publicOrigin}`);
 console.log("REST: same-origin /api/* -> host Nginx -> API container");
 console.log("OAuth: same-origin /oauth/* -> host Nginx -> API container");
 console.log("API boundary: full-vps-same-origin-rest-v3 (no 3.2s false timeout)");
-console.log("Authenticated UI: automation-home-action2-v1");
+console.log("Authenticated UI: automation-home-action3-v1");
 console.log("Text to Strategy: nearest-supported-v1, maximum 250 words, review required");
+console.log("Strategy Ready: review -> save / trade now / schedule; existing execution APIs only");
+console.log("Strategy Library: Built-in + My Strategies + AI Generated");
 console.log("Public landing: mobile-automation-action2-v1");
 console.log(`Realtime: ${process.env.DASHBOARD_WS_BASE_URL}/ws/me/live`);
