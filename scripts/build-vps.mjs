@@ -44,12 +44,11 @@ html = html
   .replace(
     '<script src="/netlify-api-boundary.js"></script>',
     '<script src="/vps-api-boundary.js?v=20260817-1"></script>',
-  );
+  )
+  .replaceAll('prelogin-landing-v2.css?v=20260814-2', 'prelogin-landing-v2.css?v=20260817-2')
+  .replaceAll('prelogin-landing-v2.js?v=20260814-2', 'prelogin-landing-v2.js?v=20260817-2');
 
-/* Action 1: authenticated Automation Home + universal mobile app shell.
- * The assets live in dashboard/ and are copied into dist by build-netlify.mjs.
- * Install them only in the full-VPS product for now; they do not change worker
- * execution or the existing Builder/Trades controllers. */
+/* Action 1: authenticated Automation Home + universal mobile app shell. */
 if (!html.includes('/automation-home-v1.css?v=20260817-1')) {
   html = html.replace(
     "</head>",
@@ -60,6 +59,21 @@ if (!html.includes('/automation-home-v1.js?v=20260817-1')) {
   html = html.replace(
     "</body>",
     '  <script src="/automation-home-v1.js?v=20260817-1" defer></script>\n</body>',
+  );
+}
+
+/* Action 2: 250-word Text-to-Strategy mobile workspace. It is a UI/compiler
+ * layer only. The trading worker remains the sole execution authority. */
+if (!html.includes('/text-to-strategy-v1.css?v=20260817-1')) {
+  html = html.replace(
+    "</head>",
+    '  <link rel="stylesheet" href="/text-to-strategy-v1.css?v=20260817-1">\n</head>',
+  );
+}
+if (!html.includes('/text-to-strategy-v1.js?v=20260817-1')) {
+  html = html.replace(
+    "</body>",
+    '  <script src="/text-to-strategy-v1.js?v=20260817-1" defer></script>\n</body>',
   );
 }
 
@@ -75,6 +89,18 @@ if (!html.includes('/automation-home-v1.css?v=20260817-1')) {
 if (!html.includes('/automation-home-v1.js?v=20260817-1')) {
   throw new Error("Action 1 Automation Home controller was not installed");
 }
+if (!html.includes('/text-to-strategy-v1.css?v=20260817-1')) {
+  throw new Error("Action 2 Text-to-Strategy stylesheet was not installed");
+}
+if (!html.includes('/text-to-strategy-v1.js?v=20260817-1')) {
+  throw new Error("Action 2 Text-to-Strategy controller was not installed");
+}
+if (!html.includes('prelogin-landing-v2.css?v=20260817-2')) {
+  throw new Error("Action 2 mobile public landing stylesheet cache bust was not installed");
+}
+if (!html.includes('prelogin-landing-v2.js?v=20260817-2')) {
+  throw new Error("Action 2 mobile public landing controller cache bust was not installed");
+}
 
 await writeFile(indexPath, html, "utf8");
 
@@ -87,7 +113,9 @@ await writeFile(
     oauth_base: "/oauth",
     websocket_base: process.env.DASHBOARD_WS_BASE_URL,
     api_boundary: "full-vps-same-origin-rest-v3",
-    authenticated_ui: "automation-home-action1-v1",
+    authenticated_ui: "automation-home-action2-v1",
+    text_to_strategy: "nearest-supported-v1-250-words",
+    public_landing: "mobile-automation-action2-v1",
     generated_at: new Date().toISOString(),
   }, null, 2)}\n`,
   "utf8",
@@ -98,5 +126,7 @@ console.log(`Public origin: ${publicOrigin}`);
 console.log("REST: same-origin /api/* -> host Nginx -> API container");
 console.log("OAuth: same-origin /oauth/* -> host Nginx -> API container");
 console.log("API boundary: full-vps-same-origin-rest-v3 (no 3.2s false timeout)");
-console.log("Authenticated UI: automation-home-action1-v1");
+console.log("Authenticated UI: automation-home-action2-v1");
+console.log("Text to Strategy: nearest-supported-v1, maximum 250 words, review required");
+console.log("Public landing: mobile-automation-action2-v1");
 console.log(`Realtime: ${process.env.DASHBOARD_WS_BASE_URL}/ws/me/live`);
