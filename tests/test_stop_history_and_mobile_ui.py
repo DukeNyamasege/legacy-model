@@ -159,15 +159,13 @@ class DashboardSessionAndReachabilityTests(unittest.TestCase):
         self.assertIn("REPOSITORY.worker_heartbeat()", ready_block)
         self.assertNotIn("REPOSITORY.summary()", ready_block)
 
-    def test_full_vps_replaces_old_smoke_surface_and_owns_production(self) -> None:
+    def test_full_vps_replaces_old_smoke_surface_while_netlify_remains_rollback(self) -> None:
         self.assertFalse((ROOT / "scripts" / "production_smoke.py").exists())
         self.assertFalse((ROOT / "scripts" / "deploy_vps.sh").exists())
         self.assertTrue((ROOT / "docker-compose.vps.yml").exists())
         self.assertTrue((ROOT / "scripts" / "deploy_full_vps.sh").exists())
         self.assertTrue((ROOT / "scripts" / "install_full_vps_caddy.sh").exists())
 
-        # The old compiler remains only as a compatibility input to build-vps;
-        # production no longer requires a Netlify project or Netlify DNS edge.
         build = (ROOT / "scripts" / "build-netlify.mjs").read_text(encoding="utf-8")
         self.assertIn("BACKEND_ORIGIN", build)
         self.assertIn("netlify-api-boundary.js", build)
@@ -176,8 +174,7 @@ class DashboardSessionAndReachabilityTests(unittest.TestCase):
         self.assertIn("/oauth/*", build)
 
         vps_build = (ROOT / "scripts" / "build-vps.mjs").read_text(encoding="utf-8")
-        self.assertIn("full-vps-same-origin-v2", vps_build)
-        self.assertIn("vps-seamless-experience.js", vps_build)
+        self.assertIn("full-vps-same-origin-v1", vps_build)
         self.assertIn('await rm(resolve(output, "_redirects"), { force: true });', vps_build)
 
         deploy = (ROOT / "scripts" / "deploy_full_vps.sh").read_text(encoding="utf-8")
@@ -222,18 +219,16 @@ class DashboardSessionAndReachabilityTests(unittest.TestCase):
         self.assertIn("branches: [main]", workflow)
         self.assertIn("python -m compileall -q app scripts", workflow)
         self.assertIn("python -m unittest -q tests.test_stop_history_and_mobile_ui", workflow)
-        self.assertIn("python -m unittest -q tests.test_vps_seamless_experience", workflow)
         self.assertIn("sh -n scripts/deploy_dedicated_backend.sh", workflow)
         self.assertIn("docker compose -f docker-compose.yml config --quiet", workflow)
         self.assertNotIn("scripts/deploy_vps.sh", workflow)
         self.assertIn("docker-compose.vps.yml", workflow)
         self.assertIn("Production full VPS frontend build", workflow)
-        self.assertIn("Legacy compiler compatibility build", workflow)
         self.assertIn("Build frontend image", workflow)
         self.assertIn('alembic heads | grep -q "20260812_0021 (head)"', workflow)
         self.assertNotIn('alembic heads | grep -q "20260805_0020 (head)"', workflow)
         self.assertIn("docker build --target api", workflow)
-        self.assertNotIn("Production Netlify frontend build", workflow)
+        self.assertIn("Production Netlify frontend build", workflow)
 
 
 if __name__ == "__main__":

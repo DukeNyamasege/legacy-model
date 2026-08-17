@@ -32,9 +32,6 @@ from app.custom_split_recovery_authority import install_custom_split_recovery_au
 from app.custom_strategy_connection_stampede_guard import (
     install_custom_strategy_connection_stampede_guard,
 )
-from app.custom_strategy_connection_stability_fix import (
-    install_custom_strategy_connection_stability_fix,
-)
 from app.custom_strategy_current_runtime_fix import install_custom_strategy_current_runtime_fix
 from app.custom_strategy_direct_runtime import install_custom_strategy_direct_runtime
 from app.custom_strategy_instant_start import install_custom_strategy_instant_start
@@ -70,8 +67,6 @@ from app.session_risk_stop_authority import install_session_risk_stop_worker
 from app.telegram_silence import install_telegram_silence
 from app.trade_registration_idempotency import install_trade_registration_idempotency
 from app.unresolved_contract_safety import install_unresolved_contract_safety
-from app.vps_execution_start_recovery import install_vps_execution_start_recovery
-from app.vps_seamless_worker import install_vps_seamless_worker
 
 
 async def run_worker() -> None:
@@ -177,11 +172,6 @@ async def run_worker() -> None:
     # loops own their own backoff and sibling accounts are never globally rebuilt.
     install_custom_strategy_connection_stampede_guard()
 
-    # OAuth refresh remains part of full-VPS startup recovery. The later stability
-    # authority removes its conflicting live-session wake/recycle policy while
-    # preserving targeted repair for genuinely missing/dead account sessions.
-    install_vps_execution_start_recovery()
-
     # Transport/Virtual Hook/Multiplier consistency installs first. Split Recovery
     # is then wrapped so the configured spread width (1/2/3), not the number of
     # remaining successful legs, is always the risk divisor. The compatibility cap
@@ -193,23 +183,12 @@ async def run_worker() -> None:
     install_custom_split_equal_spread_authority()
     install_custom_split_cap_defaults_authority()
     install_custom_virtual_post_loss_barrier_authority()
-
-    # Final connection authority: account-private failures may not force-close a
-    # live reconnect task, recycle it on a timer, or restart the shared public
-    # market watcher. Missing/dead sessions still receive exact-account repair.
-    install_custom_strategy_connection_stability_fix()
-
-    # Full-VPS responsiveness is intentionally the final UI observer. It observes
-    # the already-authoritative routed condition evaluation and execution task,
-    # then emits best-effort UI progress over the private Docker network. It cannot
-    # change a signal, stake, proposal, BUY or settlement decision.
-    install_vps_seamless_worker()
     install_telegram_silence()
 
     bot = RFDir5TradingBot()
     bot.logger.warning(
         "CUSTOM_STRATEGY_WORKER_READY architecture=account_scoped_direct "
-        "frontend=vps_nginx realtime=same_origin_vps_websocket "
+        "frontend=netlify_static realtime=nonblocking_vps_websocket "
         "legacy_rf=false legacy_aidr=false multi_strategy=false cohorts=false "
         "bulk=false tick_db_persistence=false start_required=true "
         "explicit_start_pickup=true instant_start=true provider_account_sweep_blocking=false "
@@ -225,10 +204,7 @@ async def run_worker() -> None:
         "runtime_fault_policy=reconnect_reconcile_never_stop "
         "ambiguous_buy_policy=reconcile_before_next_real duplicate_buy_retry=false "
         "stop_reason_authority=durable execution_liveness_watchdog=true "
-        "connection_repair=targeted_singleflight sibling_wake=false global_revalidation=false "
-        "stalled_execution_recovery=live_session_owned forced_recycle=false "
-        "public_reconnect_owner=public_websocket_resilience oauth_refresh=on_expiry "
-        "live_strategy_monitor=ephemeral_docker_event_bus"
+        "connection_repair=targeted_singleflight sibling_wake=false global_revalidation=false"
     )
     loop = asyncio.get_running_loop()
 

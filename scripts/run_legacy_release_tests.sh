@@ -17,11 +17,8 @@ node --check dashboard/execution-status-banner.js
 node --check dashboard/builder-edit-stability.js
 node --check dashboard/runtime-ux-authority.js
 node --check dashboard/virtual-kpi-neutrality.js
-node --check dashboard/vps-seamless-experience.js
-node --check dashboard/trades-start-stop-toggle.js
 
 exec python -m unittest -q \
-  tests.test_vps_seamless_experience \
   tests.test_execution_stop_reason_authority \
   tests.test_custom_execution_consistency_authority \
   tests.test_post_loss_split_and_virtual_neutrality \

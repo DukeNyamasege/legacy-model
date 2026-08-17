@@ -4,27 +4,15 @@
   const nativeFetch = window.fetch.bind(window);
   const nativeEventSource = window.EventSource;
   const API_PREFIX = "/api";
-  const FRONTEND_RUNTIME = String(
-    document.querySelector('meta[name="frontend-runtime"]')?.content || "",
-  ).trim().toLowerCase();
-  const FULL_VPS = FRONTEND_RUNTIME.startsWith("full-vps-same-origin");
+  const GET_TIMEOUT_MS = 3200;
+  const WRITE_TIMEOUT_MS = 5200;
+  const LIVE_CACHE_MAX_AGE_MS = 5000;
 
-  // The old 3.2-second ceiling was designed for a remote Netlify -> VPS hop. On
-  // the full VPS it caused a healthy authenticated dashboard to abort a local
-  // /api/me request and render the public landing underneath live account KPIs.
-  // Local reads get a realistic bounded SLA plus one safe GET-only retry. Writes
-  // are never retried automatically because a repeated POST could duplicate a
-  // state transition even though trading BUYs are protected elsewhere.
-  const GET_TIMEOUT_MS = FULL_VPS ? 6500 : 3200;
-  const WRITE_TIMEOUT_MS = FULL_VPS ? 8500 : 5200;
-  const GET_RETRY_COUNT = FULL_VPS ? 1 : 0;
-  const LIVE_CACHE_MAX_AGE_MS = FULL_VPS ? 30000 : 5000;
-
-  // Keep the historical compatibility marker because older dashboard assets use
-  // it as a feature flag, but expose the real hosting mode separately.
   window.FOA_NETLIFY_FRONTEND = true;
-  window.FOA_FULL_VPS_FRONTEND = FULL_VPS;
   window.FOA_NATIVE_EVENT_SOURCE = nativeEventSource;
+  // Netlify proxy rewrites are intentionally not used for long-lived SSE. The
+  // dedicated realtime client connects directly to the backend WebSocket using a
+  // short-lived signed ticket, while all REST/OAuth calls remain same-origin.
   try {
     window.EventSource = undefined;
   } catch (_) {}
@@ -35,7 +23,7 @@
       headers: {
         "Content-Type": "application/json",
         "Cache-Control": "no-store",
-        "X-FOA-Source": FULL_VPS ? "vps-live-cache" : "netlify-live-cache",
+        "X-FOA-Source": "netlify-live-cache",
       },
     });
   }
@@ -78,6 +66,8 @@
     const path = `${url.pathname}${url.search}`;
     if (!shouldProxy(path)) return input;
     const next = `${API_PREFIX}${url.pathname}${url.search}`;
+    // Application calls use path strings. Preserve Request callers by rebuilding
+    // from the original request's public RequestInit-compatible properties.
     if (input instanceof Request) {
       return new Request(next, {
         method: input.method,
@@ -159,22 +149,18 @@
     return method === "GET" || method === "HEAD" ? GET_TIMEOUT_MS : WRITE_TIMEOUT_MS;
   }
 
-  function safeGetMethod(method) {
-    return method === "GET" || method === "HEAD";
-  }
-
-  async function oneBoundedFetch(input, options, timeoutMs, upstreamSignal) {
+  async function boundedFetch(input, options = {}) {
+    const method = String(options.method || (input instanceof Request ? input.method : "GET") || "GET").toUpperCase();
+    const timeoutMs = timeoutFor(method);
     const controller = new AbortController();
+    const upstreamSignal = options.signal || (input instanceof Request ? input.signal : null);
     let upstreamAbort = null;
     if (upstreamSignal) {
       upstreamAbort = () => controller.abort(upstreamSignal.reason);
       if (upstreamSignal.aborted) upstreamAbort();
       else upstreamSignal.addEventListener("abort", upstreamAbort, { once: true });
     }
-    const timer = window.setTimeout(
-      () => controller.abort(new Error("backend timeout")),
-      timeoutMs,
-    );
+    const timer = window.setTimeout(() => controller.abort(new Error("backend timeout")), timeoutMs);
     try {
       return await nativeFetch(input, {
         ...options,
@@ -182,6 +168,11 @@
         cache: options.cache || "no-store",
         signal: controller.signal,
       });
+    } catch (error) {
+      if (controller.signal.aborted && !upstreamSignal?.aborted) {
+        throw new Error(`Backend request timed out after ${(timeoutMs / 1000).toFixed(1)}s`);
+      }
+      throw error;
     } finally {
       window.clearTimeout(timer);
       if (upstreamSignal && upstreamAbort) {
@@ -190,69 +181,28 @@
     }
   }
 
-  async function boundedFetch(input, options = {}, sourcePath = "") {
-    const method = String(
-      options.method || (input instanceof Request ? input.method : "GET") || "GET",
-    ).toUpperCase();
-    const timeoutMs = timeoutFor(method);
-    const upstreamSignal = options.signal || (input instanceof Request ? input.signal : null);
-    const attempts = safeGetMethod(method) ? 1 + GET_RETRY_COUNT : 1;
-    let lastError = null;
-
-    for (let attempt = 0; attempt < attempts; attempt += 1) {
-      try {
-        return await oneBoundedFetch(input, options, timeoutMs, upstreamSignal);
-      } catch (error) {
-        if (upstreamSignal?.aborted) throw error;
-        lastError = error;
-
-        if (safeGetMethod(method)) {
-          const live = cachedPayload(sourcePath);
-          if (live) return responseJSON(live);
-        }
-
-        if (attempt + 1 < attempts) {
-          await new Promise((resolve) => window.setTimeout(resolve, 120));
-          continue;
-        }
-      }
-    }
-
-    if (FULL_VPS && safeGetMethod(method)) {
-      throw new Error(
-        `VPS backend read did not respond after ${attempts} attempts; reconnecting automatically`,
-      );
-    }
-    if (lastError?.name === "AbortError" || String(lastError?.message || "").includes("backend timeout")) {
-      throw new Error(`Backend request timed out after ${(timeoutMs / 1000).toFixed(1)}s`);
-    }
-    throw lastError || new Error("Backend request failed");
-  }
-
   window.fetch = async (input, options = {}) => {
     const path = originalPath(input);
     const route = basePath(path);
-    const method = String(
-      options.method || (input instanceof Request ? input.method : "GET") || "GET",
-    ).toUpperCase();
+    const method = String(options.method || (input instanceof Request ? input.method : "GET") || "GET").toUpperCase();
 
     if (method === "GET") {
       const live = cachedPayload(path);
       if (live) return responseJSON(live);
+      // The builder no longer renders the legacy global summary. Never let an
+      // all-time aggregate block navigation on the static frontend.
       if (route === "/metrics/summary") {
-        return responseJSON({
-          performance_profile: FULL_VPS
-            ? "full-vps-realtime-background-summary"
-            : "netlify-static-background-summary",
-        });
+        return responseJSON({ performance_profile: "netlify-static-background-summary" });
       }
     } else if (!isLifecycleMutation(route)) {
+      // Preserve the last-good data object so a following lifecycle response can
+      // make Start/Stop locally authoritative without another full dashboard read.
       if (window.FOA_NETLIFY_LIVE_CACHE) {
         window.FOA_NETLIFY_LIVE_CACHE.savedAt = 0;
       }
     }
 
-    const response = await boundedFetch(rewriteURL(input), options, path);
+    const response = await boundedFetch(rewriteURL(input), options);
     if (method !== "GET" && response.ok && isLifecycleMutation(route)) {
       try {
         applyLifecycleMutation(await response.clone().json());
@@ -266,7 +216,5 @@
     if (value.startsWith(`${API_PREFIX}/`)) return value;
     return shouldProxy(value) ? `${API_PREFIX}${value}` : value;
   };
-  window.FOA_BACKEND_PROXY_MODE = FULL_VPS
-    ? "full-vps-same-origin-rest-v3-resilient"
-    : "netlify-same-origin-rest-v2-optimistic-lifecycle";
+  window.FOA_BACKEND_PROXY_MODE = "netlify-same-origin-rest-v2-optimistic-lifecycle";
 })();
