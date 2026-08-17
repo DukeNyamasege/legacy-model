@@ -2,16 +2,15 @@ from __future__ import annotations
 
 """Full-VPS production API entrypoint.
 
-The proven backend/realtime route stack remains unchanged. Full-VPS-only session
-observability, Telegram control, constant-time dashboard session reads, the
-Text-to-Strategy compiler, account-wide automation preferences, and the persistent
-Action 5 scheduler are installed last so they see the final OAuth/lifecycle routes
-without replacing the financial execution worker.
+The proven backend/realtime route stack is imported first so every compatibility
+layer finishes installing before Full-VPS-only observability, Telegram control,
+preferences, and the persistent Action 5 scheduler wrap the final routes/lifespan.
+The scheduler never replaces the financial execution worker.
 """
 
+from app.netlify_backend_api import app
 from app.automation_preferences_api import install_automation_preferences_api
 from app.automation_scheduler_action5 import install_automation_scheduler_action5
-from app.netlify_backend_api import app
 from app.text_to_strategy_api import install_text_to_strategy_api
 from app.vps_dashboard_latency_hotfix import install_vps_dashboard_latency_hotfix
 from app.vps_login_observability_hotfix import install_vps_login_observability_hotfix
