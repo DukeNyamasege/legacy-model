@@ -220,16 +220,18 @@ class DashboardSessionAndReachabilityTests(unittest.TestCase):
         self.assertIn("python -m compileall -q app scripts", workflow)
         self.assertIn("python -m unittest -q tests.test_stop_history_and_mobile_ui", workflow)
         self.assertIn("python -m unittest -q tests.test_premium_access_action6a", workflow)
+        self.assertIn("python -m unittest -q tests.test_lipana_mpesa_action6b", workflow)
         self.assertIn("sh -n scripts/deploy_dedicated_backend.sh", workflow)
         self.assertIn("docker compose -f docker-compose.yml config --quiet", workflow)
         self.assertNotIn("scripts/deploy_vps.sh", workflow)
         self.assertIn("docker-compose.vps.yml", workflow)
         self.assertIn("Production full VPS frontend build", workflow)
         self.assertIn("Build frontend image", workflow)
-        # Action 6A advances the schema beyond the Action 5 scheduler migration.
-        # Keep CI pinned to the current single head so an obsolete entitlement
-        # schema can never be packaged as production-ready.
-        self.assertIn('alembic heads | grep -q "20260817_0023 (head)"', workflow)
+        # Action 6B advances the schema beyond the premium identity migration.
+        # Keep CI pinned to the current single head so payment idempotency/history
+        # can never be omitted from a production package.
+        self.assertIn('alembic heads | grep -q "20260817_0024 (head)"', workflow)
+        self.assertNotIn('alembic heads | grep -q "20260817_0023 (head)"', workflow)
         self.assertNotIn('alembic heads | grep -q "20260817_0022 (head)"', workflow)
         self.assertNotIn('alembic heads | grep -q "20260812_0021 (head)"', workflow)
         self.assertNotIn('alembic heads | grep -q "20260805_0020 (head)"', workflow)
