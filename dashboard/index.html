@@ -3,31 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="color-scheme" content="dark light">
-  <meta name="theme-color" content="#071120">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#010816">
   <meta name="robots" content="noindex,nofollow,noarchive,nosnippet">
   <meta name="referrer" content="no-referrer">
   <meta name="api-base-url" content="">
-  <title>Derivadmin · Strategy Automation</title>
-  <!-- Legacy release-test source marker only; not rendered: <title>Custom Strategy Builder</title> -->
+  <title>DerivAdmin · Home of Automation</title>
   <script>
-    /*
-     * Deriv may return an OAuth authorization response to the site root when an
-     * older registered redirect is still in circulation. Never leave code/state
-     * in the visible address bar or browser history while the static dashboard
-     * boots. Copy only the callback fields into memory, clean the current history
-     * entry immediately, and hand the response to the same-origin /oauth proxy.
-     * The backend performs the PKCE/state checks, creates the HttpOnly session,
-     * and already responds with a 303 redirect to the clean root.
-     */
     (function () {
       var current;
-      try {
-        current = new URL(window.location.href);
-      } catch (_) {
-        return;
-      }
-
+      try { current = new URL(window.location.href); } catch (_) { return; }
       var isRootCallback = current.pathname === "/" && (
         current.searchParams.has("code") || current.searchParams.has("error")
       );
@@ -41,12 +26,7 @@
 
       document.documentElement.dataset.oauthCallbackProcessing = "true";
       window.__FOA_OAUTH_CALLBACK_PENDING__ = true;
-
-      /* Replace, rather than push, so the sensitive callback URL is not kept in
-         the user's Back-button history. */
-      try {
-        window.history.replaceState(window.history.state, "", "/");
-      } catch (_) {}
+      try { window.history.replaceState(window.history.state, "", "/"); } catch (_) {}
 
       window.fetch(callback.pathname + callback.search, {
         method: "GET",
@@ -57,180 +37,27 @@
         headers: { "Accept": "text/html,application/xhtml+xml" }
       }).then(function (response) {
         var finalUrl;
-        try {
-          finalUrl = new URL(response.url, current.origin);
-        } catch (_) {
-          finalUrl = null;
-        }
+        try { finalUrl = new URL(response.url, current.origin); } catch (_) { finalUrl = null; }
         var oauthError = finalUrl && finalUrl.searchParams.get("oauth_error");
         if (oauthError) {
-          try {
-            window.sessionStorage.setItem("foa-oauth-error-v1", String(oauthError).slice(0, 700));
-          } catch (_) {}
+          try { window.sessionStorage.setItem("foa-oauth-error-v1", String(oauthError).slice(0, 700)); } catch (_) {}
           window.location.replace("/");
           return;
         }
         if (!response.ok) throw new Error("OAuth callback request failed");
         window.location.replace("/");
       }).catch(function () {
-        /* Network/proxy fallback: use the normal backend callback navigation.
-           location.replace prevents this temporary URL becoming a history entry,
-           and the backend immediately redirects back to '/'. */
         window.location.replace(callback.pathname + callback.search);
       });
     })();
   </script>
-  <link rel="stylesheet" href="/ui/dashboard-v2.css">
-  <link rel="stylesheet" href="./mobile-menu-exit-spot.css">
-  <link rel="stylesheet" href="./mobile-topbar-compact.css">
-  <link rel="stylesheet" href="./trades-page-minimal.css">
-  <link rel="stylesheet" href="./final-dashboard-authority.css">
-  <link rel="stylesheet" href="./trades-start-stop-toggle.css">
-  <link rel="stylesheet" href="./tablet-navigation-fix.css">
-  <link rel="stylesheet" href="./account-bound-risk-notice.css">
-  <link rel="stylesheet" href="./result-based-strategy.css">
-  <link rel="stylesheet" href="./result-ui-fixes.css">
-  <link rel="stylesheet" href="./prelogin-landing-v2.css?v=20260814-2">
-  <style>
-    html,
-    body {
-      margin: 0;
-      min-height: 100%;
-      background: #03070d;
-      color: #f8fafc;
-      font-family: "Space Grotesk", "Manrope", "Segoe UI", sans-serif;
-    }
-
-    /* While an OAuth return is being exchanged, keep only the bootstrap visible.
-       This avoids rendering either the public landing or dashboard under a
-       callback that is still being finalized. */
-    html[data-oauth-callback-processing="true"] #foa-simple-app {
-      display: none !important;
-    }
-
-    /*
-     * The legacy dashboard renderer still has a compatibility loginView().
-     * Never allow that old card to reach first paint. The pre-login landing
-     * authority is loaded before dashboard-v2.js and replaces it before paint.
-     */
-    .public-builder {
-      display: none !important;
-    }
-
-    #foa-bootstrap {
-      min-height: 100vh;
-      display: grid;
-      place-items: center;
-      background:
-        radial-gradient(circle at 16% 0%, rgba(59, 130, 246, .16), transparent 34rem),
-        linear-gradient(135deg, #010409, #07111d 50%, #030712);
-    }
-
-    #foa-bootstrap > div {
-      text-align: center;
-      padding: 24px;
-    }
-
-    #foa-bootstrap i {
-      display: block;
-      width: 36px;
-      height: 36px;
-      margin: 0 auto 16px;
-      border: 3px solid rgba(148, 163, 184, .22);
-      border-top-color: #3b82f6;
-      border-radius: 999px;
-      animation: foa-spin .8s linear infinite;
-    }
-
-    #foa-bootstrap strong,
-    #foa-bootstrap span {
-      display: block;
-    }
-
-    #foa-bootstrap span {
-      margin-top: 8px;
-      color: #a5b4c6;
-      font-size: 14px;
-    }
-
-    @keyframes foa-spin {
-      to { transform: rotate(360deg); }
-    }
-  </style>
+  <link rel="stylesheet" href="/final-ui-shell-v1.css?v=20260817-6f1-1">
+  <script src="/netlify-api-boundary.js"></script>
 </head>
 <body>
-  <div id="foa-bootstrap">
-    <div>
-      <i aria-hidden="true"></i>
-      <strong>Trading Dashboard</strong>
-      <span>Opening dashboard...</span>
-    </div>
-  </div>
-  <noscript>This dashboard requires JavaScript.</noscript>
-  <!-- Install the pre-login observer before dashboard-v2 can emit compatibility markup. -->
-  <script src="./prelogin-landing-v2.js?v=20260814-2" defer></script>
-  <script src="/ui/dashboard-v2.js" defer></script>
-  <script src="/ui/dashboard-actions-v2.js" defer></script>
-  <script src="./mobile-menu-exit-spot.js" defer></script>
-  <script src="./mobile-topbar-compact.js" defer></script>
-  <script src="./virtual-kpi-neutrality.js?v=20260815-3" defer></script>
-  <script src="./tablet-navigation-fix.js" defer></script>
-  <script src="./global-trade-clear.js" defer></script>
-  <script src="./trades-page-minimal.js" defer></script>
-  <script src="./final-dashboard-authority.js" defer></script>
-  <script src="./trades-start-stop-toggle.js" defer></script>
-  <script src="./last-digit-special-ui.js" defer></script>
-  <script src="./matches-differs-last-digit.js?v=20260814-7" defer></script>
-  <script src="./risk-stop-session-authority.js" defer></script>
-  <script src="./signed-risk-limit-display.js" defer></script>
-  <script src="./account-bound-risk-notice.js?v=20260814-3" defer></script>
-  <script src="./result-based-strategy.js?v=20260814-2" defer></script>
-  <script src="./result-ui-fixes.js" defer></script>
-  <script src="./platform-default-strategy.js?v=20260814-2" defer></script>
-  <script src="./stopped-ui-authority.js?v=20260813-2" defer></script>
-  <script src="./strategy-edit-authority.js?v=20260814-3" defer></script>
-  <script src="./execution-status-banner.js?v=20260814-2" defer></script>
-  <script src="./netlify-realtime-client.js?v=20260815-3" defer></script>
-  <script>
-    // A connected private WebSocket is transport readiness, not a separate
-    // strategy state. Keep the Custom Strategy status line on the scanner state
-    // instead of visibly oscillating between Waiting and transport-active.
-    (function () {
-      var waiting = "Waiting - Execution session ready; waiting for the configured Custom Strategy condition";
-      var scheduled = false;
-      function normalizeRuntimeCopy() {
-        scheduled = false;
-        document.querySelectorAll(".builder-status-line span").forEach(function (node) {
-          if (String(node.textContent || "").toLowerCase().indexOf("private trading connection is active") !== -1) {
-            node.textContent = waiting;
-          }
-        });
-        document.querySelectorAll(".trades-control-panel p").forEach(function (node) {
-          if (String(node.textContent || "").toLowerCase().indexOf("private trading connection is active") !== -1) {
-            node.textContent = "Execution session ready; waiting for the configured Custom Strategy condition.";
-          }
-        });
-      }
-      function schedule() {
-        if (scheduled) return;
-        scheduled = true;
-        requestAnimationFrame(normalizeRuntimeCopy);
-      }
-      new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
-      window.setInterval(schedule, 500);
-      document.readyState === "loading"
-        ? document.addEventListener("DOMContentLoaded", schedule, { once: true })
-        : schedule();
-    })();
-
-    window.setTimeout(function () {
-      var bootstrap = document.getElementById("foa-bootstrap");
-      var app = document.getElementById("foa-simple-app");
-      if (bootstrap && app) bootstrap.remove();
-      if (bootstrap && !app) {
-        bootstrap.innerHTML = "<div><strong>Dashboard could not start</strong><span>Refresh the page once. If the issue continues, check the browser console.</span></div>";
-      }
-    }, 8000);
-  </script>
+  <div id="derivadmin-root" aria-live="polite"></div>
+  <noscript>DerivAdmin requires JavaScript.</noscript>
+  <script src="/netlify-realtime-client.js?v=20260817-6f1-1" defer></script>
+  <script src="/final-ui-shell-v1.js?v=20260817-6f1-1" defer></script>
 </body>
 </html>
