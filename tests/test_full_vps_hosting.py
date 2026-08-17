@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
 import unittest
 
 
@@ -87,7 +91,6 @@ class FullVpsHostingTests(unittest.TestCase):
         self.assertIn("VPS_PRIVATE_WS_OTP_FAILURE_BACKOFF_SECONDS:-1.5", compose)
         self.assertIn("VPS_PRIVATE_WS_TRANSIENT_BACKOFF_MAX_SECONDS:-12", compose)
 
-        # Base Compose keeps conservative fallbacks and provider rate-limit safety.
         base = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
         self.assertIn("PRIVATE_WS_HANDSHAKE_CONCURRENCY", base)
         self.assertIn("PRIVATE_WS_RATE_LIMIT_BACKOFF_SECONDS", base)
@@ -112,14 +115,9 @@ class FullVpsHostingTests(unittest.TestCase):
         self.assertIn("market_selection_deduplicated=true", source)
         self.assertIn("_low_latency_contract_snapshot_once", source)
         self.assertIn("CONTRACT_SNAPSHOT_RESPONSE_TIMEOUT_SECONDS = 5.0", source)
-
-        # Deriv's current Options API uses plural `errors`; the VPS authority must
-        # classify that payload instead of turning it into an unexplained OTP retry.
         self.assertIn('response.get("errors")', source)
         self.assertIn("HTTP_500", source)
         self.assertIn("PRIVATE_WS_OTP_PROVIDER_ERROR", source)
-
-        # OTP and the returned private WSS URL are one atomic bootstrap operation.
         self.assertIn("class _VpsBootstrapScheduler", source)
         self.assertIn("otp_and_wss_atomic=true", source)
         self.assertIn("atomic_otp_wss=true", source)
@@ -185,6 +183,47 @@ class FullVpsHostingTests(unittest.TestCase):
         self.assertIn("enabled: true", config[config.index("telegram:") :])
         self.assertIn("does NOT require a numeric chat ID", env)
         self.assertIn("TELEGRAM_BOT_USERNAME=modellegacyupdaterbot", env)
+        self.assertNotIn("add_event_handler(", source)
+        self.assertNotIn("on_event(", source)
+        self.assertIn("app.router.lifespan_context", source)
+        self.assertIn("@asynccontextmanager", source)
+        self.assertIn("base_api.CONFIG,", source)
+
+    def test_vps_production_api_imports_with_current_fastapi(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            env = os.environ.copy()
+            env.update(
+                {
+                    "DATABASE_URL": f"sqlite:///{Path(temporary) / 'vps-import.db'}",
+                    "DERIV_TOKEN_ENCRYPTION_KEY": "",
+                    "TELEGRAM_BOT_TOKEN": "",
+                    "TELEGRAM_NOTIFICATIONS_SUSPENDED": "true",
+                    "VPS_TELEGRAM_NOTIFICATIONS_SUSPENDED": "true",
+                }
+            )
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    (
+                        "import app.vps_backend_api as module; "
+                        "assert module.app.state.vps_telegram_control_installed is True; "
+                        "print('VPS_BACKEND_IMPORT_OK')"
+                    ),
+                ],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=45,
+                check=False,
+            )
+        self.assertEqual(
+            result.returncode,
+            0,
+            msg=f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}",
+        )
+        self.assertIn("VPS_BACKEND_IMPORT_OK", result.stdout)
 
 
 if __name__ == "__main__":
