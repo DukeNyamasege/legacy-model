@@ -32,7 +32,7 @@ class CustomStrategyConnectionStabilitySourceTests(unittest.TestCase):
         self.assertIn("continue", watchdog)
         self.assertIn("_schedule_targeted_runtime_repair", watchdog)
 
-    def test_account_private_reconnect_does_not_close_or_wake_live_socket(self) -> None:
+    def test_account_private_reconnect_priority_wakes_one_idle_account_only(self) -> None:
         source = (
             ROOT / "app" / "custom_strategy_connection_stability_fix.py"
         ).read_text(encoding="utf-8")
@@ -42,8 +42,11 @@ class CustomStrategyConnectionStabilitySourceTests(unittest.TestCase):
             )
         ]
         self.assertNotIn(".close(", soft)
-        self.assertNotIn("wake_private_connection", soft)
-        self.assertIn("execution_wake=false", soft)
+        self.assertIn("PRIVATE_WS_PRIORITY_WAKE", soft)
+        self.assertIn("wake_scope=single_account", soft)
+        self.assertIn("_priority_wake_due", soft)
+        self.assertIn("_private_otp_inflight", soft)
+        self.assertIn("_private_ws_handshake_inflight", soft)
         self.assertIn("forced_disconnect=false", soft)
         self.assertIn("public_reconnect=false", soft)
         self.assertIn("_schedule_targeted_runtime_repair", soft)
@@ -100,9 +103,11 @@ class CustomStrategyConnectionStabilitySourceTests(unittest.TestCase):
         self.assertIn("otp_validity_seconds=120", connect)
         self.assertIn("timeout=_OTP_BOOTSTRAP_TIMEOUT_SECONDS", connect)
         self.assertIn("PRIVATE_WS_OTP_TIMEOUT", connect)
+        self.assertIn("_private_otp_inflight", connect)
+        self.assertIn("_private_ws_handshake_inflight", connect)
         self.assertNotIn("gate.open_websocket(url)", connect)
 
-    def test_otp_rest_uses_shared_keepalive_ipv4_pool(self) -> None:
+    def test_otp_rest_uses_shared_keepalive_auto_network_pool(self) -> None:
         source = (
             ROOT / "app" / "custom_strategy_connection_stability_fix.py"
         ).read_text(encoding="utf-8")
@@ -117,15 +122,16 @@ class CustomStrategyConnectionStabilitySourceTests(unittest.TestCase):
             )
         ]
         self.assertIn("aiohttp.TCPConnector", otp_pool)
-        self.assertIn("family=socket.AF_INET", otp_pool)
-        self.assertIn("keepalive_timeout=30", otp_pool)
-        self.assertIn("ttl_dns_cache=300", otp_pool)
+        self.assertNotIn("family=socket.AF_INET", otp_pool)
+        self.assertIn("family=auto", otp_pool)
+        self.assertIn("keepalive_timeout=20", otp_pool)
+        self.assertIn("ttl_dns_cache=120", otp_pool)
         self.assertIn("aiohttp.ClientSession", otp_pool)
         self.assertIn("PRIVATE_WS_OTP_HTTP_POOL_ACTIVE", otp_pool)
         self.assertIn("session.post(endpoint, headers=headers)", otp_fetch)
         self.assertIn("deriv_headers", otp_fetch)
 
-    def test_private_websocket_open_forces_ipv4_and_remains_bounded(self) -> None:
+    def test_private_websocket_open_uses_returned_url_directly(self) -> None:
         source = (
             ROOT / "app" / "custom_strategy_connection_stability_fix.py"
         ).read_text(encoding="utf-8")
@@ -135,7 +141,8 @@ class CustomStrategyConnectionStabilitySourceTests(unittest.TestCase):
             )
         ]
         self.assertIn("open_timeout=_PRIVATE_WS_OPEN_TIMEOUT_SECONDS", connect)
-        self.assertIn("family=socket.AF_INET", connect)
+        self.assertNotIn("family=socket.AF_INET", connect)
+        self.assertIn("network_family=auto", connect)
         self.assertIn("ping_interval=20", connect)
         self.assertIn("ping_timeout=20", connect)
 
@@ -150,11 +157,14 @@ class CustomStrategyConnectionStabilitySourceTests(unittest.TestCase):
             "ClientSession.connect_and_run = _fresh_otp_connect_and_run",
             stability_source,
         )
-        self.assertIn("_private_ws_execution_wake_enabled = False", stability_source)
+        self.assertIn("_private_ws_execution_wake_enabled = True", stability_source)
+        self.assertIn("_private_ws_priority_wake_interval_seconds", stability_source)
         self.assertIn("_private_ws_otp_bootstrap_concurrency", stability_source)
         self.assertIn("_private_ws_otp_bootstrap_timeout_seconds", stability_source)
+        self.assertIn("_private_ws_otp_retry_max_seconds", stability_source)
         self.assertIn("_private_ws_otp_http_keepalive = True", stability_source)
-        self.assertIn("_private_ws_ipv4_transport = True", stability_source)
+        self.assertIn("_private_ws_network_family = \"auto\"", stability_source)
+        self.assertIn("_private_ws_ipv4_transport = False", stability_source)
         self.assertIn("_private_ws_open_timeout_seconds", stability_source)
         self.assertIn("_private_ws_exact_error_ui = True", stability_source)
         self.assertLess(
