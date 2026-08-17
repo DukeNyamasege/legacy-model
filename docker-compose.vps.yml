@@ -7,10 +7,14 @@ services:
     environment:
       FRONTEND_HOSTING_MODE: vps
       DASHBOARD_FRONTEND_ORIGINS: ${DASHBOARD_FRONTEND_ORIGINS:-https://derivadmin.site,https://www.derivadmin.site}
+      # Private admin alerts are explicitly enabled for the fresh-session rollout.
+      # This overrides an old .env suspension without enabling hourly channel spam.
+      TELEGRAM_NOTIFICATIONS_SUSPENDED: ${VPS_TELEGRAM_NOTIFICATIONS_SUSPENDED:-false}
 
   worker:
     environment:
       FRONTEND_HOSTING_MODE: vps
+      TELEGRAM_NOTIFICATIONS_SUSPENDED: ${VPS_TELEGRAM_NOTIFICATIONS_SUSPENDED:-false}
 
       # Full-VPS connection policy. OTP generation and private WSS opening are now
       # one atomic bootstrap lane, so do not create dozens of one-time OTP URLs
