@@ -1,7 +1,8 @@
-import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
+const dashboard = resolve(root, "dashboard");
 const output = resolve(root, "dist");
 const indexPath = resolve(output, "index.html");
 
@@ -32,22 +33,21 @@ if (parsedStream.protocol !== "wss:" && parsedStream.hostname !== "localhost") {
 
 await rm(output, { recursive: true, force: true });
 await mkdir(output, { recursive: true });
-await cp(resolve(root, "dashboard"), output, { recursive: true });
 
-/* Keep the server scheduler's proven built-in snapshot contract even though the
- * old Action 5 presentation is no longer loaded. 6F-2 will consume the same
- * complete strategy objects through the new UI. */
-const strategyLibraryPath = resolve(output, "strategy-template-library.js");
-let strategyLibrary = await readFile(strategyLibraryPath, "utf8");
-const compactBuiltInExport = "builtIns: BUILT_INS.map((item) => ({ id: item.id, name: item.name, analysis: item.analysis, side: item.side })),";
-if (!strategyLibrary.includes(compactBuiltInExport)) {
-  throw new Error("Strategy Library built-in export contract changed; refusing an unsafe Action 5 build");
+// 6F-1 is a clean replacement, not a legacy-dashboard overlay. Only assets owned
+// by the new direct-VPS shell are copied into the production image. Historical UI
+// sources stay in Git temporarily for migration/regression reference but are not
+// served by the product.
+const productionAssets = [
+  "index.html",
+  "final-ui-shell-v1.css",
+  "final-ui-shell-v1.js",
+  "vps-api-boundary.js",
+  "vps-realtime-client.js",
+];
+for (const asset of productionAssets) {
+  await copyFile(resolve(dashboard, asset), resolve(output, asset));
 }
-strategyLibrary = strategyLibrary.replace(
-  compactBuiltInExport,
-  "builtIns: BUILT_INS.map((item) => clone(item)),",
-);
-await writeFile(strategyLibraryPath, strategyLibrary, "utf8");
 
 let html = await readFile(indexPath, "utf8");
 html = html
@@ -100,7 +100,9 @@ await writeFile(
     frontend_runtime: "full-vps-final-ui-6f1",
     deployment_topology: "direct-vps-only",
     ui_authority: "final-ui-shell-v1",
+    production_asset_policy: "new-shell-whitelist-only",
     legacy_ui_loaded: false,
+    legacy_ui_shipped: false,
     netlify_runtime_loaded: false,
     mockup_contract: "six-approved-mobile-screens-authoritative",
     public_origin: publicOrigin,
@@ -112,7 +114,7 @@ await writeFile(
     account_switching: "demo-real-post-me-switch-account",
     schedule_execution: "persistent-server-scheduler-existing-worker-authority-v1",
     schedule_persistence: "postgres-restart-safe-exactly-once-claim-v1",
-    schedule_built_ins: "full-frozen-template-snapshots-v1",
+    schedule_ui_and_library: "reconstructed-in-6f2",
     premium_access: "weekly-linked-options-server-gate-action6a-v1",
     premium_period: "exact-7-days-no-grace-v1",
     premium_prices: "KES250-mpesa-only-v1",
@@ -126,7 +128,7 @@ await writeFile(
 console.log("Direct VPS Action 6F-1 frontend built.");
 console.log(`Public origin: ${publicOrigin}`);
 console.log(`Realtime: ${streamBase}/ws/me/live`);
-console.log("UI authority: final-ui-shell-v1; no Netlify or legacy presentation is loaded");
+console.log("UI authority: final-ui-shell-v1; production artifact contains only new-shell assets");
 console.log("REST/OAuth: same-origin /api/* and /oauth/* through the VPS edge");
 console.log("Demo/Real switching: /me/switch-account retained in the new shell");
 console.log("Backend strategy, scheduler, premium and Lipana authorities remain unchanged");
