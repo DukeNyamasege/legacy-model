@@ -186,8 +186,6 @@ class PersistentSchedulerAction5Tests(unittest.TestCase):
             "execution_token_was_rejected",
         ):
             self.assertIn(marker, source)
-        # Replace must remain in the same SQLAlchemy transaction. A nested call
-        # to account_lifecycle.stop_account would self-block on PostgreSQL.
         self.assertNotIn("stop_account(", source)
         self.assertNotIn('requests.post("https://api.deriv', source)
         self.assertNotIn("proposal_open_contract", source)
@@ -213,8 +211,6 @@ class PersistentSchedulerAction5Tests(unittest.TestCase):
         )
         self.assertNotIn("add_event_handler(", source)
         self.assertIn("install_automation_scheduler_action5(app)", entry)
-        # The complete API stack must exist before Action 5 imports/installs its
-        # final lifespan wrapper and route layer.
         self.assertLess(
             entry.index("from app.netlify_backend_api import app"),
             entry.index("from app.automation_scheduler_action5 import"),
@@ -231,21 +227,15 @@ class PersistentSchedulerAction5Tests(unittest.TestCase):
         self.assertNotIn("/publish", source)
         self.assertNotIn("send_channel", source)
 
-    def test_action5_frontend_replaces_local_staging_with_server_persistence(self) -> None:
-        js = (ROOT / "dashboard" / "automation-scheduler-action5.js").read_text(
+    def test_retired_action5_frontend_is_not_a_runtime_authority(self) -> None:
+        html = (ROOT / "dashboard" / "index.html").read_text(encoding="utf-8")
+        final_ui = (ROOT / "dashboard" / "final-ui-shell-v1.js").read_text(
             encoding="utf-8"
         )
-        css = (ROOT / "dashboard" / "automation-scheduler-action5.css").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("/me/automation-schedules", js)
-        self.assertIn("event.stopImmediatePropagation()", js)
-        self.assertIn("It will run even if this browser is closed", js)
-        self.assertIn("data-action5-cancel", js)
-        self.assertIn("foa-action5-trades-session", js)
-        self.assertIn("window.FOA_AUTOMATION_SCHEDULES", js)
-        self.assertNotIn("foa-staged-schedules-action4-v1", js)
-        self.assertIn("@media(max-width:500px)", css)
+        self.assertNotIn("automation-scheduler-action5.js", html)
+        self.assertNotIn("automation-scheduler-action5.css", html)
+        self.assertIn("/me/automation-schedules?limit=20", final_ui)
+        self.assertIn("final-ui-shell-v1", html)
 
     def test_vps_build_exposes_full_built_in_strategy_snapshots(self) -> None:
         build = (ROOT / "scripts" / "build-vps.mjs").read_text(encoding="utf-8")
@@ -262,16 +252,14 @@ class PersistentSchedulerAction5Tests(unittest.TestCase):
             build,
         )
 
-    def test_vps_build_marks_action5_as_persistent_but_does_not_deploy(self) -> None:
+    def test_vps_build_marks_scheduler_persistent_without_restoring_old_ui(self) -> None:
         build = (ROOT / "scripts" / "build-vps.mjs").read_text(encoding="utf-8")
-        self.assertIn("/automation-scheduler-action5.css?v=20260817-1", build)
-        self.assertIn("/automation-scheduler-action5.js?v=20260817-1", build)
-        self.assertIn('authenticated_ui: "automation-home-action5-v1"', build)
-        self.assertIn(
-            "persistent-server-scheduler-existing-worker-authority-v1",
-            build,
-        )
-        self.assertIn("postgres-restart-safe-exactly-once-claim-v1", build)
+        self.assertIn('ui_authority: "final-ui-shell-v1"', build)
+        self.assertIn('legacy_ui_loaded: false', build)
+        self.assertIn('schedule_execution: "persistent-server-scheduler-existing-worker-authority-v1"', build)
+        self.assertIn('schedule_persistence: "postgres-restart-safe-exactly-once-claim-v1"', build)
+        self.assertNotIn("/automation-scheduler-action5.css?v=20260817-1", build)
+        self.assertNotIn("/automation-scheduler-action5.js?v=20260817-1", build)
         scheduler = (ROOT / "app" / "automation_scheduler_action5.py").read_text(
             encoding="utf-8"
         )
