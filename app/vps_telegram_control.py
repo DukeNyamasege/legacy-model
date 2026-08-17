@@ -379,8 +379,8 @@ def install_vps_telegram_control(app: Any) -> None:
         finally:
             app.state.vps_telegram_control_task = None
 
-    # Current Starlette removed add_event_handler()/on_event(). Compose our
-    # lifecycle around the lifespan already owned by the fully-built FastAPI app.
+    # Current Starlette uses lifespan composition rather than the removed legacy
+    # event-registration helpers. Preserve the fully-built app lifecycle here.
     previous_lifespan = app.router.lifespan_context
 
     @asynccontextmanager
