@@ -74,7 +74,7 @@ class TimezoneScheduleAction4Tests(unittest.TestCase):
             "Wait until previous session finishes",
             "Skip this scheduled session",
             "Stop previous and start this one",
-            "Session Preview",
+            "SESSION PREVIEW",
             "Schedule Session",
             "Trade Now Instead",
             "Upcoming Sessions",
