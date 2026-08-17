@@ -96,15 +96,19 @@ class FullVpsHostingTests(unittest.TestCase):
         self.assertIn(".foa-automation-bottom-nav", css)
         self.assertIn("@media (max-width: 720px)", css)
 
-        # Full-VPS build keeps Action 1 assets while Action 2 advances the
-        # aggregate authenticated UI version and installs its own compiler UI.
+        # Full-VPS build keeps the Action 1 shell and Action 2 compiler while
+        # Action 3 advances routing/library behavior and adds Strategy Ready.
         self.assertIn("/automation-home-v1.css?v=20260817-1", build)
-        self.assertIn("/automation-home-v1.js?v=20260817-1", build)
-        self.assertIn('authenticated_ui: "automation-home-action2-v1"', build)
+        self.assertIn("/automation-home-v1.js?v=20260817-3", build)
+        self.assertIn('authenticated_ui: "automation-home-action3-v1"', build)
         self.assertIn('text_to_strategy: "nearest-supported-v1-250-words"', build)
+        self.assertIn('strategy_ready: "review-save-trade-schedule-v1"', build)
+        self.assertIn('strategy_library: "built-in-my-ai-unified-v1"', build)
         self.assertIn('public_landing: "mobile-automation-action2-v1"', build)
         self.assertIn("/text-to-strategy-v1.css?v=20260817-1", build)
         self.assertIn("/text-to-strategy-v1.js?v=20260817-1", build)
+        self.assertIn("/strategy-ready-v1.css?v=20260817-1", build)
+        self.assertIn("/strategy-ready-v1.js?v=20260817-1", build)
 
         syntax = subprocess.run(
             ["node", "--check", str(ROOT / "dashboard" / "automation-home-v1.js")],
