@@ -4,7 +4,7 @@
   if (window.__FOA_PREMIUM_SUBSCRIPTION_ACTION6E__) return;
   window.__FOA_PREMIUM_SUBSCRIPTION_ACTION6E__ = true;
 
-  const VERSION = "20260817-action6e-1";
+  const VERSION = "20260817-action6e-2";
   const IDEMPOTENCY_KEY = "foa-premium-mpesa-idempotency-v1";
   const POLL_MS = 2500;
   const PASSIVE_REFRESH_MS = 30000;
@@ -43,12 +43,8 @@
       logo: `<svg ${c}><path d="M5 4h6.5a7.5 7.5 0 0 1 0 15H5l5-5h1.5a2.5 2.5 0 0 0 0-5H10z"/><path d="M5 4v15"/></svg>`,
       crown: `<svg ${c}><path d="m4 17-1-9 5 4 4-7 4 7 5-4-1 9z"/><path d="M5 20h14"/></svg>`,
       phone: `<svg ${c}><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M10 5h4M11 18h2"/></svg>`,
-      shield: `<svg ${c}><path d="M12 3 5 6v5c0 5 3 8 7 10 4-2 7-5 7-10V6z"/><path d="m9.5 12 1.7 1.7 3.6-4"/></svg>`,
-      clock: `<svg ${c}><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>`,
       check: `<svg ${c}><path d="m5 12 4 4L19 6"/></svg>`,
       fail: `<svg ${c}><path d="m7 7 10 10M17 7 7 17"/></svg>`,
-      link: `<svg ${c}><path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.1 1.1"/><path d="M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.1-1.1"/></svg>`,
-      spark: `<svg ${c}><path d="m12 3 1.4 4.2L18 9l-4.6 1.8L12 15l-1.4-4.2L6 9l4.6-1.8zM19 3v4M17 5h4"/></svg>`,
     };
     return icons[name] || icons.crown;
   }
@@ -161,11 +157,12 @@
 
   function countdownParts(seconds) {
     const safe = Math.max(0, Number(seconds || 0));
-    const days = Math.floor(safe / 86400);
-    const hours = Math.floor((safe % 86400) / 3600);
-    const minutes = Math.floor((safe % 3600) / 60);
-    const secs = Math.floor(safe % 60);
-    return { days, hours, minutes, seconds: secs };
+    return {
+      days: Math.floor(safe / 86400),
+      hours: Math.floor((safe % 86400) / 3600),
+      minutes: Math.floor((safe % 3600) / 60),
+      seconds: Math.floor(safe % 60),
+    };
   }
 
   function countdownMarkup(seconds, attr = "") {
@@ -176,6 +173,19 @@
       <span><b>${String(part.minutes).padStart(2, "0")}</b>Min</span>
       <span><b>${String(part.seconds).padStart(2, "0")}</b>Sec</span>
     </div>`;
+  }
+
+  function updateCountdownNode(node, seconds) {
+    const part = countdownParts(seconds);
+    const values = [
+      String(part.days),
+      String(part.hours).padStart(2, "0"),
+      String(part.minutes).padStart(2, "0"),
+      String(part.seconds).padStart(2, "0"),
+    ];
+    qa("b", node).forEach((item, index) => {
+      if (item.textContent !== values[index]) item.textContent = values[index];
+    });
   }
 
   function formatDate(value) {
@@ -268,6 +278,7 @@
         <div class="foa-premium-benefit"><i>✓</i><span>Exact 7-day server entitlement with no grace-period ambiguity.</span></div>
         <div class="foa-premium-benefit"><i>✓</i><span>${linked || "Your"} linked Options account${linked === 1 ? "" : "s"} covered by this Premium identity.</span></div>
       </div>
+      <div style="text-align:center;margin-top:12px"><button type="button" class="foa-premium-link-btn" data-premium-logout>Log out / use another Deriv account</button></div>
     </article>`;
   }
 
@@ -328,18 +339,22 @@
   }
 
   function failedCard() {
+    const status = String(state.payment?.status || "").toLowerCase();
     const expiredAttempt = paymentExpired();
+    const uncertainExpired = status === "provider_uncertain" && expiredAttempt;
     return `<article class="foa-premium-card">
       <div class="foa-premium-result">
         <span class="foa-premium-fail-icon">${svg("fail")}</span>
-        <strong>${expiredAttempt ? "M-Pesa request expired" : "Payment was not completed"}</strong>
-        <p>No Premium time was added. A fresh 7-day period begins only after a successful KES 250 M-Pesa payment is verified.</p>
+        <strong>${uncertainExpired ? "Payment status is still uncertain" : expiredAttempt ? "M-Pesa request expired" : "Payment was not completed"}</strong>
+        <p>${uncertainExpired ? "Do not send another payment while this provider result is uncertain. Refresh the existing payment status first." : "No Premium time was added. A fresh 7-day period begins only after a successful KES 250 M-Pesa payment is verified."}</p>
         <div class="foa-premium-payment-meta">
           <div><span>Amount</span><b>KES 250</b></div>
           <div><span>Status</span><b>${esc(String(state.payment?.status || "not completed").replaceAll("_", " "))}</b></div>
           <div><span>Access</span><b>Not extended</b></div>
         </div>
-        <button type="button" class="foa-premium-primary" style="width:100%" data-premium-try-again>Try M-Pesa again</button>
+        ${uncertainExpired
+          ? `<button type="button" class="foa-premium-secondary" style="width:100%" data-premium-refresh>Refresh existing payment</button>`
+          : `<button type="button" class="foa-premium-primary" style="width:100%" data-premium-try-again>Try M-Pesa again</button>`}
       </div>
     </article>`;
   }
@@ -354,14 +369,7 @@
     const description = expired
       ? "The exact paid period has ended, so new automated trading is paused until the next verified M-Pesa payment."
       : "DerivAdmin Premium is required for trading automation. Pay once with M-Pesa to unlock exactly seven days of access.";
-
-    const action = success
-      ? successCard()
-      : pending
-        ? waitingCard()
-        : failed
-          ? failedCard()
-          : formCard();
+    const action = success ? successCard() : pending ? waitingCard() : failed ? failedCard() : formCard();
 
     return `<div class="foa-premium-shell">
       <header class="foa-premium-brandbar">
@@ -375,7 +383,7 @@
   }
 
   function renderOverlay() {
-    if (!isAuthenticated() || !state.premium || state.premium.active && state.successUntil <= Date.now()) {
+    if (!isAuthenticated() || !state.premium || (state.premium.active && state.successUntil <= Date.now())) {
       removeOverlay();
       return;
     }
@@ -383,7 +391,7 @@
     const root = ensureOverlay();
     root.innerHTML = overlayMarkup();
     root.hidden = false;
-    q("[data-premium-phone]", root)?.focus?.({ preventScroll: true });
+    if (!state.submitting) q("[data-premium-phone]", root)?.focus?.({ preventScroll: true });
   }
 
   function reminderStage() {
@@ -397,22 +405,33 @@
 
   function reminderMessage() {
     const stage = reminderStage();
-    const seconds = exactRemainingSeconds();
-    const p = countdownParts(seconds);
-    if (stage === "one_hour") return `Premium expires in ${p.minutes}m ${p.seconds}s. Renewal opens after exact expiry.`;
-    if (stage === "six_hours") return `Premium expires in ${p.hours}h ${p.minutes}m. Renewal opens after exact expiry.`;
-    if (stage === "twenty_four_hours") return `Premium expires in ${p.hours}h ${p.minutes}m. M-Pesa renewal becomes available after expiry.`;
+    const part = countdownParts(exactRemainingSeconds());
+    if (stage === "one_hour") return `Premium expires in ${part.minutes}m ${part.seconds}s. Renewal opens after exact expiry.`;
+    if (stage === "six_hours") return `Premium expires in ${part.hours}h ${part.minutes}m. Renewal opens after exact expiry.`;
+    if (stage === "twenty_four_hours") return `Premium expires in ${part.hours}h ${part.minutes}m. M-Pesa renewal becomes available after expiry.`;
     return "";
   }
 
   function renderReminder() {
-    qa(".foa-premium-reminder").forEach((node) => node.remove());
-    if (!isAuthenticated() || !state.premium?.active || reminderStage() === "active") return;
+    const existing = q(".foa-premium-reminder");
+    const stage = reminderStage();
+    if (!isAuthenticated() || !state.premium?.active || stage === "active" || q(".foa-premium-overlay")) {
+      existing?.remove();
+      return;
+    }
     const main = q("#telegram-dashboard-snapshot > main");
-    if (!main || q(".foa-premium-overlay")) return;
+    if (!main) return;
+    const message = reminderMessage();
+    if (existing) {
+      existing.dataset.stage = stage;
+      const copy = q("span", existing);
+      if (copy && copy.textContent !== message) copy.textContent = message;
+      return;
+    }
     const banner = document.createElement("div");
     banner.className = "foa-premium-reminder";
-    banner.innerHTML = `<div><strong>Premium renewal reminder</strong><span>${esc(reminderMessage())}</span></div><button type="button" data-premium-open-profile>View plan</button>`;
+    banner.dataset.stage = stage;
+    banner.innerHTML = `<div><strong>Premium renewal reminder</strong><span>${esc(message)}</span></div><button type="button" data-premium-open-profile>View plan</button>`;
     main.prepend(banner);
   }
 
@@ -442,7 +461,9 @@
         <div class="foa-premium-profile-stat"><span>Renewal</span><b>Manual M-Pesa after expiry</b></div>
         <div class="foa-premium-profile-stat"><span>Provider</span><b>Lipana · M-Pesa</b></div>
       </div>
-      ${active ? `<p style="margin:12px 0 0;color:#7892ac;font-size:10px;line-height:1.5">${esc(renewal.message || "Premium is active. Renewal becomes available after the exact current expiry time.")}</p>` : `<button type="button" class="foa-premium-primary" style="width:100%;margin-top:14px" data-premium-open>Pay KES 250 with M-Pesa</button>`}
+      ${active
+        ? `<p style="margin:12px 0 0;color:#7892ac;font-size:10px;line-height:1.5">${esc(renewal.message || "Premium is active. Renewal becomes available after the exact current expiry time.")}</p>`
+        : `<button type="button" class="foa-premium-primary" style="width:100%;margin-top:14px" data-premium-open>Pay KES 250 with M-Pesa</button>`}
       <div class="foa-premium-history"><div class="foa-premium-history-head"><strong>Premium payment history</strong><span>Verified periods only</span></div><div class="foa-premium-history-list">${historyRows()}</div></div>
     </section>`;
   }
@@ -458,7 +479,8 @@
       linked: state.premium.linked_account_count,
       history: state.history.map((row) => [row.id, row.status]),
     });
-    const existing = q(".foa-premium-profile-card", scaffold.parentElement || document);
+    const parent = scaffold.parentElement || document;
+    const existing = q(".foa-premium-profile-card", parent);
     if (existing && signature === state.lastProfileSignature) return;
     existing?.remove();
     scaffold.insertAdjacentHTML("afterend", profileMarkup());
@@ -467,11 +489,10 @@
 
   function updateCountdowns() {
     const seconds = exactRemainingSeconds();
-    qa("[data-premium-overlay-countdown], [data-premium-profile-countdown]").forEach((node) => {
-      node.outerHTML = countdownMarkup(seconds, node.hasAttribute("data-premium-overlay-countdown") ? "data-premium-overlay-countdown" : "data-premium-profile-countdown");
-    });
+    qa("[data-premium-overlay-countdown], [data-premium-profile-countdown]").forEach((node) => updateCountdownNode(node, seconds));
     const reminder = q(".foa-premium-reminder span");
-    if (reminder) reminder.textContent = reminderMessage();
+    const message = reminderMessage();
+    if (reminder && reminder.textContent !== message) reminder.textContent = message;
     if (state.premium?.active && seconds <= 0 && !state.loading) refreshPremium(true);
   }
 
@@ -503,7 +524,7 @@
       }
       renderOverlay();
       if (paymentIsFailure() || paymentExpired()) {
-        clearPaymentIntent();
+        if (paymentIsFailure()) clearPaymentIntent();
         stopPoll();
         return;
       }
@@ -543,10 +564,12 @@
       state.methods = null;
       state.history = [];
       stopPoll();
+      if (state.passiveTimer) clearTimeout(state.passiveTimer);
       removeOverlay();
       document.body.removeAttribute("data-premium-gate-state");
       return;
     }
+
     const key = accountKey();
     if (state.accountKey && state.accountKey !== key) {
       state.premium = null;
@@ -562,6 +585,7 @@
     if (state.loading && !force) return;
     state.loading = true;
     if (!state.premium) document.body.dataset.premiumGateState = "checking";
+
     try {
       const access = await api("/me/premium-access");
       state.premium = access;
@@ -569,7 +593,8 @@
         state.methods = null;
         state.payment = null;
         if (!options.preserveSuccess) state.successUntil = 0;
-        removeOverlay();
+        if (state.successUntil > Date.now()) renderOverlay();
+        else removeOverlay();
         renderReminder();
         if (document.body.dataset.automationRoute === "profile") loadHistory();
         return;
@@ -596,9 +621,7 @@
 
   function schedulePassiveRefresh() {
     if (state.passiveTimer) clearTimeout(state.passiveTimer);
-    state.passiveTimer = setTimeout(() => {
-      refreshPremium(true).catch(() => {});
-    }, PASSIVE_REFRESH_MS);
+    state.passiveTimer = setTimeout(() => refreshPremium(true).catch(() => {}), PASSIVE_REFRESH_MS);
   }
 
   async function submitPayment(form) {
@@ -651,11 +674,8 @@
   }
 
   function openProfile() {
-    if (typeof window.FOA_AUTOMATION_NAVIGATE === "function") {
-      window.FOA_AUTOMATION_NAVIGATE("profile");
-    } else {
-      location.hash = "#/profile";
-    }
+    if (typeof window.FOA_AUTOMATION_NAVIGATE === "function") window.FOA_AUTOMATION_NAVIGATE("profile");
+    else location.hash = "#/profile";
     setTimeout(() => { loadHistory(); renderProfile(); }, 80);
   }
 
@@ -694,6 +714,11 @@
       openProfile();
       return;
     }
+    if (event.target?.closest?.("[data-premium-logout]")) {
+      event.preventDefault();
+      q(".builder-header #logout")?.click();
+      return;
+    }
     if (event.target?.closest?.(".foa-automation-bell") && state.premium?.active) {
       event.preventDefault();
       openProfile();
@@ -712,12 +737,12 @@
   window.addEventListener("foa:premium-refresh", () => refreshPremium(true));
   window.addEventListener("pageshow", () => refreshPremium(true));
   window.addEventListener("focus", () => {
-    if (paymentIsPending()) pollPayment();
+    if (paymentIsPending() && !paymentExpired()) pollPayment();
     else refreshPremium(true);
   });
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden && isAuthenticated()) {
-      if (paymentIsPending()) pollPayment();
+      if (paymentIsPending() && !paymentExpired()) pollPayment();
       else refreshPremium(true);
     }
   });
@@ -734,13 +759,11 @@
       }
       const key = accountKey();
       if (!state.premium || key !== state.accountKey) refreshPremium(true);
-      else {
-        if (state.premium.active) {
-          renderReminder();
-          renderProfile();
-        } else if (!q(".foa-premium-overlay")) {
-          renderOverlay();
-        }
+      else if (state.premium.active) {
+        renderReminder();
+        renderProfile();
+      } else if (!q(".foa-premium-overlay")) {
+        renderOverlay();
       }
     });
   }).observe(document.documentElement, { childList: true, subtree: true });
