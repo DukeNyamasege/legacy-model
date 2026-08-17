@@ -141,6 +141,10 @@ await writeFile(
     schedule_overlap: "wait-skip-replace-v1",
     schedule_history: "server-lifecycle-history-v1",
     schedule_built_ins: "full-frozen-template-snapshots-v1",
+    premium_access: "weekly-linked-options-server-gate-action6a-v1",
+    premium_period: "exact-7-days-no-grace-v1",
+    premium_prices: "KES250-or-USD2-v1",
+    premium_worker_gate: "admission-proposal-buy-settlement-preserved-v1",
     public_landing: "mobile-automation-action2-v1",
     generated_at: new Date().toISOString(),
   }, null, 2)}\n`,
@@ -160,5 +164,7 @@ console.log("Timezone: Africa/Nairobi (EAT) default, mirrored across linked Opti
 console.log("Schedule Trading: persistent server strategy + date + time + timezone + stake + TP + SL + overlap policy");
 console.log("Schedule execution: restart-safe server scheduler -> existing Custom Strategy worker; no browser timer and no second BUY engine");
 console.log("Schedule lifecycle: scheduled / waiting / starting / running / completed / skipped / cancelled / failed");
+console.log("Premium access Action 6A: linked DOT/ROT entitlement, KES 250 or USD 2, exact 7-day server boundary, no payment adapters yet");
+console.log("Premium worker gate: fresh admission + proposal + BUY; open-contract settlement preserved");
 console.log("Public landing: mobile-automation-action2-v1");
 console.log(`Realtime: ${process.env.DASHBOARD_WS_BASE_URL}/ws/me/live`);
