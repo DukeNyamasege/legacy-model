@@ -38,7 +38,7 @@ class FinalUi6F2Tests(unittest.TestCase):
             "Strategy Ready",
             "Schedule Trading",
             "Choose your timezone",
-            "Profile & Settings",
+            "PROFILE & SETTINGS",
             "Live Runs",
             "250 words",
             "Best possible interpretation",
@@ -63,6 +63,7 @@ class FinalUi6F2Tests(unittest.TestCase):
     def test_new_run_panel_matches_transaction_ledger_contract(self) -> None:
         js = (ROOT / "dashboard" / "final-ui-shell-v2.js").read_text(encoding="utf-8")
         css = (ROOT / "dashboard" / "final-ui-shell-v2.css").read_text(encoding="utf-8")
+        exporter = (ROOT / "scripts" / "export-deriv-quill-icons-v2.mjs").read_text(encoding="utf-8")
         for text in (
             "Type",
             "Entry / Exit spot",
@@ -77,15 +78,13 @@ class FinalUi6F2Tests(unittest.TestCase):
             "managed_account_id",
         ):
             self.assertIn(text, js)
-        for icon in (
-            'quill("over")',
-            'quill("under")',
-            'quill("demoAccount")',
-            'quill("realAccount")',
-            'quill("usd"',
-            'quill("volatility")',
-        ):
-            self.assertIn(icon, js)
+        self.assertIn('quill("demoAccount")', js)
+        self.assertIn('quill("realAccount")', js)
+        self.assertIn('quill("usd"', js)
+        self.assertIn('quill("volatility")', js)
+        self.assertIn("quill(contractKey(trade))", js)
+        for contract_icon in ("over:", "under:", "matches:", "differs:", "even:", "odd:", "rise:", "fall:"):
+            self.assertIn(contract_icon, exporter)
         self.assertIn("entry_tick", js)
         self.assertIn("exit_tick", js)
         self.assertIn("trade.profit", js)
