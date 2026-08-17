@@ -69,7 +69,7 @@ if (!html.includes('/strategy-ready-v1.js?v=20260817-1')) {
 /* Historical regression marker retained for Action 3 tests while Action 4 is
  * the active aggregate UI version: authenticated_ui: "automation-home-action3-v1" */
 
-/* Action 4: OAuth-identity timezone onboarding + mobile Schedule Trading UI.
+/* Action 4: linked-account-stable timezone onboarding + mobile Schedule Trading UI.
  * Schedule records are intentionally prepared client-side in Action 4; Action 5
  * installs the persistent VPS scheduling/execution authority. */
 if (!html.includes('/timezone-schedule-v1.css?v=20260817-1')) {
@@ -107,7 +107,7 @@ await writeFile(
     text_to_strategy: "nearest-supported-v1-250-words",
     strategy_ready: "review-save-trade-schedule-v1",
     strategy_library: "built-in-my-ai-unified-v1",
-    automation_timezone: "oauth-identity-global-africa-nairobi-default-v1",
+    automation_timezone: "linked-options-global-africa-nairobi-default-v1",
     schedule_workspace: "mobile-date-time-strategy-risk-overlap-action4-v1",
     schedule_execution: "deferred-to-action5",
     public_landing: "mobile-automation-action2-v1",
@@ -125,7 +125,7 @@ console.log("Authenticated UI: automation-home-action4-v1");
 console.log("Text to Strategy: nearest-supported-v1, maximum 250 words, review required");
 console.log("Strategy Ready: review -> save / trade now / schedule; existing execution APIs only");
 console.log("Strategy Library: Built-in + My Strategies + AI Generated");
-console.log("Timezone: Africa/Nairobi (EAT) default, OAuth-identity global preference, changeable worldwide");
+console.log("Timezone: Africa/Nairobi (EAT) default, mirrored across linked Options account IDs, changeable worldwide");
 console.log("Schedule Trading: strategy + date + time + timezone + stake + TP + SL + overlap policy");
 console.log("Schedule execution: deferred to Action 5 persistent VPS scheduler");
 console.log("Public landing: mobile-automation-action2-v1");
