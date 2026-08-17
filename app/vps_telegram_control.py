@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -106,14 +105,11 @@ def _remember_channel(client: TelegramAlertClient, chat: dict[str, Any]) -> None
     base_api.REPOSITORY.set_runtime_preference(CHANNEL_CHAT_KEY, chat_id)
     base_api.REPOSITORY.set_runtime_preference(CHANNEL_TITLE_KEY, client.chat_title)
     client._cache_channel()
-    LOGGER.info(
-        "TELEGRAM_CHANNEL_REMEMBERED title=%s",
-        client.chat_title or "channel",
-    )
+    LOGGER.info("TELEGRAM_CHANNEL_REMEMBERED title=%s", client.chat_title or "channel")
 
 
 class VpsTelegramController(TelegramAdminController):
-    """One VPS Telegram poller for private admin control and opt-in broadcasts."""
+    """Single VPS Telegram poller for private admin control and opt-in broadcasts."""
 
     def _is_admin(self, chat_id: str, username: str) -> bool:
         stored_chat = base_api.REPOSITORY.runtime_preference(ADMIN_CHAT_KEY).strip()
@@ -122,8 +118,7 @@ class VpsTelegramController(TelegramAdminController):
         return bool(username and username == self.admin_username)
 
     def _help_text(self) -> str:
-        base = super()._help_text()
-        additions = "\n".join(
+        return super()._help_text() + "\n" + "\n".join(
             (
                 "",
                 "FULL-VPS TELEGRAM COMMANDS",
@@ -136,18 +131,21 @@ class VpsTelegramController(TelegramAdminController):
                 "Users who open this bot and send /start become eligible for direct /update broadcasts.",
             )
         )
-        return base + additions
 
     async def _publish_known_channel(self, text: str) -> bool:
         if not self.channel_client.chat_id:
             return False
         return await self.channel_client.send_announcement(text)
 
-    async def _broadcast_subscribers(self, text: str, *, exclude_chat_id: str = "") -> tuple[int, int]:
-        subscribers = _subscriber_payloads()
+    async def _broadcast_subscribers(
+        self,
+        text: str,
+        *,
+        exclude_chat_id: str = "",
+    ) -> tuple[int, int]:
         sent = 0
         failed = 0
-        for item in subscribers:
+        for item in _subscriber_payloads():
             chat_id = str(item.get("chat_id") or "").strip()
             if not chat_id or chat_id == str(exclude_chat_id or "").strip():
                 continue
@@ -155,9 +153,7 @@ class VpsTelegramController(TelegramAdminController):
                 sent += 1
             else:
                 failed += 1
-            # Telegram's ordinary bulk Bot API limit is roughly 30 messages/sec.
-            # Twenty per second keeps headroom and avoids turning one admin update
-            # into a burst of 429 responses.
+            # Stay below Telegram's ordinary bulk delivery ceiling.
             await asyncio.sleep(0.05)
         return sent, failed
 
@@ -173,33 +169,23 @@ class VpsTelegramController(TelegramAdminController):
             return
 
         if lower == "/publish-status":
-            if not self.channel_client.chat_id:
-                await self._send_private(
-                    chat_id,
-                    "❌ No Telegram channel is currently remembered. Post once in the channel while the bot is an admin/member, then retry.",
-                )
-                return
             sent = await self._publish_known_channel(self._status_text())
             await self._send_private(
                 chat_id,
                 "✅ Current VPS status was published to the channel."
                 if sent
-                else "❌ Channel publication failed.",
+                else "❌ No saved channel or channel publication failed.",
             )
             return
 
         if lower.startswith("/publish "):
             message = raw.split(maxsplit=1)[1].strip()
-            if not self.channel_client.chat_id:
-                await self._send_private(
-                    chat_id,
-                    "❌ No Telegram channel is currently remembered. Post once in the channel while the bot is an admin/member, then retry.",
-                )
-                return
             sent = bool(message) and await self._publish_known_channel(message)
             await self._send_private(
                 chat_id,
-                "✅ Message published to the channel." if sent else "❌ Channel publication failed.",
+                "✅ Message published to the channel."
+                if sent
+                else "❌ No saved channel or channel publication failed.",
             )
             return
 
@@ -208,10 +194,7 @@ class VpsTelegramController(TelegramAdminController):
             if not message:
                 await self._send_private(chat_id, "Use: /broadcast your message")
                 return
-            sent, failed = await self._broadcast_subscribers(
-                message,
-                exclude_chat_id=chat_id,
-            )
+            sent, failed = await self._broadcast_subscribers(message, exclude_chat_id=chat_id)
             await self._send_private(
                 chat_id,
                 f"✅ Direct broadcast complete. Sent: {sent} | Failed: {failed}",
@@ -228,13 +211,12 @@ class VpsTelegramController(TelegramAdminController):
                 message,
                 exclude_chat_id=chat_id,
             )
-            channel_label = "SENT" if channel_sent else "NOT SENT"
             await self._send_private(
                 chat_id,
                 "\n".join(
                     (
                         "📣 ONE-UPDATE DELIVERY COMPLETE",
-                        f"Channel: {channel_label}",
+                        f"Channel: {'SENT' if channel_sent else 'NOT SENT'}",
                         f"Direct subscriber inboxes: {direct_sent}",
                         f"Direct failures: {direct_failed}",
                     )
@@ -357,7 +339,7 @@ def install_vps_telegram_control(app: Any) -> None:
     _seed_channel(channel_client)
     controller = VpsTelegramController(
         base_api.REPOSITORY,
-        base_api.CONFIG.telegram,
+        base_api.CONFIG,
         LOGGER,
         channel_client,
     )
@@ -381,7 +363,7 @@ def install_vps_telegram_control(app: Any) -> None:
         LOGGER.warning(
             "VPS_TELEGRAM_CONTROL_ACTIVE private_admin_autodiscovery=true "
             "channel_updates=true opt_in_broadcast=true one_update_command=/update "
-            "force_mention_all=false"
+            "force_mention_all=false lifecycle=lifespan"
         )
 
     async def shutdown() -> None:
@@ -397,9 +379,8 @@ def install_vps_telegram_control(app: Any) -> None:
         finally:
             app.state.vps_telegram_control_task = None
 
-    # Starlette 1.x removed add_event_handler()/on_event(). Compose the Telegram
-    # lifecycle around whatever lifespan the already-built FastAPI app currently
-    # owns so every earlier installer keeps its startup/shutdown semantics.
+    # Current Starlette removed add_event_handler()/on_event(). Compose our
+    # lifecycle around the lifespan already owned by the fully-built FastAPI app.
     previous_lifespan = app.router.lifespan_context
 
     @asynccontextmanager
