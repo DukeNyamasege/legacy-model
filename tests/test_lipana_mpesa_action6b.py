@@ -17,9 +17,18 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class LipanaPureContractTests(unittest.TestCase):
     def test_kenyan_phone_normalization_is_strict(self) -> None:
-        self.assertEqual(lipana.normalize_kenyan_mpesa_phone("0712 345 678"), "+254712345678")
-        self.assertEqual(lipana.normalize_kenyan_mpesa_phone("254712345678"), "+254712345678")
-        self.assertEqual(lipana.normalize_kenyan_mpesa_phone("+254112345678"), "+254112345678")
+        self.assertEqual(
+            lipana.normalize_kenyan_mpesa_phone("0712 345 678"),
+            "+254712345678",
+        )
+        self.assertEqual(
+            lipana.normalize_kenyan_mpesa_phone("254712345678"),
+            "+254712345678",
+        )
+        self.assertEqual(
+            lipana.normalize_kenyan_mpesa_phone("+254112345678"),
+            "+254112345678",
+        )
         with self.assertRaises(ValueError):
             lipana.normalize_kenyan_mpesa_phone("+12025550123")
 
@@ -109,13 +118,21 @@ class PremiumPaymentIdempotencyTests(unittest.TestCase):
         )
         self.assertEqual(replay.current_period_end, paid_at + timedelta(days=7))
 
+        # SQLite intentionally drops timezone metadata on DateTime round-trips;
+        # the production service normalizes every stored timestamp to UTC before
+        # entitlement decisions. Assert through that same authority instead of
+        # comparing the SQLite driver's raw representation.
         with self.database.session() as session:
             customer = session.get(PremiumCustomer, "customer-1")
             self.assertIsNotNone(customer)
             self.assertEqual(customer.renewal_preference, "prompt_again")
             self.assertFalse(customer.auto_renew_enabled)
-            self.assertEqual(customer.current_period_start, paid_at)
-            self.assertEqual(customer.current_period_end, paid_at + timedelta(days=7))
+            stored = effective_access_state(customer, now=paid_at)
+            self.assertEqual(stored.current_period_start, paid_at)
+            self.assertEqual(
+                stored.current_period_end,
+                paid_at + timedelta(days=7),
+            )
 
     def test_expiry_is_still_exact_after_lipana_activation(self) -> None:
         paid_at = datetime(2026, 8, 17, 9, 22, 30, tzinfo=timezone.utc)
@@ -133,7 +150,9 @@ class PremiumPaymentIdempotencyTests(unittest.TestCase):
             self.assertTrue(
                 effective_access_state(
                     customer,
-                    now=paid_at + timedelta(days=7) - timedelta(microseconds=1),
+                    now=paid_at
+                    + timedelta(days=7)
+                    - timedelta(microseconds=1),
                 ).active
             )
             expired = effective_access_state(
@@ -147,17 +166,21 @@ class PremiumPaymentIdempotencyTests(unittest.TestCase):
 class LipanaSourceSafetyTests(unittest.TestCase):
     def test_official_sdk_is_pinned_and_server_reverification_is_required(self) -> None:
         requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
-        source = (ROOT / "app" / "lipana_mpesa_action6b.py").read_text(encoding="utf-8")
+        source = (ROOT / "app" / "lipana_mpesa_action6b.py").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("lipana==1.0.1", requirements)
         self.assertIn('request.headers.get("x-lipana-signature")', source)
         self.assertIn("client.webhooks.verify(payload, signature, secret)", source)
         self.assertIn("client.transactions.retrieve", source)
         self.assertIn("amount_minor != AMOUNT_MINOR", source)
         self.assertIn('renewal_preference="prompt_again"', source)
-        self.assertIn('auto_renew_enabled=False', source)
+        self.assertIn("auto_renew_enabled=False", source)
 
     def test_payment_model_never_persists_raw_phone_or_webhook_body(self) -> None:
-        models = (ROOT / "app" / "premium_payment_models.py").read_text(encoding="utf-8")
+        models = (ROOT / "app" / "premium_payment_models.py").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("phone_hash", models)
         self.assertIn("phone_masked", models)
         self.assertNotIn("phone_number:", models)
@@ -173,7 +196,9 @@ class LipanaSourceSafetyTests(unittest.TestCase):
         self.assertIn("https://derivadmin.site/api/webhooks/lipana", env)
 
     def test_action6b_routes_are_installed_before_final_premium_gate(self) -> None:
-        source = (ROOT / "app" / "vps_backend_api.py").read_text(encoding="utf-8")
+        source = (ROOT / "app" / "vps_backend_api.py").read_text(
+            encoding="utf-8"
+        )
         payment = source.index("install_lipana_mpesa_action6b(app)")
         gate = source.index("install_premium_access_action6a(app)")
         self.assertLess(payment, gate)
