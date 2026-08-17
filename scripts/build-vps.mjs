@@ -52,16 +52,23 @@ for (const asset of productionAssets) {
 
 // @deriv/quill-icons is the official ESM package. Its generated category barrels
 // contain extensionless internal specifiers which Node 24 does not execute
-// directly. Bundle the build-time exporter first so esbuild resolves those
-// official modules exactly; no substitute SVGs or browser CDN are introduced.
+// directly. Bundle those official Quill modules so esbuild resolves their internal
+// imports, but leave React/ReactDOM and Node built-ins native. This avoids the CJS
+// react-dom/server dynamic-require shim while still using the exact Deriv exports.
 await esbuild({
   entryPoints: [resolve(root, "scripts", "export-deriv-quill-icons-v2.mjs")],
   outfile: bundledIconExporter,
   bundle: true,
   platform: "node",
   format: "esm",
-  target: "node22",
+  target: "node24",
   packages: "bundle",
+  external: [
+    "react",
+    "react-dom",
+    "react-dom/*",
+    "node:*",
+  ],
   logLevel: "warning",
 });
 try {
@@ -140,7 +147,7 @@ await writeFile(
     run_panel_source: "me-trades-today-real-and-virtual-stream",
     deriv_icons: "official-quill-icons-2.4.18-build-time-static-svg",
     deriv_icon_repository: "deriv-com/quill-icons",
-    deriv_icon_build_resolution: "esbuild-bundled-official-esm-v1",
+    deriv_icon_build_resolution: "esbuild-quill-only-react-native-externals-v1",
     linked_account_selector: "specific-linked-options-account-v1",
     public_origin: publicOrigin,
     api_base: "/api",
