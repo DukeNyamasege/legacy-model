@@ -63,7 +63,8 @@ class FullVpsHostingTests(unittest.TestCase):
         css = (ROOT / "dashboard" / "automation-home-v1.css").read_text(encoding="utf-8")
         build = (ROOT / "scripts" / "build-vps.mjs").read_text(encoding="utf-8")
 
-        # Approved Action 1 information architecture.
+        # Approved Action 1 information architecture remains present as later
+        # actions extend the product around it.
         self.assertIn("Home of Automation", js)
         self.assertIn("Strategy Builder", js)
         self.assertIn("Text to Strategy", js)
@@ -95,10 +96,15 @@ class FullVpsHostingTests(unittest.TestCase):
         self.assertIn(".foa-automation-bottom-nav", css)
         self.assertIn("@media (max-width: 720px)", css)
 
-        # Full-VPS build installs the new shell with immutable cache-busting.
+        # Full-VPS build keeps Action 1 assets while Action 2 advances the
+        # aggregate authenticated UI version and installs its own compiler UI.
         self.assertIn("/automation-home-v1.css?v=20260817-1", build)
         self.assertIn("/automation-home-v1.js?v=20260817-1", build)
-        self.assertIn('authenticated_ui: "automation-home-action1-v1"', build)
+        self.assertIn('authenticated_ui: "automation-home-action2-v1"', build)
+        self.assertIn('text_to_strategy: "nearest-supported-v1-250-words"', build)
+        self.assertIn('public_landing: "mobile-automation-action2-v1"', build)
+        self.assertIn("/text-to-strategy-v1.css?v=20260817-1", build)
+        self.assertIn("/text-to-strategy-v1.js?v=20260817-1", build)
 
         syntax = subprocess.run(
             ["node", "--check", str(ROOT / "dashboard" / "automation-home-v1.js")],
