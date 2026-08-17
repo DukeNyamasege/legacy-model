@@ -46,11 +46,34 @@ html = html
     '<script src="/vps-api-boundary.js?v=20260817-1"></script>',
   );
 
+/* Action 1: authenticated Automation Home + universal mobile app shell.
+ * The assets live in dashboard/ and are copied into dist by build-netlify.mjs.
+ * Install them only in the full-VPS product for now; they do not change worker
+ * execution or the existing Builder/Trades controllers. */
+if (!html.includes('/automation-home-v1.css?v=20260817-1')) {
+  html = html.replace(
+    "</head>",
+    '  <link rel="stylesheet" href="/automation-home-v1.css?v=20260817-1">\n</head>',
+  );
+}
+if (!html.includes('/automation-home-v1.js?v=20260817-1')) {
+  html = html.replace(
+    "</body>",
+    '  <script src="/automation-home-v1.js?v=20260817-1" defer></script>\n</body>',
+  );
+}
+
 if (!html.includes('/vps-api-boundary.js?v=20260817-1')) {
   throw new Error("Full VPS API boundary was not installed into the production HTML");
 }
 if (html.includes('<script src="/netlify-api-boundary.js"></script>')) {
   throw new Error("Netlify 3.2-second API boundary must not remain active on full VPS");
+}
+if (!html.includes('/automation-home-v1.css?v=20260817-1')) {
+  throw new Error("Action 1 Automation Home stylesheet was not installed");
+}
+if (!html.includes('/automation-home-v1.js?v=20260817-1')) {
+  throw new Error("Action 1 Automation Home controller was not installed");
 }
 
 await writeFile(indexPath, html, "utf8");
@@ -64,6 +87,7 @@ await writeFile(
     oauth_base: "/oauth",
     websocket_base: process.env.DASHBOARD_WS_BASE_URL,
     api_boundary: "full-vps-same-origin-rest-v3",
+    authenticated_ui: "automation-home-action1-v1",
     generated_at: new Date().toISOString(),
   }, null, 2)}\n`,
   "utf8",
@@ -74,4 +98,5 @@ console.log(`Public origin: ${publicOrigin}`);
 console.log("REST: same-origin /api/* -> host Nginx -> API container");
 console.log("OAuth: same-origin /oauth/* -> host Nginx -> API container");
 console.log("API boundary: full-vps-same-origin-rest-v3 (no 3.2s false timeout)");
+console.log("Authenticated UI: automation-home-action1-v1");
 console.log(`Realtime: ${process.env.DASHBOARD_WS_BASE_URL}/ws/me/live`);
