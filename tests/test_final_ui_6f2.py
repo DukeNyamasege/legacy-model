@@ -110,7 +110,9 @@ class FinalUi6F2Tests(unittest.TestCase):
         self.assertIn('import { build as esbuild } from "esbuild"', build)
         self.assertIn('entryPoints: [resolve(root, "scripts", "export-deriv-quill-icons-v2.mjs")]', build)
         self.assertIn('packages: "bundle"', build)
-        self.assertIn('deriv_icon_build_resolution: "esbuild-bundled-official-esm-v1"', build)
+        self.assertIn('external: [', build)
+        self.assertIn('"react-dom/*"', build)
+        self.assertIn('deriv_icon_build_resolution: "esbuild-quill-only-react-native-externals-v1"', build)
 
     def test_specific_linked_account_switch_is_selection_only(self) -> None:
         source = (ROOT / "app" / "final_linked_accounts_6f2.py").read_text(encoding="utf-8")
