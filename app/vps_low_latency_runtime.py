@@ -22,7 +22,6 @@ from app.rf_dir5_bot import RFDir5TradingBot
 from app.token_store import decrypt_auth_payload
 from enhanced_bot import (
     ClientSession,
-    mask_account_id,
     normalize_account_type,
     runtime_account_key,
     sanitize_account_ids,
@@ -240,6 +239,23 @@ def _low_latency_admit_one_runtime_account(
     return str(original(bot, int(managed_id)) or "")
 
 
+async def _connect_with_happy_eyeballs(url: str, **kwargs: Any):
+    try:
+        return await websockets.connect(
+            url,
+            happy_eyeballs_delay=0.25,
+            interleave=1,
+            **kwargs,
+        )
+    except TypeError as exc:
+        # Compatibility fallback for an older websockets/asyncio build. The
+        # returned Deriv URL is unchanged; only address-family racing is lost.
+        text = str(exc).lower()
+        if "happy_eyeballs" not in text and "interleave" not in text:
+            raise
+        return await websockets.connect(url, **kwargs)
+
+
 async def _low_latency_open_websocket(
     gate: private_ws._PrivateConnectionGate,
     url: str,
@@ -247,26 +263,13 @@ async def _low_latency_open_websocket(
     """Open Deriv's returned WSS URL using the VPS's fastest IP family."""
 
     async with gate._handshake_slots:
-        kwargs = {
-            "open_timeout": 20,
-            "close_timeout": 5,
-            "ping_interval": 20,
-            "ping_timeout": 20,
-        }
-        try:
-            return await websockets.connect(
-                url,
-                happy_eyeballs_delay=0.25,
-                interleave=1,
-                **kwargs,
-            )
-        except TypeError as exc:
-            # Compatibility fallback for an older websockets/asyncio build. The
-            # returned Deriv URL is unchanged; only address-family racing is lost.
-            text = str(exc).lower()
-            if "happy_eyeballs" not in text and "interleave" not in text:
-                raise
-            return await websockets.connect(url, **kwargs)
+        return await _connect_with_happy_eyeballs(
+            url,
+            open_timeout=20,
+            close_timeout=5,
+            ping_interval=20,
+            ping_timeout=20,
+        )
 
 
 def _low_latency_normal_backoff(
@@ -311,38 +314,30 @@ async def _low_latency_contract_snapshot_once(
         }
 
     req_id = 920000 + int(contract_id) % 100000
-    kwargs = {
-        "open_timeout": _CONTRACT_SNAPSHOT_OPEN_TIMEOUT_SECONDS,
-        "close_timeout": 3,
-        "ping_interval": None,
-    }
+    websocket = None
     try:
-        try:
-            connection = websockets.connect(
-                url,
-                happy_eyeballs_delay=0.25,
-                interleave=1,
-                **kwargs,
+        websocket = await _connect_with_happy_eyeballs(
+            url,
+            open_timeout=_CONTRACT_SNAPSHOT_OPEN_TIMEOUT_SECONDS,
+            close_timeout=3,
+            ping_interval=None,
+        )
+        await websocket.send(
+            json.dumps(
+                {
+                    "proposal_open_contract": 1,
+                    "contract_id": int(contract_id),
+                    "req_id": req_id,
+                }
             )
-        except TypeError:
-            connection = websockets.connect(url, **kwargs)
-        async with connection as ws:
-            await ws.send(
-                json.dumps(
-                    {
-                        "proposal_open_contract": 1,
-                        "contract_id": int(contract_id),
-                        "req_id": req_id,
-                    }
-                )
-            )
-            deadline = time.monotonic() + _CONTRACT_SNAPSHOT_RESPONSE_TIMEOUT_SECONDS
-            while time.monotonic() < deadline:
-                remaining = max(0.1, deadline - time.monotonic())
-                raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
-                response = json.loads(raw)
-                if response.get("req_id") == req_id:
-                    return response
+        )
+        deadline = time.monotonic() + _CONTRACT_SNAPSHOT_RESPONSE_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
+            remaining = max(0.1, deadline - time.monotonic())
+            raw = await asyncio.wait_for(websocket.recv(), timeout=remaining)
+            response = json.loads(raw)
+            if response.get("req_id") == req_id:
+                return response
         return {
             "error": {
                 "message": "Authenticated contract status response was not received",
@@ -363,6 +358,12 @@ async def _low_latency_contract_snapshot_once(
                 "code": "CONNECTION_ERROR",
             }
         }
+    finally:
+        if websocket is not None:
+            try:
+                await websocket.close()
+            except Exception:
+                pass
 
 
 def install_vps_low_latency_runtime() -> None:
