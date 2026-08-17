@@ -34,20 +34,22 @@ if (parsedStream.protocol !== "wss:" && parsedStream.hostname !== "localhost") {
 await rm(output, { recursive: true, force: true });
 await mkdir(output, { recursive: true });
 
-// 6F-1 is a clean replacement, not a legacy-dashboard overlay. Only assets owned
-// by the new direct-VPS shell are copied into the production image. Historical UI
-// sources stay in Git temporarily for migration/regression reference but are not
-// served by the product.
+// 6F-2 remains a direct-VPS clean shell. Historical dashboard sources can stay in
+// Git for regression reference, but the production image receives only this list.
 const productionAssets = [
   "index.html",
-  "final-ui-shell-v1.css",
-  "final-ui-shell-v1.js",
-  "vps-api-boundary.js",
-  "vps-realtime-client.js",
+  "final-ui-shell-v2.css",
+  "final-ui-shell-v2.js",
+  "vps-api-boundary-v2.js",
+  "vps-realtime-client-v2.js",
 ];
 for (const asset of productionAssets) {
   await copyFile(resolve(dashboard, asset), resolve(output, asset));
 }
+
+// Export the official pinned Deriv Quill React components to static SVG markup.
+// The browser receives local VPS assets only; it has no npm/CDN runtime dependency.
+await import("./export-deriv-quill-icons-v2.mjs");
 
 let html = await readFile(indexPath, "utf8");
 html = html
@@ -56,25 +58,30 @@ html = html
     `<meta name="stream-base-url" content="${streamBase}">`,
   )
   .replace(
-    '<meta name="frontend-runtime" content="direct-vps-final-ui-6f1">',
-    '<meta name="frontend-runtime" content="full-vps-final-ui-6f1">',
+    '<meta name="frontend-runtime" content="direct-vps-final-ui-6f2">',
+    '<meta name="frontend-runtime" content="full-vps-final-ui-6f2">',
   );
 
 const required = [
-  '<meta name="frontend-runtime" content="full-vps-final-ui-6f1">',
+  '<meta name="frontend-runtime" content="full-vps-final-ui-6f2">',
   'meta name="stream-base-url"',
-  '/vps-api-boundary.js?v=20260817-1',
-  '/vps-realtime-client.js?v=20260817-6f1-2',
-  '/final-ui-shell-v1.css?v=20260817-6f1-1',
-  '/final-ui-shell-v1.js?v=20260817-6f1-1',
+  '/vps-api-boundary-v2.js?v=20260817-6f2-1',
+  '/deriv-quill-icons-v2.js?v=2.4.18',
+  '/vps-realtime-client-v2.js?v=20260817-6f2-1',
+  '/final-ui-shell-v2.css?v=20260817-6f2-1',
+  '/final-ui-shell-v2.js?v=20260817-6f2-1',
 ];
 for (const marker of required) {
-  if (!html.includes(marker)) throw new Error(`Action 6F-1 VPS marker missing: ${marker}`);
+  if (!html.includes(marker)) throw new Error(`Action 6F-2 VPS marker missing: ${marker}`);
 }
 
 const forbiddenProductionUi = [
   '/netlify-api-boundary.js',
   '/netlify-realtime-client.js',
+  '/vps-api-boundary.js?v=20260817-1',
+  '/vps-realtime-client.js?v=20260817-6f1-2',
+  '/final-ui-shell-v1.css',
+  '/final-ui-shell-v1.js',
   '/ui/dashboard-v2.css',
   '/ui/dashboard-v2.js',
   '/ui/dashboard-actions-v2.js',
@@ -89,32 +96,44 @@ const forbiddenProductionUi = [
   'tablet-navigation-fix',
 ];
 for (const marker of forbiddenProductionUi) {
-  if (html.includes(marker)) throw new Error(`Legacy/Netlify presentation leaked into direct VPS UI: ${marker}`);
+  if (html.includes(marker)) throw new Error(`Retired presentation leaked into direct VPS 6F-2 UI: ${marker}`);
+}
+
+const iconManifest = JSON.parse(await readFile(resolve(output, "deriv-quill-icons-v2.json"), "utf8"));
+for (const key of ["over", "under", "matches", "differs", "even", "odd", "rise", "fall", "demoAccount", "realAccount", "usd", "volatility"]) {
+  if (!iconManifest.exports?.[key]) throw new Error(`Official Deriv Quill icon provenance missing: ${key}`);
 }
 
 await writeFile(indexPath, html, "utf8");
-
 await writeFile(
   resolve(output, "vps-build.json"),
   `${JSON.stringify({
-    frontend_runtime: "full-vps-final-ui-6f1",
+    frontend_runtime: "full-vps-final-ui-6f2",
     deployment_topology: "direct-vps-only",
-    ui_authority: "final-ui-shell-v1",
+    ui_authority: "final-ui-shell-v2",
+    authenticated_ui: "six-screen-reconstruction-6f2-v1",
     production_asset_policy: "new-shell-whitelist-only",
     legacy_ui_loaded: false,
     legacy_ui_shipped: false,
     netlify_runtime_loaded: false,
     mockup_contract: "six-approved-mobile-screens-authoritative",
+    run_panel: "deriv-transaction-ledger-v1",
+    run_panel_source: "me-trades-today-real-and-virtual-stream",
+    deriv_icons: "official-quill-icons-2.4.18-build-time-static-svg",
+    deriv_icon_repository: "deriv-com/quill-icons",
+    linked_account_selector: "specific-linked-options-account-v1",
     public_origin: publicOrigin,
     api_base: "/api",
     oauth_base: "/oauth",
     websocket_base: streamBase,
-    api_boundary: "full-vps-same-origin-rest-v3",
-    realtime_client: "vps-realtime-client-v1",
-    account_switching: "demo-real-post-me-switch-account",
+    api_boundary: "direct-vps-same-origin-rest-6f2",
+    realtime_client: "vps-realtime-client-v2",
+    account_switching: "specific-linked-account-post-me-switch-account",
+    text_to_strategy: "250-word-nearest-supported-review-first-v1",
+    builder_execution: "canonical-custom-strategy-existing-worker-authority",
     schedule_execution: "persistent-server-scheduler-existing-worker-authority-v1",
     schedule_persistence: "postgres-restart-safe-exactly-once-claim-v1",
-    schedule_ui_and_library: "reconstructed-in-6f2",
+    schedule_ui_and_library: "reconstructed-6f2-v1",
     premium_access: "weekly-linked-options-server-gate-action6a-v1",
     premium_period: "exact-7-days-no-grace-v1",
     premium_prices: "KES250-mpesa-only-v1",
@@ -125,10 +144,10 @@ await writeFile(
   "utf8",
 );
 
-console.log("Direct VPS Action 6F-1 frontend built.");
+console.log("Direct VPS Action 6F-2 frontend built.");
 console.log(`Public origin: ${publicOrigin}`);
 console.log(`Realtime: ${streamBase}/ws/me/live`);
-console.log("UI authority: final-ui-shell-v1; production artifact contains only new-shell assets");
-console.log("REST/OAuth: same-origin /api/* and /oauth/* through the VPS edge");
-console.log("Demo/Real switching: /me/switch-account retained in the new shell");
-console.log("Backend strategy, scheduler, premium and Lipana authorities remain unchanged");
+console.log("UI authority: final-ui-shell-v2; six-screen reconstruction plus live run ledger");
+console.log("Official Deriv icons: @deriv/quill-icons 2.4.18 exported to local static SVGs");
+console.log("Run ledger: /me/trades/today; specific linked account selector: /me/accounts + /me/switch-account");
+console.log("No Netlify or retired 6F-1 presentation is shipped in the production artifact");
