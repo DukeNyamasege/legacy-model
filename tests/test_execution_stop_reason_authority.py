@@ -103,22 +103,25 @@ class ExecutionStopReasonAuthorityTests(unittest.TestCase):
             guard,
         )
 
-    def test_dashboard_surfaces_reasoned_terminal_states_without_observer_loop(self) -> None:
-        source = (ROOT / "dashboard" / "execution-status-banner.js").read_text(
+    def test_new_direct_vps_ui_reads_reasoned_lifecycle_without_old_banner(self) -> None:
+        old = (ROOT / "dashboard" / "execution-status-banner.js").read_text(
             encoding="utf-8"
         )
         index = (ROOT / "dashboard" / "index.html").read_text(encoding="utf-8")
-        self.assertIn("REASONED_TERMINAL", source)
-        self.assertIn('runtimeState === "STOPPED"', source)
-        self.assertIn('runtimeState === "ERROR"', source)
-        self.assertIn('box.setAttribute("role", "alert")', source)
-        self.assertIn('box.setAttribute("aria-live", "assertive")', source)
-        self.assertIn("Take profit stop", source)
-        self.assertIn("Stop loss stop", source)
-        self.assertIn("function scheduleUpdate()", source)
-        self.assertIn("requestAnimationFrame(() =>", source)
-        self.assertIn("if (box.textContent !== nextText) box.textContent = nextText", source)
-        self.assertIn("/execution-status-banner.js?v=20260814-2", index)
+        shell = (ROOT / "dashboard" / "final-ui-shell-v1.js").read_text(
+            encoding="utf-8"
+        )
+
+        # Preserve the historical source as documentation of reason mappings,
+        # but the 6F UI has a single presentation authority.
+        self.assertIn("REASONED_TERMINAL", old)
+        self.assertIn("Take profit stop", old)
+        self.assertIn("Stop loss stop", old)
+        self.assertNotIn("execution-status-banner.js", index)
+        self.assertIn('api("/me/trading-lifecycle")', shell)
+        self.assertIn("state.lifecycle = results[1].value", shell)
+        self.assertIn("state.lifecycle?.reason", shell)
+        self.assertIn('/final-ui-shell-v1.js?v=20260817-6f1-1', index)
 
 
 if __name__ == "__main__":
