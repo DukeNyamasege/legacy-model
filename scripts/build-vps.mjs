@@ -6,7 +6,7 @@ const root = resolve(import.meta.dirname, "..");
 const dashboard = resolve(root, "dashboard");
 const output = resolve(root, "dist");
 const indexPath = resolve(output, "index.html");
-const bundledIconExporter = resolve(root, "scripts", ".quill-export-bundle-6f2.mjs");
+const bundledIconExporter = resolve(root, "scripts", ".quill-export-bundle-6f3.mjs");
 
 const publicOrigin = String(
   process.env.PUBLIC_ORIGIN
@@ -37,12 +37,15 @@ await rm(output, { recursive: true, force: true });
 await rm(bundledIconExporter, { force: true });
 await mkdir(output, { recursive: true });
 
-// 6F-2 remains a direct-VPS clean shell. Historical dashboard sources can stay in
-// Git for regression reference, but the production image receives only this list.
+// 6F-3 ships one final presentation system. The premium bootstrap is the admission
+// gate; the authenticated shell and realtime client are loaded only after the
+// server reports an active entitlement (or for the anonymous login landing page).
 const productionAssets = [
   "index.html",
   "final-ui-shell-v2.css",
   "final-ui-shell-v2.js",
+  "final-premium-6f3.css",
+  "final-premium-6f3.js",
   "vps-api-boundary-v2.js",
   "vps-realtime-client-v2.js",
 ];
@@ -50,11 +53,6 @@ for (const asset of productionAssets) {
   await copyFile(resolve(dashboard, asset), resolve(output, asset));
 }
 
-// @deriv/quill-icons is the official ESM package. Its generated category barrels
-// contain extensionless internal specifiers which Node 24 does not execute
-// directly. Bundle those official Quill modules so esbuild resolves their internal
-// imports, but leave React/ReactDOM and Node built-ins native. This avoids the CJS
-// react-dom/server dynamic-require shim while still using the exact Deriv exports.
 await esbuild({
   entryPoints: [resolve(root, "scripts", "export-deriv-quill-icons-v2.mjs")],
   outfile: bundledIconExporter,
@@ -63,12 +61,7 @@ await esbuild({
   format: "esm",
   target: "node24",
   packages: "bundle",
-  external: [
-    "react",
-    "react-dom",
-    "react-dom/*",
-    "node:*",
-  ],
+  external: ["react", "react-dom", "react-dom/*", "node:*"],
   logLevel: "warning",
 });
 try {
@@ -84,45 +77,43 @@ html = html
     `<meta name="stream-base-url" content="${streamBase}">`,
   )
   .replace(
-    '<meta name="frontend-runtime" content="direct-vps-final-ui-6f2">',
-    '<meta name="frontend-runtime" content="full-vps-final-ui-6f2">',
+    '<meta name="frontend-runtime" content="direct-vps-final-ui-6f3">',
+    '<meta name="frontend-runtime" content="full-vps-final-ui-6f3">',
   );
 
 const required = [
-  '<meta name="frontend-runtime" content="full-vps-final-ui-6f2">',
+  '<meta name="frontend-runtime" content="full-vps-final-ui-6f3">',
+  '<meta name="frontend-authority" content="final-ui-shell-v2">',
   'meta name="stream-base-url"',
   '/vps-api-boundary-v2.js?v=20260817-6f2-1',
   '/deriv-quill-icons-v2.js?v=2.4.18',
-  '/vps-realtime-client-v2.js?v=20260817-6f2-1',
   '/final-ui-shell-v2.css?v=20260817-6f2-1',
-  '/final-ui-shell-v2.js?v=20260817-6f2-1',
+  '/final-premium-6f3.css?v=20260817-6f3-1',
+  '/final-premium-6f3.js?v=20260817-6f3-1',
 ];
 for (const marker of required) {
-  if (!html.includes(marker)) throw new Error(`Action 6F-2 VPS marker missing: ${marker}`);
+  if (!html.includes(marker)) throw new Error(`Action 6F-3 VPS marker missing: ${marker}`);
+}
+
+// The heavy authenticated runtime must not start directly from index.html.
+for (const marker of [
+  '<script src="/vps-realtime-client-v2.js?v=20260817-6f2-1" defer>',
+  '<script src="/final-ui-shell-v2.js?v=20260817-6f2-1" defer>',
+]) {
+  if (html.includes(marker)) throw new Error(`Premium admission bypass found in 6F-3 document: ${marker}`);
 }
 
 const forbiddenProductionUi = [
-  '/netlify-api-boundary.js',
-  '/netlify-realtime-client.js',
-  '/vps-api-boundary.js?v=20260817-1',
-  '/vps-realtime-client.js?v=20260817-6f1-2',
-  '/final-ui-shell-v1.css',
-  '/final-ui-shell-v1.js',
-  '/ui/dashboard-v2.css',
-  '/ui/dashboard-v2.js',
-  '/ui/dashboard-actions-v2.js',
-  'automation-home-v1',
-  'text-to-strategy-v1',
-  'strategy-ready-v1',
-  'timezone-schedule-v1',
-  'automation-scheduler-action5',
-  'premium-subscription-action6e',
-  'final-dashboard-authority',
-  'mobile-topbar-compact',
-  'tablet-navigation-fix',
+  '/netlify-api-boundary.js', '/netlify-realtime-client.js',
+  '/vps-api-boundary.js?v=20260817-1', '/vps-realtime-client.js?v=20260817-6f1-2',
+  '/final-ui-shell-v1.css', '/final-ui-shell-v1.js',
+  '/ui/dashboard-v2.css', '/ui/dashboard-v2.js', '/ui/dashboard-actions-v2.js',
+  'automation-home-v1', 'text-to-strategy-v1', 'strategy-ready-v1', 'timezone-schedule-v1',
+  'automation-scheduler-action5', 'premium-subscription-action6e', 'final-dashboard-authority',
+  'mobile-topbar-compact', 'tablet-navigation-fix',
 ];
 for (const marker of forbiddenProductionUi) {
-  if (html.includes(marker)) throw new Error(`Retired presentation leaked into direct VPS 6F-2 UI: ${marker}`);
+  if (html.includes(marker)) throw new Error(`Retired presentation leaked into direct VPS 6F-3 UI: ${marker}`);
 }
 
 const iconManifest = JSON.parse(await readFile(resolve(output, "deriv-quill-icons-v2.json"), "utf8"));
@@ -134,11 +125,12 @@ await writeFile(indexPath, html, "utf8");
 await writeFile(
   resolve(output, "vps-build.json"),
   `${JSON.stringify({
-    frontend_runtime: "full-vps-final-ui-6f2",
+    frontend_runtime: "full-vps-final-ui-6f3",
     deployment_topology: "direct-vps-only",
     ui_authority: "final-ui-shell-v2",
-    authenticated_ui: "six-screen-reconstruction-6f2-v1",
-    production_asset_policy: "new-shell-whitelist-only",
+    premium_bootstrap: "final-premium-6f3",
+    authenticated_ui: "six-screen-reconstruction-6f2-with-premium-admission-6f3",
+    production_asset_policy: "final-authority-whitelist-only",
     legacy_ui_loaded: false,
     legacy_ui_shipped: false,
     netlify_runtime_loaded: false,
@@ -154,7 +146,7 @@ await writeFile(
     oauth_base: "/oauth",
     websocket_base: streamBase,
     api_boundary: "direct-vps-same-origin-rest-6f2",
-    realtime_client: "vps-realtime-client-v2",
+    realtime_client: "premium-admitted-vps-realtime-client-v2",
     account_switching: "specific-linked-account-post-me-switch-account",
     text_to_strategy: "250-word-nearest-supported-review-first-v1",
     builder_execution: "canonical-custom-strategy-existing-worker-authority",
@@ -166,15 +158,18 @@ await writeFile(
     premium_prices: "KES250-mpesa-only-v1",
     premium_payment: "lipana-stk-verified-webhook-v1",
     premium_renewal: "manual-mpesa-after-exact-expiry-v1",
+    premium_ui: "same-language-root-gate-and-profile-6f3-v1",
+    premium_runtime_admission: "unpaid-users-do-not-load-shell-or-realtime-v1",
+    premium_unlock_authority: "verified-server-entitlement-only-v1",
+    final_product_qa: "oauth-accounts-premium-builder-ai-schedule-trades-mobile-v1",
     generated_at: new Date().toISOString(),
   }, null, 2)}\n`,
   "utf8",
 );
 
-console.log("Direct VPS Action 6F-2 frontend built.");
+console.log("Direct VPS Action 6F-3 frontend built.");
 console.log(`Public origin: ${publicOrigin}`);
-console.log(`Realtime: ${streamBase}/ws/me/live`);
-console.log("UI authority: final-ui-shell-v2; six-screen reconstruction plus live run ledger");
-console.log("Official Deriv icons: @deriv/quill-icons 2.4.18 exported to local static SVGs");
-console.log("Run ledger: /me/trades/today; specific linked account selector: /me/accounts + /me/switch-account");
-console.log("No Netlify or retired 6F-1 presentation is shipped in the production artifact");
+console.log(`Realtime: ${streamBase}/ws/me/live (loaded only after Premium admission)`);
+console.log("UI authority: final-ui-shell-v2 with final-premium-6f3 admission gate");
+console.log("Premium: Login -> linked DOT/ROT -> KES250 M-Pesa -> verified unlock -> exact 7-day expiry -> renewal");
+console.log("No Netlify or retired Action UI is shipped in the production artifact");
