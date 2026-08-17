@@ -81,15 +81,26 @@ class FinalUi6F1Tests(unittest.TestCase):
         self.assertIn(".da-greeting-card", css)
         self.assertIn("@media (max-width: 760px)", css)
 
-    def test_direct_vps_build_does_not_import_or_execute_netlify_build(self) -> None:
+    def test_direct_vps_build_ships_only_new_shell_assets(self) -> None:
         build = (ROOT / "scripts" / "build-vps.mjs").read_text(encoding="utf-8")
         package = (ROOT / "package.json").read_text(encoding="utf-8")
         dockerfile = (ROOT / "Dockerfile.frontend").read_text(encoding="utf-8")
 
         self.assertIn('deployment_topology: "direct-vps-only"', build)
         self.assertIn('ui_authority: "final-ui-shell-v1"', build)
+        self.assertIn('production_asset_policy: "new-shell-whitelist-only"', build)
+        self.assertIn('legacy_ui_shipped: false', build)
         self.assertIn('netlify_runtime_loaded: false', build)
-        self.assertIn('await cp(resolve(root, "dashboard"), output, { recursive: true });', build)
+        self.assertIn('const productionAssets = [', build)
+        for asset in (
+            '"index.html"',
+            '"final-ui-shell-v1.css"',
+            '"final-ui-shell-v1.js"',
+            '"vps-api-boundary.js"',
+            '"vps-realtime-client.js"',
+        ):
+            self.assertIn(asset, build)
+        self.assertNotIn('cp(resolve(root, "dashboard")', build)
         self.assertNotIn("build-netlify.mjs", build)
         self.assertNotIn("npm run build:netlify", package)
         self.assertIn('"build": "node scripts/build-vps.mjs"', package)
@@ -103,7 +114,7 @@ class FinalUi6F1Tests(unittest.TestCase):
         self.assertIn("/me/live-snapshot", source)
         self.assertIn("window.DERIVADMIN_LIVE_CACHE", source)
         self.assertIn('CustomEvent("derivadmin:live-snapshot"', source)
-        self.assertNotIn("querySelectorAll(\".builder-stat\")", source)
+        self.assertNotIn('querySelectorAll(".builder-stat")', source)
         self.assertNotIn("innerHTML", source)
 
     def test_same_origin_vps_edge_and_database_safety_remain(self) -> None:
