@@ -10,8 +10,9 @@ from app.final_trade_history_cutoff_authority import _row_visible_after_cutoff
 ROOT = Path(__file__).resolve().parents[1]
 AUTHORITY = ROOT / "app" / "final_trade_history_cutoff_authority.py"
 BACKEND = ROOT / "app" / "netlify_backend_api.py"
-KPI_JS = ROOT / "dashboard" / "virtual-kpi-neutrality.js"
-REALTIME_JS = ROOT / "dashboard" / "netlify-realtime-client.js"
+LEGACY_KPI_JS = ROOT / "dashboard" / "virtual-kpi-neutrality.js"
+FINAL_UI_JS = ROOT / "dashboard" / "final-ui-shell-v1.js"
+VPS_REALTIME_JS = ROOT / "dashboard" / "vps-realtime-client.js"
 INDEX = ROOT / "dashboard" / "index.html"
 
 
@@ -68,31 +69,36 @@ class ClearTradesUnboundedKpiTests(unittest.TestCase):
         cutoff = source.index("install_final_trade_history_cutoff_authority(app)")
         self.assertLess(surface, cutoff)
 
-    def test_frontend_kpis_never_fall_back_to_bounded_rows_after_clear(self) -> None:
-        source = KPI_JS.read_text(encoding="utf-8")
+    def test_historical_kpi_clear_logic_is_preserved_as_reference(self) -> None:
+        source = LEGACY_KPI_JS.read_text(encoding="utf-8")
         self.assertIn("function summaryMetrics(me, payload)", source)
         self.assertIn("payloadCutoffTime(payload)", source)
         self.assertIn("localCutoff ? zeroMetrics() : rowFallbackMetrics", source)
-        self.assertIn("ONLY KPI", source)
-        self.assertIn("MutationObserver", source)
         self.assertIn('window.addEventListener("foa:global-trades-cleared"', source)
 
-    def test_realtime_writer_uses_server_summary_and_accepts_real_zero_after_clear(self) -> None:
-        source = REALTIME_JS.read_text(encoding="utf-8")
-        self.assertIn("function payloadCutoffTime(trades)", source)
-        self.assertIn("summary.total ?? me?.stats?.trades", source)
-        self.assertIn("serverCutoff + 1000 < cutoff", source)
-        self.assertIn("Never replace the", source)
-        self.assertIn("aggregate with rows.length", source)
-        self.assertIn("if (!cutoff && incomingIsEmpty && cachedHasActivity)", source)
-        self.assertNotIn("total = rows.length", source)
-        self.assertIn('window.addEventListener("foa:global-trades-cleared"', source)
-        self.assertIn("client-clear-barrier-awaiting-cutoff-server", source)
+    def test_new_direct_vps_home_uses_server_summary_as_single_kpi_source(self) -> None:
+        shell = FINAL_UI_JS.read_text(encoding="utf-8")
+        realtime = VPS_REALTIME_JS.read_text(encoding="utf-8")
+        index = INDEX.read_text(encoding="utf-8")
 
-    def test_cache_busted_single_kpi_assets_are_shipped(self) -> None:
-        source = INDEX.read_text(encoding="utf-8")
-        self.assertIn("virtual-kpi-neutrality.js?v=20260815-3", source)
-        self.assertIn("netlify-realtime-client.js?v=20260815-3", source)
+        metrics = shell.split("function metrics()", 1)[1].split("function greeting()", 1)[0]
+        self.assertIn("const summary = state.trades?.summary || {}", metrics)
+        self.assertIn("summary.total ?? stats.trades", metrics)
+        self.assertIn("summary.wins ?? stats.wins", metrics)
+        self.assertIn("summary.losses ?? stats.losses", metrics)
+        self.assertIn("summary.profit ?? stats.profit", metrics)
+        self.assertNotIn("rows.length", metrics)
+
+        self.assertIn("/me/live-snapshot", realtime)
+        self.assertIn("raw.trades || null", realtime)
+        self.assertIn("window.DERIVADMIN_LIVE_CACHE", realtime)
+        self.assertNotIn("querySelectorAll", realtime)
+        self.assertNotIn("innerHTML", realtime)
+
+        self.assertIn("vps-realtime-client.js?v=20260817-6f1-2", index)
+        self.assertIn("final-ui-shell-v1.js?v=20260817-6f1-1", index)
+        self.assertNotIn("virtual-kpi-neutrality.js", index)
+        self.assertNotIn("netlify-realtime-client.js", index)
 
 
 if __name__ == "__main__":
