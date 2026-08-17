@@ -162,10 +162,9 @@ virtual_protection:
   max_observations: 0
   scope: PER_ACCOUNT
 telegram:
-  # Suspended by operator request. Channel publishing remains disabled even if a
-  # bot token/chat ID exists. TELEGRAM_NOTIFICATIONS_SUSPENDED=true additionally
-  # blocks private messages and update polling in both API and worker processes.
-  enabled: false
+  # Telegram is enabled again. Account-login and Auto Trade lifecycle alerts go
+  # only to the private admin inbox. Channel publishing remains a separate path.
+  enabled: true
   bot_token_env: TELEGRAM_BOT_TOKEN
   chat_id_env: TELEGRAM_CHAT_ID
   channel_cache_path: /app/model_artifacts/telegram_channel.json
