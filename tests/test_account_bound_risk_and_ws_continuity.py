@@ -21,15 +21,15 @@ class AccountBoundRiskAndWsContinuityTests(unittest.TestCase):
         self.assertIn("[data-mode]", source)
         self.assertIn("invalidateForAccountSwitch", source)
 
-    def test_retired_risk_notice_ui_cannot_surface_in_6f1(self) -> None:
+    def test_retired_risk_notice_ui_cannot_surface_in_6f2(self) -> None:
         css = (ROOT / "dashboard" / "account-bound-risk-notice.css").read_text(
             encoding="utf-8"
         )
         index = (ROOT / "dashboard" / "index.html").read_text(encoding="utf-8")
-        final_ui = (ROOT / "dashboard" / "final-ui-shell-v1.js").read_text(
+        final_ui = (ROOT / "dashboard" / "final-ui-shell-v2.js").read_text(
             encoding="utf-8"
         )
-        # Keep the old asset available as historical source/reference, but 6F-1
+        # Keep the old asset available as historical source/reference, but 6F-2
         # has one UI authority and must never load or recreate the old notifier.
         self.assertIn(".limit-notifier", css)
         self.assertIn("display: none !important", css)
@@ -37,7 +37,8 @@ class AccountBoundRiskAndWsContinuityTests(unittest.TestCase):
         self.assertNotIn("account-bound-risk-notice.js", index)
         self.assertNotIn("signed-risk-limit-display.js", index)
         self.assertNotIn("limit-notifier", final_ui)
-        self.assertIn("final-ui-shell-v1", index)
+        self.assertIn("final-ui-shell-v2", index)
+        self.assertNotIn("final-ui-shell-v1", index)
 
     def test_final_execution_continuity_never_forces_websocket_close(self) -> None:
         source = (ROOT / "app" / "final_execution_continuity.py").read_text(
