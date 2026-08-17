@@ -8,36 +8,38 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class AccountBoundRiskAndWsContinuityTests(unittest.TestCase):
-    def test_historical_risk_notice_logic_remains_account_bound(self) -> None:
-        source = (ROOT / "dashboard" / "account-bound-risk-notice.js").read_text(
+    def test_account_bound_risk_contract_is_backend_authoritative(self) -> None:
+        source = (ROOT / "app" / "session_risk_api_authority.py").read_text(
             encoding="utf-8"
         )
-        self.assertIn('const me = await getJSON("/me")', source)
-        self.assertIn('getJSON("/me/trading-lifecycle")', source)
-        self.assertIn("if (meStatus !== status) return false", source)
-        self.assertIn("if (Boolean(me.enabled) || Boolean(lifecycle.enabled)) return false", source)
-        self.assertIn("lifecycle.risk_limit_is_hard_stop !== true", source)
-        self.assertIn("Math.abs(Math.abs(configured) - targetMagnitude) > 0.005", source)
-        self.assertIn("[data-mode]", source)
-        self.assertIn("invalidateForAccountSwitch", source)
+        self.assertIn('@app.get("/me/trading-lifecycle")', source)
+        self.assertIn("managed_account_id", source)
+        self.assertIn("account_id_masked", source)
+        self.assertIn("execution_status_updated_at", source)
+        self.assertIn("read_session_risk_limits", source)
+        self.assertIn("limit_target", source)
+        self.assertIn("limit_achieved", source)
+        self.assertIn('"risk_limit_is_hard_stop": status in {"take_profit", "stop_loss"}', source)
+        self.assertIn("session_limits_started_at", source)
+        self.assertIn("if not enabled and status not in", source)
 
-    def test_retired_risk_notice_ui_cannot_surface_in_6f2(self) -> None:
-        css = (ROOT / "dashboard" / "account-bound-risk-notice.css").read_text(
-            encoding="utf-8"
-        )
+    def test_retired_risk_notice_ui_is_physically_removed_from_6f3(self) -> None:
         index = (ROOT / "dashboard" / "index.html").read_text(encoding="utf-8")
         final_ui = (ROOT / "dashboard" / "final-ui-shell-v2.js").read_text(
             encoding="utf-8"
         )
-        # Keep the old asset available as historical source/reference, but 6F-2
-        # has one UI authority and must never load or recreate the old notifier.
-        self.assertIn(".limit-notifier", css)
-        self.assertIn("display: none !important", css)
-        self.assertNotIn("account-bound-risk-notice.css", index)
-        self.assertNotIn("account-bound-risk-notice.js", index)
+        premium = (ROOT / "dashboard" / "final-premium-6f3.js").read_text(
+            encoding="utf-8"
+        )
+        self.assertFalse((ROOT / "dashboard" / "account-bound-risk-notice.js").exists())
+        self.assertFalse((ROOT / "dashboard" / "account-bound-risk-notice.css").exists())
+        self.assertNotIn("account-bound-risk-notice", index)
+        self.assertNotIn("account-bound-risk-notice", final_ui)
+        self.assertNotIn("account-bound-risk-notice", premium)
         self.assertNotIn("signed-risk-limit-display.js", index)
         self.assertNotIn("limit-notifier", final_ui)
         self.assertIn("final-ui-shell-v2", index)
+        self.assertIn("final-premium-6f3", index)
         self.assertNotIn("final-ui-shell-v1", index)
 
     def test_final_execution_continuity_never_forces_websocket_close(self) -> None:
