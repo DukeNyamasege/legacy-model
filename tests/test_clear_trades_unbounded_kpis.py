@@ -10,8 +10,8 @@ from app.final_trade_history_cutoff_authority import _row_visible_after_cutoff
 ROOT = Path(__file__).resolve().parents[1]
 AUTHORITY = ROOT / "app" / "final_trade_history_cutoff_authority.py"
 BACKEND = ROOT / "app" / "netlify_backend_api.py"
-LEGACY_KPI_JS = ROOT / "dashboard" / "virtual-kpi-neutrality.js"
 FINAL_UI_JS = ROOT / "dashboard" / "final-ui-shell-v2.js"
+PREMIUM_JS = ROOT / "dashboard" / "final-premium-6f3.js"
 VPS_REALTIME_JS = ROOT / "dashboard" / "vps-realtime-client-v2.js"
 INDEX = ROOT / "dashboard" / "index.html"
 
@@ -69,15 +69,20 @@ class ClearTradesUnboundedKpiTests(unittest.TestCase):
         cutoff = source.index("install_final_trade_history_cutoff_authority(app)")
         self.assertLess(surface, cutoff)
 
-    def test_historical_kpi_clear_logic_is_preserved_as_reference(self) -> None:
-        source = LEGACY_KPI_JS.read_text(encoding="utf-8")
-        self.assertIn("function summaryMetrics(me, payload)", source)
-        self.assertIn("payloadCutoffTime(payload)", source)
-        self.assertIn("localCutoff ? zeroMetrics() : rowFallbackMetrics", source)
-        self.assertIn('window.addEventListener("foa:global-trades-cleared"', source)
+    def test_retired_client_side_kpi_reset_overlay_is_removed(self) -> None:
+        self.assertFalse((ROOT / "dashboard" / "custom-runtime-client.js").exists())
+        self.assertFalse((ROOT / "dashboard" / "dashboard-v2.js").exists())
+        index = INDEX.read_text(encoding="utf-8")
+        self.assertNotIn("custom-runtime-client.js", index)
+        self.assertNotIn("dashboard-v2.js", index)
+        # Clear-history visibility is server-authoritative now, not browser-local.
+        source = AUTHORITY.read_text(encoding="utf-8")
+        self.assertIn("_row_visible_after_cutoff", source)
+        self.assertIn("cutoff_fast_trade_payload", source)
 
     def test_new_direct_vps_home_uses_server_summary_as_single_kpi_source(self) -> None:
         shell = FINAL_UI_JS.read_text(encoding="utf-8")
+        premium = PREMIUM_JS.read_text(encoding="utf-8")
         realtime = VPS_REALTIME_JS.read_text(encoding="utf-8")
         index = INDEX.read_text(encoding="utf-8")
 
@@ -96,8 +101,13 @@ class ClearTradesUnboundedKpiTests(unittest.TestCase):
         self.assertNotIn("querySelectorAll", realtime)
         self.assertNotIn("innerHTML", realtime)
 
-        self.assertIn("vps-realtime-client-v2.js?v=20260817-6f2-1", index)
-        self.assertIn("final-ui-shell-v2.js?v=20260817-6f2-1", index)
+        # F3 holds these heavy F2 modules behind Premium admission rather than
+        # loading them directly from index.html.
+        self.assertNotIn('<script src="/vps-realtime-client-v2.js?v=20260817-6f2-1" defer>', index)
+        self.assertNotIn('<script src="/final-ui-shell-v2.js?v=20260817-6f2-1" defer>', index)
+        self.assertIn("vps-realtime-client-v2.js?v=20260817-6f2-1", premium)
+        self.assertIn("final-ui-shell-v2.js?v=20260817-6f2-1", premium)
+        self.assertIn("if (state.premium?.local_dev_preview || state.premium?.active)", premium)
         self.assertNotIn("final-ui-shell-v1.js", index)
         self.assertNotIn("virtual-kpi-neutrality.js", index)
         self.assertNotIn("netlify-realtime-client.js", index)
