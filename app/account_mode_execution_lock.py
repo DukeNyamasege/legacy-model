@@ -46,8 +46,12 @@ STARTING_LIKE_STATUSES = {
 
 # Every worker-generated state that could replace the browser ownership marker is
 # listed here. While the direct-browser heartbeat is fresh, none of these writes
-# may erase the fence. Explicit Stop/Pause/TP/SL remain allowed.
+# may erase the fence. "stopped" is included because the legacy account loader
+# normalizes any worker-ineligible row to stopped; an actual user Stop first sets
+# enabled=False, so direct_browser_lease_fresh() is false and that terminal write
+# still passes through normally.
 AUTO_PROMOTION_STATUSES = {
+    "stopped",
     "starting",
     "validating",
     "connecting",
@@ -125,10 +129,11 @@ def _manual_locking_set_status(original_set_status):
             current_status = str(row.execution_status or "inactive").strip().lower()
             current_lifecycle = account_lifecycle_from_row(row)
 
-            # While the browser lease is fresh, worker validation/refresh status
-            # writers are not allowed to replace direct_browser with runnable
-            # server states. Doing so would destroy the ownership fence and permit
-            # a duplicate server BUY. Explicit terminal statuses still pass through.
+            # While the browser lease is fresh, worker validation/refresh/account-
+            # loader writers are not allowed to replace direct_browser with a
+            # runnable or synthetic-stopped server state. Doing so would destroy
+            # the ownership fence and permit an unsafe handoff. A true user Stop
+            # first disables the row, making the lease non-fresh, so it is allowed.
             if (
                 current_status == DIRECT_BROWSER_STATUS
                 and direct_browser_lease_fresh(row)
