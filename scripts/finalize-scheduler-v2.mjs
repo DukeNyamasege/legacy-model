@@ -26,6 +26,13 @@ const scheduleHelpers = `
     return "";
   }
 
+  function exactScheduleTime(value, seconds) {
+    const normalized = normalizedScheduleTime(value);
+    if (!normalized) return "";
+    const second = Math.max(0, Math.min(59, Math.trunc(Number(seconds || 0))));
+    return \`${"${normalized.slice(0, 5)}"}:${"${String(second).padStart(2, \"0\")}"}\`;
+  }
+
   function zonedWallClock(date, timezone) {
     const parts = new Intl.DateTimeFormat("en-CA", {
       timeZone: timezone,
@@ -50,7 +57,7 @@ shell = replaceOnce(shell, "  function schedulePage() {", `${scheduleHelpers}  f
 shell = replaceOnce(
   shell,
   'const localTime = state.scheduleDraft?.time || new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false }).format(now);',
-  'const localTime = state.scheduleDraft?.time || new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, hourCycle: "h23" }).format(now);',
+  'const localClock = normalizedScheduleTime(state.scheduleDraft?.time || new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, hourCycle: "h23" }).format(now));\n    const localTime = localClock.slice(0, 5);\n    const localSecond = localClock.slice(6, 8) || "00";',
   "seconds default",
 );
 shell = replaceOnce(
@@ -59,7 +66,10 @@ shell = replaceOnce(
   'const schedules = state.schedules?.items || state.schedules?.schedules || [];\n    const active = schedules.filter((item) => !["completed", "cancelled", "skipped", "failed"].includes(String(item.status || "").toLowerCase()));\n    const history = schedules.filter((item) => ["completed", "cancelled", "skipped", "failed"].includes(String(item.status || "").toLowerCase()));',
   "schedule API items/history",
 );
-shell = replaceOnce(shell, '<input id="s-time" type="time" value="${esc(localTime)}">', '<input id="s-time" type="time" step="1" value="${esc(localTime)}">', "time seconds input");
+
+const oldTimeGrid = '<div class="form-grid three"><label><span>Date</span><input id="s-date" type="date" value="${esc(localDate)}"></label><label><span>Time</span><input id="s-time" type="time" value="${esc(localTime)}"></label><label><span>Timezone</span><select id="s-timezone">${TIMEZONES.map(([zone, city]) => `<option value="${esc(zone)}" ${zone === (state.scheduleDraft?.timezone || tz) ? "selected" : ""}>${esc(city)}</option>`).join("")}</select></label></div>';
+const newTimeGrid = '<div class="form-grid schedule-clock-grid"><label><span>Date</span><input id="s-date" type="date" value="${esc(localDate)}"></label><label><span>Time</span><input id="s-time" type="time" step="60" value="${esc(localTime)}"></label><label><span>Seconds</span><input id="s-second" type="number" min="0" max="59" step="1" inputmode="numeric" value="${esc(localSecond)}"></label><label><span>Timezone</span><select id="s-timezone">${TIMEZONES.map(([zone, city]) => `<option value="${esc(zone)}" ${zone === (state.scheduleDraft?.timezone || tz) ? "selected" : ""}>${esc(city)}</option>`).join("")}</select></label></div>';
+shell = replaceOnce(shell, oldTimeGrid, newTimeGrid, "explicit seconds input");
 
 const oldAside = '<aside class="panel upcoming compact-schedules"><div class="panel-title"><div><span class="eyebrow">SCHEDULED TRADES</span><h3>${active.length}</h3></div></div>${active.length ? active.slice(0, 12).map((item) => scheduleRow(item)).join("") : `<div class="empty-mini compact"><p>No scheduled trades.</p></div>`}</aside>';
 const newAside = '<aside class="panel upcoming compact-schedules"><div class="panel-title"><div><span class="eyebrow">UPCOMING / ACTIVE</span><h3>${active.length}</h3></div></div>${active.length ? active.slice(0, 12).map((item) => scheduleRow(item)).join("") : `<div class="empty-mini compact"><p>No upcoming scheduled trades.</p></div>`}<div class="panel-title schedule-history-title"><div><span class="eyebrow">SCHEDULE HISTORY</span><h3>${history.length}</h3></div></div>${history.length ? history.slice(0, 12).map((item) => scheduleRow(item)).join("") : `<div class="empty-mini compact"><p>No completed scheduled sessions yet.</p></div>`}</aside>';
@@ -100,11 +110,11 @@ shell = replaceOnce(
 shell = replaceOnce(
   shell,
   'const overlap = document.querySelector(\'input[name="overlap"]:checked\')?.value || "wait";\n      const payload = {',
-  'const overlap = document.querySelector(\'input[name="overlap"]:checked\')?.value || "wait";\n      const scheduleDate = document.getElementById("s-date")?.value || "";\n      const scheduleTime = document.getElementById("s-time")?.value || "";\n      const scheduleZone = document.getElementById("s-timezone")?.value || DEFAULT_TZ;\n      if (!scheduleWallClockIsFuture(scheduleDate, scheduleTime, scheduleZone)) throw new Error("Choose an exact schedule time in the future.");\n      const payload = {',
+  'const overlap = document.querySelector(\'input[name="overlap"]:checked\')?.value || "wait";\n      const scheduleDate = document.getElementById("s-date")?.value || "";\n      const scheduleTime = exactScheduleTime(document.getElementById("s-time")?.value || "", document.getElementById("s-second")?.value || 0);\n      const scheduleZone = document.getElementById("s-timezone")?.value || DEFAULT_TZ;\n      if (!scheduleWallClockIsFuture(scheduleDate, scheduleTime, scheduleZone)) throw new Error("Choose an exact schedule time in the future.");\n      const payload = {',
   "future-only UI guard",
 );
 shell = replaceOnce(shell, 'date: document.getElementById("s-date")?.value,', 'date: scheduleDate,', "schedule date payload");
-shell = replaceOnce(shell, 'time: document.getElementById("s-time")?.value,', 'time: normalizedScheduleTime(scheduleTime),', "schedule time payload");
+shell = replaceOnce(shell, 'time: document.getElementById("s-time")?.value,', 'time: scheduleTime,', "schedule time payload");
 shell = replaceOnce(shell, 'timezone: document.getElementById("s-timezone")?.value || DEFAULT_TZ,', 'timezone: scheduleZone,', "schedule timezone payload");
 shell = replaceOnce(
   shell,
@@ -145,4 +155,4 @@ premium = replaceOnce(
 );
 fs.writeFileSync(premiumPath, premium);
 
-console.log("scheduler-v2 finalizer applied: seconds/future-only/history/server start/run ledger state");
+console.log("scheduler-v2 finalizer applied: explicit seconds/future-only/history/server start/run ledger state");
