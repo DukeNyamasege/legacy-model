@@ -1,6 +1,9 @@
 #!/usr/bin/env sh
 set -eu
 
+ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$ROOT_DIR"
+
 # Legacy strategy tests deliberately create temporary SQLite databases and local
 # token files. A VPS candidate supplies PostgreSQL and production token settings;
 # leaking those values into this suite makes otherwise independent tests share
@@ -11,42 +14,67 @@ export ALLOW_LEGACY_GLOBAL_TOKENS=true
 export COPYTRADING_ALLOW_LEGACY_GLOBAL_TOKENS=true
 export FRONTEND_ORIGINS="http://127.0.0.1:8080,http://localhost:8080,https://derivadmin.site"
 
+NODE_CHECK_FILES="
+dashboard/final-premium-6f3.js
+dashboard/final-ui-shell-v2.js
+dashboard/vps-api-boundary-v2.js
+dashboard/vps-realtime-client-v2.js
+dashboard/public-testing-runtime-v1.js
+dashboard/direct-pip-precision-v1.js
+dashboard/direct-financial-fence-v1.js
+dashboard/direct-socket-control-v1.js
+dashboard/direct-hard-stop-fence-v1.js
+dashboard/direct-reset-authority-v1.js
+dashboard/direct-interaction-guard-v3.js
+dashboard/deriv-direct-execution-v1.js
+dashboard/direct-strategy-persistence-v1.js
+dashboard/direct-continuity-checkpoint-v1.js
+dashboard/direct-ui-cleanup-v1.js
+dashboard/direct-builder-loaded-v2.js
+dashboard/direct-runtime-ux-v3.js
+dashboard/direct-demo-reset-router-v1.js
+dashboard/direct-transaction-ledger-v6.js
+dashboard/direct-run-panel-authority-v6.js
+dashboard/mobile-layout-authority-v1.js
+dashboard/run-panel-usability-v1.js
+scripts/export-deriv-quill-icons-v2.mjs
+scripts/build-vps.mjs
+scripts/build-direct-runtime-v2.mjs
+scripts/finalize-direct-runtime-v2.mjs
+scripts/finalize-direct-ux-v4.mjs
+scripts/finalize-production-controls-v6.mjs
+scripts/finalize-production-controls-v6b.mjs
+scripts/finalize-scheduler-v2.mjs
+scripts/finalize-execution-continuity-v1.mjs
+"
+
 # Production continuity-v1 keeps Run alive across recoverable transport failures,
 # reconciles open contracts after authenticated-WS reconnect, makes Reset a pure
 # visibility action, keeps one human Start flow, and financially fences real BUYs
 # behind the configured Virtual Hook loss/win state machine. The camera theme is a
 # presentation-only final CSS authority for tutorial/live-recording readability.
-node --check dashboard/final-premium-6f3.js
-node --check dashboard/final-ui-shell-v2.js
-node --check dashboard/vps-api-boundary-v2.js
-node --check dashboard/vps-realtime-client-v2.js
-node --check dashboard/public-testing-runtime-v1.js
-node --check dashboard/direct-pip-precision-v1.js
-node --check dashboard/direct-financial-fence-v1.js
-node --check dashboard/direct-socket-control-v1.js
-node --check dashboard/direct-hard-stop-fence-v1.js
-node --check dashboard/direct-reset-authority-v1.js
-node --check dashboard/direct-interaction-guard-v3.js
-node --check dashboard/deriv-direct-execution-v1.js
-node --check dashboard/direct-strategy-persistence-v1.js
-node --check dashboard/direct-continuity-checkpoint-v1.js
-node --check dashboard/direct-ui-cleanup-v1.js
-node --check dashboard/direct-builder-loaded-v2.js
-node --check dashboard/direct-runtime-ux-v3.js
-node --check dashboard/direct-demo-reset-router-v1.js
-node --check dashboard/direct-transaction-ledger-v6.js
-node --check dashboard/direct-run-panel-authority-v6.js
-node --check dashboard/mobile-layout-authority-v1.js
-node --check dashboard/run-panel-usability-v1.js
-node --check scripts/export-deriv-quill-icons-v2.mjs
-node --check scripts/build-vps.mjs
-node --check scripts/build-direct-runtime-v2.mjs
-node --check scripts/finalize-direct-runtime-v2.mjs
-node --check scripts/finalize-direct-ux-v4.mjs
-node --check scripts/finalize-production-controls-v6.mjs
-node --check scripts/finalize-production-controls-v6b.mjs
-node --check scripts/finalize-scheduler-v2.mjs
-node --check scripts/finalize-execution-continuity-v1.mjs
+#
+# VPS hosts do not need Node installed. If Node is unavailable locally, run the
+# exact same syntax checks in an ephemeral Node 22 container, matching the
+# frontend build stage and avoiding host-package drift.
+if command -v node >/dev/null 2>&1; then
+  for file in $NODE_CHECK_FILES; do
+    node --check "$file"
+  done
+else
+  command -v docker >/dev/null 2>&1 || {
+    echo "ERROR: neither host Node nor Docker is available for JavaScript syntax checks." >&2
+    exit 1
+  }
+  echo "Host Node not found; using node:22-alpine Docker runtime for syntax checks."
+  docker run --rm \
+    -v "$ROOT_DIR:/work:ro" \
+    -w /work \
+    node:22-alpine \
+    sh -ec 'for file in $NODE_CHECK_FILES; do node --check "$file"; done' \
+    -- \
+    NODE_CHECK_FILES="$NODE_CHECK_FILES"
+fi
 
 grep -q -- '--camera-bg: #07111f' dashboard/tutorial-camera-theme-v1.css
 grep -q -- '--camera-bg: #e9f0f6' dashboard/tutorial-camera-theme-v1.css
