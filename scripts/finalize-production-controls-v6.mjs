@@ -54,25 +54,25 @@ premium = premium.replaceAll(
 write("final-premium-6f3.js", premium);
 
 // ---------------------------------------------------------------------------
-// 2. Browser-direct Split recovery: configured N successful equal profit legs.
+// 2. Browser-direct Split recovery: one fixed stake for configured N successes.
 // ---------------------------------------------------------------------------
 let engine = read("deriv-direct-execution-v2.js");
 engine = replaceOnce(
   engine,
   "browser split state",
   `    recoveryDebt: 0,\n    currentStake: 0.5,`,
-  `    recoveryDebt: 0,\n    splitBasisDebt: 0,\n    splitRemainingWins: 0,\n    currentStake: 0.5,`,
+  `    recoveryDebt: 0,\n    splitBasisDebt: 0,\n    splitRemainingWins: 0,\n    splitPartStake: 0,\n    currentStake: 0.5,`,
 );
 engine = engine.replaceAll(
   `    state.recoveryDebt = 0;\n    state.currentStake = baseStake();`,
-  `    state.recoveryDebt = 0;\n    state.splitBasisDebt = 0;\n    state.splitRemainingWins = 0;\n    state.currentStake = baseStake();`,
+  `    state.recoveryDebt = 0;\n    state.splitBasisDebt = 0;\n    state.splitRemainingWins = 0;\n    state.splitPartStake = 0;\n    state.currentStake = baseStake();`,
 );
 
 const recoveryPattern = /  function recoveryStake\(firstProposal\) \{[\s\S]*?\n  \}\n\n  async function executeReal/;
 if (!recoveryPattern.test(engine)) throw new Error("Production v6 patch missing: recoveryStake");
 engine = engine.replace(
   recoveryPattern,
-  `  function recoveryStake(firstProposal) {\n    const base = baseStake();\n    const settings = state.strategy?.martingale || { mode: "system", multiplier: 2, split_count: 2 };\n    if (state.recoveryDebt <= 0.009) return base;\n    if (settings.mode === "multiplier") {\n      return Math.ceil(base * (Number(settings.multiplier || 2) ** Math.max(1, state.consecutiveLosses)) * 100) / 100;\n    }\n    const ratio = proposedProfitRatio(firstProposal, base) || state.lastProfitRatio;\n    if (ratio <= 0) return base;\n    if (settings.mode === "split") {\n      const parts = Math.max(1, Math.min(3, Number(settings.split_count || 1)));\n      if (state.splitBasisDebt <= 0.009 || state.splitRemainingWins <= 0) {\n        state.splitBasisDebt = state.recoveryDebt;\n        state.splitRemainingWins = parts;\n      }\n      const targetProfitPerSuccessfulLeg = state.splitBasisDebt / parts;\n      return Math.ceil(Math.max(base, targetProfitPerSuccessfulLeg / ratio) * 100) / 100;\n    }\n    const buffer = Math.max(0.05, state.recoveryDebt * 0.06);\n    return Math.ceil(Math.max(base, (state.recoveryDebt + buffer) / ratio) * 100) / 100;\n  }\n\n  async function executeReal`,
+  `  function recoveryStake(firstProposal) {\n    const base = baseStake();\n    const settings = state.strategy?.martingale || { mode: "system", multiplier: 2, split_count: 2 };\n    if (state.recoveryDebt <= 0.009) return base;\n    if (settings.mode === "multiplier") {\n      return Math.ceil(base * (Number(settings.multiplier || 2) ** Math.max(1, state.consecutiveLosses)) * 100) / 100;\n    }\n    const ratio = proposedProfitRatio(firstProposal, base) || state.lastProfitRatio;\n    if (ratio <= 0) return Math.max(0.50, base);\n    if (settings.mode === "split") {\n      const parts = Math.max(1, Math.min(3, Number(settings.split_count || 1)));\n      if (state.splitBasisDebt <= 0.009 || state.splitRemainingWins <= 0) {\n        state.splitBasisDebt = state.recoveryDebt;\n        state.splitRemainingWins = parts;\n        state.splitPartStake = 0;\n      }\n      if (Number(state.splitPartStake || 0) < 0.50) {\n        const buffer = Math.max(0.05, state.splitBasisDebt * 0.06);\n        const fullOneShotStake = Math.ceil(Math.max(0.50, (state.splitBasisDebt + buffer) / ratio) * 100) / 100;\n        state.splitPartStake = Math.ceil(Math.max(0.50, fullOneShotStake / parts) * 100) / 100;\n      }\n      return Math.max(0.50, Number(state.splitPartStake || 0.50));\n    }\n    const buffer = Math.max(0.05, state.recoveryDebt * 0.06);\n    return Math.ceil(Math.max(base, (state.recoveryDebt + buffer) / ratio) * 100) / 100;\n  }\n\n  async function executeReal`,
 );
 
 engine = replaceOnce(
@@ -86,7 +86,7 @@ engine = replaceOnce(
   engine,
   "browser split settlement ledger",
   `    if (profit < 0) {\n      state.consecutiveLosses += 1;\n      state.recoveryDebt = Math.max(0, state.recoveryDebt + Math.abs(profit));\n    } else {\n      state.recoveryDebt = Math.max(0, state.recoveryDebt - profit);\n      if (state.recoveryDebt <= 0.009) {\n        state.recoveryDebt = 0;\n        state.consecutiveLosses = 0;\n        state.currentStake = baseStake();\n      }\n    }`,
-  `    const martingale = state.strategy?.martingale || {};\n    const splitMode = String(martingale.mode || "system") === "split";\n    const splitCount = Math.max(1, Math.min(3, Number(martingale.split_count || 1)));\n    const wasRecovery = Boolean(open.recovery);\n    if (profit < 0) {\n      state.consecutiveLosses += 1;\n      state.recoveryDebt = Math.max(0, state.recoveryDebt + Math.abs(profit));\n      if (splitMode) {\n        // A losing recovery does not consume a successful part. The enlarged real\n        // debt becomes a new equal Split-N loss pool.\n        state.splitBasisDebt = state.recoveryDebt;\n        state.splitRemainingWins = splitCount;\n      }\n    } else {\n      state.recoveryDebt = Math.max(0, state.recoveryDebt - profit);\n      if (splitMode && wasRecovery && state.recoveryDebt > 0.009) {\n        state.splitRemainingWins = Math.max(0, Number(state.splitRemainingWins || splitCount) - 1);\n        // Provider cent rounding may leave a tiny transparent residual. Never fall\n        // back to base while real debt exists; retain one cleanup success if needed.\n        if (state.splitRemainingWins <= 0) state.splitRemainingWins = 1;\n      }\n      if (state.recoveryDebt <= 0.009) {\n        state.recoveryDebt = 0;\n        state.splitBasisDebt = 0;\n        state.splitRemainingWins = 0;\n        state.consecutiveLosses = 0;\n        state.currentStake = baseStake();\n      }\n    }`,
+  `    const martingale = state.strategy?.martingale || {};\n    const splitMode = String(martingale.mode || "system") === "split";\n    const splitCount = Math.max(1, Math.min(3, Number(martingale.split_count || 1)));\n    const wasRecovery = Boolean(open.recovery);\n    if (profit < 0) {\n      state.consecutiveLosses += 1;\n      state.recoveryDebt = Math.max(0, state.recoveryDebt + Math.abs(profit));\n      if (splitMode) {\n        // Every loss starts a new enlarged equal-stake Split-N pool. Reprice only\n        // once on the next proposal, then all successful legs use that same stake.\n        state.splitBasisDebt = state.recoveryDebt;\n        state.splitRemainingWins = splitCount;\n        state.splitPartStake = 0;\n      }\n    } else {\n      state.recoveryDebt = Math.max(0, state.recoveryDebt - profit);\n      if (splitMode && wasRecovery && state.recoveryDebt > 0.009) {\n        state.splitRemainingWins = Math.max(0, Number(state.splitRemainingWins || splitCount) - 1);\n        // Provider payout/cent changes can leave transparent residual debt. Keep\n        // the same fixed part stake and one cleanup success until real debt clears.\n        if (state.splitRemainingWins <= 0) state.splitRemainingWins = 1;\n      }\n      if (state.recoveryDebt <= 0.009) {\n        state.recoveryDebt = 0;\n        state.splitBasisDebt = 0;\n        state.splitRemainingWins = 0;\n        state.splitPartStake = 0;\n        state.consecutiveLosses = 0;\n        state.currentStake = baseStake();\n      }\n    }`,
 );
 write("deriv-direct-execution-v2.js", engine);
 
@@ -136,4 +136,4 @@ index = index.replace(
 );
 write("index.html", index);
 
-console.log("Production v6 finalized: premium fail-open, hard Stop support, equal Split debt continuity, compact stable Run UI and transaction metadata");
+console.log("Production v6 finalized: premium fail-open, hard Stop support, fixed equal-stake Split recovery, stable Run UI and transaction metadata");
