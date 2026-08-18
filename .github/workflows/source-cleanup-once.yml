@@ -1,0 +1,170 @@
+name: One-time canonical duplicate cleanup
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/source-cleanup-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Remove retired Run source and cleanup shim
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          shell_path = Path('dashboard/final-ui-shell-v2.js')
+          source = shell_path.read_text(encoding='utf-8')
+
+          def replace_once(old: str, new: str, label: str):
+              global source
+              count = source.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected exactly one match, found {count}')
+              source = source.replace(old, new, 1)
+
+          def remove_block(start: str, end: str, label: str):
+              global source
+              first = source.find(start)
+              if first < 0:
+                  raise SystemExit(f'{label}: start marker missing')
+              last = source.find(end, first)
+              if last < 0:
+                  raise SystemExit(f'{label}: end marker missing')
+              source = source[:first] + source[last:]
+
+          replace_once(
+              'const ROUTES = new Set(["home", "builder", "ai", "ready", "schedule", "profile", "trades", "timezone"]);',
+              'const ROUTES = new Set(["home", "builder", "ai", "ready", "schedule", "profile", "timezone"]);',
+              'retire trades route',
+          )
+
+          icon_line = '      trades: \'<path d="M4 18V9m5 9V5m6 13v-7m5 7V3"/>\',\n'
+          if source.count(icon_line) != 1:
+              raise SystemExit('retired trades icon: expected exactly one match')
+          source = source.replace(icon_line, '', 1)
+
+          # Old page-level ledger + summary duplicated the fixed global Run panel.
+          remove_block('  function tradeRows() {', '  function runPanelStats() {', 'retired page ledger/summary')
+          remove_block('  function tradesPage() {', '  function render() {', 'retired trades page')
+
+          replace_once(
+              'const pages = { home, builder: builderPage, ai: aiPage, ready: readyPage, schedule: schedulePage, profile: profilePage, trades: tradesPage, timezone: timezonePage };',
+              'const pages = { home, builder: builderPage, ai: aiPage, ready: readyPage, schedule: schedulePage, profile: profilePage, timezone: timezonePage };',
+              'remove trades page from router',
+          )
+
+          # Trade actions now reveal the single fixed Run panel instead of navigating
+          # to a second page-level Run implementation.
+          go_count = source.count('go("trades");')
+          if go_count != 3:
+              raise SystemExit(f'expected 3 retired go("trades") calls, found {go_count}')
+          source = source.replace('go("trades");', 'openRunPanel("transactions");')
+
+          # Remove the account selector and execution controls that only existed on
+          # the retired tradesPage(). The fixed global Run panel owns execution.
+          source = '\n'.join(
+              line for line in source.split('\n')
+              if 'const accountSelect = document.getElementById("run-account-select")' not in line
+              and 'if (accountSelect) accountSelect.addEventListener(' not in line
+              and 'root.querySelectorAll("[data-start-trading]")' not in line
+              and 'root.querySelectorAll("[data-pause-trading]")' not in line
+              and 'root.querySelectorAll("[data-stop-trading]")' not in line
+              and 'root.querySelectorAll("[data-clear-trades]")' not in line
+          )
+
+          replace_once(
+              '["trades", "home", "schedule"].includes(state.route)',
+              '["home", "schedule"].includes(state.route)',
+              'retire trades refresh route',
+          )
+
+          source = source.replace(
+              'window.FOA_FINAL_UI = Object.freeze({ version: "20260818-local-ui-12", refresh, go });',
+              'window.FOA_FINAL_UI = Object.freeze({ version: "20260819-single-run-source-1", refresh, go });',
+              1,
+          )
+
+          forbidden = {
+              'function tradesPage()': 'retired tradesPage renderer',
+              '<section class="run-panel">': 'retired page-level Run markup',
+              'go("trades")': 'retired trades navigation',
+              'run-account-select': 'retired page-level account selector',
+              '[data-start-trading]': 'retired page-level start control',
+              '[data-pause-trading]': 'retired page-level pause control',
+              '[data-stop-trading]': 'retired page-level stop control',
+              '[data-clear-trades]': 'retired page-level clear control',
+          }
+          for needle, label in forbidden.items():
+              if needle in source:
+                  raise SystemExit(f'{label} still present: {needle}')
+          if source.count('class="global-run-panel') != 1:
+              raise SystemExit('canonical shell must render exactly one global Run panel')
+
+          shell_path.write_text(source, encoding='utf-8')
+
+          docker_path = Path('Dockerfile.frontend')
+          docker = docker_path.read_text(encoding='utf-8')
+          docker = '\n'.join(
+              line for line in docker.split('\n')
+              if 'cp dashboard/direct-ui-cleanup-v1.js dist/direct-ui-cleanup-v1.js' not in line
+              and 'node --check dist/direct-ui-cleanup-v1.js' not in line
+          )
+          marker = "'<script src=\\\"/direct-ui-cleanup-v1.js?"
+          start = docker.find(marker)
+          if start < 0:
+              raise SystemExit('Docker injection for direct-ui-cleanup-v1.js not found')
+          end = docker.find("',", start)
+          if end < 0:
+              raise SystemExit('Docker cleanup script terminator not found')
+          docker = docker[:start] + docker[end + 2:]
+          if 'direct-ui-cleanup-v1.js' in docker:
+              raise SystemExit('Dockerfile still references retired cleanup shim')
+          docker_path.write_text(docker, encoding='utf-8')
+
+          release_path = Path('scripts/run_legacy_release_tests.sh')
+          release = release_path.read_text(encoding='utf-8')
+          release = release.replace('dashboard/direct-ui-cleanup-v1.js\n', '')
+          if 'tests.test_single_global_run_panel' not in release:
+              anchor = '    tests.test_run_panel_ledger_v8 \\\n'
+              if anchor not in release:
+                  raise SystemExit('release test insertion anchor missing')
+              release = release.replace(anchor, anchor + '    tests.test_single_global_run_panel \\\n', 1)
+          if 'dashboard/direct-ui-cleanup-v1.js' in release:
+              raise SystemExit('release gate still references retired cleanup shim')
+          release_path.write_text(release, encoding='utf-8')
+
+          test_path = Path('tests/test_single_global_run_panel.py')
+          test_path.write_text('''from __future__ import annotations\n\nimport unittest\nfrom pathlib import Path\n\n\nROOT = Path(__file__).resolve().parents[1]\n\n\nclass SingleGlobalRunPanelTests(unittest.TestCase):\n    def test_canonical_shell_has_exactly_one_run_panel(self) -> None:\n        shell = (ROOT / "dashboard" / "final-ui-shell-v2.js").read_text(encoding="utf-8")\n        self.assertEqual(shell.count('class="global-run-panel'), 1)\n        self.assertNotIn('function tradesPage()', shell)\n        self.assertNotIn('<section class="run-panel">', shell)\n        self.assertNotIn('go("trades")', shell)\n        self.assertNotIn('run-account-select', shell)\n        self.assertNotIn('[data-start-trading]', shell)\n        self.assertNotIn('[data-pause-trading]', shell)\n        self.assertNotIn('[data-stop-trading]', shell)\n        self.assertNotIn('[data-clear-trades]', shell)\n        self.assertNotIn('trades: tradesPage', shell)\n\n    def test_only_current_run_authority_is_shipped(self) -> None:\n        dockerfile = (ROOT / "Dockerfile.frontend").read_text(encoding="utf-8")\n        authority = (ROOT / "dashboard" / "direct-run-panel-authority-v6.js").read_text(encoding="utf-8")\n        self.assertIn('document.querySelector(".global-run-panel")', authority)\n        self.assertIn('direct-run-panel-authority-v6.js', dockerfile)\n        self.assertNotIn('direct-run-panel-authority-v5.js', dockerfile)\n        self.assertNotIn('single-run-controller-v1.js', dockerfile)\n        self.assertNotIn('direct-ui-cleanup-v1.js', dockerfile)\n        self.assertFalse((ROOT / "dashboard" / "direct-ui-cleanup-v1.js").exists())\n\n\nif __name__ == "__main__":\n    unittest.main()\n''', encoding='utf-8')
+
+          cleanup = Path('dashboard/direct-ui-cleanup-v1.js')
+          if cleanup.exists():
+              cleanup.unlink()
+          PY
+
+      - name: Validate cleaned source
+        run: |
+          node --check dashboard/final-ui-shell-v2.js
+          node --check dashboard/direct-run-panel-authority-v6.js
+          python3 -m unittest -q tests.test_single_global_run_panel
+          ! grep -R --line-number --fixed-strings 'direct-ui-cleanup-v1.js' Dockerfile.frontend scripts/run_legacy_release_tests.sh dashboard tests/test_single_global_run_panel.py
+
+      - name: Commit canonical cleanup
+        run: |
+          git config user.name "Mr Duke"
+          git config user.email "133217491+DukeNyamasege@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "Remove embedded duplicate Run implementation"
+          git push origin HEAD:main
