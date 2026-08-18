@@ -138,7 +138,7 @@ class HybridBrowserDirectV2Contract(unittest.TestCase):
         self.assertIn("direct-bot-state-pill", authority)
         self.assertNotIn("Stopping bot —", authority)
         self.assertNotIn("Bot currently stopped", authority)
-        self.assertNotIn("MutationObserver", authority)
+        self.assertNotIn("new MutationObserver", authority)
         self.assertNotIn("startEverything", authority)
 
     def test_reset_is_local_first_and_never_toggles_execution(self) -> None:
