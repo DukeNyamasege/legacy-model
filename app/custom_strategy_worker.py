@@ -48,6 +48,8 @@ from app.custom_virtual_post_loss_barrier_authority import (
 )
 from app.deriv_rate_limit_circuit import install_deriv_rate_limit_circuit
 from app.deriv_request_broker import install_deriv_request_broker
+from app.direct_browser_runtime_authority import install_direct_browser_runtime_authority
+from app.direct_execution_worker_fence import install_direct_execution_worker_fence
 from app.exact_strategy_execution_authority import install_exact_strategy_execution_authority
 from app.execution_stop_reason_authority import install_execution_stop_reason_authority
 from app.final_execution_continuity import install_final_execution_continuity
@@ -195,6 +197,15 @@ async def run_worker() -> None:
     install_custom_virtual_post_loss_barrier_authority()
     install_telegram_silence()
 
+    # Browser-direct ownership is installed LAST, after every lifecycle, liveness,
+    # low-latency and financial wrapper. A fresh browser lease is intentionally not
+    # a VPS runtime, so worker housekeeping may neither normalize it to STOPPED nor
+    # run its liveness repair loop against it. The final scope fence still performs
+    # an uncached database ownership check immediately before any server BUY and
+    # wakes server takeover only after the browser lease really expires.
+    install_direct_browser_runtime_authority()
+    install_direct_execution_worker_fence()
+
     # Keep the complete premium execution guard available for the paid launch, but
     # do not install it while public testing is free. This is critical because the
     # worker guard sits immediately before proposal and BUY and would otherwise
@@ -205,8 +216,9 @@ async def run_worker() -> None:
 
     bot = RFDir5TradingBot()
     bot.logger.warning(
-        "CUSTOM_STRATEGY_WORKER_READY architecture=account_scoped_direct "
-        "frontend=full_vps_same_origin realtime=nonblocking_vps_websocket "
+        "CUSTOM_STRATEGY_WORKER_READY architecture=hybrid_browser_direct_v2 "
+        "frontend=full_vps_same_origin realtime=browser_deriv_direct "
+        "scheduled_and_offline=server_worker browser_owner_fenced=true "
         "legacy_rf=false legacy_aidr=false multi_strategy=false cohorts=false "
         "bulk=false tick_db_persistence=false start_required=true "
         "explicit_start_pickup=true instant_start=true provider_account_sweep_blocking=false "
@@ -223,7 +235,7 @@ async def run_worker() -> None:
         "virtual_void_policy=retry_without_real_unlock same_tick_reentry=false "
         "runtime_fault_policy=reconnect_reconcile_never_stop "
         "ambiguous_buy_policy=reconcile_before_next_real duplicate_buy_retry=false "
-        "stop_reason_authority=durable execution_liveness_watchdog=true "
+        "stop_reason_authority=durable execution_liveness_watchdog=browser_aware "
         "connection_repair=targeted_singleflight sibling_wake=false global_revalidation=false "
         "vps_low_latency=true provider_rate_limit_backoff=preserved",
         "public_testing_bypass" if public_testing else "exact_timestamp_before_proposal_and_buy",
