@@ -78,7 +78,6 @@ section "DOCKER SERVICES"
 
 section "HEALTH"
 "${COMPOSE[@]}" exec -T api python - <<'PY' || true
-import json
 import urllib.request
 for url in (
     "http://127.0.0.1:8080/health/database",
@@ -92,7 +91,7 @@ for url in (
         print(url, "ERROR", type(exc).__name__, str(exc))
 PY
 
-MANAGED_IDS="$(resolve_ids | tr -d '\r' | sed '/^[[:space:]]*$/d')"
+MANAGED_IDS="$(resolve_ids 2>/dev/null | tr -d '\r' | sed '/^[[:space:]]*$/d' || true)"
 section "ACCOUNT RESOLUTION"
 echo "managed_account_ids:"
 if [[ -n "$MANAGED_IDS" ]]; then
@@ -101,9 +100,13 @@ else
   echo "NONE FOUND"
 fi
 
-ID_LIST="$(printf '%s\n' "$MANAGED_IDS" | paste -sd, -)"
+ID_LIST="$(printf '%s\n' "$MANAGED_IDS" | sed '/^[[:space:]]*$/d' | paste -sd, -)"
+ID_REGEX="$(printf '%s\n' "$MANAGED_IDS" | sed '/^[[:space:]]*$/d' | paste -sd'|' -)"
 if [[ -z "$ID_LIST" ]]; then
   ID_LIST="-1"
+fi
+if [[ -z "$ID_REGEX" ]]; then
+  ID_REGEX="__no_managed_id__"
 fi
 
 section "MANAGED ACCOUNT (TOKEN REDACTED)"
@@ -111,6 +114,7 @@ psql_query "
 SELECT jsonb_pretty(to_jsonb(m) - 'token_secret')
 FROM managed_accounts AS m
 WHERE m.id IN (${ID_LIST})
+   OR m.label ILIKE '%${SUFFIX}%'
 ORDER BY m.id;
 " || true
 
@@ -119,6 +123,7 @@ psql_query "
 SELECT jsonb_pretty(to_jsonb(r))
 FROM account_risk_states AS r
 WHERE r.managed_account_id IN (${ID_LIST})
+   OR r.account_id_masked ILIKE '%${SUFFIX}%'
 ORDER BY r.managed_account_id;
 " || true
 
@@ -126,10 +131,7 @@ section "CUSTOM STRATEGY / HARD STOP / RECOVERY PREFERENCES"
 psql_query "
 SELECT preference_key, preference_value, updated_at
 FROM runtime_preferences
-WHERE preference_key IN (
-  $(printf '%s\n' "$MANAGED_IDS" | awk '{printf "\047custom_strategy:v1:%s\047,\047direct_execution:hard_stop:v2:%s\047,",$1,$1}' | sed 's/,$//')
-)
-   OR preference_key ~ ('(' || replace('${ID_LIST}', ',', '|') || ')$')
+WHERE preference_key ~ ('(' || replace('${ID_LIST}', ',', '|') || ')$')
 ORDER BY preference_key;
 " || true
 
@@ -153,7 +155,7 @@ SELECT
   COALESCE(SUM(payout), 0) AS total_payout,
   COALESCE(SUM(profit), 0) AS total_profit
 FROM trades
-WHERE managed_account_id IN (${ID_LIST})
+WHERE (managed_account_id IN (${ID_LIST}) OR account_id_masked ILIKE '%${SUFFIX}%')
   AND purchase_time >= now() - interval '6 hours';
 " || true
 
@@ -197,7 +199,7 @@ ORDER BY created_at DESC
 LIMIT 300;
 " || true
 
-LOG_PATTERN="${ACCOUNT_HINT}|${SUFFIX}|managed_id=($(printf '%s\n' "$MANAGED_IDS" | paste -sd'|' -))|CUSTOM_VIRTUAL|DIRECT_WORKER|DIRECT_EXECUTION|HARD_STOP|TAKE_PROFIT|STOP_LOSS|TP_|SL_|PURCHASE|BUY|RECOVERY|SETTLED|EXECUTION_FAILED"
+LOG_PATTERN="${ACCOUNT_HINT}|${SUFFIX}|managed_id=(${ID_REGEX})|CUSTOM_VIRTUAL|DIRECT_WORKER|DIRECT_EXECUTION|HARD_STOP|TAKE_PROFIT|STOP_LOSS|TP_|SL_|PURCHASE|BUY|RECOVERY|SETTLED|EXECUTION_FAILED"
 
 section "WORKER LOGS"
 "${COMPOSE[@]}" logs --since "$SINCE" --no-color worker 2>&1 \
