@@ -68,12 +68,11 @@ else
   }
   echo "Host Node not found; using node:22-alpine Docker runtime for syntax checks."
   docker run --rm \
+    -e NODE_CHECK_FILES="$NODE_CHECK_FILES" \
     -v "$ROOT_DIR:/work:ro" \
     -w /work \
     node:22-alpine \
-    sh -ec 'for file in $NODE_CHECK_FILES; do node --check "$file"; done' \
-    -- \
-    NODE_CHECK_FILES="$NODE_CHECK_FILES"
+    sh -ec 'for file in $NODE_CHECK_FILES; do node --check "$file"; done'
 fi
 
 grep -q -- '--camera-bg: #07111f' dashboard/tutorial-camera-theme-v1.css
