@@ -4,11 +4,14 @@ from __future__ import annotations
 
 This module is worker-only. It removes fresh browser-owned accounts from the
 server Custom Strategy scanner, rechecks ownership immediately before the final
-server purchase scope, and explicitly wakes the worker when a browser lease ages
-out. The final BUY check is deliberately uncached.
+server purchase scope, explicitly wakes the worker when a browser lease ages out,
+and prevents a takeover BUY while the last browser checkpoint still reports an
+open provider contract.
 """
 
+import json
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -17,12 +20,60 @@ import app.custom_strategy_runtime as custom_runtime
 import app.shared_system_strategy_clock as shared_clock
 from app.account_mode_execution_lock import account_allows_new_execution
 from app.direct_execution_lease import DIRECT_BROWSER_STATUS, direct_browser_lease_fresh
-from app.models import ManagedAccount, utc_now
+from app.models import ManagedAccount, RuntimePreference, utc_now
 from app.rf_dir5_bot import RFDir5TradingBot
 
 _INSTALLED = False
 CACHE_SECONDS = 1.0
 TAKEOVER_SCAN_SECONDS = 2.0
+OPEN_CONTRACT_HANDOFF_GRACE_SECONDS = 300.0
+OWNER_PREFIX = "direct_execution:v1:"
+CHECKPOINT_PREFIX = "direct_execution:checkpoint:v1:"
+
+
+def _json_payload(row: RuntimePreference | None) -> dict[str, Any]:
+    if row is None:
+        return {}
+    try:
+        value = json.loads(str(row.preference_value or "{}"))
+        return value if isinstance(value, dict) else {}
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+
+
+def _aware(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        result = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if result.tzinfo is None:
+        result = result.replace(tzinfo=timezone.utc)
+    return result.astimezone(timezone.utc)
+
+
+def _browser_contract_handoff_hold(session: Any, managed_id: int) -> bool:
+    owner = _json_payload(session.get(RuntimePreference, f"{OWNER_PREFIX}{int(managed_id)}"))
+    checkpoint = _json_payload(
+        session.get(RuntimePreference, f"{CHECKPOINT_PREFIX}{int(managed_id)}")
+    )
+    if not owner or not checkpoint:
+        return False
+    if str(owner.get("epoch") or "") != str(checkpoint.get("epoch") or ""):
+        return False
+    try:
+        open_contracts = int(checkpoint.get("open_contracts") or 0)
+    except (TypeError, ValueError):
+        open_contracts = 0
+    if open_contracts <= 0:
+        return False
+    checkpointed_at = _aware(checkpoint.get("checkpointed_at"))
+    if checkpointed_at is None:
+        return True
+    age = (datetime.now(timezone.utc) - checkpointed_at).total_seconds()
+    return age < OPEN_CONTRACT_HANDOFF_GRACE_SECONDS
 
 
 def _eligible_map(bot: Any, managed_ids: set[int], *, force: bool = False) -> dict[int, bool]:
@@ -39,7 +90,13 @@ def _eligible_map(bot: Any, managed_ids: set[int], *, force: bool = False) -> di
         rows = session.scalars(
             select(ManagedAccount).where(ManagedAccount.id.in_(sorted(ids)))
         ).all()
-        values = {int(row.id): bool(account_allows_new_execution(row)) for row in rows}
+        values = {
+            int(row.id): bool(
+                account_allows_new_execution(row)
+                and not _browser_contract_handoff_hold(session, int(row.id))
+            )
+            for row in rows
+        }
     for managed_id in ids:
         values.setdefault(managed_id, False)
     bot._direct_execution_fence_cache = values
@@ -76,6 +133,8 @@ def _promote_expired_browser_leases(bot: Any) -> list[int]:
         ).all()
         for row in rows:
             if direct_browser_lease_fresh(row):
+                continue
+            if _browser_contract_handoff_hold(session, int(row.id)):
                 continue
             row.execution_status = "connecting"
             row.execution_status_reason = (
@@ -141,7 +200,7 @@ def install_direct_execution_worker_fence() -> None:
         if browser_or_stopped:
             bot.logger.info(
                 "DIRECT_EXECUTION_SERVER_SCOPE_FENCED signal_id=%s blocked_ids=%s "
-                "purchase=false reason=browser_owner_or_stopped",
+                "purchase=false reason=browser_owner_stopped_or_open_handoff",
                 str(getattr(signal, "signal_id", "-")),
                 sorted(browser_or_stopped),
             )
