@@ -1,12 +1,28 @@
 (() => {
   "use strict";
 
-  if (window.__DERIVADMIN_DIRECT_TRANSACTION_LEDGER_V6__) return;
-  window.__DERIVADMIN_DIRECT_TRANSACTION_LEDGER_V6__ = true;
+  if (window.__DERIVADMIN_DIRECT_TRANSACTION_LEDGER_V7__) return;
+  window.__DERIVADMIN_DIRECT_TRANSACTION_LEDGER_V7__ = true;
+
+  /*
+   * DIRECT TRANSACTION + KPI AUTHORITY
+   *
+   * Browser-direct execution is deliberately ahead of the VPS reporting ledger.
+   * While a direct journal exists for the selected account, this file owns BOTH
+   * the visible Transactions rows and the six Run summary KPIs from the same
+   * contract snapshot. That removes the historic one-run lag and the visual
+   * appear/disappear race between the shell refresh and the direct ledger.
+   *
+   * No timer reinserts rows. A narrow MutationObserver repairs only a shell DOM
+   * replacement and is disconnected while this authority writes its own DOM.
+   */
 
   const JOURNAL_PREFIX = "derivadmin-direct-journal-v1:";
+  let observer = null;
+  let observedPanel = null;
+  let applying = false;
+  let renderQueued = false;
   let lastSignature = "";
-  let timer = null;
 
   function esc(value) {
     return String(value ?? "")
@@ -17,9 +33,20 @@
       .replaceAll("'", "&#39;");
   }
 
+  function finite(value, fallback = 0) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : fallback;
+  }
+
   function selectedManagedId() {
     try {
       const id = Number(window.DERIVADMIN_DIRECT_RUNTIME_UX_V3?.state?.()?.selected_managed_id || 0);
+      if (id > 0) return String(id);
+    } catch (_) {}
+    try {
+      const snapshot = window.DERIVADMIN_DIRECT_EXECUTION_V1?.state?.() || {};
+      const account = snapshot.account || {};
+      const id = Number(account.managed_account_id || account.id || 0);
       if (id > 0) return String(id);
     } catch (_) {}
     return "";
@@ -27,14 +54,14 @@
 
   function journalRows() {
     const selected = selectedManagedId();
-    const preferred = selected ? `${JOURNAL_PREFIX}${selected}` : "";
     const keys = [];
-    if (preferred) keys.push(preferred);
-    for (let i = 0; i < localStorage.length; i += 1) {
-      const key = localStorage.key(i);
-      if (key?.startsWith(JOURNAL_PREFIX) && !keys.includes(key)) keys.push(key);
+    if (selected) keys.push(`${JOURNAL_PREFIX}${selected}`);
+    if (!keys.length) {
+      for (let i = 0; i < localStorage.length; i += 1) {
+        const key = localStorage.key(i);
+        if (key?.startsWith(JOURNAL_PREFIX)) keys.push(key);
+      }
     }
-
     for (const key of keys) {
       try {
         const rows = JSON.parse(localStorage.getItem(key) || "[]");
@@ -50,13 +77,13 @@
       if (String(row?.mode || "") !== "real") continue;
       const id = String(row?.contract_id || "").trim();
       if (!id) continue;
-      const existing = map.get(id) || {};
+      const previous = map.get(id) || {};
       map.set(id, {
-        ...existing,
+        ...previous,
         ...row,
         contract_id: id,
-        opened_at: existing.opened_at || row.at || "",
-        at: row.at || existing.at || "",
+        opened_at: previous.opened_at || row.opened_at || row.at || "",
+        at: row.at || previous.at || "",
       });
     }
     return Array.from(map.values())
@@ -93,17 +120,20 @@
   }
 
   function money(value) {
-    const number = Number(value || 0);
-    return Number.isFinite(number) ? `${number.toFixed(2)} USD` : "0.00 USD";
+    return `${finite(value, 0).toFixed(2)} USD`;
+  }
+
+  function isSettled(row) {
+    return String(row?.state || "").toUpperCase() === "SETTLED" || Boolean(row?.outcome);
   }
 
   function rowMarkup(row) {
-    const settled = String(row.state || "").toUpperCase() === "SETTLED" || Boolean(row.outcome);
-    const profit = Number(row.profit || 0);
+    const settled = isSettled(row);
+    const profit = finite(row.profit, 0);
     const entry = row.entry_spot ?? row.entry_tick ?? "—";
     const exit = settled ? (row.exit_spot ?? row.exit_tick ?? "—") : "OPEN";
     const pl = settled ? `${profit >= 0 ? "+" : ""}${money(profit)}` : "OPEN";
-    return `<div class="transaction-row transaction-row-v6 direct-local-transaction-row-v6" data-direct-contract-id="${esc(row.contract_id)}">
+    return `<div class="transaction-row transaction-row-v6 direct-local-transaction-row-v7" data-direct-contract-id="${esc(row.contract_id)}">
       <span class="tx-time-market"><small>${esc(timeLabel(row.opened_at || row.at))}</small><b>${esc(marketLabel(row.symbol))}</b></span>
       <span class="tx-type"><b>${esc(typeLabel(row))}</b></span>
       <span class="tx-spots"><b>${esc(entry)}</b><small>${esc(exit)}</small></span>
@@ -112,62 +142,143 @@
     </div>`;
   }
 
+  function stats(rows) {
+    let totalStake = 0;
+    let totalPayout = 0;
+    let profit = 0;
+    let wins = 0;
+    let losses = 0;
+
+    for (const row of rows) {
+      const stake = Math.max(0, finite(row.stake, 0));
+      totalStake += stake; // OPEN positions count immediately as a run + stake.
+      if (!isSettled(row)) continue;
+      const pnl = finite(row.profit, 0);
+      profit += pnl;
+      const outcome = String(row.outcome || "").toUpperCase();
+      if (outcome === "WIN") {
+        wins += 1;
+        totalPayout += Math.max(0, finite(row.payout, stake + pnl));
+      } else if (outcome === "LOSS") {
+        losses += 1;
+        totalPayout += Math.max(0, finite(row.payout, 0));
+      } else {
+        totalPayout += Math.max(0, finite(row.payout, pnl > 0 ? stake + pnl : 0));
+      }
+    }
+    return { totalStake, totalPayout, profit, wins, losses, runs: rows.length };
+  }
+
+  function statsMarkup(value) {
+    return `<article><b>Total stake</b><span>${esc(money(value.totalStake))}</span></article>
+      <article><b>Total payout</b><span>${esc(money(value.totalPayout))}</span></article>
+      <article><button type="button" class="run-help">What's this?</button><b>No. of runs</b><span>${value.runs}</span></article>
+      <article><b>Contracts lost</b><span>${value.losses}</span></article>
+      <article><b>Contracts won</b><span>${value.wins}</span></article>
+      <article><b>Total profit/loss</b><span class="${value.profit >= 0 ? "positive" : "negative"}">${value.profit >= 0 ? "+" : ""}${esc(money(value.profit))}</span></article>`;
+  }
+
   function activeTransactions() {
     return String(document.querySelector(".global-run-panel [data-run-tab].active")?.dataset?.runTab || "") === "transactions";
   }
 
-  function render() {
-    if (!activeTransactions()) return;
-    const panel = document.querySelector(".global-run-panel");
-    const body = panel?.querySelector(".run-panel-body");
-    if (!body) return;
-
-    const rows = contracts();
-    const signature = rows.map((row) => [row.contract_id, row.state, row.profit, row.entry_spot, row.exit_spot, row.at].join("|")).join(";");
-    const existingCount = body.querySelectorAll(".direct-local-transaction-row-v6").length;
-    if (signature === lastSignature && existingCount === rows.length) return;
-    lastSignature = signature;
-
-    body.querySelectorAll(".direct-local-transaction-row-v6,.direct-local-only-table-v6").forEach((node) => node.remove());
-    if (!rows.length) return;
-
-    let table = body.querySelector(".transaction-table");
-    let targetRows = table?.querySelector(".transaction-rows");
-    if (!table || !targetRows) {
-      body.querySelector(".run-panel-empty")?.remove();
-      table = document.createElement("div");
-      table.className = "transaction-table transaction-table-v6 direct-local-only-table-v6";
-      table.innerHTML = `<div class="transaction-head transaction-head-v6"><span>Time / Market</span><span>Type</span><span>Entry / Exit</span><span>Buy price</span><span>Profit / Loss</span></div><div class="transaction-rows"></div>`;
-      body.prepend(table);
-      targetRows = table.querySelector(".transaction-rows");
-    }
-
-    const fragment = document.createDocumentFragment();
-    const holder = document.createElement("div");
-    holder.innerHTML = rows.map(rowMarkup).join("");
-    while (holder.firstChild) fragment.appendChild(holder.firstChild);
-    targetRows.prepend(fragment);
+  function signature(rows) {
+    return rows.map((row) => [
+      row.contract_id,
+      row.state,
+      row.outcome,
+      finite(row.stake, 0),
+      finite(row.profit, 0),
+      row.entry_spot ?? row.entry_tick ?? "",
+      row.exit_spot ?? row.exit_tick ?? "",
+      row.at || "",
+    ].join("|")).join(";");
   }
 
-  window.addEventListener("derivadmin:direct-trade", () => setTimeout(render, 0));
-  window.addEventListener("derivadmin:direct-clear", () => { lastSignature = ""; setTimeout(render, 0); });
-  window.addEventListener("derivadmin:direct-reset-all", () => { lastSignature = ""; setTimeout(render, 0); });
-  window.addEventListener("pageshow", () => setTimeout(render, 0));
-  document.addEventListener("foa:vps-live", () => setTimeout(render, 0));
+  function disconnectObserver() {
+    try { observer?.disconnect(); } catch (_) {}
+  }
+
+  function connectObserver() {
+    const panel = document.querySelector(".global-run-panel");
+    if (!panel || !("MutationObserver" in window)) return;
+    if (observedPanel === panel && observer) {
+      disconnectObserver();
+      observer.observe(panel, { childList: true, subtree: true });
+      return;
+    }
+    disconnectObserver();
+    observedPanel = panel;
+    observer = new MutationObserver(() => {
+      if (!applying && journalRows().length) queueRender(true);
+    });
+    observer.observe(panel, { childList: true, subtree: true });
+  }
+
+  function render(force = false) {
+    renderQueued = false;
+    if (!activeTransactions()) {
+      connectObserver();
+      return;
+    }
+
+    const rows = contracts();
+    if (!rows.length) {
+      lastSignature = "";
+      connectObserver();
+      return; // No direct session: allow the normal VPS ledger to own the panel.
+    }
+
+    const panel = document.querySelector(".global-run-panel");
+    const body = panel?.querySelector(".run-panel-body");
+    const summary = panel?.querySelector(".run-panel-stats");
+    if (!panel || !body || !summary) return;
+
+    const nextSignature = signature(rows);
+    const expectedRows = body.querySelectorAll(".direct-local-transaction-row-v7").length;
+    const expectedRuns = String(stats(rows).runs);
+    const displayedRuns = String(summary.children?.[2]?.querySelector("span")?.textContent || "").trim();
+    if (!force && nextSignature === lastSignature && expectedRows === rows.length && displayedRuns === expectedRuns) {
+      connectObserver();
+      return;
+    }
+
+    applying = true;
+    disconnectObserver();
+    try {
+      lastSignature = nextSignature;
+      body.innerHTML = `<div class="transaction-table transaction-table-v6 direct-canonical-table-v7">
+        <div class="transaction-head transaction-head-v6"><span>Time / Market</span><span>Type</span><span>Entry / Exit</span><span>Buy price</span><span>Profit / Loss</span></div>
+        <div class="transaction-rows">${rows.map(rowMarkup).join("")}</div>
+      </div>`;
+      summary.innerHTML = statsMarkup(stats(rows));
+      panel.dataset.directLedgerAuthority = "v7";
+    } finally {
+      applying = false;
+      connectObserver();
+    }
+  }
+
+  function queueRender(force = false) {
+    if (renderQueued && !force) return;
+    renderQueued = true;
+    requestAnimationFrame(() => render(force));
+  }
+
+  window.addEventListener("derivadmin:direct-trade", () => queueRender(true));
+  window.addEventListener("derivadmin:direct-clear", () => { lastSignature = ""; queueRender(true); });
+  window.addEventListener("derivadmin:direct-reset-all", () => { lastSignature = ""; queueRender(true); });
+  window.addEventListener("pageshow", () => queueRender(true));
+  document.addEventListener("foa:vps-live", () => queueRender(true));
   document.addEventListener("click", (event) => {
-    if (event.target?.closest?.('[data-run-tab="transactions"]')) setTimeout(render, 0);
+    if (event.target?.closest?.('[data-run-tab="transactions"]')) setTimeout(() => queueRender(true), 0);
   });
 
-  // Reinsert only if another shell refresh replaced the Transactions DOM. The
-  // signature check makes this a no-op during ordinary live ticks, preventing the
-  // old visual shaking/reflow loop.
-  timer = setInterval(() => {
-    if (!document.hidden && activeTransactions()) render();
-  }, 2000);
-  window.addEventListener("pagehide", () => clearInterval(timer), { once: true });
-
+  queueRender(true);
   window.DERIVADMIN_DIRECT_TRANSACTION_LEDGER_V6 = Object.freeze({
-    version: "20260818-direct-transaction-ledger-v6",
-    refresh: render,
+    version: "20260818-direct-transaction-ledger-v7",
+    refresh: () => queueRender(true),
+    contracts,
+    stats: () => stats(contracts()),
   });
 })();
