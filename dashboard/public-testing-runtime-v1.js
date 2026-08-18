@@ -42,6 +42,7 @@
     } catch (_) {
       state.testingFree = false;
     }
+    document.documentElement.dataset.publicTestingAccess = state.testingFree ? "free" : "paid";
     queueRender();
   }
 
@@ -55,7 +56,9 @@
 
   function removeTestingPhasePremiumUi() {
     if (!state.testingFree) return;
-    document.querySelectorAll(".paid-soon-banner,.premium-reminder,.premium-profile").forEach((node) => node.remove());
+    // Premium profile/reminder/banner nodes are hidden by scoped CSS instead of
+    // removed. The retained premium bootstrap may legitimately re-render them;
+    // keeping the nodes avoids a MutationObserver reinjection loop during testing.
     document.querySelectorAll(".global-message.error,.global-message.success,.premium-message").forEach((node) => {
       if (isPremiumNoise(node)) node.remove();
     });
@@ -213,6 +216,10 @@
     const style = document.createElement("style");
     style.id = "public-testing-runtime-v1-style";
     style.textContent = `
+      html[data-public-testing-access="free"] .paid-soon-banner,
+      html[data-public-testing-access="free"] .premium-reminder,
+      html[data-public-testing-access="free"] .premium-profile,
+      html[data-public-testing-access="free"] article.panel:has(.premium-profile){display:none!important}
       .testing-tick-journal{margin-top:12px;border:1px solid rgba(72,181,255,.25);border-radius:14px;overflow:hidden;background:rgba(1,15,34,.42)}
       .testing-tick-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border-bottom:1px solid rgba(72,181,255,.18)}
       .testing-tick-head span{display:flex;align-items:center;gap:8px;font-weight:800}.testing-live-dot{width:8px;height:8px;border-radius:50%;background:#15d991;box-shadow:0 0 10px rgba(21,217,145,.75)}
@@ -301,7 +308,7 @@
   loadAccessMode();
   window.setTimeout(syncFromDom, 0);
   window.DERIVADMIN_PUBLIC_TESTING_RUNTIME_V1 = Object.freeze({
-    version: "20260818-public-testing-run-v2",
+    version: "20260818-public-testing-run-v3",
     publicWebSocket: PUBLIC_WS,
     refresh: syncFromDom,
   });
