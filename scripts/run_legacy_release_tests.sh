@@ -83,7 +83,9 @@ docker compose -f docker-compose.yml run --rm --no-deps api sh -ec '
     app/direct_execution_hard_stop_state.py \
     app/vps_direct_hard_stop_v2.py \
     app/direct_execution_worker_fence.py \
+    app/custom_split_recovery_authority.py \
     app/custom_split_debt_continuity_authority.py \
+    app/stale_split_basis_reconciliation_authority.py \
     app/custom_virtual_post_loss_barrier_authority.py \
     app/vps_direct_execution_checkpoint.py \
     app/global_recovery_execution_policy.py \
