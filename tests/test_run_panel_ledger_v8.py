@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-class RunPanelLedgerV9Contract(unittest.TestCase):
+class RunPanelLedgerV10Contract(unittest.TestCase):
     def text(self, relative: str) -> str:
         return (ROOT / relative).read_text(encoding="utf-8")
 
@@ -45,11 +45,12 @@ class RunPanelLedgerV9Contract(unittest.TestCase):
         self.assertIn("text-align:center!important", ux)
         self.assertIn("text-overflow:clip!important", ux)
 
-    def test_frontend_cache_busts_unified_v9_and_scheduler_status(self) -> None:
+    def test_frontend_cache_busts_continuity_v10_assets(self) -> None:
         dockerfile = self.text("Dockerfile.frontend")
-        self.assertIn("/direct-transaction-ledger-v6.js?v=20260818-unified-ledger-v9", dockerfile)
-        self.assertIn("/direct-run-panel-authority-v6.js?v=20260818-scheduler-start-stop-v2", dockerfile)
+        self.assertIn("/direct-transaction-ledger-v6.js?v=20260818-unified-ledger-v10-virtual", dockerfile)
+        self.assertIn("/direct-run-panel-authority-v6.js?v=20260818-run-reset-v3", dockerfile)
         self.assertIn("/run-panel-usability-v1.js?v=20260818-run-panel-usability-v2", dockerfile)
+        self.assertIn("node scripts/finalize-execution-continuity-v1.mjs", dockerfile)
         self.assertIn("node --check dist/direct-transaction-ledger-v6.js", dockerfile)
         self.assertIn("node --check dist/direct-run-panel-authority-v6.js", dockerfile)
 
