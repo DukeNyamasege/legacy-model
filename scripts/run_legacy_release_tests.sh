@@ -11,11 +11,9 @@ export ALLOW_LEGACY_GLOBAL_TOKENS=true
 export COPYTRADING_ALLOW_LEGACY_GLOBAL_TOKENS=true
 export FRONTEND_ORIGINS="http://127.0.0.1:8080,http://localhost:8080,https://derivadmin.site"
 
-# Action 6F-3 remains the base direct-VPS shell. Hybrid browser-direct v2 is the
-# current execution/control overlay: one financial live engine, one visible Run
-# authority, browser-owned live Deriv execution, persistent scheduler/offline
-# takeover, exact demo reset and sticky strategy analysis. Public testing is access
-# only and is forbidden from owning Run/Stop. Syntax-check every shipped source.
+# Production v6 keeps exactly one live start engine and adds independent browser +
+# server hard-stop fences, saved Virtual Hook entry authority, persistent equal
+# Split recovery, compact stable transactions and a testing-free premium fail-open.
 node --check dashboard/final-premium-6f3.js
 node --check dashboard/final-ui-shell-v2.js
 node --check dashboard/vps-api-boundary-v2.js
@@ -24,6 +22,7 @@ node --check dashboard/public-testing-runtime-v1.js
 node --check dashboard/direct-pip-precision-v1.js
 node --check dashboard/direct-financial-fence-v1.js
 node --check dashboard/direct-socket-control-v1.js
+node --check dashboard/direct-hard-stop-fence-v1.js
 node --check dashboard/direct-reset-authority-v1.js
 node --check dashboard/direct-interaction-guard-v3.js
 node --check dashboard/deriv-direct-execution-v1.js
@@ -33,12 +32,21 @@ node --check dashboard/direct-ui-cleanup-v1.js
 node --check dashboard/direct-builder-loaded-v2.js
 node --check dashboard/direct-runtime-ux-v3.js
 node --check dashboard/direct-demo-reset-router-v1.js
-node --check dashboard/direct-run-panel-authority-v5.js
+node --check dashboard/direct-run-panel-authority-v6.js
 node --check scripts/export-deriv-quill-icons-v2.mjs
 node --check scripts/build-vps.mjs
 node --check scripts/build-direct-runtime-v2.mjs
 node --check scripts/finalize-direct-runtime-v2.mjs
 node --check scripts/finalize-direct-ux-v4.mjs
+node --check scripts/finalize-production-controls-v6.mjs
+
+python -m py_compile \
+  app/direct_execution_hard_stop_state.py \
+  app/vps_direct_hard_stop_v2.py \
+  app/direct_execution_worker_fence.py \
+  app/custom_split_debt_continuity_authority.py \
+  app/custom_virtual_post_loss_barrier_authority.py \
+  app/vps_backend_api.py
 
 exec python -m unittest -q \
   tests.test_hybrid_browser_direct_v2 \
