@@ -6,12 +6,14 @@
 
   const NativeWebSocket = window.WebSocket;
   const nativeFetch = window.fetch.bind(window);
+  let hydrationReq = 900000000;
   const state = {
     armed: false,
     epoch: "",
     armedAt: 0,
     lastAckAt: 0,
     leaseMs: 20000,
+    hydrationPending: 0,
   };
 
   function pathFor(input) {
@@ -75,6 +77,10 @@
         } catch (_) {}
       } else {
         clearLease(String(body?.epoch || ""));
+        if (response.status === 409) {
+          const note = document.querySelector(".global-run-panel .direct-execution-state");
+          if (note) note.textContent = "Direct • this account already has an active live-trading browser";
+        }
       }
     } else if (path === "/me/direct-execution/heartbeat" && method === "POST") {
       if (response.ok && String(body?.epoch || "") === state.epoch) {
@@ -100,7 +106,7 @@
   } catch (_) {}
 
   function leaseAllowsBuy() {
-    if (!state.armed || !state.epoch || !state.lastAckAt) return false;
+    if (!state.armed || !state.epoch || !state.lastAckAt || state.hydrationPending > 0) return false;
     // Stop browser financial sends before the server lease can expire. This leaves
     // an 8-second no-owner buffer for a clean VPS takeover rather than overlap.
     return Date.now() - state.lastAckAt < Math.max(2500, state.leaseMs - 8000);
@@ -111,12 +117,91 @@
       ? new NativeWebSocket(url)
       : new NativeWebSocket(url, protocols);
     const nativeSend = socket.send.bind(socket);
+    const publicSocket = String(url || "").includes("/trading/v1/options/ws/public");
+    const historyRequests = new Map();
+
+    function finishHydration(reqId, message = null) {
+      const pending = historyRequests.get(reqId);
+      if (!pending) return;
+      historyRequests.delete(reqId);
+      clearTimeout(pending.timer);
+
+      if (message?.history && Array.isArray(message.history.prices) && Array.isArray(message.history.times)) {
+        const prices = message.history.prices;
+        const times = message.history.times;
+        const pipSize = Number(message.pip_size);
+        const count = Math.min(prices.length, times.length);
+        for (let index = 0; index < count; index += 1) {
+          const tick = {
+            symbol: pending.symbol,
+            quote: prices[index],
+            epoch: Number(times[index]),
+          };
+          if (Number.isInteger(pipSize) && pipSize >= 0) tick.pip_size = pipSize;
+          try {
+            socket.dispatchEvent(new MessageEvent("message", {
+              data: JSON.stringify({ msg_type: "tick", tick }),
+            }));
+          } catch (_) {}
+        }
+      }
+
+      state.hydrationPending = Math.max(0, state.hydrationPending - 1);
+      try { nativeSend(pending.livePayload); } catch (_) {}
+    }
+
+    if (publicSocket) {
+      socket.addEventListener("message", (event) => {
+        let message = null;
+        try { message = JSON.parse(String(event.data || "")); } catch (_) {}
+        const reqId = Number(message?.req_id || 0);
+        if (!reqId || !historyRequests.has(reqId)) return;
+        if (message?.msg_type === "history" || message?.history || message?.error) {
+          finishHydration(reqId, message);
+        }
+      });
+      socket.addEventListener("close", () => {
+        for (const reqId of Array.from(historyRequests.keys())) finishHydration(reqId, null);
+      });
+    }
+
     socket.send = function guardedSend(data) {
       let payload = null;
       try { payload = typeof data === "string" ? JSON.parse(data) : null; } catch (_) {}
+
       if (payload && Object.prototype.hasOwnProperty.call(payload, "buy") && !leaseAllowsBuy()) {
         throw new Error("Direct financial ownership is not active");
       }
+
+      // Directly hydrate the exact history window before the live subscription.
+      // The synthetic history ticks are delivered to the normal browser strategy
+      // evaluator; only after hydration is complete do live ticks begin.
+      if (publicSocket && payload?.ticks && Number(payload?.subscribe || 0) === 1) {
+        const symbol = String(payload.ticks || "").toUpperCase();
+        const reqId = ++hydrationReq;
+        state.hydrationPending += 1;
+        const timer = setTimeout(() => finishHydration(reqId, null), 3500);
+        historyRequests.set(reqId, {
+          symbol,
+          livePayload: data,
+          timer,
+        });
+        try {
+          nativeSend(JSON.stringify({
+            ticks_history: symbol,
+            count: 1001,
+            end: "latest",
+            style: "ticks",
+            subscribe: 0,
+            req_id: reqId,
+          }));
+          return;
+        } catch (_) {
+          finishHydration(reqId, null);
+          return;
+        }
+      }
+
       return nativeSend(data);
     };
     return socket;
