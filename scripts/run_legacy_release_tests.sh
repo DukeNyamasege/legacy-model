@@ -11,18 +11,34 @@ export ALLOW_LEGACY_GLOBAL_TOKENS=true
 export COPYTRADING_ALLOW_LEGACY_GLOBAL_TOKENS=true
 export FRONTEND_ORIGINS="http://127.0.0.1:8080,http://localhost:8080,https://derivadmin.site"
 
-# Action 6F-3 is the direct-VPS admission authority; the completed 6F-2 shell is
-# loaded only after Premium admission. Syntax-check only the runtime that will
-# actually ship; every backend strategy, settlement, recovery and execution
-# regression below remains unchanged.
+# Action 6F-3 remains the base direct-VPS shell. Hybrid browser-direct v2 is the
+# current execution/control overlay: one Run state, browser-owned live Deriv
+# execution, persistent scheduler/offline takeover, exact demo reset and sticky
+# strategy analysis. Syntax-check every source/compiler that the Docker image uses.
 node --check dashboard/final-premium-6f3.js
 node --check dashboard/final-ui-shell-v2.js
 node --check dashboard/vps-api-boundary-v2.js
 node --check dashboard/vps-realtime-client-v2.js
+node --check dashboard/direct-pip-precision-v1.js
+node --check dashboard/direct-financial-fence-v1.js
+node --check dashboard/direct-socket-control-v1.js
+node --check dashboard/direct-reset-authority-v1.js
+node --check dashboard/direct-interaction-guard-v3.js
+node --check dashboard/deriv-direct-execution-v1.js
+node --check dashboard/direct-strategy-persistence-v1.js
+node --check dashboard/direct-continuity-checkpoint-v1.js
+node --check dashboard/direct-ui-cleanup-v1.js
+node --check dashboard/direct-builder-loaded-v2.js
+node --check dashboard/direct-runtime-ux-v3.js
+node --check dashboard/direct-demo-reset-router-v1.js
 node --check scripts/export-deriv-quill-icons-v2.mjs
 node --check scripts/build-vps.mjs
+node --check scripts/build-direct-runtime-v2.mjs
+node --check scripts/finalize-direct-runtime-v2.mjs
+node --check scripts/finalize-direct-ux-v4.mjs
 
 exec python -m unittest -q \
+  tests.test_hybrid_browser_direct_v2 \
   tests.test_persistent_scheduler_action5 \
   tests.test_execution_stop_reason_authority \
   tests.test_custom_execution_consistency_authority \
