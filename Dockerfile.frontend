@@ -9,6 +9,7 @@ COPY dashboard ./dashboard
 COPY scripts/build-vps.mjs ./scripts/build-vps.mjs
 COPY scripts/build-direct-runtime-v2.mjs ./scripts/build-direct-runtime-v2.mjs
 COPY scripts/finalize-direct-runtime-v2.mjs ./scripts/finalize-direct-runtime-v2.mjs
+COPY scripts/finalize-direct-ux-v4.mjs ./scripts/finalize-direct-ux-v4.mjs
 COPY scripts/export-deriv-quill-icons-v2.mjs ./scripts/export-deriv-quill-icons-v2.mjs
 
 ARG PUBLIC_ORIGIN=https://derivadmin.site
@@ -23,6 +24,7 @@ RUN node scripts/build-vps.mjs
 # saved after-loss execution route; UX-v4 follows that active route on every tick.
 RUN node scripts/build-direct-runtime-v2.mjs \
   && node scripts/finalize-direct-runtime-v2.mjs \
+  && node scripts/finalize-direct-ux-v4.mjs \
   && node --check dist/deriv-direct-execution-v2.js \
   && node --check dist/direct-runtime-ux-v4.js
 
