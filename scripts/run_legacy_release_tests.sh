@@ -78,7 +78,18 @@ fi
 grep -q -- '--camera-bg: #07111f' dashboard/tutorial-camera-theme-v1.css
 grep -q -- '--camera-bg: #e9f0f6' dashboard/tutorial-camera-theme-v1.css
 
-python -m py_compile \
+if command -v python >/dev/null 2>&1; then
+  PYTHON_BIN=python
+elif command -v python3 >/dev/null 2>&1; then
+  PYTHON_BIN=python3
+else
+  echo "ERROR: neither python nor python3 is installed on the VPS host." >&2
+  exit 1
+fi
+
+echo "Using Python interpreter: $PYTHON_BIN"
+
+"$PYTHON_BIN" -m py_compile \
   app/direct_execution_hard_stop_state.py \
   app/vps_direct_hard_stop_v2.py \
   app/direct_execution_worker_fence.py \
@@ -88,7 +99,7 @@ python -m py_compile \
   app/automation_scheduler_v2_authority.py \
   app/vps_backend_api.py
 
-exec python -m unittest -q \
+exec "$PYTHON_BIN" -m unittest -q \
   tests.test_tutorial_camera_theme \
   tests.test_execution_continuity_v10 \
   tests.test_scheduler_v2_authority \
