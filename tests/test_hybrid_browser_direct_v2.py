@@ -47,9 +47,31 @@ class HybridBrowserDirectV2Contract(unittest.TestCase):
         self.assertIn("node scripts/finalize-direct-ux-v4.mjs", dockerfile)
         self.assertIn("/deriv-direct-execution-v2.js?v=20260818-browser-direct-v2", dockerfile)
         self.assertIn("/direct-runtime-ux-v4.js?v=20260818-runtime-ux-v4", dockerfile)
+        self.assertIn("/direct-run-panel-authority-v5.js?v=20260818-single-run-v5", dockerfile)
         self.assertNotIn('/single-run-controller-v1.js', dockerfile)
         self.assertNotIn('/deriv-direct-execution-v1.js?v=', dockerfile)
         self.assertNotIn('/direct-runtime-ux-v3.js?v=', dockerfile)
+
+    def test_public_testing_runtime_has_zero_execution_authority(self) -> None:
+        testing = self.text("dashboard/public-testing-runtime-v1.js")
+        self.assertIn('execution_authority: "none"', testing)
+        self.assertNotIn("directMainRun", testing)
+        self.assertNotIn("/me/resume-trading", testing)
+        self.assertNotIn("/me/stop-trading", testing)
+        self.assertNotIn("execution-runtime", testing)
+        self.assertNotIn("setOptimisticRunUi", testing)
+        self.assertNotIn("ACTIVE_RUNTIME_STATES", testing)
+
+    def test_final_run_panel_authority_stops_both_owners_but_never_starts(self) -> None:
+        authority = self.text("dashboard/direct-run-panel-authority-v5.js")
+        self.assertIn('/api/me/direct-execution/status', authority)
+        self.assertIn('/api/me/direct-execution/stop', authority)
+        self.assertIn('window.addEventListener("click"', authority)
+        self.assertIn("function effectiveRunning()", authority)
+        self.assertIn("stopEverything", authority)
+        self.assertIn("direct-live-transactions-v5", authority)
+        self.assertIn("height:calc(100dvh - 72px)", authority)
+        self.assertNotIn("/me/resume-trading", authority)
 
     def test_build_compiler_preserves_result_route_and_special_comparators(self) -> None:
         compiler = self.text("scripts/build-direct-runtime-v2.mjs")
