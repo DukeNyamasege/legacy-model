@@ -73,6 +73,7 @@
     const exactLosses = Number.isFinite(engineLosses) ? Math.max(0, Math.trunc(engineLosses)) : consecutiveLosses;
     const splitBasis = Number(engine.split_basis_debt || 0);
     const splitRemaining = Number(engine.split_remaining_wins || 0);
+    const splitPartStake = Number(engine.split_part_stake || 0);
 
     return {
       epoch: String(fence.epoch),
@@ -81,6 +82,7 @@
         recovery_debt: Math.round(exactDebt * 100000000) / 100000000,
         split_basis_debt: Number.isFinite(splitBasis) ? Math.max(0, splitBasis) : 0,
         split_remaining_wins: Number.isFinite(splitRemaining) ? Math.max(0, Math.trunc(splitRemaining)) : 0,
+        split_part_stake: Number.isFinite(splitPartStake) ? Math.max(0, splitPartStake) : 0,
         consecutive_losses: exactLosses,
         virtual_mode: Boolean(engine.virtual_mode),
         virtual_wins: virtualWins,
@@ -132,7 +134,7 @@
   }, { once: true });
 
   window.DERIVADMIN_DIRECT_CONTINUITY_CHECKPOINT_V1 = Object.freeze({
-    version: "20260818-direct-continuity-v2-split",
+    version: "20260819-direct-continuity-v3-fixed-split-stake",
     checkpoint,
   });
 })();
