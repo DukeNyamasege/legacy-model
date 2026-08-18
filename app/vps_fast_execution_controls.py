@@ -16,6 +16,7 @@ from fastapi import BackgroundTasks, HTTPException, Request
 from sqlalchemy import delete, or_, select
 
 import app.api as base_api
+import app.api_performance_hardening as performance
 from app.final_public_controls import ClearTradesRequest, _today_bounds_utc
 from app.models import AccountRiskState, ManagedAccount, RuntimePreference, Trade, VirtualTrade, utc_now
 
@@ -104,6 +105,12 @@ def _mark_stopped_now(request: Request, *, status: str, reason: str) -> tuple[in
         row.execution_status_reason = reason[:160]
         row.execution_status_updated_at = utc_now()
         row.updated_at = utc_now()
+    # Never let a previously cached enabled=True / RUNNING payload overwrite the
+    # just-committed financial stop on the next dashboard render.
+    try:
+        performance._clear_response_caches()
+    except Exception:
+        pass
     try:
         base_api.mark_dashboard_dirty(account.get("account_type"))
     except Exception:
@@ -245,6 +252,10 @@ def install_vps_fast_execution_controls(app: Any) -> None:
 
         deleted_trades = int(trade_result.rowcount or 0)
         deleted_virtual = int(virtual_result.rowcount or 0)
+        try:
+            performance._clear_response_caches()
+        except Exception:
+            pass
         client_host = request.client.host if request.client else "unknown"
         background_tasks.add_task(
             _audit,
