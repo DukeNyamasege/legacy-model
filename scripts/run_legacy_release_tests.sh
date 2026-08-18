@@ -11,10 +11,10 @@ export ALLOW_LEGACY_GLOBAL_TOKENS=true
 export COPYTRADING_ALLOW_LEGACY_GLOBAL_TOKENS=true
 export FRONTEND_ORIGINS="http://127.0.0.1:8080,http://localhost:8080,https://derivadmin.site"
 
-# Production v6 keeps exactly one live start engine and adds independent browser +
-# server hard-stop fences, saved Virtual Hook entry authority, persistent equal
-# Split recovery, exact offline Split continuation, compact stable transactions,
-# mobile Run-panel visibility and strict Strategy Builder viewport containment.
+# Production v7 keeps exactly one live start engine, instant browser-direct rows +
+# KPIs from one contract snapshot, reset locked during execution, independent hard
+# stop fences, saved Virtual Hook authority, exact Split recovery continuity, mobile
+# Run-panel visibility and strict Strategy Builder viewport containment.
 node --check dashboard/final-premium-6f3.js
 node --check dashboard/final-ui-shell-v2.js
 node --check dashboard/vps-api-boundary-v2.js
@@ -36,6 +36,7 @@ node --check dashboard/direct-demo-reset-router-v1.js
 node --check dashboard/direct-transaction-ledger-v6.js
 node --check dashboard/direct-run-panel-authority-v6.js
 node --check dashboard/mobile-layout-authority-v1.js
+node --check dashboard/run-panel-usability-v1.js
 node --check scripts/export-deriv-quill-icons-v2.mjs
 node --check scripts/build-vps.mjs
 node --check scripts/build-direct-runtime-v2.mjs
@@ -54,6 +55,7 @@ python -m py_compile \
   app/vps_backend_api.py
 
 exec python -m unittest -q \
+  tests.test_run_panel_live_ledger_v7 \
   tests.test_hybrid_browser_direct_v2 \
   tests.test_persistent_scheduler_action5 \
   tests.test_execution_stop_reason_authority \
