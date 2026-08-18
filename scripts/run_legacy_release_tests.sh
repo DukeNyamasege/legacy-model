@@ -11,10 +11,10 @@ export ALLOW_LEGACY_GLOBAL_TOKENS=true
 export COPYTRADING_ALLOW_LEGACY_GLOBAL_TOKENS=true
 export FRONTEND_ORIGINS="http://127.0.0.1:8080,http://localhost:8080,https://derivadmin.site"
 
-# Production v7 keeps exactly one live start engine, instant browser-direct rows +
-# KPIs from one contract snapshot, reset locked during execution, independent hard
-# stop fences, saved Virtual Hook authority, exact Split recovery continuity, mobile
-# Run-panel visibility and strict Strategy Builder viewport containment.
+# Production v8 keeps exactly one live start engine, a retained browser-direct
+# transaction/KPI snapshot, reset locked during execution, independent hard-stop
+# fences, saved Virtual Hook authority, exact Split recovery continuity, mobile
+# Run-panel/nav visibility and strict Strategy Builder viewport containment.
 node --check dashboard/final-premium-6f3.js
 node --check dashboard/final-ui-shell-v2.js
 node --check dashboard/vps-api-boundary-v2.js
@@ -55,7 +55,7 @@ python -m py_compile \
   app/vps_backend_api.py
 
 exec python -m unittest -q \
-  tests.test_run_panel_live_ledger_v7 \
+  tests.test_run_panel_ledger_v8 \
   tests.test_hybrid_browser_direct_v2 \
   tests.test_persistent_scheduler_action5 \
   tests.test_execution_stop_reason_authority \
