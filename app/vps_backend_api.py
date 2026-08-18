@@ -26,6 +26,7 @@ from app.vps_demo_balance_reset import install_vps_demo_balance_reset
 from app.vps_direct_execution_api import install_vps_direct_execution_api
 from app.vps_direct_execution_arm_guard import install_vps_direct_execution_arm_guard
 from app.vps_direct_execution_checkpoint import install_vps_direct_execution_checkpoint
+from app.vps_direct_hard_stop_v2 import install_vps_direct_hard_stop_v2
 from app.vps_fast_execution_controls import install_vps_fast_execution_controls
 from app.vps_linked_accounts_latency_hotfix import install_vps_linked_accounts_latency_hotfix
 from app.vps_login_observability_hotfix import install_vps_login_observability_hotfix
@@ -70,6 +71,10 @@ install_vps_demo_balance_reset(app)
 install_vps_direct_execution_api(app)
 install_vps_direct_execution_arm_guard(app)
 install_vps_direct_execution_checkpoint(app)
+# Stop is a separate financial invariant.  Persist its independent sentinel before
+# any slower account-row lifecycle cleanup so a single Stop click forbids the next
+# server BUY immediately.  Successful explicit Start/Arm clears that sentinel.
+install_vps_direct_hard_stop_v2(app)
 # Legacy lifecycle routes remain as safe fallbacks and for explicit server-owned
 # operations. They are not on the live browser proposal/BUY path.
 install_vps_fast_execution_controls(app)
@@ -81,5 +86,5 @@ install_premium_access_action6a(app)
 
 app.state.production_frontend_host = "vps_nginx"
 app.state.production_backend_role = "control_plane_scheduler_offline_takeover"
-app.state.production_architecture = "hybrid_browser_direct_v2"
+app.state.production_architecture = "hybrid_browser_direct_v2_hard_stop"
 app.state.public_testing_free_access = PUBLIC_TESTING_FREE_ACCESS
