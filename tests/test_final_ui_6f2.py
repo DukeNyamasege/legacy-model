@@ -15,16 +15,17 @@ class FinalUi6F2Tests(unittest.TestCase):
         premium = (ROOT / "dashboard" / "final-premium-6f3.js").read_text(encoding="utf-8")
         self.assertIn('frontend-runtime" content="direct-vps-final-ui-6f3"', html)
         self.assertIn('frontend-authority" content="final-ui-shell-v2"', html)
-        self.assertIn('/vps-api-boundary-v2.js?v=20260817-6f2-1', html)
+        self.assertIn('/vps-api-boundary-v2.js?v=20260818-local-ui-12', html)
         self.assertIn('/deriv-quill-icons-v2.js?v=2.4.18', html)
         self.assertIn('/final-ui-shell-v2.css?v=20260817-6f2-1', html)
         self.assertIn('/final-premium-6f3.css?v=20260817-6f3-1', html)
-        self.assertIn('/final-premium-6f3.js?v=20260817-6f3-1', html)
-        # The heavy F2 runtime is admitted dynamically only after Premium passes.
+        self.assertIn('/final-premium-6f3.js?v=20260818-local-ui-12', html)
+        self.assertIn('/public-testing-runtime-v1.js?v=20260818-public-testing-run-v2', html)
+        # The heavy F2 runtime is admitted dynamically by the 6F-3 bootstrap.
         self.assertNotIn('<script src="/vps-realtime-client-v2.js?v=20260817-6f2-1" defer>', html)
         self.assertNotIn('<script src="/final-ui-shell-v2.js?v=20260817-6f2-1" defer>', html)
-        self.assertIn('/vps-realtime-client-v2.js?v=20260817-6f2-1', premium)
-        self.assertIn('/final-ui-shell-v2.js?v=20260817-6f2-1', premium)
+        self.assertIn('/vps-realtime-client-v2.js?v=20260817-local-ui-2', premium)
+        self.assertIn('/final-ui-shell-v2.js?v=20260818-local-ui-12', premium)
         for retired in (
             "/netlify-api-boundary.js",
             "/netlify-realtime-client.js",
@@ -151,7 +152,7 @@ class FinalUi6F2Tests(unittest.TestCase):
             vps.index("install_premium_access_action6a(app)"),
         )
 
-    def test_browser_never_becomes_deriv_purchase_authority(self) -> None:
+    def test_browser_shell_never_becomes_deriv_purchase_authority(self) -> None:
         js = (ROOT / "dashboard" / "final-ui-shell-v2.js").read_text(encoding="utf-8")
         boundary = (ROOT / "dashboard" / "vps-api-boundary-v2.js").read_text(encoding="utf-8")
         self.assertIn('json("/me/custom-strategy"', js)
@@ -186,6 +187,7 @@ class FinalUi6F2Tests(unittest.TestCase):
             '"final-ui-shell-v2.js"',
             '"final-premium-6f3.css"',
             '"final-premium-6f3.js"',
+            '"public-testing-runtime-v1.js"',
             '"vps-api-boundary-v2.js"',
             '"vps-realtime-client-v2.js"',
         ):
@@ -198,6 +200,7 @@ class FinalUi6F2Tests(unittest.TestCase):
     def test_6f2_javascript_is_syntax_valid(self) -> None:
         for path in (
             ROOT / "dashboard" / "final-ui-shell-v2.js",
+            ROOT / "dashboard" / "public-testing-runtime-v1.js",
             ROOT / "dashboard" / "vps-api-boundary-v2.js",
             ROOT / "dashboard" / "vps-realtime-client-v2.js",
             ROOT / "scripts" / "export-deriv-quill-icons-v2.mjs",
