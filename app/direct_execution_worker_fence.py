@@ -116,13 +116,7 @@ def _server_ids(bot: Any, managed_ids: set[int], *, force: bool = False) -> set[
 
 
 def _promote_expired_browser_leases(bot: Any) -> list[int]:
-    """Convert elapsed browser ownership into an explicit server takeover write.
-
-    The core account refresher is revision-driven. Time passing does not change a
-    database revision, so an expired direct_browser row needs this one transition
-    to wake account validation even when other users keep the worker busy.  A hard
-    stopped account is never promoted simply because its old browser lease aged.
-    """
+    """Convert elapsed browser ownership into an explicit server takeover write."""
 
     now_monotonic = time.monotonic()
     previous = float(getattr(bot, "_direct_takeover_scan_at", 0.0) or 0.0)
@@ -182,8 +176,6 @@ def install_direct_execution_worker_fence() -> None:
     async def refresh_with_direct_takeover(self: RFDir5TradingBot) -> None:
         promoted = _promote_expired_browser_leases(self)
         if promoted:
-            # Do not rely on revision implementation details after the transition;
-            # force one exact account refresh so takeover begins promptly.
             await self.validate_accounts()
             self._sync_clients_with_runtime_accounts()
             await self._ensure_sessions_for_valid_clients()
@@ -202,9 +194,6 @@ def install_direct_execution_worker_fence() -> None:
         virtual_protection_enabled: bool = True,
     ) -> None:
         requested = {int(value) for value in scope_ids}
-        # Force a fresh database read at the final financial boundary. This is the
-        # authoritative server-side equivalent of the browser's pre-BUY epoch check
-        # and is where the independent user hard-stop sentinel is enforced.
         allowed = _server_ids(bot, requested, force=True)
         blocked = requested - allowed
         if blocked:
@@ -239,11 +228,18 @@ def install_direct_execution_worker_fence() -> None:
     RFDir5TradingBot._direct_execution_hard_stop_fence = "uncached_final_pre_buy"
     _INSTALLED = True
 
-    # This fence is the last worker-side execution layer installed by the current
-    # runtime. Install the cross-account recovery/lifecycle policy here so older
-    # Martingale cap and fail-closed wrappers cannot regain authority afterwards.
+    # These are the final worker-side authorities. Older cap/fail-closed/global-P&L
+    # layers are captured underneath and cannot regain financial/lifecycle control.
+    from app.account_identity_canonical_authority import (
+        install_account_identity_canonical_authority,
+    )
+    from app.account_trade_metrics_authority import (
+        install_account_trade_metrics_authority,
+    )
     from app.global_recovery_execution_policy import (
         install_global_recovery_execution_policy,
     )
 
+    install_account_identity_canonical_authority()
+    install_account_trade_metrics_authority()
     install_global_recovery_execution_policy()
