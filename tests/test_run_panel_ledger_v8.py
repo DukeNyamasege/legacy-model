@@ -7,19 +7,22 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-class RunPanelLedgerV8Contract(unittest.TestCase):
+class RunPanelLedgerV9Contract(unittest.TestCase):
     def text(self, relative: str) -> str:
         return (ROOT / relative).read_text(encoding="utf-8")
 
-    def test_direct_rows_and_kpis_share_retained_snapshot_without_timer(self) -> None:
+    def test_browser_and_server_rows_share_one_retained_snapshot_without_timer(self) -> None:
         ledger = self.text("dashboard/direct-transaction-ledger-v6.js")
-        self.assertIn("DIRECT TRANSACTION + KPI AUTHORITY V8", ledger)
-        self.assertIn("derivadmin-direct-ledger-snapshot-v8:", ledger)
-        self.assertIn("rememberRows(key, live)", ledger)
-        self.assertIn("return retainedRows(key)", ledger)
+        self.assertIn("__DERIVADMIN_DIRECT_TRANSACTION_LEDGER_V9__", ledger)
+        self.assertIn("derivadmin-unified-ledger-snapshot-v9:", ledger)
+        self.assertIn("function serverContracts()", ledger)
+        self.assertIn("function directContracts()", ledger)
+        self.assertIn("window.FOA_FINAL_UI?.state?.()", ledger)
+        self.assertIn("for (const row of retainedRows(key))", ledger)
+        self.assertIn("for (const row of serverContracts())", ledger)
+        self.assertIn("for (const row of directContracts())", ledger)
         self.assertIn("summary.innerHTML = statsMarkup(values)", ledger)
         self.assertIn("observer = new MutationObserver", ledger)
-        self.assertIn("render(true)", ledger)
         self.assertNotIn("setInterval", ledger)
         self.assertNotIn("requestAnimationFrame(() => render", ledger)
 
@@ -42,12 +45,13 @@ class RunPanelLedgerV8Contract(unittest.TestCase):
         self.assertIn("text-align:center!important", ux)
         self.assertIn("text-overflow:clip!important", ux)
 
-    def test_frontend_cache_busts_v8_and_usability_v2(self) -> None:
+    def test_frontend_cache_busts_unified_v9_and_scheduler_status(self) -> None:
         dockerfile = self.text("Dockerfile.frontend")
-        self.assertIn("/direct-transaction-ledger-v6.js?v=20260818-direct-ledger-v8", dockerfile)
+        self.assertIn("/direct-transaction-ledger-v6.js?v=20260818-unified-ledger-v9", dockerfile)
+        self.assertIn("/direct-run-panel-authority-v6.js?v=20260818-scheduler-start-stop-v2", dockerfile)
         self.assertIn("/run-panel-usability-v1.js?v=20260818-run-panel-usability-v2", dockerfile)
         self.assertIn("node --check dist/direct-transaction-ledger-v6.js", dockerfile)
-        self.assertIn("node --check dist/run-panel-usability-v1.js", dockerfile)
+        self.assertIn("node --check dist/direct-run-panel-authority-v6.js", dockerfile)
 
 
 if __name__ == "__main__":
