@@ -56,9 +56,6 @@
 
   function removeTestingPhasePremiumUi() {
     if (!state.testingFree) return;
-    // Premium profile/reminder/banner nodes are hidden by scoped CSS instead of
-    // removed. The retained premium bootstrap may legitimately re-render them;
-    // keeping the nodes avoids a MutationObserver reinjection loop during testing.
     document.querySelectorAll(".global-message.error,.global-message.success,.premium-message").forEach((node) => {
       if (isPremiumNoise(node)) node.remove();
     });
@@ -90,10 +87,11 @@
 
   function chooseTransactions({ force = false } = {}) {
     const tab = document.querySelector('[data-run-tab="transactions"]');
-    if (!tab) return;
-    if (!force && state.defaultTransactionsApplied) return;
+    if (!tab) return false;
+    if (!force && state.defaultTransactionsApplied) return true;
     state.defaultTransactionsApplied = true;
     if (!tab.classList.contains("active")) tab.click();
+    return true;
   }
 
   async function currentMarkets() {
@@ -259,8 +257,16 @@
     if (running !== state.running) {
       state.running = running;
       if (running) startMirror();
-      else closeMirror();
+      else {
+        state.defaultTransactionsApplied = false;
+        closeMirror();
+      }
     }
+    // The first click can beat a slow shell re-render. Once the backend lifecycle
+    // actually says the run is active, apply Transactions again if the tab did not
+    // exist during the optimistic click. This makes Transactions the run default
+    // without forcing it while the user is stopped.
+    if (running && !state.defaultTransactionsApplied) chooseTransactions();
     queueRender();
   }
 
@@ -271,15 +277,21 @@
       window.setTimeout(() => {
         const starting = !wasRunning;
         setOptimisticRunUi(starting);
-        chooseTransactions({ force: true });
-        if (starting) startMirror();
-        else closeMirror();
+        if (starting) {
+          state.defaultTransactionsApplied = false;
+          chooseTransactions({ force: true });
+          startMirror();
+        } else {
+          state.defaultTransactionsApplied = false;
+          closeMirror();
+        }
       }, 0);
       return;
     }
     if (event.target?.closest?.(STOP_SELECTORS)) {
       window.setTimeout(() => {
         setOptimisticRunUi(false);
+        state.defaultTransactionsApplied = false;
         closeMirror();
       }, 0);
       return;
@@ -308,7 +320,7 @@
   loadAccessMode();
   window.setTimeout(syncFromDom, 0);
   window.DERIVADMIN_PUBLIC_TESTING_RUNTIME_V1 = Object.freeze({
-    version: "20260818-public-testing-run-v3",
+    version: "20260818-public-testing-run-v4",
     publicWebSocket: PUBLIC_WS,
     refresh: syncFromDom,
   });
