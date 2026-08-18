@@ -13,7 +13,8 @@ export FRONTEND_ORIGINS="http://127.0.0.1:8080,http://localhost:8080,https://der
 
 # Production v6 keeps exactly one live start engine and adds independent browser +
 # server hard-stop fences, saved Virtual Hook entry authority, persistent equal
-# Split recovery, compact stable transactions and a testing-free premium fail-open.
+# Split recovery, exact offline Split continuation, compact stable transactions and
+# a testing-free premium fail-open.
 node --check dashboard/final-premium-6f3.js
 node --check dashboard/final-ui-shell-v2.js
 node --check dashboard/vps-api-boundary-v2.js
@@ -32,6 +33,7 @@ node --check dashboard/direct-ui-cleanup-v1.js
 node --check dashboard/direct-builder-loaded-v2.js
 node --check dashboard/direct-runtime-ux-v3.js
 node --check dashboard/direct-demo-reset-router-v1.js
+node --check dashboard/direct-transaction-ledger-v6.js
 node --check dashboard/direct-run-panel-authority-v6.js
 node --check scripts/export-deriv-quill-icons-v2.mjs
 node --check scripts/build-vps.mjs
@@ -39,6 +41,7 @@ node --check scripts/build-direct-runtime-v2.mjs
 node --check scripts/finalize-direct-runtime-v2.mjs
 node --check scripts/finalize-direct-ux-v4.mjs
 node --check scripts/finalize-production-controls-v6.mjs
+node --check scripts/finalize-production-controls-v6b.mjs
 
 python -m py_compile \
   app/direct_execution_hard_stop_state.py \
@@ -46,6 +49,7 @@ python -m py_compile \
   app/direct_execution_worker_fence.py \
   app/custom_split_debt_continuity_authority.py \
   app/custom_virtual_post_loss_barrier_authority.py \
+  app/vps_direct_execution_checkpoint.py \
   app/vps_backend_api.py
 
 exec python -m unittest -q \
