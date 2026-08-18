@@ -15,19 +15,115 @@
   ].join(",");
   const START_SELECTORS = [TOGGLE_SELECTORS, START_ONLY_SELECTORS].join(",");
   const STOP_SELECTORS = ["[data-stop-trading]", "[data-pause-trading]"].join(",");
+  const CRITICAL_WRITE_ROUTES = new Set([
+    "/me/custom-strategy",
+    "/me/resume-trading",
+    "/me/auto-trade",
+    "/me/stop-trading",
+    "/me/pause-trading",
+    "/me/automation-schedules",
+  ]);
+  const ACTIVE_RUNTIME_STATES = new Set(["STARTING", "WAITING_FOR_CONDITION", "EXECUTING", "RUNNING"]);
+  const boundaryFetch = window.fetch.bind(window);
 
   const state = {
     socket: null,
     reconnectTimer: null,
+    lifecycleTimer: null,
     markets: [],
     ticks: [],
     analysisCount: 0,
     running: false,
     connected: false,
+    transition: "",
     defaultTransactionsApplied: false,
     renderQueued: false,
     strategyRefreshAt: 0,
     testingFree: false,
+    lastRuntimeState: "STOPPED",
+  };
+
+  function asUrl(input) {
+    try {
+      if (input instanceof Request) return new URL(input.url, window.location.origin);
+      return new URL(String(input), window.location.origin);
+    } catch (_) { return null; }
+  }
+
+  function unproxiedRoute(url) {
+    if (!url) return "";
+    const path = String(url.pathname || "");
+    return path.startsWith("/api/") ? path.slice(4) || "/" : path;
+  }
+
+  function apiUrl(url) {
+    if (!url || url.origin !== window.location.origin) return url?.href || "";
+    const route = unproxiedRoute(url);
+    if (!route.startsWith("/me/")) return url.href;
+    return `${window.location.origin}/api${route}${url.search || ""}`;
+  }
+
+  function timeoutForRoute(route) {
+    if (route === "/me/custom-strategy") return 60000;
+    if (route === "/me/automation-schedules") return 45000;
+    return 30000;
+  }
+
+  function headersObject(headers) {
+    const result = {};
+    try {
+      new Headers(headers || {}).forEach((value, key) => { result[key] = value; });
+    } catch (_) {}
+    return result;
+  }
+
+  function directXhrFetch(input, options = {}) {
+    const url = asUrl(input);
+    const route = unproxiedRoute(url);
+    const method = String(options.method || (input instanceof Request ? input.method : "GET") || "GET").toUpperCase();
+    if (input instanceof Request && options.body == null && !["GET", "HEAD"].includes(method)) return boundaryFetch(input, options);
+
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open(method, apiUrl(url), true);
+      xhr.withCredentials = true;
+      xhr.timeout = timeoutForRoute(route);
+      const headers = headersObject(options.headers || (input instanceof Request ? input.headers : {}));
+      if (options.body != null && !Object.keys(headers).some((key) => key.toLowerCase() === "content-type")) headers["Content-Type"] = "application/json";
+      Object.entries(headers).forEach(([key, value]) => {
+        try { xhr.setRequestHeader(key, value); } catch (_) {}
+      });
+      xhr.onload = () => {
+        const responseHeaders = new Headers();
+        String(xhr.getAllResponseHeaders() || "").trim().split(/[\r\n]+/).forEach((line) => {
+          const index = line.indexOf(":");
+          if (index > 0) responseHeaders.append(line.slice(0, index).trim(), line.slice(index + 1).trim());
+        });
+        resolve(new Response(xhr.responseText || "", {
+          status: xhr.status || 500,
+          statusText: xhr.statusText || "",
+          headers: responseHeaders,
+        }));
+      };
+      xhr.onerror = () => reject(new Error("Backend connection failed. Check the API service and try again."));
+      xhr.ontimeout = () => reject(new Error(`Backend did not answer ${route} within ${(xhr.timeout / 1000).toFixed(0)}s.`));
+      xhr.onabort = () => reject(new DOMException("Request aborted", "AbortError"));
+      try { xhr.send(options.body ?? null); } catch (error) { reject(error); }
+    });
+  }
+
+  // The original VPS boundary aborts all writes after 8 seconds. Keep its GET/live
+  // cache behaviour, but route execution-critical writes through a same-origin XHR
+  // transport with realistic timeouts. This preserves cookies and never exposes
+  // account credentials or financial purchase authority to the browser.
+  window.fetch = async (input, options = {}) => {
+    const url = asUrl(input);
+    const route = unproxiedRoute(url);
+    const method = String(options.method || (input instanceof Request ? input.method : "GET") || "GET").toUpperCase();
+    if (url?.origin === window.location.origin && !["GET", "HEAD"].includes(method) && CRITICAL_WRITE_ROUTES.has(route)) {
+      return directXhrFetch(input, options);
+    }
+    return boundaryFetch(input, options);
   };
 
   async function loadAccessMode() {
@@ -54,14 +150,20 @@
       || text.includes("premium renewal reminder");
   }
 
+  function isObsoleteTimeoutNoise(node) {
+    return /backend request timed out after 8\.0s/i.test(String(node?.textContent || ""));
+  }
+
   function removeTestingPhasePremiumUi() {
     if (!state.testingFree) return;
     document.querySelectorAll(".global-message.error,.global-message.success,.premium-message").forEach((node) => {
-      if (isPremiumNoise(node)) node.remove();
+      if (isPremiumNoise(node) || (state.running && isObsoleteTimeoutNoise(node))) node.remove();
     });
   }
 
   function runLooksActive() {
+    if (state.transition === "starting") return true;
+    if (state.transition === "stopping") return false;
     const toggle = document.querySelector("[data-run-execution-toggle]");
     if (toggle?.classList.contains("on")) return true;
     const runButton = document.querySelector("[data-run-start]");
@@ -72,17 +174,15 @@
 
   function setOptimisticRunUi(running) {
     state.running = Boolean(running);
-    const toggle = document.querySelector("[data-run-execution-toggle]");
-    if (toggle) {
+    document.querySelectorAll("[data-run-execution-toggle]").forEach((toggle) => {
       toggle.classList.toggle("on", running);
       toggle.setAttribute("aria-label", running ? "Stop trading" : "Start trading");
-    }
-    const runButton = document.querySelector("[data-run-start]");
-    if (runButton) {
+    });
+    document.querySelectorAll("[data-run-start]").forEach((runButton) => {
       const label = runButton.querySelector("span");
       if (label) label.textContent = running ? "Stop" : "Run";
       else runButton.textContent = running ? "Stop" : "Run";
-    }
+    });
   }
 
   function chooseTransactions({ force = false } = {}) {
@@ -94,12 +194,18 @@
     return true;
   }
 
+  function openRunPanelToTransactions() {
+    const panel = document.querySelector(".global-run-panel");
+    if (panel?.classList.contains("collapsed")) panel.querySelector("[data-run-panel-toggle]")?.click();
+    window.setTimeout(() => chooseTransactions({ force: true }), 0);
+  }
+
   async function currentMarkets() {
     const now = Date.now();
     if (state.markets.length && now < state.strategyRefreshAt) return state.markets;
-    state.strategyRefreshAt = now + 10_000;
+    state.strategyRefreshAt = now + 10000;
     try {
-      const response = await fetch("/me/custom-strategy", {
+      const response = await boundaryFetch("/me/custom-strategy", {
         credentials: "same-origin",
         cache: "no-store",
         headers: { Accept: "application/json" },
@@ -152,9 +258,7 @@
     socket.onopen = () => {
       state.connected = true;
       markets.forEach((symbol, index) => {
-        try {
-          socket.send(JSON.stringify({ ticks: symbol, subscribe: 1, req_id: 90_000 + index }));
-        } catch (_) {}
+        try { socket.send(JSON.stringify({ ticks: symbol, subscribe: 1, req_id: 90000 + index })); } catch (_) {}
       });
       queueRender();
     };
@@ -237,7 +341,11 @@
       block.className = "testing-tick-journal";
       journal.appendChild(block);
     }
-    const markup = `<div class="testing-tick-head"><span><i class="testing-live-dot"></i>Live Deriv tick analysis</span><small>${state.connected ? "connected" : state.running ? "connecting" : "stopped"} · ${state.analysisCount} ticks</small></div><div class="testing-tick-list">${latestRowsMarkup()}</div>`;
+    const phase = state.transition === "starting" ? "starting"
+      : state.connected ? "connected"
+      : state.running ? "connecting"
+      : "stopped";
+    const markup = `<div class="testing-tick-head"><span><i class="testing-live-dot"></i>Live Deriv tick analysis</span><small>${phase} · ${state.analysisCount} ticks</small></div><div class="testing-tick-list">${latestRowsMarkup()}</div>`;
     if (block.innerHTML !== markup) block.innerHTML = markup;
   }
 
@@ -248,11 +356,112 @@
       state.renderQueued = false;
       removeTestingPhasePremiumUi();
       injectStyles();
+      if (state.running || state.transition === "starting") setOptimisticRunUi(true);
+      if (state.transition === "stopping") setOptimisticRunUi(false);
       renderTickJournal();
     });
   }
 
+  async function readLifecycleDirect() {
+    try {
+      const response = await directXhrFetch("/api/me/execution-runtime", { method: "GET", headers: { Accept: "application/json" } });
+      if (!response.ok) return null;
+      return await response.json();
+    } catch (_) { return null; }
+  }
+
+  async function syncLifecycle() {
+    const payload = await readLifecycleDirect();
+    if (!payload?.authenticated) return;
+    const runtime = String(payload.runtime_state || "STOPPED").toUpperCase();
+    state.lastRuntimeState = runtime;
+    if (ACTIVE_RUNTIME_STATES.has(runtime)) {
+      state.transition = "";
+      state.running = true;
+      setOptimisticRunUi(true);
+      startMirror();
+      if (!state.defaultTransactionsApplied) chooseTransactions();
+    } else if (["STOPPED", "ERROR"].includes(runtime) && state.transition !== "starting") {
+      state.running = false;
+      setOptimisticRunUi(false);
+      closeMirror();
+      state.defaultTransactionsApplied = false;
+    }
+    queueRender();
+  }
+
+  function scheduleLifecycleSync(delay = 350) {
+    window.clearTimeout(state.lifecycleTimer);
+    state.lifecycleTimer = window.setTimeout(syncLifecycle, delay);
+  }
+
+  async function directMainRun(starting) {
+    state.transition = starting ? "starting" : "stopping";
+    setOptimisticRunUi(starting);
+    if (starting) {
+      openRunPanelToTransactions();
+      startMirror();
+    } else {
+      state.defaultTransactionsApplied = false;
+      closeMirror();
+    }
+    queueRender();
+
+    try {
+      const path = starting ? "/me/resume-trading" : "/me/stop-trading";
+      const body = starting ? JSON.stringify({ mode: "continue" }) : "{}";
+      const response = await window.fetch(path, {
+        method: "POST",
+        body,
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+      });
+      const payload = await response.clone().json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.detail || payload?.message || `Backend returned ${response.status}`);
+      state.transition = "";
+      state.running = starting;
+      if (starting) {
+        state.lastRuntimeState = String(payload.runtime_state || "STARTING").toUpperCase();
+        setOptimisticRunUi(true);
+        startMirror();
+        openRunPanelToTransactions();
+      } else {
+        state.lastRuntimeState = "STOPPED";
+        setOptimisticRunUi(false);
+        closeMirror();
+      }
+      try { window.FOA_FINAL_UI?.refresh?.(); } catch (_) {}
+      scheduleLifecycleSync(250);
+    } catch (error) {
+      state.transition = "";
+      state.running = false;
+      setOptimisticRunUi(false);
+      closeMirror();
+      state.defaultTransactionsApplied = false;
+      const existing = document.querySelector(".instant-run-error");
+      if (existing) existing.remove();
+      const banner = document.createElement("div");
+      banner.className = "global-message error instant-run-error";
+      banner.textContent = String(error?.message || "Trading could not be started.");
+      const app = document.querySelector(".app-main") || document.getElementById("derivadmin-root");
+      app?.prepend(banner);
+    }
+    queueRender();
+  }
+
   function syncFromDom() {
+    if (state.transition === "starting") {
+      setOptimisticRunUi(true);
+      startMirror();
+      queueRender();
+      return;
+    }
+    if (state.transition === "stopping") {
+      setOptimisticRunUi(false);
+      queueRender();
+      return;
+    }
     const running = runLooksActive();
     if (running !== state.running) {
       state.running = running;
@@ -271,27 +480,40 @@
     if (target) {
       const wasRunning = runLooksActive();
       const isToggle = target.matches(TOGGLE_SELECTORS);
+      const starting = isToggle ? !wasRunning : true;
+
+      if (isToggle) {
+        // Main Run is a pure execution control: do not re-save the Builder first.
+        // This makes an already-saved strategy start immediately and prevents a
+        // slow Builder save from blocking the Run/Stop control.
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        directMainRun(starting);
+        return;
+      }
+
+      // Builder/AI Trade Now still owns save-then-start semantics in the shell.
+      // Keep this optimistic work deferred until the shell has read its own state.
       window.setTimeout(() => {
-        // Main Run and its switch are toggles. Builder/AI/ready Trade Now actions
-        // are start-only and must never stop an already-active run.
-        const starting = isToggle ? !wasRunning : true;
-        setOptimisticRunUi(starting);
-        if (starting) {
-          state.defaultTransactionsApplied = false;
-          chooseTransactions({ force: true });
-          startMirror();
-        } else {
-          state.defaultTransactionsApplied = false;
-          closeMirror();
-        }
+        setOptimisticRunUi(true);
+        state.transition = "starting";
+        state.defaultTransactionsApplied = false;
+        chooseTransactions({ force: true });
+        startMirror();
+        queueRender();
+        scheduleLifecycleSync(900);
       }, 0);
       return;
     }
+
     if (event.target?.closest?.(STOP_SELECTORS)) {
       window.setTimeout(() => {
+        state.transition = "stopping";
         setOptimisticRunUi(false);
         state.defaultTransactionsApplied = false;
         closeMirror();
+        queueRender();
+        scheduleLifecycleSync(500);
       }, 0);
       return;
     }
@@ -299,9 +521,9 @@
   }, true);
 
   document.addEventListener("foa:vps-live", () => window.setTimeout(syncFromDom, 0));
-  document.addEventListener("foa:backend-lifecycle", () => window.setTimeout(syncFromDom, 0));
-  window.addEventListener("pageshow", syncFromDom);
-  window.addEventListener("focus", () => { loadAccessMode(); syncFromDom(); });
+  document.addEventListener("foa:backend-lifecycle", () => window.setTimeout(() => { syncFromDom(); scheduleLifecycleSync(50); }, 0));
+  window.addEventListener("pageshow", () => { syncFromDom(); scheduleLifecycleSync(300); });
+  window.addEventListener("focus", () => { loadAccessMode(); syncFromDom(); scheduleLifecycleSync(100); });
   window.addEventListener("beforeunload", closeMirror);
 
   let observerQueued = false;
@@ -317,10 +539,11 @@
 
   injectStyles();
   loadAccessMode();
-  window.setTimeout(syncFromDom, 0);
+  window.setTimeout(() => { syncFromDom(); scheduleLifecycleSync(500); }, 0);
+  window.setInterval(() => { if (!document.hidden) scheduleLifecycleSync(0); }, 3000);
   window.DERIVADMIN_PUBLIC_TESTING_RUNTIME_V1 = Object.freeze({
-    version: "20260818-public-testing-run-v5",
+    version: "20260818-public-testing-run-v6",
     publicWebSocket: PUBLIC_WS,
-    refresh: syncFromDom,
+    refresh: () => { syncFromDom(); scheduleLifecycleSync(0); },
   });
 })();
