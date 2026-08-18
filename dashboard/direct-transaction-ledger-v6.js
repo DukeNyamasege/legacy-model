@@ -1,28 +1,31 @@
 (() => {
   "use strict";
 
-  if (window.__DERIVADMIN_DIRECT_TRANSACTION_LEDGER_V7__) return;
-  window.__DERIVADMIN_DIRECT_TRANSACTION_LEDGER_V7__ = true;
+  if (window.__DERIVADMIN_DIRECT_TRANSACTION_LEDGER_V8__) return;
+  window.__DERIVADMIN_DIRECT_TRANSACTION_LEDGER_V8__ = true;
 
   /*
-   * DIRECT TRANSACTION + KPI AUTHORITY
+   * DIRECT TRANSACTION + KPI AUTHORITY V8
    *
-   * Browser-direct execution is deliberately ahead of the VPS reporting ledger.
-   * While a direct journal exists for the selected account, this file owns BOTH
-   * the visible Transactions rows and the six Run summary KPIs from the same
-   * contract snapshot. That removes the historic one-run lag and the visual
-   * appear/disappear race between the shell refresh and the direct ledger.
+   * The direct Deriv journal is the source of truth for browser-owned live trades.
+   * A canonical per-account snapshot is retained so a slower VPS shell refresh can
+   * never temporarily replace confirmed rows with "No transactions yet".  The
+   * same contract snapshot owns BOTH Transactions and the six summary KPIs.
    *
-   * No timer reinserts rows. A narrow MutationObserver repairs only a shell DOM
-   * replacement and is disconnected while this authority writes its own DOM.
+   * There is no polling/reinsertion timer. DOM repairs happen synchronously from a
+   * narrow MutationObserver before the browser gets another paint opportunity.
+   * Only an explicit Reset/Clear event deletes the retained snapshot.
    */
 
   const JOURNAL_PREFIX = "derivadmin-direct-journal-v1:";
+  const SNAPSHOT_PREFIX = "derivadmin-direct-ledger-snapshot-v8:";
   let observer = null;
   let observedPanel = null;
+  let rootObserver = null;
   let applying = false;
-  let renderQueued = false;
   let lastSignature = "";
+  let lastAccountKey = "";
+  const memorySnapshots = new Map();
 
   function esc(value) {
     return String(value ?? "")
@@ -52,23 +55,68 @@
     return "";
   }
 
-  function journalRows() {
+  function accountKey() {
     const selected = selectedManagedId();
-    const keys = [];
-    if (selected) keys.push(`${JOURNAL_PREFIX}${selected}`);
-    if (!keys.length) {
-      for (let i = 0; i < localStorage.length; i += 1) {
-        const key = localStorage.key(i);
-        if (key?.startsWith(JOURNAL_PREFIX)) keys.push(key);
-      }
+    if (selected) lastAccountKey = selected;
+    return selected || lastAccountKey;
+  }
+
+  function readJson(key, fallback) {
+    try {
+      const value = JSON.parse(localStorage.getItem(key) || "null");
+      return value == null ? fallback : value;
+    } catch (_) {
+      return fallback;
     }
-    for (const key of keys) {
-      try {
-        const rows = JSON.parse(localStorage.getItem(key) || "[]");
-        if (Array.isArray(rows) && rows.length) return rows;
-      } catch (_) {}
+  }
+
+  function writeJson(key, value) {
+    try { localStorage.setItem(key, JSON.stringify(value)); } catch (_) {}
+  }
+
+  function rawJournalRows(key) {
+    if (!key) return [];
+    const rows = readJson(`${JOURNAL_PREFIX}${key}`, []);
+    return Array.isArray(rows) ? rows : [];
+  }
+
+  function retainedRows(key) {
+    if (!key) return [];
+    const memory = memorySnapshots.get(key);
+    if (Array.isArray(memory) && memory.length) return memory;
+    const rows = readJson(`${SNAPSHOT_PREFIX}${key}`, []);
+    if (Array.isArray(rows) && rows.length) {
+      memorySnapshots.set(key, rows);
+      return rows;
     }
     return [];
+  }
+
+  function rememberRows(key, rows) {
+    if (!key || !Array.isArray(rows) || !rows.length) return;
+    const copy = rows.slice(-500);
+    memorySnapshots.set(key, copy);
+    writeJson(`${SNAPSHOT_PREFIX}${key}`, copy);
+  }
+
+  function journalRows() {
+    const key = accountKey();
+    if (!key) return [];
+    const live = rawJournalRows(key);
+    if (live.length) {
+      rememberRows(key, live);
+      return live;
+    }
+    return retainedRows(key);
+  }
+
+  function clearSnapshot() {
+    const key = accountKey();
+    if (key) {
+      memorySnapshots.delete(key);
+      try { localStorage.removeItem(`${SNAPSHOT_PREFIX}${key}`); } catch (_) {}
+    }
+    lastSignature = "";
   }
 
   function contracts() {
@@ -94,11 +142,18 @@
   function marketLabel(symbol) {
     const raw = String(symbol || "").toUpperCase();
     const labels = {
-      "1HZ10V": "V10 (1s)", "1HZ25V": "V25 (1s)", "1HZ50V": "V50 (1s)",
-      "1HZ75V": "V75 (1s)", "1HZ100V": "V100 (1s)",
-      "R_10": "V10", "R_25": "V25", "R_50": "V50", "R_75": "V75", "R_100": "V100",
+      "1HZ10V": "V10 1S",
+      "1HZ25V": "V25 1S",
+      "1HZ50V": "V50 1S",
+      "1HZ75V": "V75 1S",
+      "1HZ100V": "V100 1S",
+      "R_10": "V10",
+      "R_25": "V25",
+      "R_50": "V50",
+      "R_75": "V75",
+      "R_100": "V100",
     };
-    return labels[raw] ? `${labels[raw]} · ${raw}` : (raw || "Deriv Options");
+    return labels[raw] || "Deriv";
   }
 
   function timeLabel(value) {
@@ -133,7 +188,7 @@
     const entry = row.entry_spot ?? row.entry_tick ?? "—";
     const exit = settled ? (row.exit_spot ?? row.exit_tick ?? "—") : "OPEN";
     const pl = settled ? `${profit >= 0 ? "+" : ""}${money(profit)}` : "OPEN";
-    return `<div class="transaction-row transaction-row-v6 direct-local-transaction-row-v6 direct-local-transaction-row-v7" data-direct-contract-id="${esc(row.contract_id)}">
+    return `<div class="transaction-row transaction-row-v6 direct-local-transaction-row-v6 direct-local-transaction-row-v8" data-direct-contract-id="${esc(row.contract_id)}">
       <span class="tx-time-market"><small>${esc(timeLabel(row.opened_at || row.at))}</small><b>${esc(marketLabel(row.symbol))}</b></span>
       <span class="tx-type"><b>${esc(typeLabel(row))}</b></span>
       <span class="tx-spots"><b>${esc(entry)}</b><small>${esc(exit)}</small></span>
@@ -151,7 +206,7 @@
 
     for (const row of rows) {
       const stake = Math.max(0, finite(row.stake, 0));
-      totalStake += stake; // OPEN positions count immediately as a run + stake.
+      totalStake += stake;
       if (!isSettled(row)) continue;
       const pnl = finite(row.profit, 0);
       profit += pnl;
@@ -210,13 +265,26 @@
     disconnectObserver();
     observedPanel = panel;
     observer = new MutationObserver(() => {
-      if (!applying && journalRows().length) queueRender(true);
+      if (!applying && retainedRows(accountKey()).length && activeTransactions()) render(true);
     });
     observer.observe(panel, { childList: true, subtree: true });
   }
 
+  function connectRootObserver() {
+    const root = document.getElementById("derivadmin-root");
+    if (!root || !("MutationObserver" in window) || rootObserver) return;
+    rootObserver = new MutationObserver(() => {
+      if (applying) return;
+      const panel = document.querySelector(".global-run-panel");
+      if (panel !== observedPanel) {
+        connectObserver();
+        if (retainedRows(accountKey()).length && activeTransactions()) render(true);
+      }
+    });
+    rootObserver.observe(root, { childList: true, subtree: false });
+  }
+
   function render(force = false) {
-    renderQueued = false;
     if (!activeTransactions()) {
       connectObserver();
       return;
@@ -226,7 +294,7 @@
     if (!rows.length) {
       lastSignature = "";
       connectObserver();
-      return; // No direct session: allow the normal VPS ledger to own the panel.
+      return;
     }
 
     const panel = document.querySelector(".global-run-panel");
@@ -235,10 +303,11 @@
     if (!panel || !body || !summary) return;
 
     const nextSignature = signature(rows);
-    const expectedRows = body.querySelectorAll(".direct-local-transaction-row-v7").length;
-    const expectedRuns = String(stats(rows).runs);
+    const values = stats(rows);
+    const expectedRows = body.querySelectorAll(".direct-local-transaction-row-v8").length;
     const displayedRuns = String(summary.children?.[2]?.querySelector("span")?.textContent || "").trim();
-    if (!force && nextSignature === lastSignature && expectedRows === rows.length && displayedRuns === expectedRuns) {
+    const canonicalPresent = Boolean(body.querySelector(".direct-canonical-table-v8"));
+    if (!force && canonicalPresent && nextSignature === lastSignature && expectedRows === rows.length && displayedRuns === String(values.runs)) {
       connectObserver();
       return;
     }
@@ -247,38 +316,42 @@
     disconnectObserver();
     try {
       lastSignature = nextSignature;
-      body.innerHTML = `<div class="transaction-table transaction-table-v6 direct-canonical-table-v7">
+      body.innerHTML = `<div class="transaction-table transaction-table-v6 direct-canonical-table-v8">
         <div class="transaction-head transaction-head-v6"><span>Time / Market</span><span>Type</span><span>Entry / Exit</span><span>Buy price</span><span>Profit / Loss</span></div>
         <div class="transaction-rows">${rows.map(rowMarkup).join("")}</div>
       </div>`;
-      summary.innerHTML = statsMarkup(stats(rows));
-      panel.dataset.directLedgerAuthority = "v7";
+      summary.innerHTML = statsMarkup(values);
+      panel.dataset.directLedgerAuthority = "v8";
     } finally {
       applying = false;
       connectObserver();
     }
   }
 
-  function queueRender(force = false) {
-    if (renderQueued && !force) return;
-    renderQueued = true;
-    requestAnimationFrame(() => render(force));
+  function renderNow() {
+    render(true);
   }
 
-  window.addEventListener("derivadmin:direct-trade", () => queueRender(true));
-  window.addEventListener("derivadmin:direct-clear", () => { lastSignature = ""; queueRender(true); });
-  window.addEventListener("derivadmin:direct-reset-all", () => { lastSignature = ""; queueRender(true); });
-  window.addEventListener("pageshow", () => queueRender(true));
-  document.addEventListener("foa:vps-live", () => queueRender(true));
+  window.addEventListener("derivadmin:direct-trade", renderNow);
+  window.addEventListener("derivadmin:direct-clear", () => { clearSnapshot(); renderNow(); });
+  window.addEventListener("derivadmin:direct-reset-all", () => { clearSnapshot(); renderNow(); });
+  window.addEventListener("pageshow", renderNow);
+  document.addEventListener("foa:vps-live", renderNow);
   document.addEventListener("click", (event) => {
-    if (event.target?.closest?.('[data-run-tab="transactions"]')) setTimeout(() => queueRender(true), 0);
+    if (event.target?.closest?.('[data-run-tab="transactions"]')) queueMicrotask(renderNow);
   });
 
-  queueRender(true);
-  window.DERIVADMIN_DIRECT_TRANSACTION_LEDGER_V6 = Object.freeze({
-    version: "20260818-direct-transaction-ledger-v7",
-    refresh: () => queueRender(true),
+  connectRootObserver();
+  connectObserver();
+  renderNow();
+
+  const api = Object.freeze({
+    version: "20260818-direct-transaction-ledger-v8",
+    refresh: renderNow,
     contracts,
     stats: () => stats(contracts()),
+    clearSnapshot,
   });
+  window.DERIVADMIN_DIRECT_TRANSACTION_LEDGER_V6 = api;
+  window.DERIVADMIN_DIRECT_TRANSACTION_LEDGER_V8 = api;
 })();
