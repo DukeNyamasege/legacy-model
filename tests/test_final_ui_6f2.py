@@ -20,19 +20,14 @@ class FinalUi6F2Tests(unittest.TestCase):
         self.assertIn('/final-ui-shell-v2.css?v=20260817-6f2-1', html)
         self.assertIn('/final-premium-6f3.css?v=20260817-6f3-1', html)
         self.assertIn('/final-premium-6f3.js?v=20260818-local-ui-12', html)
-        self.assertIn('/public-testing-runtime-v1.js?v=20260818-public-testing-run-v4', html)
+        self.assertIn('/public-testing-runtime-v1.js?v=20260818-public-testing-run-v5', html)
         self.assertNotIn('<script src="/vps-realtime-client-v2.js?v=20260817-6f2-1" defer>', html)
         self.assertNotIn('<script src="/final-ui-shell-v2.js?v=20260817-6f2-1" defer>', html)
         self.assertIn('/vps-realtime-client-v2.js?v=20260817-local-ui-2', premium)
         self.assertIn('/final-ui-shell-v2.js?v=20260818-local-ui-12', premium)
         for retired in (
-            "/netlify-api-boundary.js",
-            "/netlify-realtime-client.js",
-            "/final-ui-shell-v1.css",
-            "/final-ui-shell-v1.js",
-            "/ui/dashboard-v2.js",
-            "automation-home-v1",
-            "premium-subscription-action6e",
+            "/netlify-api-boundary.js", "/netlify-realtime-client.js", "/final-ui-shell-v1.css",
+            "/final-ui-shell-v1.js", "/ui/dashboard-v2.js", "automation-home-v1", "premium-subscription-action6e",
         ):
             self.assertNotIn(retired, html)
 
@@ -47,8 +42,7 @@ class FinalUi6F2Tests(unittest.TestCase):
         for route in (
             'json("/me")', 'json("/me/accounts")', 'json("/me/trades/today?limit=5000")',
             'json("/me/trading-lifecycle")', 'json("/me/automation-schedules?limit=80")',
-            'json("/me/automation-preferences")', 'json("/me/custom-strategy")',
-            'json("/me/text-to-strategy/compile"',
+            'json("/me/automation-preferences")', 'json("/me/custom-strategy")', 'json("/me/text-to-strategy/compile"',
         ):
             self.assertIn(route, js)
         self.assertNotIn("Coming soon", js)
@@ -60,9 +54,8 @@ class FinalUi6F2Tests(unittest.TestCase):
         css = (ROOT / "dashboard" / "final-ui-shell-v2.css").read_text(encoding="utf-8")
         exporter = (ROOT / "scripts" / "export-deriv-quill-icons-v2.mjs").read_text(encoding="utf-8")
         for text in (
-            "Type", "Entry / Exit spot", "Stake and P/L", "Total stake", "Total payout",
-            "No. of runs", "Contracts lost", "Contracts won", "Total profit/loss",
-            "run-account-select", "managed_account_id",
+            "Type", "Entry / Exit spot", "Stake and P/L", "Total stake", "Total payout", "No. of runs",
+            "Contracts lost", "Contracts won", "Total profit/loss", "run-account-select", "managed_account_id",
         ):
             self.assertIn(text, js)
         self.assertIn('state.me?.account_type === "real" ? "realAccount" : "demoAccount"', js)
@@ -107,10 +100,7 @@ class FinalUi6F2Tests(unittest.TestCase):
         self.assertIn('@app.get("/me/accounts")', source)
         self.assertIn('@app.post("/me/switch-account")', source)
         self.assertIn(
-            "def switch_linked_personal_account(\n"
-            "        request: Request,\n"
-            "        body: LinkedAccountSwitchRequest,\n"
-            "    ) -> Any:", source,
+            "def switch_linked_personal_account(\n        request: Request,\n        body: LinkedAccountSwitchRequest,\n    ) -> Any:", source,
         )
         self.assertNotIn(") -> dict[str, Any] | JSONResponse:", source)
         self.assertIn("managed_account_id", source)
@@ -146,9 +136,8 @@ class FinalUi6F2Tests(unittest.TestCase):
         self.assertIn('legacy_ui_shipped: false', build)
         self.assertIn('netlify_runtime_loaded: false', build)
         for asset in (
-            '"index.html"', '"final-ui-shell-v2.css"', '"final-ui-shell-v2.js"',
-            '"final-premium-6f3.css"', '"final-premium-6f3.js"', '"public-testing-runtime-v1.js"',
-            '"vps-api-boundary-v2.js"', '"vps-realtime-client-v2.js"',
+            '"index.html"', '"final-ui-shell-v2.css"', '"final-ui-shell-v2.js"', '"final-premium-6f3.css"',
+            '"final-premium-6f3.js"', '"public-testing-runtime-v1.js"', '"vps-api-boundary-v2.js"', '"vps-realtime-client-v2.js"',
         ):
             self.assertIn(asset, build)
         self.assertNotIn('"final-ui-shell-v1.js",', build)
@@ -158,12 +147,9 @@ class FinalUi6F2Tests(unittest.TestCase):
 
     def test_6f2_javascript_is_syntax_valid(self) -> None:
         for path in (
-            ROOT / "dashboard" / "final-ui-shell-v2.js",
-            ROOT / "dashboard" / "public-testing-runtime-v1.js",
-            ROOT / "dashboard" / "vps-api-boundary-v2.js",
-            ROOT / "dashboard" / "vps-realtime-client-v2.js",
-            ROOT / "scripts" / "export-deriv-quill-icons-v2.mjs",
-            ROOT / "scripts" / "build-vps.mjs",
+            ROOT / "dashboard" / "final-ui-shell-v2.js", ROOT / "dashboard" / "public-testing-runtime-v1.js",
+            ROOT / "dashboard" / "vps-api-boundary-v2.js", ROOT / "dashboard" / "vps-realtime-client-v2.js",
+            ROOT / "scripts" / "export-deriv-quill-icons-v2.mjs", ROOT / "scripts" / "build-vps.mjs",
         ):
             result = subprocess.run(["node", "--check", str(path)], cwd=ROOT, capture_output=True, text=True, timeout=20, check=False)
             self.assertEqual(result.returncode, 0, msg=f"{path.name}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}")
