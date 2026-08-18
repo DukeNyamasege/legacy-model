@@ -22,8 +22,8 @@ replaceOnce(
 replaceOnce(
   "export persistent split takeover state",
   `      recovery_debt: state.recoveryDebt,\n      consecutive_losses: state.consecutiveLosses,`,
-  `      recovery_debt: state.recoveryDebt,\n      split_basis_debt: state.splitBasisDebt,\n      split_remaining_wins: state.splitRemainingWins,\n      consecutive_losses: state.consecutiveLosses,`,
+  `      recovery_debt: state.recoveryDebt,\n      split_basis_debt: state.splitBasisDebt,\n      split_remaining_wins: state.splitRemainingWins,\n      split_part_stake: state.splitPartStake,\n      consecutive_losses: state.consecutiveLosses,`,
 );
 
 fs.writeFileSync(file, source, "utf8");
-console.log("Production v6b finalized: direct transaction entry spot and exact Split takeover state exported");
+console.log("Production v6b finalized: direct transaction entry spot and fixed equal Split takeover state exported");
