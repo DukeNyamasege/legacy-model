@@ -57,7 +57,8 @@ class TutorialCameraThemeContract(unittest.TestCase):
         self.assertIn("cp dashboard/tutorial-camera-theme-v1.css dist/tutorial-camera-theme-v1.css", docker)
         self.assertIn("20260818-camera-theme-v1", docker)
         self.assertIn("grep -q -- '--camera-bg' dist/tutorial-camera-theme-v1.css", docker)
-        self.assertIn("h.replace('</head>',camera+'\\\\n</head>')", docker)
+        self.assertIn("const camera='<link rel=", docker)
+        self.assertIn("h.replace('</head>',camera+", docker)
 
 
 if __name__ == "__main__":
