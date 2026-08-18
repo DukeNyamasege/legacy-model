@@ -61,10 +61,11 @@ class SchedulerV2AuthorityContract(unittest.TestCase):
         ):
             self.assertIn(marker, source)
 
-    def test_frontend_finalizer_adds_seconds_future_guard_history_and_state_export(self) -> None:
+    def test_frontend_finalizer_adds_explicit_seconds_future_guard_history_and_state_export(self) -> None:
         source = self.text("scripts/finalize-scheduler-v2.mjs")
         for marker in (
-            'type="time" step="1"',
+            'id="s-second" type="number" min="0" max="59" step="1"',
+            "exactScheduleTime",
             "normalizedScheduleTime",
             "scheduleWallClockIsFuture",
             "Date.now() + 5000",
