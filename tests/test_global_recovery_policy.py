@@ -46,6 +46,18 @@ class GlobalRecoveryPolicyTests(unittest.TestCase):
             (ROOT / "scripts" / "finalize-production-controls-v6.mjs").read_text(encoding="utf-8"),
         )
 
+    def test_stale_split_basis_is_repaired_only_before_first_unconsumed_leg(self) -> None:
+        source = (ROOT / "app" / "stale_split_basis_reconciliation_authority.py").read_text(encoding="utf-8")
+        fence = (ROOT / "app" / "direct_execution_worker_fence.py").read_text(encoding="utf-8")
+        self.assertIn("remaining == split_count", source)
+        self.assertIn("abs(basis - debt) > 0.009", source)
+        self.assertIn("equal_split._write_basis_debt(self, managed_id, debt)", source)
+        self.assertIn("GLOBAL_SPLIT_STALE_BASIS_REPAIRED", source)
+        self.assertGreater(
+            fence.index("install_stale_split_basis_reconciliation_authority()"),
+            fence.index("install_global_recovery_execution_policy()"),
+        )
+
     def test_only_tp_sl_or_explicit_manual_stop_are_terminal(self) -> None:
         source = (ROOT / "app" / "global_recovery_execution_policy.py").read_text(encoding="utf-8")
         self.assertIn('_ALLOWED_TERMINAL = {"take_profit", "stop_loss"}', source)
@@ -66,6 +78,9 @@ class GlobalRecoveryPolicyTests(unittest.TestCase):
         self.assertIn("discard_token_without_terminal_stop", source)
         self.assertIn("row.enabled = True", source)
         self.assertIn("automatic recovery required", source)
+        self.assertIn("_explicit_manual_reason", source)
+        self.assertIn("direct_hard_stop_active", source)
+        self.assertIn("generic/synthetic", source)
         self.assertIn("install_never_auto_stop_repository_authority()", fence)
         self.assertLess(
             fence.index("install_never_auto_stop_repository_authority()"),
