@@ -34,10 +34,13 @@ class GlobalRecoveryPolicyTests(unittest.TestCase):
 
     def test_real_debt_is_final_recovery_classifier(self) -> None:
         source = (ROOT / "app" / "global_recovery_execution_policy.py").read_text(encoding="utf-8")
+        early = (ROOT / "app" / "custom_split_recovery_authority.py").read_text(encoding="utf-8")
         self.assertIn('"recovery_classification": "REAL_DEBT_IS_RECOVERY"', source)
         self.assertIn("if debt <= 0.009", source)
         self.assertIn("is_recovery=True", source)
         self.assertIn("legacy_cap_ignored=true", source)
+        self.assertIn("actual debt forces recovery classification", early)
+        self.assertIn("debt_classifier_authoritative=true", early)
         self.assertIn(
             "splitPartStake",
             (ROOT / "scripts" / "finalize-production-controls-v6.mjs").read_text(encoding="utf-8"),
@@ -78,6 +81,7 @@ class GlobalRecoveryPolicyTests(unittest.TestCase):
 
     def test_fresh_start_clears_stale_checkpoint_but_reset_is_history_only(self) -> None:
         source = (ROOT / "app" / "vps_runtime_policy_hotfix.py").read_text(encoding="utf-8")
+        browser = (ROOT / "dashboard" / "deriv-direct-execution-v1.js").read_text(encoding="utf-8")
         for prefix in (
             "direct_execution:checkpoint:v1:",
             "custom_equal_split_basis_debt:",
@@ -88,6 +92,14 @@ class GlobalRecoveryPolicyTests(unittest.TestCase):
         self.assertIn('"/me/direct-execution/arm"', source)
         self.assertNotIn('"/me/clear-trades",', source)
         self.assertIn('reset_trades_financial_state_policy = "history_only"', source)
+        start = browser.index("function clearLocalTrades()")
+        end = browser.index("function normalizeCondition", start)
+        clear_body = browser[start:end]
+        self.assertIn("HISTORY ONLY", clear_body)
+        self.assertNotIn("state.recoveryDebt = 0", clear_body)
+        self.assertNotIn("state.sessionProfit = 0", clear_body)
+        self.assertNotIn("state.consecutiveLosses = 0", clear_body)
+        self.assertNotIn("state.virtualMode = false", clear_body)
 
     def test_browser_and_server_handoff_preserve_fixed_split_stake(self) -> None:
         checkpoint_js = (ROOT / "dashboard" / "direct-continuity-checkpoint-v1.js").read_text(encoding="utf-8")
@@ -130,11 +142,11 @@ class GlobalRecoveryPolicyTests(unittest.TestCase):
         self.assertIn("PRIVATE_WS_RATE_LIMIT_BACKOFF_SECONDS", compose)
         self.assertIn("PRIVATE_WS_MAX_BACKOFF_SECONDS", compose)
 
-    def test_runtime_report_matches_exact_managed_id_suffix(self) -> None:
+    def test_runtime_report_matches_exact_managed_id_suffix_without_unsafe_cast(self) -> None:
         source = (ROOT / "scripts" / "collect_account_runtime_report.sh").read_text(encoding="utf-8")
-        self.assertIn("preference_key ~ ':[0-9]+$'", source)
-        self.assertIn("split_part(preference_key", source)
+        self.assertIn("substring(preference_key from ':([0-9]+)$')::integer IN", source)
         self.assertNotIn("replace('${ID_LIST}', ',', '|')", source)
+        self.assertNotIn("split_part(preference_key", source)
 
 
 if __name__ == "__main__":
