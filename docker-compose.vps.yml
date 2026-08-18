@@ -44,6 +44,7 @@ services:
       dockerfile: Dockerfile.frontend
       args:
         PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-https://derivadmin.site}
+        PUBLIC_TESTING_FREE_ACCESS: ${PUBLIC_TESTING_FREE_ACCESS:-true}
     restart: unless-stopped
     ports:
       - "127.0.0.1:8081:80"
