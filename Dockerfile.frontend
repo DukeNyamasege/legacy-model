@@ -11,6 +11,7 @@ COPY scripts/build-direct-runtime-v2.mjs ./scripts/build-direct-runtime-v2.mjs
 COPY scripts/finalize-direct-runtime-v2.mjs ./scripts/finalize-direct-runtime-v2.mjs
 COPY scripts/finalize-direct-ux-v4.mjs ./scripts/finalize-direct-ux-v4.mjs
 COPY scripts/finalize-production-controls-v6.mjs ./scripts/finalize-production-controls-v6.mjs
+COPY scripts/finalize-production-controls-v6b.mjs ./scripts/finalize-production-controls-v6b.mjs
 COPY scripts/export-deriv-quill-icons-v2.mjs ./scripts/export-deriv-quill-icons-v2.mjs
 
 ARG PUBLIC_ORIGIN=https://derivadmin.site
@@ -22,11 +23,13 @@ RUN node scripts/build-vps.mjs
 # Build-time parity compiler. It starts from the reviewed direct-v1 engine and
 # guarded UX-v3 source, applies exact known replacements, then production-v6 adds
 # synchronous Stop support, persistent equal Split recovery, compact transactions
-# and a testing-free premium fail-open. Every transformed JS file is syntax checked.
+# and a testing-free premium fail-open. v6b exports the exact Split handoff state
+# and direct entry-spot metadata. Every transformed JS file is syntax checked.
 RUN node scripts/build-direct-runtime-v2.mjs \
   && node scripts/finalize-direct-runtime-v2.mjs \
   && node scripts/finalize-direct-ux-v4.mjs \
   && node scripts/finalize-production-controls-v6.mjs \
+  && node scripts/finalize-production-controls-v6b.mjs \
   && node --check dist/final-premium-6f3.js \
   && node --check dist/final-ui-shell-v2.js \
   && node --check dist/deriv-direct-execution-v2.js \
@@ -35,8 +38,9 @@ RUN node scripts/build-direct-runtime-v2.mjs \
 # Hybrid execution frontend. deriv-direct-execution-v2 remains the ONLY manual/live
 # start engine. The public-testing helper is access/UI only. The hard-stop socket
 # fence is the outermost BUY guard before the direct engine creates its sockets.
-# Runtime UX renders account/Journal analysis, while run-panel-authority-v6 is LAST
-# and owns only stable Start/Stop presentation, instant reset and server-stop retry.
+# Runtime UX renders account/Journal analysis; direct transaction ledger merges
+# browser-direct contracts into the same canonical five-column Transactions table;
+# run-panel-authority-v6 is LAST and owns stable Start/Stop/reset presentation only.
 RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && cp dashboard/direct-financial-fence-v1.js dist/direct-financial-fence-v1.js \
   && cp dashboard/direct-socket-control-v1.js dist/direct-socket-control-v1.js \
@@ -48,6 +52,7 @@ RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && cp dashboard/direct-ui-cleanup-v1.js dist/direct-ui-cleanup-v1.js \
   && cp dashboard/direct-builder-loaded-v2.js dist/direct-builder-loaded-v2.js \
   && cp dashboard/direct-demo-reset-router-v1.js dist/direct-demo-reset-router-v1.js \
+  && cp dashboard/direct-transaction-ledger-v6.js dist/direct-transaction-ledger-v6.js \
   && cp dashboard/direct-run-panel-authority-v6.js dist/direct-run-panel-authority-v6.js \
   && node --check dist/direct-pip-precision-v1.js \
   && node --check dist/direct-financial-fence-v1.js \
@@ -60,8 +65,9 @@ RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && node --check dist/direct-ui-cleanup-v1.js \
   && node --check dist/direct-builder-loaded-v2.js \
   && node --check dist/direct-demo-reset-router-v1.js \
+  && node --check dist/direct-transaction-ledger-v6.js \
   && node --check dist/direct-run-panel-authority-v6.js \
-  && node -e "const fs=require('fs');const p='dist/index.html';let h=fs.readFileSync(p,'utf8');const scripts=['<script src=\"/direct-pip-precision-v1.js?v=20260818-direct-pip-v1\" defer></script>','<script src=\"/direct-financial-fence-v1.js?v=20260818-direct-fence-v2\" defer></script>','<script src=\"/direct-socket-control-v1.js?v=20260818-direct-socket-v1\" defer></script>','<script src=\"/direct-hard-stop-fence-v1.js?v=20260818-browser-hard-stop-v1\" defer></script>','<script src=\"/direct-reset-authority-v1.js?v=20260818-reset-authority-v1\" defer></script>','<script src=\"/direct-interaction-guard-v3.js?v=20260818-interaction-v3\" defer></script>','<script src=\"/deriv-direct-execution-v2.js?v=20260818-browser-direct-v6\" defer></script>','<script src=\"/direct-strategy-persistence-v1.js?v=20260818-direct-persist-v1\" defer></script>','<script src=\"/direct-continuity-checkpoint-v1.js?v=20260818-direct-continuity-v1\" defer></script>','<script src=\"/direct-ui-cleanup-v1.js?v=20260818-direct-cleanup-v1\" defer></script>','<script src=\"/direct-builder-loaded-v2.js?v=20260818-builder-loaded-v2\" defer></script>','<script src=\"/direct-runtime-ux-v4.js?v=20260818-runtime-ux-v6\" defer></script>','<script src=\"/direct-demo-reset-router-v1.js?v=20260818-demo-reset-router-v1\" defer></script>','<script src=\"/direct-run-panel-authority-v6.js?v=20260818-single-start-stop-v6\" defer></script>'];for(const s of scripts){if(!h.includes(s))h=h.replace('</body>',s+'\\n</body>');}fs.writeFileSync(p,h);"
+  && node -e "const fs=require('fs');const p='dist/index.html';let h=fs.readFileSync(p,'utf8');const scripts=['<script src=\"/direct-pip-precision-v1.js?v=20260818-direct-pip-v1\" defer></script>','<script src=\"/direct-financial-fence-v1.js?v=20260818-direct-fence-v2\" defer></script>','<script src=\"/direct-socket-control-v1.js?v=20260818-direct-socket-v1\" defer></script>','<script src=\"/direct-hard-stop-fence-v1.js?v=20260818-browser-hard-stop-v1\" defer></script>','<script src=\"/direct-reset-authority-v1.js?v=20260818-reset-authority-v1\" defer></script>','<script src=\"/direct-interaction-guard-v3.js?v=20260818-interaction-v3\" defer></script>','<script src=\"/deriv-direct-execution-v2.js?v=20260818-browser-direct-v6b\" defer></script>','<script src=\"/direct-strategy-persistence-v1.js?v=20260818-direct-persist-v1\" defer></script>','<script src=\"/direct-continuity-checkpoint-v1.js?v=20260818-direct-continuity-v2-split\" defer></script>','<script src=\"/direct-ui-cleanup-v1.js?v=20260818-direct-cleanup-v1\" defer></script>','<script src=\"/direct-builder-loaded-v2.js?v=20260818-builder-loaded-v2\" defer></script>','<script src=\"/direct-runtime-ux-v4.js?v=20260818-runtime-ux-v6\" defer></script>','<script src=\"/direct-demo-reset-router-v1.js?v=20260818-demo-reset-router-v1\" defer></script>','<script src=\"/direct-transaction-ledger-v6.js?v=20260818-direct-ledger-v6\" defer></script>','<script src=\"/direct-run-panel-authority-v6.js?v=20260818-single-start-stop-v6\" defer></script>'];for(const s of scripts){if(!h.includes(s))h=h.replace('</body>',s+'\\n</body>');}fs.writeFileSync(p,h);"
 
 FROM nginx:1.27-alpine AS frontend
 
