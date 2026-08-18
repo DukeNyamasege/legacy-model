@@ -103,6 +103,7 @@ docker compose -f docker-compose.yml run --rm --no-deps api sh -ec '
     tests.test_execution_continuity_v10 \
     tests.test_scheduler_v2_authority \
     tests.test_run_panel_ledger_v8 \
+    tests.test_single_global_run_panel \
     tests.test_hybrid_browser_direct_v2 \
     tests.test_persistent_scheduler_action5 \
     tests.test_execution_stop_reason_authority \
