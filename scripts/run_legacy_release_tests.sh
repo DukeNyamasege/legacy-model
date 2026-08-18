@@ -14,7 +14,8 @@ export FRONTEND_ORIGINS="http://127.0.0.1:8080,http://localhost:8080,https://der
 # Production continuity-v1 keeps Run alive across recoverable transport failures,
 # reconciles open contracts after authenticated-WS reconnect, makes Reset a pure
 # visibility action, keeps one human Start flow, and financially fences real BUYs
-# behind the configured Virtual Hook loss/win state machine.
+# behind the configured Virtual Hook loss/win state machine. The camera theme is a
+# presentation-only final CSS authority for tutorial/live-recording readability.
 node --check dashboard/final-premium-6f3.js
 node --check dashboard/final-ui-shell-v2.js
 node --check dashboard/vps-api-boundary-v2.js
@@ -47,6 +48,9 @@ node --check scripts/finalize-production-controls-v6b.mjs
 node --check scripts/finalize-scheduler-v2.mjs
 node --check scripts/finalize-execution-continuity-v1.mjs
 
+grep -q -- '--camera-bg: #07111f' dashboard/tutorial-camera-theme-v1.css
+grep -q -- '--camera-bg: #e9f0f6' dashboard/tutorial-camera-theme-v1.css
+
 python -m py_compile \
   app/direct_execution_hard_stop_state.py \
   app/vps_direct_hard_stop_v2.py \
@@ -58,6 +62,7 @@ python -m py_compile \
   app/vps_backend_api.py
 
 exec python -m unittest -q \
+  tests.test_tutorial_camera_theme \
   tests.test_execution_continuity_v10 \
   tests.test_scheduler_v2_authority \
   tests.test_run_panel_ledger_v8 \
