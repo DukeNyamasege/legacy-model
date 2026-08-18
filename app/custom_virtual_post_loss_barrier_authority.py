@@ -4,12 +4,16 @@ import time
 from typing import Any
 
 from app import custom_strategy_direct_runtime as direct_runtime
+from app.custom_strategy_virtual_hook import virtual_hook_settings_from_session
+from app.models import AccountRiskState, utc_now
+from app.repositories.rf_dir5_repository import RFDir5Repository, VIRTUAL_WAITING_FOR_WIN
 from app.rf_dir5_bot import RFDir5TradingBot
 
 
 _INSTALLED = False
 _ORIGINAL_HANDLE_CONTRACT: Any = None
 _ORIGINAL_SCHEDULE: Any = None
+_ORIGINAL_RECORD_OUTCOME: Any = None
 
 
 def _barriers(bot: RFDir5TradingBot) -> dict[int, int]:
@@ -37,21 +41,118 @@ def _tick_epoch(tick: dict[str, Any]) -> int:
     return 0
 
 
-def install_custom_virtual_post_loss_barrier_authority() -> None:
-    """Do not let the real-loss settlement tick double as a virtual entry tick.
+def _saved_hook(repository: RFDir5Repository, managed_id: int):
+    try:
+        with repository.database.session() as session:
+            return virtual_hook_settings_from_session(session, int(managed_id))
+    except Exception:
+        return None
 
-    The real contract remains authoritative until its settlement handler finishes.
-    If that settlement enters Virtual Hook, every Custom Strategy account scheduler
-    is blocked until a strictly later provider tick arrives. The future tick still
-    has to qualify the normal saved strategy; there is no virtual-only fast path.
+
+def install_custom_virtual_post_loss_barrier_authority() -> None:
+    """Final saved Virtual Hook entry + future-tick barrier authority.
+
+    The Builder's account-scoped Virtual Hook controls both sides of the state
+    machine on the server:
+
+      actual losses >= configured threshold -> VIRTUAL_WAITING_FOR_WIN
+      configured consecutive virtual wins   -> REAL_RECOVERY_PENDING
+
+    The real contract remains authoritative until settlement completes.  If that
+    settlement enters Virtual Hook, every Custom Strategy account scheduler is
+    blocked until a strictly later provider tick arrives.  The future tick still
+    has to qualify the saved strategy; there is no virtual-only fast path.
     """
 
-    global _INSTALLED, _ORIGINAL_HANDLE_CONTRACT, _ORIGINAL_SCHEDULE
+    global _INSTALLED, _ORIGINAL_HANDLE_CONTRACT, _ORIGINAL_SCHEDULE, _ORIGINAL_RECORD_OUTCOME
     if _INSTALLED:
         return
 
     _ORIGINAL_HANDLE_CONTRACT = RFDir5TradingBot.handle_contract_update
     _ORIGINAL_SCHEDULE = direct_runtime._schedule_account_matches
+    _ORIGINAL_RECORD_OUTCOME = RFDir5Repository.record_account_outcome
+
+    def record_outcome_with_saved_virtual_hook(
+        self: RFDir5Repository,
+        *args: Any,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        original = _ORIGINAL_RECORD_OUTCOME
+        if original is None:
+            raise RuntimeError("Outcome recorder is unavailable")
+
+        try:
+            managed_id = int(kwargs.get("managed_account_id"))
+        except (TypeError, ValueError):
+            return original(self, *args, **kwargs)
+
+        hook = _saved_hook(self, managed_id)
+        patched = dict(kwargs)
+        if hook is not None:
+            patched["virtual_protection_enabled"] = bool(hook.enabled)
+            patched["virtual_trigger_actual_losses"] = max(1, int(hook.enter_after_losses))
+
+        result = original(self, *args, **patched)
+        if hook is None or not hook.enabled:
+            return result
+
+        # The historic repository guard never entered virtual before two losses.
+        # Respect an explicitly saved Custom Strategy threshold of one as well, and
+        # repair any wrapper that accidentally advanced the mode too early/late.
+        try:
+            profit = float(kwargs.get("profit") or 0.0)
+        except (TypeError, ValueError):
+            profit = 0.0
+        if profit > 0:
+            return result
+
+        changed = False
+        with self.database.session() as session:
+            state = session.get(AccountRiskState, managed_id, with_for_update=True)
+            if state is None:
+                return result
+            threshold = max(1, int(hook.enter_after_losses))
+            losses = int(state.consecutive_losses or 0)
+            debt = float(state.recovery_loss_debt or 0.0)
+            if losses >= threshold and debt >= 0.01:
+                if state.protection_mode != VIRTUAL_WAITING_FOR_WIN:
+                    state.protection_mode = VIRTUAL_WAITING_FOR_WIN
+                    state.entered_virtual_mode_at = utc_now()
+                    state.virtual_win_count = 0
+                    state.current_virtual_loss_streak = 0
+                    changed = True
+                state.recovery_pending = True
+                state.recovery_pending_since = state.recovery_pending_since or utc_now()
+                state.updated_at = utc_now()
+
+                result.update(
+                    {
+                        "protection_mode": "VIRTUAL_MODE",
+                        "raw_protection_state": VIRTUAL_WAITING_FOR_WIN,
+                        "recovery_pending": True,
+                        "virtual_hook_enabled": True,
+                        "virtual_hook_enter_after_losses": threshold,
+                        "virtual_hook_exit_after_consecutive_wins": max(
+                            1, int(hook.exit_after_consecutive_wins)
+                        ),
+                    }
+                )
+
+        if changed:
+            self.base.audit(
+                "CUSTOM_VIRTUAL_HOOK_ENTERED",
+                "worker",
+                "settlement",
+                {
+                    "managed_account_id": managed_id,
+                    "enter_after_losses": max(1, int(hook.enter_after_losses)),
+                    "exit_after_consecutive_wins": max(
+                        1, int(hook.exit_after_consecutive_wins)
+                    ),
+                    "financial_purchase": False,
+                },
+            )
+        return result
 
     async def handle_contract_then_arm_virtual_barrier(
         self: RFDir5TradingBot,
@@ -111,7 +212,7 @@ def install_custom_virtual_post_loss_barrier_authority() -> None:
         self.logger.warning(
             "CUSTOM_VIRTUAL_AFTER_REAL_LOSS_BARRIER managed_id=%s contract_id=%s "
             "settlement_epoch=%s open_actual_closed=true same_settlement_tick_entry=false "
-            "virtual_fast_path=false",
+            "virtual_fast_path=false saved_hook_authoritative=true",
             int(managed_id),
             int(contract_id),
             settlement_epoch,
@@ -179,8 +280,9 @@ def install_custom_virtual_post_loss_barrier_authority() -> None:
         finally:
             bot._custom_direct_accounts = runtime
 
+    RFDir5Repository.record_account_outcome = record_outcome_with_saved_virtual_hook  # type: ignore[method-assign]
     RFDir5TradingBot.handle_contract_update = handle_contract_then_arm_virtual_barrier  # type: ignore[method-assign]
     direct_runtime._schedule_account_matches = schedule_only_after_future_post_loss_tick
     RFDir5TradingBot._custom_virtual_post_loss_barrier_authority_installed = True
-    RFDir5TradingBot._custom_virtual_entry_policy = "real_position_settled_then_future_qualified_tick"
+    RFDir5TradingBot._custom_virtual_entry_policy = "saved_hook_real_loss_threshold_then_future_qualified_tick"
     _INSTALLED = True
