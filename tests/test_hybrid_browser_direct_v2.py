@@ -24,7 +24,7 @@ class HybridBrowserDirectV2Contract(unittest.TestCase):
         authority = self.text("app/direct_browser_runtime_authority.py")
         self.assertIn("direct_browser_lease_fresh(row)", authority)
         self.assertIn("return None", authority)
-        self.assertIn("only the browser heartbeat may extend", authority)
+        self.assertIn("only a browser heartbeat may extend", authority)
         self.assertNotIn("row.execution_status_updated_at =", authority)
 
     def test_demo_reset_uses_official_deriv_options_endpoint(self) -> None:
