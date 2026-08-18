@@ -6,14 +6,14 @@
 
   const PUBLIC_WS = "wss://api.derivws.com/trading/v1/options/ws/public";
   const FALLBACK_MARKETS = ["1HZ10V", "1HZ25V", "1HZ50V", "1HZ75V", "1HZ100V", "R_10", "R_25", "R_50", "R_75", "R_100"];
-  const START_SELECTORS = [
-    "[data-run-start]",
-    "[data-run-execution-toggle]",
+  const TOGGLE_SELECTORS = ["[data-run-start]", "[data-run-execution-toggle]"].join(",");
+  const START_ONLY_SELECTORS = [
     "[data-builder-trade]",
     "[data-ready-trade]",
     "[data-trade-now-selected]",
     "[data-start-trading]",
   ].join(",");
+  const START_SELECTORS = [TOGGLE_SELECTORS, START_ONLY_SELECTORS].join(",");
   const STOP_SELECTORS = ["[data-stop-trading]", "[data-pause-trading]"].join(",");
 
   const state = {
@@ -262,10 +262,6 @@
         closeMirror();
       }
     }
-    // The first click can beat a slow shell re-render. Once the backend lifecycle
-    // actually says the run is active, apply Transactions again if the tab did not
-    // exist during the optimistic click. This makes Transactions the run default
-    // without forcing it while the user is stopped.
     if (running && !state.defaultTransactionsApplied) chooseTransactions();
     queueRender();
   }
@@ -274,8 +270,11 @@
     const target = event.target?.closest?.(START_SELECTORS);
     if (target) {
       const wasRunning = runLooksActive();
+      const isToggle = target.matches(TOGGLE_SELECTORS);
       window.setTimeout(() => {
-        const starting = !wasRunning;
+        // Main Run and its switch are toggles. Builder/AI/ready Trade Now actions
+        // are start-only and must never stop an already-active run.
+        const starting = isToggle ? !wasRunning : true;
         setOptimisticRunUi(starting);
         if (starting) {
           state.defaultTransactionsApplied = false;
@@ -320,7 +319,7 @@
   loadAccessMode();
   window.setTimeout(syncFromDom, 0);
   window.DERIVADMIN_PUBLIC_TESTING_RUNTIME_V1 = Object.freeze({
-    version: "20260818-public-testing-run-v4",
+    version: "20260818-public-testing-run-v5",
     publicWebSocket: PUBLIC_WS,
     refresh: syncFromDom,
   });
