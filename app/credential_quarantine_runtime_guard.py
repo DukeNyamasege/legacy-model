@@ -6,6 +6,7 @@ from typing import Any
 from app.bulk_credential_failure_hardening import (
     quarantine_undecryptable_enabled_accounts,
 )
+from app.direct_execution_worker_fence import install_direct_execution_worker_fence
 from enhanced_bot import TradingBot
 
 
@@ -14,16 +15,22 @@ _VERSION = "credential-quarantine-pre-validation-v1"
 
 
 def install_credential_quarantine_runtime_guard() -> None:
-    """Run one final credential sweep immediately before Deriv validation.
+    """Run final browser-ownership and credential guards before validation.
 
-    The ordinary account-loader guard remains the primary protection. This final
-    boundary closes a startup ordering/race gap: an enabled legacy row that is
-    undecryptable or already marked InvalidToken is disabled before any provider
-    account discovery, OTP or financial execution can use it. Credentials are
-    preserved for repair and healthy sibling accounts are untouched.
+    The direct-execution fence is installed here because production worker setup
+    invokes this function after Custom Strategy runtime is installed. That gives
+    the fence the final live references to the custom scanner and exact-scope BUY
+    path without changing scheduled/server execution semantics.
+
+    The ordinary credential loader guard remains the primary credential protection.
+    This boundary also closes a startup ordering/race gap: an enabled legacy row
+    that is undecryptable or already marked InvalidToken is disabled before any
+    provider account discovery, OTP or financial execution can use it.
     """
 
     global _INSTALLED
+    install_direct_execution_worker_fence()
+
     current = TradingBot.validate_accounts
     if getattr(current, "_credential_quarantine_runtime_guard", False):
         _INSTALLED = True
@@ -53,7 +60,8 @@ def install_credential_quarantine_runtime_guard() -> None:
     TradingBot._credential_quarantine_runtime_guard_version = _VERSION
     logging.getLogger(__name__).warning(
         "CREDENTIAL_QUARANTINE_RUNTIME_GUARD_INSTALLED version=%s "
-        "boundary=before_provider_validation credentials_preserved=true",
+        "boundary=before_provider_validation credentials_preserved=true "
+        "direct_browser_worker_fence=true",
         _VERSION,
     )
     _INSTALLED = True
