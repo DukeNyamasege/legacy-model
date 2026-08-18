@@ -4,9 +4,13 @@ from __future__ import annotations
 
 The final 6F-2 selector correctly scopes accounts by Deriv login identity, but its
 GET route enumerates/decrypts every historical ManagedAccount on every browser
-refresh.  On a long-lived VPS that can exceed the frontend read timeout.  This
+refresh. On a long-lived VPS that can exceed the frontend read timeout. This
 hotfix returns the selected account in O(1), warms the complete linked list after
 the response, and validates an explicit switch using only current + target rows.
+
+DOT/ROT Options account identifiers are intentionally returned in full to the
+authenticated account owner. They are account identifiers, not bearer credentials;
+trade secrets/tokens remain server-side and are never returned by these routes.
 """
 
 import threading
@@ -66,9 +70,10 @@ def _selected_payload(account: dict[str, Any], row: dict[str, Any], payload: dic
     summary = base_api.REPOSITORY.account_summary(account_id, managed_account_id=managed_id)
     return {
         "managed_account_id": managed_id,
+        "account_id": account_id,
         "account_id_masked": base_api.mask_account_id(account_id),
         "account_type": account_type,
-        "label": str(row.get("label") or f"{account_type.title()} {base_api.mask_account_id(account_id)}"),
+        "label": str(row.get("label") or f"{account_type.title()} {account_id}"),
         "balance": float(summary.get("balance") or 0.0),
         "currency": str(summary.get("currency") or "USD").upper(),
         "status": str(summary.get("status") or "linked"),
@@ -94,10 +99,13 @@ def _cached(identity: str, selected_id: int) -> list[dict[str, Any]] | None:
 def _discover(identity: str, current_payload: dict[str, Any]) -> None:
     try:
         rows = _linked_rows(current_payload)
-        items = [
-            {**_account_payload(row, payload, -1), "selected": False}
-            for row, payload in rows
-        ]
+        items: list[dict[str, Any]] = []
+        for row, payload in rows:
+            account_id = str(payload.get("account_id") or "").strip()
+            item = {**_account_payload(row, payload, -1), "selected": False}
+            item["account_id"] = account_id
+            item["account_id_masked"] = base_api.mask_account_id(account_id)
+            items.append(item)
         with _LOCK:
             _CACHE[identity] = (time.monotonic() + _CACHE_TTL_SECONDS, items)
     except Exception:
@@ -129,13 +137,15 @@ def install_vps_linked_accounts_latency_hotfix(app: Any) -> None:
             raise HTTPException(status_code=401, detail="Not authenticated")
         if account.get("local_dev_preview"):
             account_type = base_api.normalize_account_type(account.get("account_type"))
+            preview_id = str(account.get("account_id") or account.get("account_id_masked") or "VRTDEV")
             return {
                 "authenticated": True,
                 "scope": "linked_options_accounts",
                 "selected_managed_account_id": int(account.get("id") or 0),
                 "accounts": [{
                     "managed_account_id": int(account.get("id") or 0),
-                    "account_id_masked": str(account.get("account_id_masked") or "VRT***DEV"),
+                    "account_id": preview_id,
+                    "account_id_masked": str(account.get("account_id_masked") or preview_id),
                     "account_type": account_type,
                     "label": str(account.get("label") or "Local Preview"),
                     "balance": 0.0,
@@ -166,7 +176,7 @@ def install_vps_linked_accounts_latency_hotfix(app: Any) -> None:
             "selected_managed_account_id": selected_id,
             "accounts": linked,
             "linked_accounts_loading": loading,
-            "performance_profile": "vps-linked-accounts-stale-while-revalidate-v1",
+            "performance_profile": "vps-linked-accounts-stale-while-revalidate-v2-full-id",
         }
 
     @app.post("/me/switch-account")
@@ -218,10 +228,12 @@ def install_vps_linked_accounts_latency_hotfix(app: Any) -> None:
             base_api.mark_dashboard_dirty(target_type)
         except Exception:
             pass
+        account_id = str(target_payload.get("account_id") or "").strip()
         return {
             "success": True,
             "managed_account_id": target_id,
-            "account_id_masked": base_api.mask_account_id(str(target_payload.get("account_id") or "")),
+            "account_id": account_id,
+            "account_id_masked": base_api.mask_account_id(account_id),
             "account_type": target_type,
         }
 
