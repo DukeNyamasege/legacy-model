@@ -80,12 +80,23 @@ class SchedulerV2AuthorityContract(unittest.TestCase):
         ):
             self.assertIn(marker, source)
 
+    def test_mobile_scheduler_clock_and_results_cannot_overflow(self) -> None:
+        ui = self.text("dashboard/scheduler-v2-ui.js")
+        self.assertIn(".schedule-clock-grid", ui)
+        self.assertIn("grid-template-columns:1.15fr .9fr .55fr 1.2fr", ui)
+        self.assertIn("@media(max-width:700px)", ui)
+        self.assertIn("@media(max-width:390px)", ui)
+        self.assertIn(".schedule-result", ui)
+        self.assertIn("max-width:100%", ui)
+
     def test_frontend_build_runs_scheduler_finalizer_and_unified_ledger_v9(self) -> None:
         docker = self.text("Dockerfile.frontend")
         self.assertIn("COPY scripts/finalize-scheduler-v2.mjs", docker)
         self.assertIn("node scripts/finalize-scheduler-v2.mjs", docker)
+        self.assertIn("cp dashboard/scheduler-v2-ui.js", docker)
         self.assertIn("20260818-unified-ledger-v9", docker)
         self.assertIn("20260818-scheduler-start-stop-v2", docker)
+        self.assertIn("20260818-scheduler-v2-ui-1", docker)
         self.assertIn("node --check dist/final-ui-shell-v2.js", docker)
 
     def test_vps_entrypoint_installs_scheduler_v2_after_action5(self) -> None:
