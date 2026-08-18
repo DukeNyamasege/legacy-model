@@ -25,14 +25,40 @@ def _retry_status(status: str, reason: str) -> str:
     return "reconnecting" if any(word in text for word in ("token", "credential", "connect", "socket", "session")) else "waiting_for_condition"
 
 
+def _explicit_manual_reason(reason: str) -> bool:
+    text = str(reason or "").strip().lower()
+    return any(
+        marker in text
+        for marker in (
+            "user stop",
+            "user pressed",
+            "manual stop",
+            "manually stopped",
+            "manual pause",
+            "paused manually",
+            "stopped manually",
+            "start is required before execution",
+            "auto trading stopped for this account mode",
+        )
+    )
+
+
 def _preserve_enabled_retry(repository: Test2Repository, managed_id: int, status: str, reason: str) -> None:
     with repository.database.session() as session:
         row = session.get(ManagedAccount, int(managed_id), with_for_update=True)
-        if row is None or direct_hard_stop_active(session, int(managed_id)):
+        if row is None:
+            return
+        if direct_hard_stop_active(session, int(managed_id)):
             return
         current = str(row.execution_status or "").strip().lower()
-        if current in {"take_profit", "stop_loss", "manual_pause", "stopped"}:
+        current_reason = str(row.execution_status_reason or "")
+        if current in {"take_profit", "stop_loss"}:
             return
+        if current in {"manual_pause", "stopped"} and _explicit_manual_reason(current_reason):
+            return
+        # A generic/synthetic "stopped" row without a hard-stop sentinel or an
+        # explicit manual reason is not a user exit. Keep the already-started
+        # account enabled and let its repair path continue.
         row.enabled = True
         row.execution_status = _retry_status(status, reason)
         row.execution_status_reason = (
