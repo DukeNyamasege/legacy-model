@@ -252,7 +252,7 @@ jobs:
           grep -Fq '/deriv-quill-icons-v2.js?v=2.4.18' dist/index.html
           grep -Fq '/final-premium-6f3.css?v=20260817-6f3-1' dist/index.html
           grep -Fq '/final-premium-6f3.js?v=20260818-local-ui-12' dist/index.html
-          grep -Fq '/public-testing-runtime-v1.js?v=20260818-public-testing-run-v4' dist/index.html
+          grep -Fq '/public-testing-runtime-v1.js?v=20260818-public-testing-run-v5' dist/index.html
           grep -Fq 'const TESTING_FREE_ACCESS = true;' dist/final-premium-6f3.js
           ! grep -Fq '<script src="/vps-realtime-client-v2.js?v=20260817-6f2-1" defer>' dist/index.html
           ! grep -Fq '<script src="/final-ui-shell-v2.js?v=20260817-6f2-1" defer>' dist/index.html
