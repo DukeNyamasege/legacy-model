@@ -11,10 +11,10 @@ export ALLOW_LEGACY_GLOBAL_TOKENS=true
 export COPYTRADING_ALLOW_LEGACY_GLOBAL_TOKENS=true
 export FRONTEND_ORIGINS="http://127.0.0.1:8080,http://localhost:8080,https://derivadmin.site"
 
-# Production v8 keeps exactly one live start engine, a retained browser-direct
-# transaction/KPI snapshot, reset locked during execution, independent hard-stop
-# fences, saved Virtual Hook authority, exact Split recovery continuity, mobile
-# Run-panel/nav visibility and strict Strategy Builder viewport containment.
+# Production scheduler-v2 keeps browser-direct manual execution and durable server
+# scheduling separate: exact-second future schedules clear an old hard-stop fence,
+# wake the existing worker, merge scheduled contracts into the canonical Run ledger
+# and expose terminal scheduled-session P/L without introducing another BUY path.
 node --check dashboard/final-premium-6f3.js
 node --check dashboard/final-ui-shell-v2.js
 node --check dashboard/vps-api-boundary-v2.js
@@ -44,6 +44,7 @@ node --check scripts/finalize-direct-runtime-v2.mjs
 node --check scripts/finalize-direct-ux-v4.mjs
 node --check scripts/finalize-production-controls-v6.mjs
 node --check scripts/finalize-production-controls-v6b.mjs
+node --check scripts/finalize-scheduler-v2.mjs
 
 python -m py_compile \
   app/direct_execution_hard_stop_state.py \
@@ -52,9 +53,11 @@ python -m py_compile \
   app/custom_split_debt_continuity_authority.py \
   app/custom_virtual_post_loss_barrier_authority.py \
   app/vps_direct_execution_checkpoint.py \
+  app/automation_scheduler_v2_authority.py \
   app/vps_backend_api.py
 
 exec python -m unittest -q \
+  tests.test_scheduler_v2_authority \
   tests.test_run_panel_ledger_v8 \
   tests.test_hybrid_browser_direct_v2 \
   tests.test_persistent_scheduler_action5 \
