@@ -12,6 +12,31 @@
   <meta name="frontend-runtime" content="direct-vps-final-ui-6f3">
   <meta name="frontend-authority" content="final-ui-shell-v2">
   <title>DerivAdmin · Home of Automation</title>
+
+  <!--
+    This loader is intentionally inline and independent from the application shell.
+    It renders before deferred JavaScript, API calls, OAuth restoration and external
+    styles finish, so a slow startup can never leave the user staring at a blank
+    black screen.
+  -->
+  <style id="derivadmin-soft-loader-style">
+    html,body{min-height:100%;background:#020d1f}
+    #derivadmin-soft-loader{position:fixed;inset:0;z-index:2147483000;display:flex;align-items:center;justify-content:center;padding:24px;background:radial-gradient(circle at 50% 34%,rgba(19,102,194,.2),transparent 38%),linear-gradient(180deg,#06172e 0%,#020d1f 62%,#031329 100%);opacity:0;visibility:hidden;pointer-events:none;transition:opacity .24s ease,visibility .24s ease;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#f4f8ff}
+    #derivadmin-soft-loader.is-visible{opacity:1;visibility:visible;pointer-events:auto}
+    .da-loader-card{width:min(330px,86vw);display:flex;flex-direction:column;align-items:center;text-align:center;padding:28px 22px 24px;border:1px solid rgba(95,177,255,.2);border-radius:24px;background:rgba(4,22,47,.76);box-shadow:0 20px 70px rgba(0,0,0,.24);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+    .da-loader-mark{width:58px;height:58px;border-radius:18px;display:grid;place-items:center;margin-bottom:18px;background:linear-gradient(145deg,#0e64d5,#11b7f5);box-shadow:0 10px 32px rgba(13,124,229,.28);font-size:27px;font-weight:900;letter-spacing:-1px;color:white}
+    .da-loader-ring{position:relative;width:42px;height:42px;margin-bottom:17px;border-radius:50%;border:3px solid rgba(127,199,255,.17);border-top-color:#21c7ff;animation:da-loader-spin .9s linear infinite}
+    .da-loader-ring:after{content:"";position:absolute;inset:5px;border-radius:50%;border:2px solid transparent;border-bottom-color:rgba(53,141,255,.8);animation:da-loader-spin 1.35s linear infinite reverse}
+    .da-loader-title{margin:0 0 7px;font-size:18px;font-weight:850;letter-spacing:-.25px;color:#f7fbff}
+    .da-loader-message{min-height:20px;margin:0;font-size:13px;line-height:1.5;font-weight:600;color:#9eb6d4}
+    .da-loader-progress{width:100%;height:3px;margin-top:20px;border-radius:999px;overflow:hidden;background:rgba(99,170,235,.13)}
+    .da-loader-progress span{display:block;width:38%;height:100%;border-radius:inherit;background:linear-gradient(90deg,transparent,#22c8ff,#297bff,transparent);animation:da-loader-slide 1.25s ease-in-out infinite}
+    .da-loader-note{margin-top:11px;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#54799e}
+    @keyframes da-loader-spin{to{transform:rotate(360deg)}}
+    @keyframes da-loader-slide{0%{transform:translateX(-120%)}100%{transform:translateX(300%)}}
+    @media (prefers-reduced-motion:reduce){.da-loader-ring,.da-loader-ring:after,.da-loader-progress span{animation-duration:2.4s}}
+  </style>
+
   <script>
     (function () {
       var current;
@@ -61,8 +86,134 @@
   <script src="/deriv-quill-icons-v2.js?v=2.4.18"></script>
 </head>
 <body>
+  <div id="derivadmin-soft-loader" class="is-visible" role="status" aria-live="polite" aria-label="DerivAdmin is loading">
+    <div class="da-loader-card">
+      <div class="da-loader-mark" aria-hidden="true">D</div>
+      <div class="da-loader-ring" aria-hidden="true"></div>
+      <h2 class="da-loader-title">DerivAdmin</h2>
+      <p class="da-loader-message" data-loader-message>Loading your trading workspace…</p>
+      <div class="da-loader-progress" aria-hidden="true"><span></span></div>
+      <div class="da-loader-note">Secure connection in progress</div>
+    </div>
+  </div>
+
   <div id="derivadmin-root" aria-live="polite"></div>
   <noscript>DerivAdmin requires JavaScript.</noscript>
+
+  <script>
+    (function () {
+      var loader = document.getElementById("derivadmin-soft-loader");
+      var message = loader && loader.querySelector("[data-loader-message]");
+      var root = document.getElementById("derivadmin-root");
+      var visibleSince = Date.now();
+      var hideTimer = 0;
+      var transitionTimer = 0;
+      var MINIMUM_VISIBLE_MS = 320;
+
+      function setMessage(text) {
+        if (message && text) message.textContent = String(text);
+      }
+
+      function show(text) {
+        window.clearTimeout(hideTimer);
+        window.clearTimeout(transitionTimer);
+        visibleSince = Date.now();
+        setMessage(text || "Loading your trading workspace…");
+        if (loader) loader.classList.add("is-visible");
+        document.documentElement.dataset.softLoading = "true";
+      }
+
+      function hide() {
+        var wait = Math.max(0, MINIMUM_VISIBLE_MS - (Date.now() - visibleSince));
+        window.clearTimeout(hideTimer);
+        hideTimer = window.setTimeout(function () {
+          if (loader) loader.classList.remove("is-visible");
+          document.documentElement.dataset.softLoading = "false";
+        }, wait);
+      }
+
+      function appIsReady() {
+        if (!root) return false;
+        return Boolean(root.querySelector(".app-shell")) || root.children.length > 0 || String(root.textContent || "").trim().length > 20;
+      }
+
+      function transition(label, maximumMs) {
+        show(label || "Opening…");
+        var before = root ? root.innerHTML : "";
+        var observer = root && new MutationObserver(function () {
+          if (!root || root.innerHTML === before) return;
+          observer.disconnect();
+          window.setTimeout(hide, 100);
+        });
+        if (observer) observer.observe(root, { childList: true, subtree: true, attributes: true });
+        transitionTimer = window.setTimeout(function () {
+          if (observer) observer.disconnect();
+          hide();
+        }, maximumMs || 2200);
+      }
+
+      window.DERIVADMIN_SOFT_LOADER = Object.freeze({
+        show: show,
+        hide: hide,
+        message: setMessage,
+        transition: transition
+      });
+
+      if (document.documentElement.dataset.oauthCallbackProcessing === "true") {
+        setMessage("Connecting securely to Deriv…");
+      }
+
+      if (root) {
+        var bootObserver = new MutationObserver(function () {
+          if (!appIsReady()) return;
+          bootObserver.disconnect();
+          window.setTimeout(hide, 120);
+        });
+        bootObserver.observe(root, { childList: true, subtree: true });
+      }
+
+      document.addEventListener("DOMContentLoaded", function () {
+        if (appIsReady()) hide();
+      });
+
+      // Home, Builder, AI, Schedule, Profile, feature cards and Back all use
+      // data-route. Show immediate feedback before the SPA replaces the view.
+      document.addEventListener("click", function (event) {
+        var routeButton = event.target && event.target.closest && event.target.closest("[data-route]");
+        if (routeButton) {
+          var text = String(routeButton.textContent || "").replace(/\s+/g, " ").trim();
+          transition(text ? "Opening " + text.slice(0, 34) + "…" : "Opening…", 2600);
+          return;
+        }
+
+        var action = event.target && event.target.closest && event.target.closest(
+          "[data-builder-trade],[data-ready-trade],[data-start-trading],[data-create-schedule],[data-builder-save],[data-account-id]"
+        );
+        if (action) {
+          var actionText = String(action.textContent || "").replace(/\s+/g, " ").trim();
+          transition(actionText ? actionText.slice(0, 42) + "…" : "Please wait…", 3600);
+        }
+      }, true);
+
+      window.addEventListener("pageshow", function () {
+        if (appIsReady()) hide();
+      });
+
+      // Never replace a blank screen with another unexplained blank state. If
+      // startup is genuinely slow, keep the loader visible and explain the delay.
+      window.setTimeout(function () {
+        if (loader && loader.classList.contains("is-visible") && !appIsReady()) {
+          setMessage("Still loading your workspace…");
+        }
+      }, 8000);
+      window.setTimeout(function () {
+        if (loader && loader.classList.contains("is-visible") && !appIsReady()) {
+          setMessage("Connection is taking longer than usual. Please keep this page open.");
+        }
+      }, 18000);
+    })();
+  </script>
+
   <script src="/final-premium-6f3.js?v=20260818-local-ui-12" defer></script>
   <script src="/public-testing-runtime-v1.js?v=20260818-public-testing-run-v5&amp;hotfix=6" defer></script>
 </body>
