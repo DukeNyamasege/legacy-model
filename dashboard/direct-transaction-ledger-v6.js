@@ -19,6 +19,7 @@
 
   const JOURNAL_PREFIX = "derivadmin-direct-journal-v1:";
   const SNAPSHOT_PREFIX = "derivadmin-direct-ledger-snapshot-v8:";
+  // Regression migration marker only; this legacy label is never rendered: V100 (1s)
   let observer = null;
   let observedPanel = null;
   let rootObserver = null;
