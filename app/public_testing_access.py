@@ -59,3 +59,17 @@ def apply_public_testing_scheduler_bypass() -> bool:
 
     renewal.run_premium_expiry_cycle = free_testing_expiry_cycle
     return True
+
+
+def install_public_testing_access_api(app: Any) -> None:
+    """Expose only the non-secret access mode needed by the testing UI layer."""
+
+    @app.get("/me/public-testing-access", include_in_schema=False)
+    def public_testing_access() -> dict[str, Any]:
+        enabled = public_testing_free_access_enabled()
+        return {
+            "public_testing_free_access": enabled,
+            "premium_enforcement_active": not enabled,
+        }
+
+    app.state.public_testing_access_api_installed = True
