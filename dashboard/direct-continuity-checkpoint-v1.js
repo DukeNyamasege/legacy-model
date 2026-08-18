@@ -34,9 +34,14 @@
     let virtualWins = 0;
     let virtualLosses = 0;
     let virtualObservations = 0;
+    const openContracts = new Map();
 
     for (const row of rows) {
+      if (row?.mode === "real" && row?.state === "OPEN" && row?.contract_id) {
+        openContracts.set(String(row.contract_id), row);
+      }
       if (row?.mode === "real" && row?.state === "SETTLED") {
+        if (row?.contract_id) openContracts.delete(String(row.contract_id));
         const profit = Number(row.profit || 0);
         if (!Number.isFinite(profit)) continue;
         if (profit < 0) {
@@ -69,7 +74,8 @@
         virtual_wins: virtualWins,
         virtual_losses: virtualLosses,
         virtual_observations: virtualObservations,
-        open_contracts: Number(engine.open_contracts || 0),
+        open_contracts: openContracts.size,
+        open_contract_ids: Array.from(openContracts.keys()).slice(0, 20),
       },
     };
   }
