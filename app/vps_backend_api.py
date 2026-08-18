@@ -18,6 +18,7 @@ from app.premium_renewal_action6d import install_premium_renewal_action6d
 from app.public_testing_access import (
     apply_public_testing_premium_bypass,
     apply_public_testing_scheduler_bypass,
+    install_public_testing_access_api,
 )
 from app.text_to_strategy_api import install_text_to_strategy_api
 from app.vps_dashboard_latency_hotfix import install_vps_dashboard_latency_hotfix
@@ -44,6 +45,7 @@ install_premium_renewal_action6d(app)
 # Action 6D keeps its payment/renewal routes, but while testing is free it may not
 # skip scheduled starts or pause accounts just because an old premium period ended.
 apply_public_testing_scheduler_bypass()
+install_public_testing_access_api(app)
 # 6F-2 replaces only the account selector route. It changes the selected
 # ClientSession account and never starts/stops trading or changes strategy/risk.
 install_final_linked_accounts_6f2(app)
