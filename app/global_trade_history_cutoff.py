@@ -58,28 +58,39 @@ def _read_cutoff(session: Any, managed_account_id: int) -> datetime | None:
     return _parse_cutoff(row.preference_value if row is not None else None)
 
 
-def _write_cutoff(session: Any, managed_account_id: int) -> datetime:
-    now = datetime.now(timezone.utc)
+def _write_cutoff_value(
+    session: Any,
+    managed_account_id: int,
+    value: datetime,
+) -> datetime:
+    normalized = value.astimezone(timezone.utc)
     key = _cutoff_key(managed_account_id)
-    value = now.isoformat()
+    text = normalized.isoformat()
     row = session.get(RuntimePreference, key)
     if row is None:
-        session.add(RuntimePreference(preference_key=key, preference_value=value))
+        session.add(RuntimePreference(preference_key=key, preference_value=text))
     else:
-        row.preference_value = value
+        row.preference_value = text
         row.updated_at = utc_now()
-    return now
+    return normalized
+
+
+def _write_cutoff(session: Any, managed_account_id: int) -> datetime:
+    return _write_cutoff_value(
+        session,
+        managed_account_id,
+        datetime.now(timezone.utc),
+    )
 
 
 def install_global_trade_history_cutoff(app: Any) -> None:
     """Make Reset/Clear the persistent account-wide visibility boundary.
 
-    Once a trader has pressed Reset, every contract opened after that timestamp is
-    returned across midnight, logout/login, browsers and devices until the next
-    Reset. Historical database rows remain intact for audit/settlement integrity;
-    visibility is controlled by the durable cutoff only. Accounts with no cutoff
-    keep the legacy today-only bootstrap so an existing user is not suddenly shown
-    years of historical contracts after an upgrade.
+    The first dashboard read seeds a durable boundary at the start of the current
+    reporting day. That preserves the familiar current-day initial view without a
+    midnight expiry: every subsequent manual or scheduled contract remains visible
+    across logout/login, browsers, devices and future days until explicit Reset.
+    Reset moves the boundary forward. Historical database rows are never deleted.
     """
 
     global _INSTALLED
@@ -136,10 +147,16 @@ def install_global_trade_history_cutoff(app: Any) -> None:
     def global_personal_trade_stream(request: Request) -> dict[str, Any]:
         account = _current_account_payload(request)
         managed_id = int(account["id"])
-        today_start, today_end = _today_bounds_utc()
+        today_start, _today_end = _today_bounds_utc()
 
         with base_api.DATABASE.session() as session:
             cutoff = _read_cutoff(session, managed_id)
+            if cutoff is None:
+                # Safe one-time migration: show today's existing trades, then keep
+                # that boundary forever until the trader explicitly presses Reset.
+                # This prevents a schedule created today from disappearing at
+                # midnight without exposing years of pre-upgrade history.
+                cutoff = _write_cutoff_value(session, managed_id, today_start)
 
             actual_query = (
                 select(Trade, CandidateSignalRecord, DirectionalSignal)
@@ -152,38 +169,18 @@ def install_global_trade_history_cutoff(app: Any) -> None:
                     DirectionalSignal.signal_id == Trade.signal_id,
                 )
                 .where(Trade.managed_account_id == managed_id)
-            )
-            virtual_query = select(VirtualTrade).where(
-                VirtualTrade.managed_account_id == managed_id
-            )
-
-            if cutoff is not None:
-                # Reset is the durable session boundary. Do not add a midnight
-                # upper/lower bound here: scheduled/server trades must still be
-                # visible tomorrow until the trader explicitly resets again.
-                actual_query = actual_query.where(
+                .where(
                     or_(
                         Trade.purchase_time >= cutoff,
                         Trade.provider_purchase_time >= cutoff,
                     )
                 )
-                virtual_query = virtual_query.where(VirtualTrade.created_at >= cutoff)
-            else:
-                # Backward-compatible bootstrap for accounts that have never used
-                # Reset. Their first Reset creates the durable cross-day boundary.
-                actual_query = actual_query.where(
-                    or_(
-                        Trade.purchase_time.between(today_start, today_end),
-                        Trade.settlement_time.between(today_start, today_end),
-                        Trade.provider_purchase_time.between(today_start, today_end),
-                    )
-                )
-                virtual_query = virtual_query.where(
-                    or_(
-                        VirtualTrade.created_at.between(today_start, today_end),
-                        VirtualTrade.settled_at.between(today_start, today_end),
-                    )
-                )
+            )
+            virtual_query = (
+                select(VirtualTrade)
+                .where(VirtualTrade.managed_account_id == managed_id)
+                .where(VirtualTrade.created_at >= cutoff)
+            )
 
             actual_rows = session.execute(
                 actual_query.order_by(Trade.purchase_time.desc()).limit(5000)
@@ -220,7 +217,7 @@ def install_global_trade_history_cutoff(app: Any) -> None:
         )
         profit = sum(float(row.get("profit") or 0.0) for row in actual_trades)
         aidr = _aidr_summary(state, managed_id)
-        cutoff_iso = cutoff.isoformat() if cutoff is not None else None
+        cutoff_iso = cutoff.isoformat()
 
         return {
             "authenticated": True,
@@ -230,14 +227,10 @@ def install_global_trade_history_cutoff(app: Any) -> None:
             "date": datetime.now(_reporting_timezone()).date().isoformat(),
             "session_started_at": cutoff_iso,
             "history_cleared_at": cutoff_iso,
-            "history_visibility": (
-                "from_cutoff_forward_until_next_reset"
-                if cutoff is not None
-                else "legacy_today_until_first_reset"
-            ),
+            "history_visibility": "from_cutoff_forward_until_next_reset",
             "history_visibility_global": True,
             "history_preserved_across_stop": True,
-            "history_preserved_across_midnight": cutoff is not None,
+            "history_preserved_across_midnight": True,
             "trades": trades,
             "aidr": aidr,
             "summary": {
