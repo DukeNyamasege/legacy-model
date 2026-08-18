@@ -2,17 +2,17 @@ from __future__ import annotations
 
 """Low-latency execution controls for the Full-VPS runtime.
 
-The browser must never wait for recovery-history cleanup before a manual Stop is
-acknowledged.  The persisted ManagedAccount lifecycle is the financial authority;
-the worker's manual-stop guard re-reads that row before execution, proposal and
-BUY.  These VPS routes therefore commit the smallest possible lifecycle mutation
-first and keep reset work bounded/account-scoped.
+The browser must never wait for recovery-history cleanup or audit bookkeeping
+before a manual Stop is acknowledged. The persisted ManagedAccount lifecycle is
+the financial authority; the worker's manual-stop guard re-reads that row before
+execution, proposal and BUY. These VPS routes therefore commit the smallest
+possible lifecycle mutation first and keep reset work bounded/account-scoped.
 """
 
 from inspect import isawaitable
 from typing import Any, Callable
 
-from fastapi import HTTPException, Request
+from fastapi import BackgroundTasks, HTTPException, Request
 from sqlalchemy import delete, or_, select
 
 import app.api as base_api
@@ -72,12 +72,7 @@ def _reset_risk_state_bounded(session: Any, managed_id: int) -> None:
 
 
 def _delete_runtime_preferences_bounded(session: Any, managed_id: int) -> int:
-    """Delete only this account's known recovery keys with one SQL DELETE.
-
-    The previous public-control helper loaded the complete RuntimePreference table
-    into Python and inspected every row.  That work happened while Stop held the
-    ManagedAccount lock and was a major source of slow acknowledgements.
-    """
+    """Delete only this account's known recovery keys with one SQL DELETE."""
 
     prefixes = (
         f"aidr_split_remaining:{managed_id}",
@@ -94,11 +89,11 @@ def _delete_runtime_preferences_bounded(session: Any, managed_id: int) -> int:
     return int(result.rowcount or 0)
 
 
-def _mark_stopped_now(request: Request, *, status: str, reason: str) -> tuple[int, str]:
+def _mark_stopped_now(request: Request, *, status: str, reason: str) -> tuple[int, str, str]:
     account = _current_account(request)
     managed_id = int(account["id"])
-    # Deliberately avoid SELECT ... FOR UPDATE here.  The only authority needed to
-    # stop new purchases is enabled=False + a terminal lifecycle status.  Keeping
+    # Deliberately avoid SELECT ... FOR UPDATE here. The only authority needed to
+    # stop new purchases is enabled=False + a terminal lifecycle status. Keeping
     # this transaction tiny lets the manual-stop BUY guard observe it immediately.
     with base_api.DATABASE.session() as session:
         row = session.get(ManagedAccount, managed_id)
@@ -113,19 +108,15 @@ def _mark_stopped_now(request: Request, *, status: str, reason: str) -> tuple[in
         base_api.mark_dashboard_dirty(account.get("account_type"))
     except Exception:
         pass
-    return managed_id, str(account.get("account_type") or "demo")
+    client_host = request.client.host if request.client else "unknown"
+    return managed_id, str(account.get("account_type") or "demo"), client_host
 
 
-def _audit(event: str, request: Request, payload: dict[str, Any]) -> None:
+def _audit(event: str, client_host: str, payload: dict[str, Any]) -> None:
     try:
-        base_api.REPOSITORY.audit(
-            event,
-            "personal_dashboard",
-            request.client.host if request.client else "unknown",
-            payload,
-        )
+        base_api.REPOSITORY.audit(event, "personal_dashboard", client_host, payload)
     except Exception:
-        # Audit transport must never delay or invalidate a financial Stop.
+        # Background audit transport must never affect execution controls.
         pass
 
 
@@ -135,7 +126,7 @@ def install_vps_fast_execution_controls(app: Any) -> None:
         return
 
     # Capture the current Custom Strategy auto-trade route so enabled=True keeps
-    # the canonical start/preflight implementation.  Only enabled=False is replaced
+    # the canonical start/preflight implementation. Only enabled=False is replaced
     # by the immediate durable Stop authority below.
     original_auto = _remove_route(app, "/me/auto-trade", "POST")
     _remove_route(app, "/me/stop-trading", "POST")
@@ -143,15 +134,16 @@ def install_vps_fast_execution_controls(app: Any) -> None:
     _remove_route(app, "/me/clear-trades", "POST")
 
     @app.post("/me/stop-trading")
-    def fast_stop_trading(request: Request) -> dict[str, Any]:
-        managed_id, _account_type = _mark_stopped_now(
+    def fast_stop_trading(request: Request, background_tasks: BackgroundTasks) -> dict[str, Any]:
+        managed_id, _account_type, client_host = _mark_stopped_now(
             request,
             status="stopped",
             reason="Auto trading stopped. No new proposal or BUY is permitted until Start.",
         )
-        _audit(
+        background_tasks.add_task(
+            _audit,
             "VPS_FAST_PERSONAL_TRADING_STOPPED",
-            request,
+            client_host,
             {"managed_account_id": managed_id, "new_purchase_authority": False},
         )
         return {
@@ -165,15 +157,16 @@ def install_vps_fast_execution_controls(app: Any) -> None:
         }
 
     @app.post("/me/pause-trading")
-    def fast_pause_trading(request: Request) -> dict[str, Any]:
-        managed_id, _account_type = _mark_stopped_now(
+    def fast_pause_trading(request: Request, background_tasks: BackgroundTasks) -> dict[str, Any]:
+        managed_id, _account_type, client_host = _mark_stopped_now(
             request,
             status="manual_pause",
             reason="Auto trading paused. No new proposal or BUY is permitted until Resume.",
         )
-        _audit(
+        background_tasks.add_task(
+            _audit,
             "VPS_FAST_PERSONAL_TRADING_PAUSED",
-            request,
+            client_host,
             {"managed_account_id": managed_id, "new_purchase_authority": False},
         )
         return {
@@ -186,16 +179,24 @@ def install_vps_fast_execution_controls(app: Any) -> None:
         }
 
     @app.post("/me/auto-trade")
-    async def fast_auto_trade(request: Request, body: base_api.AutoTradeRequest) -> Any:
+    async def fast_auto_trade(
+        request: Request,
+        body: base_api.AutoTradeRequest,
+        background_tasks: BackgroundTasks,
+    ) -> Any:
         if not bool(body.enabled):
-            return fast_stop_trading(request)
+            return fast_stop_trading(request, background_tasks)
         if original_auto is None:
             raise HTTPException(status_code=503, detail="Start execution route is unavailable")
         result = original_auto(request, body)
         return await result if isawaitable(result) else result
 
     @app.post("/me/clear-trades")
-    def fast_clear_personal_trades(request: Request, body: ClearTradesRequest) -> dict[str, Any]:
+    def fast_clear_personal_trades(
+        request: Request,
+        body: ClearTradesRequest,
+        background_tasks: BackgroundTasks,
+    ) -> dict[str, Any]:
         account = _current_account(request)
         managed_id = int(account["id"])
         scope = str(body.scope or "today").strip().lower()
@@ -244,9 +245,11 @@ def install_vps_fast_execution_controls(app: Any) -> None:
 
         deleted_trades = int(trade_result.rowcount or 0)
         deleted_virtual = int(virtual_result.rowcount or 0)
-        _audit(
+        client_host = request.client.host if request.client else "unknown"
+        background_tasks.add_task(
+            _audit,
             "VPS_FAST_PERSONAL_TRADES_CLEARED",
-            request,
+            client_host,
             {
                 "managed_account_id": managed_id,
                 "scope": scope,
