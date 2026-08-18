@@ -41,10 +41,6 @@ await rm(output, { recursive: true, force: true });
 await rm(bundledIconExporter, { force: true });
 await mkdir(output, { recursive: true });
 
-// 6F-3 keeps the final presentation system and future premium implementation.
-// The public-testing controller temporarily removes paid-access friction, syncs
-// instant Run/Stop controls, defaults new runs to Transactions, and provides a
-// lightweight public Deriv tick mirror for Journal observability.
 const productionAssets = [
   "index.html",
   "final-ui-shell-v2.css",
@@ -61,9 +57,6 @@ for (const asset of productionAssets) {
   await copyFile(resolve(dashboard, asset), resolve(output, asset));
 }
 
-// Keep one switch for API, worker, scheduler and browser admission. Source keeps
-// the future Premium implementation intact; the built artifact follows the VPS
-// environment value so PUBLIC_TESTING_FREE_ACCESS=false restores the paid gate.
 let premiumSource = await readFile(premiumPath, "utf8");
 const testingFlagMarker = "const TESTING_FREE_ACCESS = true;";
 if (!premiumSource.includes(testingFlagMarker)) {
@@ -113,15 +106,12 @@ const required = [
   '/final-premium-6f3.css?v=20260817-6f3-1',
   '/mobile-reference-ui.css?v=20260818-local-ui-12',
   '/final-premium-6f3.js?v=20260818-local-ui-12',
-  '/public-testing-runtime-v1.js?v=20260818-public-testing-run-v3',
+  '/public-testing-runtime-v1.js?v=20260818-public-testing-run-v4',
 ];
 for (const marker of required) {
   if (!html.includes(marker)) throw new Error(`Action 6F-3 VPS marker missing: ${marker}`);
 }
 
-// The heavy authenticated runtime still starts through the 6F-3 bootstrap. The
-// small public-testing controller is presentation/observability only and never has
-// access to account credentials, proposal IDs or BUY authority.
 for (const marker of [
   '<script src="/vps-realtime-client-v2.js?v=20260817-6f2-1" defer>',
   '<script src="/final-ui-shell-v2.js?v=20260817-6f2-1" defer>',
