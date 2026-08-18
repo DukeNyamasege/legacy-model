@@ -129,3 +129,11 @@ def install_custom_split_cap_defaults_authority() -> None:
     RFDir5TradingBot._custom_split_cap_defaults_authority_installed = True
     RFDir5TradingBot._custom_split_cap_policy = "canonical_10pct_cap_when_optional_kwargs_omitted"
     _INSTALLED = True
+
+    # Install after the canonical cap wrapper so persistent actual debt can never
+    # fall through to a base-stake primary trade between Split recovery legs.
+    from app.custom_split_debt_continuity_authority import (
+        install_custom_split_debt_continuity_authority,
+    )
+
+    install_custom_split_debt_continuity_authority()
