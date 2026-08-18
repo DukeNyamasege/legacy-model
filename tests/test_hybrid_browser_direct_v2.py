@@ -53,6 +53,7 @@ class HybridBrowserDirectV2Contract(unittest.TestCase):
         self.assertIn("/direct-transaction-ledger-v6.js?v=20260818-direct-ledger-v6", dockerfile)
         self.assertIn("/direct-runtime-ux-v4.js?v=20260818-runtime-ux-v6", dockerfile)
         self.assertIn("/direct-run-panel-authority-v6.js?v=20260818-single-start-stop-v6", dockerfile)
+        self.assertIn("/mobile-layout-authority-v1.js?v=20260818-mobile-layout-v1", dockerfile)
         self.assertNotIn('/single-run-controller-v1.js', dockerfile)
         self.assertNotIn('/direct-run-panel-authority-v5.js?v=', dockerfile)
         self.assertNotIn('/deriv-direct-execution-v1.js?v=', dockerfile)
@@ -155,6 +156,30 @@ class HybridBrowserDirectV2Contract(unittest.TestCase):
         self.assertNotIn("Bot currently stopped", authority)
         self.assertNotIn("new MutationObserver", authority)
         self.assertNotIn("startEverything", authority)
+
+    def test_mobile_run_panel_totals_and_reopen_handle_cannot_be_hidden(self) -> None:
+        authority = self.text("dashboard/mobile-layout-authority-v1.js")
+        self.assertIn("run-panel-reopen-v1", authority)
+        self.assertIn('handle.dataset.runPanelToggle = ""', authority)
+        self.assertIn(".global-run-panel.collapsed .run-panel-reopen-v1", authority)
+        self.assertIn("grid-template-rows:repeat(2,minmax(40px,auto))", authority)
+        self.assertIn(".global-run-panel.open .run-panel-bar", authority)
+        self.assertIn("position:relative!important", authority)
+        self.assertIn("env(safe-area-inset-bottom", authority)
+        self.assertNotIn("setInterval", authority)
+
+    def test_mobile_builder_is_strictly_contained_inside_phone_viewport(self) -> None:
+        authority = self.text("dashboard/mobile-layout-authority-v1.js")
+        self.assertIn("@media (max-width:700px)", authority)
+        self.assertIn("max-width:100vw!important", authority)
+        self.assertIn("overflow-x:hidden!important", authority)
+        self.assertIn(".restored-builder .form-grid.two", authority)
+        self.assertIn("grid-template-columns:minmax(0,1fr)!important", authority)
+        self.assertIn(".restored-builder .builder-market-grid", authority)
+        self.assertIn("width:100%!important", authority)
+        self.assertIn("overflow-wrap:anywhere", authority)
+        self.assertNotIn("/me/resume-trading", authority)
+        self.assertNotIn("/me/stop-trading", authority)
 
     def test_reset_is_local_first_and_never_toggles_execution(self) -> None:
         authority = self.text("dashboard/direct-run-panel-authority-v6.js")
