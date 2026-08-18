@@ -12,9 +12,9 @@
    * Manual live execution belongs exclusively to deriv-direct-execution-v2.
    * Scheduled/offline execution belongs to the VPS worker.
    *
-   * Keeping this separation prevents the historical start/stop loop where this
-   * testing helper and the direct engine both changed the same Run button and
-   * alternated /me/resume-trading with /me/stop-trading.
+   * Keeping this separation prevents the historical start/stop loop where the
+   * testing helper and direct engine both changed the same Run button and sent
+   * competing execution-control requests.
    */
 
   const state = { testingFree: false, renderQueued: false };
