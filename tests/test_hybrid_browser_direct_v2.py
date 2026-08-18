@@ -56,7 +56,7 @@ class HybridBrowserDirectV2Contract(unittest.TestCase):
         self.assertIn('condition.operator === "all_even"', compiler)
         self.assertIn('condition.operator === "all_odd"', compiler)
         self.assertIn('routing?.enabled && routing?.after_loss', compiler)
-        self.assertIn('route_key: "after_loss"', compiler)
+        self.assertIn('normalizeExecutionRoute(routing.after_loss, "after_loss")', compiler)
         self.assertIn("activeExecutionRoute()", compiler)
         self.assertIn("active-route MET/NOT-MET parity", compiler)
 
