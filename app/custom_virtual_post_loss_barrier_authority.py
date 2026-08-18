@@ -139,19 +139,27 @@ def install_custom_virtual_post_loss_barrier_authority() -> None:
                 )
 
         if changed:
-            self.base.audit(
-                "CUSTOM_VIRTUAL_HOOK_ENTERED",
-                "worker",
-                "settlement",
-                {
-                    "managed_account_id": managed_id,
-                    "enter_after_losses": max(1, int(hook.enter_after_losses)),
-                    "exit_after_consecutive_wins": max(
-                        1, int(hook.exit_after_consecutive_wins)
-                    ),
-                    "financial_purchase": False,
-                },
-            )
+            # Diagnostics are strictly non-financial.  A missing/slow legacy audit
+            # helper must never roll back or break an already-committed Virtual Hook
+            # settlement transition.
+            try:
+                audit = getattr(self.base, "audit", None)
+                if callable(audit):
+                    audit(
+                        "CUSTOM_VIRTUAL_HOOK_ENTERED",
+                        "worker",
+                        "settlement",
+                        {
+                            "managed_account_id": managed_id,
+                            "enter_after_losses": max(1, int(hook.enter_after_losses)),
+                            "exit_after_consecutive_wins": max(
+                                1, int(hook.exit_after_consecutive_wins)
+                            ),
+                            "financial_purchase": False,
+                        },
+                    )
+            except Exception:
+                pass
         return result
 
     async def handle_contract_then_arm_virtual_barrier(
