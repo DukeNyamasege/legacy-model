@@ -13,8 +13,8 @@ export FRONTEND_ORIGINS="http://127.0.0.1:8080,http://localhost:8080,https://der
 
 # Production v6 keeps exactly one live start engine and adds independent browser +
 # server hard-stop fences, saved Virtual Hook entry authority, persistent equal
-# Split recovery, exact offline Split continuation, compact stable transactions and
-# a testing-free premium fail-open.
+# Split recovery, exact offline Split continuation, compact stable transactions,
+# mobile Run-panel visibility and strict Strategy Builder viewport containment.
 node --check dashboard/final-premium-6f3.js
 node --check dashboard/final-ui-shell-v2.js
 node --check dashboard/vps-api-boundary-v2.js
@@ -35,6 +35,7 @@ node --check dashboard/direct-runtime-ux-v3.js
 node --check dashboard/direct-demo-reset-router-v1.js
 node --check dashboard/direct-transaction-ledger-v6.js
 node --check dashboard/direct-run-panel-authority-v6.js
+node --check dashboard/mobile-layout-authority-v1.js
 node --check scripts/export-deriv-quill-icons-v2.mjs
 node --check scripts/build-vps.mjs
 node --check scripts/build-direct-runtime-v2.mjs
