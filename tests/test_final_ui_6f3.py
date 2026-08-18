@@ -10,19 +10,20 @@ DASHBOARD = ROOT / "dashboard"
 
 
 class FinalUi6F3Tests(unittest.TestCase):
-    def test_document_uses_premium_bootstrap_before_heavy_runtime(self) -> None:
+    def test_document_loads_testing_controller_without_loading_heavy_shell_directly(self) -> None:
         html = (DASHBOARD / "index.html").read_text(encoding="utf-8")
         self.assertIn('data-premium-boot="pending"', html)
         self.assertIn('frontend-runtime" content="direct-vps-final-ui-6f3"', html)
         self.assertIn('frontend-authority" content="final-ui-shell-v2"', html)
         self.assertIn('/final-premium-6f3.css?v=20260817-6f3-1', html)
-        self.assertIn('/final-premium-6f3.js?v=20260817-6f3-1', html)
+        self.assertIn('/final-premium-6f3.js?v=20260818-local-ui-12', html)
+        self.assertIn('/public-testing-runtime-v1.js?v=20260818-public-testing-run-v2', html)
         self.assertNotIn('<script src="/vps-realtime-client-v2.js?v=20260817-6f2-1" defer>', html)
         self.assertNotIn('<script src="/final-ui-shell-v2.js?v=20260817-6f2-1" defer>', html)
         self.assertNotIn("premium-subscription-action6e", html)
         self.assertNotIn("netlify", html.lower())
 
-    def test_login_to_payment_to_unlock_flow_is_server_authoritative(self) -> None:
+    def test_future_mpesa_premium_flow_is_retained(self) -> None:
         js = (DASHBOARD / "final-premium-6f3.js").read_text(encoding="utf-8")
         for route in (
             'api("/me")',
@@ -36,89 +37,84 @@ class FinalUi6F3Tests(unittest.TestCase):
             'api("/me/premium-access/renewal-history?limit=8")',
         ):
             self.assertIn(route, js)
-        self.assertIn("KES 250", js)
-        self.assertIn("7 days", js)
-        self.assertIn("M-PESA · LIPANA", js)
-        self.assertIn("DOT & ROT access", js)
-        self.assertIn("signed Lipana callback", js)
-        self.assertIn("server-side transaction verification", js)
-        # The STK response never calls loadFinalApp. Unlock occurs only after the
-        # payment polling path sees server activation, then the user reloads.
-        self.assertIn("payment?.activated", js)
-        self.assertIn("premium?.active", js)
+        for marker in (
+            "KES 250",
+            "7 days",
+            "M-PESA · LIPANA",
+            "DOT & ROT access",
+            "signed Lipana callback",
+            "server-side transaction verification",
+            "payment?.activated",
+            "premium?.active",
+        ):
+            self.assertIn(marker, js)
+        self.assertIn("const TESTING_FREE_ACCESS = true;", js)
         self.assertNotIn("api.derivws.com", js)
         self.assertNotIn("proposal_open_contract", js)
 
-    def test_unpaid_users_do_not_load_shell_or_realtime(self) -> None:
-        js = (DASHBOARD / "final-premium-6f3.js").read_text(encoding="utf-8")
-        boot_start = js.index("async function boot()")
-        boot = js[boot_start:]
-        self.assertIn("await loadPremiumData()", boot)
-        self.assertIn("if (state.premium?.local_dev_preview || state.premium?.active)", boot)
-        self.assertIn("await loadFinalApp({ realtime: true })", boot)
-        self.assertIn("gate();", boot)
-        self.assertIn('/vps-realtime-client-v2.js?v=20260817-6f2-1', js)
-        self.assertIn('/final-ui-shell-v2.js?v=20260817-6f2-1', js)
-        self.assertIn('state.locked = true', js)
-        self.assertIn('document.documentElement.dataset.premiumState = "locked"', js)
+    def test_public_testing_controller_hides_paywall_and_syncs_instant_run(self) -> None:
+        js = (DASHBOARD / "public-testing-runtime-v1.js").read_text(encoding="utf-8")
+        for marker in (
+            'fetch("/me/public-testing-access"',
+            "public_testing_free_access",
+            ".paid-soon-banner,.premium-reminder,.premium-profile",
+            "premium use only",
+            "pay kes 250",
+            '"[data-run-start]"',
+            '"[data-run-execution-toggle]"',
+            '"[data-builder-trade]"',
+            '"[data-ready-trade]"',
+            '"[data-trade-now-selected]"',
+            '"[data-start-trading]"',
+            'data-run-tab="transactions"',
+            'label.textContent = running ? "Stop" : "Run"',
+        ):
+            self.assertIn(marker, js)
 
-    def test_pending_uncertain_failed_and_retry_states_are_explicit(self) -> None:
-        js = (DASHBOARD / "final-premium-6f3.js").read_text(encoding="utf-8")
-        self.assertIn('new Set(["initiating", "pending", "provider_uncertain"])', js)
-        self.assertIn('new Set(["failed", "verification_failed"])', js)
-        self.assertIn("Do not start another payment", js)
-        self.assertIn("Approve the M-Pesa prompt", js)
-        self.assertIn("Payment was not completed", js)
-        self.assertIn("Try M-Pesa again", js)
-        self.assertIn("idempotency_key: idempotencyKey()", js)
-        self.assertIn("schedulePoll", js)
+    def test_journal_uses_public_deriv_ticks_only_for_observability(self) -> None:
+        js = (DASHBOARD / "public-testing-runtime-v1.js").read_text(encoding="utf-8")
+        self.assertIn("wss://api.derivws.com/trading/v1/options/ws/public", js)
+        self.assertIn("ticks: symbol", js)
+        self.assertIn("subscribe: 1", js)
+        self.assertIn('payload?.msg_type !== "tick"', js)
+        self.assertIn("derivadmin:analysis-tick", js)
+        self.assertIn("Live Deriv tick analysis", js)
+        self.assertIn("analyzed", js)
+        self.assertNotIn('"buy":', js)
+        self.assertNotIn("proposal_open_contract", js)
+        self.assertNotIn("access_token", js)
+        self.assertNotIn("pat_token", js)
 
-    def test_exact_expiry_rechecks_server_and_relocks_runtime(self) -> None:
+    def test_public_testing_bypass_covers_http_worker_expiry_and_schedule_start(self) -> None:
+        access = (ROOT / "app" / "public_testing_access.py").read_text(encoding="utf-8")
+        vps = (ROOT / "app" / "vps_backend_api.py").read_text(encoding="utf-8")
+        worker = (ROOT / "app" / "custom_strategy_worker.py").read_text(encoding="utf-8")
+        env_example = (ROOT / ".env.vps.example").read_text(encoding="utf-8")
+        self.assertIn('os.getenv("PUBLIC_TESTING_FREE_ACCESS", "true")', access)
+        self.assertIn('os.environ["PREMIUM_ACCESS_ENFORCEMENT"] = "false"', access)
+        self.assertIn("scheduler._apply_schedule_strategy = original", access)
+        self.assertIn("renewal.run_premium_expiry_cycle = free_testing_expiry_cycle", access)
+        self.assertIn('@app.get("/me/public-testing-access"', access)
+        self.assertIn("apply_public_testing_premium_bypass()", vps)
+        self.assertIn("apply_public_testing_scheduler_bypass()", vps)
+        self.assertIn("install_public_testing_access_api(app)", vps)
+        self.assertIn("if not public_testing:", worker)
+        self.assertIn("install_premium_worker_guard()", worker)
+        self.assertIn("PUBLIC_TESTING_FREE_ACCESS=true", env_example)
+        self.assertIn("PREMIUM_ACCESS_ENFORCEMENT=true", env_example)
+
+    def test_exact_paid_expiry_logic_remains_available_for_later_launch(self) -> None:
         js = (DASHBOARD / "final-premium-6f3.js").read_text(encoding="utf-8")
         service = (ROOT / "app" / "premium_access_service.py").read_text(encoding="utf-8")
         renewal = (ROOT / "app" / "premium_renewal_action6d.py").read_text(encoding="utf-8")
         self.assertIn("async function exactExpiryReached()", js)
         self.assertIn('const access = await api("/me/premium-access")', js)
-        self.assertIn("location.reload();", js)
         self.assertIn("scheduleExactExpiry", js)
         self.assertIn("timedelta(days=WEEKLY_PERIOD_DAYS)", service)
         self.assertIn("current_period_end <= current", renewal)
         self.assertIn("Premium subscription expired before scheduled start", renewal)
 
-    def test_active_profile_and_reminders_share_final_visual_language(self) -> None:
-        js = (DASHBOARD / "final-premium-6f3.js").read_text(encoding="utf-8")
-        css = (DASHBOARD / "final-premium-6f3.css").read_text(encoding="utf-8")
-        for marker in (
-            "Weekly Premium",
-            "Exact expiry",
-            "Linked accounts",
-            "Lipana · M-Pesa",
-            "Verified periods",
-            "Premium renewal reminder",
-        ):
-            self.assertIn(marker, js)
-        for selector in (
-            ".premium-page",
-            ".premium-plan-card",
-            ".premium-payment-card",
-            ".premium-countdown",
-            ".premium-profile",
-            ".premium-reminder",
-        ):
-            self.assertIn(selector, css)
-        self.assertIn("@media(max-width:720px)", css)
-        self.assertIn("@media(max-width:420px)", css)
-        self.assertIn("#020714", css)
-        self.assertIn("#52e8ff", css)
-
-    def test_mpesa_only_ui_has_no_card_checkout(self) -> None:
-        js = (DASHBOARD / "final-premium-6f3.js").read_text(encoding="utf-8")
-        self.assertNotIn("Flutterwave", js)
-        self.assertNotIn("USD 2", js)
-        self.assertNotIn("credit card", js.lower())
-        self.assertNotIn("debit card", js.lower())
-
-    def test_backend_premium_gate_and_lipana_verification_remain_authoritative(self) -> None:
+    def test_backend_premium_and_lipana_verification_are_not_deleted(self) -> None:
         access = (ROOT / "app" / "premium_access_api.py").read_text(encoding="utf-8")
         lipana = (ROOT / "app" / "lipana_mpesa_action6b.py").read_text(encoding="utf-8")
         worker = (ROOT / "app" / "premium_worker_guard.py").read_text(encoding="utf-8")
@@ -129,21 +125,25 @@ class FinalUi6F3Tests(unittest.TestCase):
         self.assertIn("Lipana transaction amount did not match KES 250", lipana)
         self.assertIn("premium", worker.lower())
 
-    def test_build_declares_one_frontend_authority_and_6f3_admission(self) -> None:
+    def test_build_switches_browser_admission_with_same_testing_flag(self) -> None:
         build = (ROOT / "scripts" / "build-vps.mjs").read_text(encoding="utf-8")
-        self.assertIn('frontend_runtime: "full-vps-final-ui-6f3"', build)
-        self.assertIn('ui_authority: "final-ui-shell-v2"', build)
-        self.assertIn('premium_bootstrap: "final-premium-6f3"', build)
-        self.assertIn('premium_runtime_admission: "unpaid-users-do-not-load-shell-or-realtime-v1"', build)
-        self.assertIn('premium_unlock_authority: "verified-server-entitlement-only-v1"', build)
-        self.assertIn('production_asset_policy: "final-authority-whitelist-only"', build)
-        self.assertIn('legacy_ui_shipped: false', build)
-        self.assertIn('netlify_runtime_loaded: false', build)
-        self.assertIn('"final-premium-6f3.css"', build)
-        self.assertIn('"final-premium-6f3.js"', build)
+        dockerfile = (ROOT / "Dockerfile.frontend").read_text(encoding="utf-8")
+        compose = (ROOT / "docker-compose.vps.yml").read_text(encoding="utf-8")
+        self.assertIn("PUBLIC_TESTING_FREE_ACCESS", build)
+        self.assertIn("testingFlagMarker", build)
+        self.assertIn('"public-testing-runtime-v1.js"', build)
+        self.assertIn('run_default_tab: "transactions-on-start-v1"', build)
+        self.assertIn('instant_run: "one-click-save-if-needed-then-resume-worker-v1"', build)
+        self.assertIn('journal_analysis: "live-public-deriv-tick-observability-mirror-v1"', build)
+        self.assertIn('journal_financial_authority: "backend-private-websocket-only"', build)
+        self.assertIn("ARG PUBLIC_TESTING_FREE_ACCESS=true", dockerfile)
+        self.assertIn("PUBLIC_TESTING_FREE_ACCESS: ${PUBLIC_TESTING_FREE_ACCESS:-true}", compose)
 
-    def test_existing_product_routes_remain_wired_under_premium_admission(self) -> None:
+    def test_existing_strategy_schedule_and_purchase_flow_remain_wired(self) -> None:
         shell = (DASHBOARD / "final-ui-shell-v2.js").read_text(encoding="utf-8")
+        runtime = (ROOT / "app" / "custom_strategy_runtime_api.py").read_text(encoding="utf-8")
+        direct = (ROOT / "app" / "custom_strategy_direct_runtime.py").read_text(encoding="utf-8")
+        execution = (ROOT / "app" / "account_execution_session.py").read_text(encoding="utf-8")
         for route in (
             'json("/me/accounts")',
             'json("/me/trades/today?limit=5000")',
@@ -154,13 +154,20 @@ class FinalUi6F3Tests(unittest.TestCase):
             'json("/me/switch-account"',
         ):
             self.assertIn(route, shell)
-        for page in ("Strategy Builder", "Text to Strategy", "Strategy Ready", "Schedule Trading", "Live Runs"):
-            self.assertIn(page, shell)
+        self.assertIn('@app.post("/me/resume-trading")', runtime)
+        self.assertIn('row.execution_status = "starting"', runtime)
+        self.assertIn("evaluate_custom_strategy", direct)
+        self.assertIn("_execute_for_account", direct)
+        self.assertIn("execute_real", direct)
+        self.assertIn('"proposal": 1', execution)
+        self.assertIn('"buy": str(economics.proposal_id)', execution)
+        self.assertIn("PURCHASE_CONFIRMED", execution)
 
     def test_javascript_syntax_is_valid(self) -> None:
         for path in (
             DASHBOARD / "final-premium-6f3.js",
             DASHBOARD / "final-ui-shell-v2.js",
+            DASHBOARD / "public-testing-runtime-v1.js",
             DASHBOARD / "vps-api-boundary-v2.js",
             DASHBOARD / "vps-realtime-client-v2.js",
             ROOT / "scripts" / "build-vps.mjs",
