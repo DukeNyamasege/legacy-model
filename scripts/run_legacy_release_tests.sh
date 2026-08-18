@@ -5,11 +5,9 @@ ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT_DIR"
 
 # Legacy strategy tests deliberately create temporary SQLite databases and local
-# token files. A VPS candidate supplies PostgreSQL and production token settings;
-# leaking those values into this suite makes otherwise independent tests share
-# rows. Keep isolation confined to this one-shot process. Production services
-# retain PostgreSQL, encrypted credentials and account-scoped execution.
-unset DATABASE_URL
+# token files. Production services retain PostgreSQL, encrypted credentials and
+# account-scoped execution, but the release suite itself runs isolated from the
+# production DATABASE_URL.
 export ALLOW_LEGACY_GLOBAL_TOKENS=true
 export COPYTRADING_ALLOW_LEGACY_GLOBAL_TOKENS=true
 export FRONTEND_ORIGINS="http://127.0.0.1:8080,http://localhost:8080,https://derivadmin.site"
@@ -48,15 +46,9 @@ scripts/finalize-scheduler-v2.mjs
 scripts/finalize-execution-continuity-v1.mjs
 "
 
-# Production continuity-v1 keeps Run alive across recoverable transport failures,
-# reconciles open contracts after authenticated-WS reconnect, makes Reset a pure
-# visibility action, keeps one human Start flow, and financially fences real BUYs
-# behind the configured Virtual Hook loss/win state machine. The camera theme is a
-# presentation-only final CSS authority for tutorial/live-recording readability.
-#
 # VPS hosts do not need Node installed. If Node is unavailable locally, run the
-# exact same syntax checks in an ephemeral Node 22 container, matching the
-# frontend build stage and avoiding host-package drift.
+# same syntax checks in an ephemeral Node 22 container, matching the frontend
+# build stage and avoiding host-package drift.
 if command -v node >/dev/null 2>&1; then
   for file in $NODE_CHECK_FILES; do
     node --check "$file"
@@ -78,50 +70,58 @@ fi
 grep -q -- '--camera-bg: #07111f' dashboard/tutorial-camera-theme-v1.css
 grep -q -- '--camera-bg: #e9f0f6' dashboard/tutorial-camera-theme-v1.css
 
-if command -v python >/dev/null 2>&1; then
-  PYTHON_BIN=python
-elif command -v python3 >/dev/null 2>&1; then
-  PYTHON_BIN=python3
-else
-  echo "ERROR: neither python nor python3 is installed on the VPS host." >&2
+# Python release tests must use the same dependency set as production. Bare VPS
+# hosts intentionally do not carry FastAPI/SQLAlchemy/aiohttp, so build and run
+# the API target instead of mutating the host Python installation.
+command -v docker >/dev/null 2>&1 || {
+  echo "ERROR: Docker is required for Python release tests." >&2
   exit 1
-fi
+}
 
-echo "Using Python interpreter: $PYTHON_BIN"
+echo "Building production API test image so Python tests use runtime dependencies."
+docker compose -f docker-compose.yml build api
 
-"$PYTHON_BIN" -m py_compile \
-  app/direct_execution_hard_stop_state.py \
-  app/vps_direct_hard_stop_v2.py \
-  app/direct_execution_worker_fence.py \
-  app/custom_split_debt_continuity_authority.py \
-  app/custom_virtual_post_loss_barrier_authority.py \
-  app/vps_direct_execution_checkpoint.py \
-  app/automation_scheduler_v2_authority.py \
-  app/vps_backend_api.py
+echo "Running Python release tests inside API image."
+docker compose -f docker-compose.yml run --rm --no-deps api sh -ec '
+  unset DATABASE_URL
+  export ALLOW_LEGACY_GLOBAL_TOKENS=true
+  export COPYTRADING_ALLOW_LEGACY_GLOBAL_TOKENS=true
+  export FRONTEND_ORIGINS="http://127.0.0.1:8080,http://localhost:8080,https://derivadmin.site"
 
-exec "$PYTHON_BIN" -m unittest -q \
-  tests.test_tutorial_camera_theme \
-  tests.test_execution_continuity_v10 \
-  tests.test_scheduler_v2_authority \
-  tests.test_run_panel_ledger_v8 \
-  tests.test_hybrid_browser_direct_v2 \
-  tests.test_persistent_scheduler_action5 \
-  tests.test_execution_stop_reason_authority \
-  tests.test_custom_execution_consistency_authority \
-  tests.test_post_loss_split_and_virtual_neutrality \
-  tests.test_clear_trades_unbounded_kpis \
-  tests.test_custom_virtual_integrity_authority \
-  tests.test_custom_strategy_instant_start \
-  tests.test_personal_token_sync \
-  tests.test_multi_strategy \
-  tests.test_multi_strategy_concurrency \
-  tests.test_strategy_v2 \
-  tests.test_standardized_execution_runtime \
-  tests.test_scalable_group_execution \
-  tests.test_rotating_execution_cohorts \
-  tests.test_provider_connection_resilience \
-  tests.test_websocket_hot_path_hardening \
-  tests.test_per_account_virtual_runtime \
-  tests.test_strategy_settlement_integrity \
-  tests.test_websocket_execution_hardening \
-  tests.test_performance_hardening
+  python -m py_compile \
+    app/direct_execution_hard_stop_state.py \
+    app/vps_direct_hard_stop_v2.py \
+    app/direct_execution_worker_fence.py \
+    app/custom_split_debt_continuity_authority.py \
+    app/custom_virtual_post_loss_barrier_authority.py \
+    app/vps_direct_execution_checkpoint.py \
+    app/automation_scheduler_v2_authority.py \
+    app/vps_backend_api.py
+
+  python -m unittest -q \
+    tests.test_tutorial_camera_theme \
+    tests.test_execution_continuity_v10 \
+    tests.test_scheduler_v2_authority \
+    tests.test_run_panel_ledger_v8 \
+    tests.test_hybrid_browser_direct_v2 \
+    tests.test_persistent_scheduler_action5 \
+    tests.test_execution_stop_reason_authority \
+    tests.test_custom_execution_consistency_authority \
+    tests.test_post_loss_split_and_virtual_neutrality \
+    tests.test_clear_trades_unbounded_kpis \
+    tests.test_custom_virtual_integrity_authority \
+    tests.test_custom_strategy_instant_start \
+    tests.test_personal_token_sync \
+    tests.test_multi_strategy \
+    tests.test_multi_strategy_concurrency \
+    tests.test_strategy_v2 \
+    tests.test_standardized_execution_runtime \
+    tests.test_scalable_group_execution \
+    tests.test_rotating_execution_cohorts \
+    tests.test_provider_connection_resilience \
+    tests.test_websocket_hot_path_hardening \
+    tests.test_per_account_virtual_runtime \
+    tests.test_strategy_settlement_integrity \
+    tests.test_websocket_execution_hardening \
+    tests.test_performance_hardening
+'
