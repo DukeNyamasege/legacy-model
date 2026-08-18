@@ -17,7 +17,7 @@ class FinalUi6F3Tests(unittest.TestCase):
         self.assertIn('frontend-authority" content="final-ui-shell-v2"', html)
         self.assertIn('/final-premium-6f3.css?v=20260817-6f3-1', html)
         self.assertIn('/final-premium-6f3.js?v=20260818-local-ui-12', html)
-        self.assertIn('/public-testing-runtime-v1.js?v=20260818-public-testing-run-v4', html)
+        self.assertIn('/public-testing-runtime-v1.js?v=20260818-public-testing-run-v5', html)
         self.assertNotIn('<script src="/vps-realtime-client-v2.js?v=20260817-6f2-1" defer>', html)
         self.assertNotIn('<script src="/final-ui-shell-v2.js?v=20260817-6f2-1" defer>', html)
         self.assertNotIn("premium-subscription-action6e", html)
@@ -35,8 +35,7 @@ class FinalUi6F3Tests(unittest.TestCase):
             self.assertIn(route, js)
         for marker in (
             "KES 250", "7 days", "M-PESA · LIPANA", "DOT & ROT access",
-            "signed Lipana callback", "server-side transaction verification",
-            "payment?.activated", "premium?.active",
+            "signed Lipana callback", "server-side transaction verification", "payment?.activated", "premium?.active",
         ):
             self.assertIn(marker, js)
         self.assertIn("const TESTING_FREE_ACCESS = true;", js)
@@ -48,11 +47,13 @@ class FinalUi6F3Tests(unittest.TestCase):
         for marker in (
             'fetch("/me/public-testing-access"', "public_testing_free_access",
             ".paid-soon-banner", ".premium-reminder", ".premium-profile",
-            "premium use only", "pay kes 250", '"[data-run-start]"',
-            '"[data-run-execution-toggle]"', '"[data-builder-trade]"',
-            '"[data-ready-trade]"', '"[data-trade-now-selected]"', '"[data-start-trading]"',
-            'data-run-tab="transactions"', 'label.textContent = running ? "Stop" : "Run"',
+            "premium use only", "pay kes 250", '"[data-run-start]"', '"[data-run-execution-toggle]"',
+            '"[data-builder-trade]"', '"[data-ready-trade]"', '"[data-trade-now-selected]"',
+            '"[data-start-trading]"', 'data-run-tab="transactions"',
+            'label.textContent = running ? "Stop" : "Run"',
             "if (running && !state.defaultTransactionsApplied) chooseTransactions();",
+            "const isToggle = target.matches(TOGGLE_SELECTORS);",
+            "const starting = isToggle ? !wasRunning : true;",
         ):
             self.assertIn(marker, js)
 
