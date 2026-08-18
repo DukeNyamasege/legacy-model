@@ -1,25 +1,11 @@
 (() => {
   "use strict";
 
-  if (window.__DERIVADMIN_DIRECT_TRANSACTION_LEDGER_V8__) return;
-  window.__DERIVADMIN_DIRECT_TRANSACTION_LEDGER_V8__ = true;
-
-  /*
-   * DIRECT TRANSACTION + KPI AUTHORITY V8
-   *
-   * The direct Deriv journal is the source of truth for browser-owned live trades.
-   * A canonical per-account snapshot is retained so a slower VPS shell refresh can
-   * never temporarily replace confirmed rows with "No transactions yet".  The
-   * same contract snapshot owns BOTH Transactions and the six summary KPIs.
-   *
-   * There is no polling/reinsertion timer. DOM repairs happen synchronously from a
-   * narrow MutationObserver before the browser gets another paint opportunity.
-   * Only an explicit Reset/Clear event deletes the retained snapshot.
-   */
+  if (window.__DERIVADMIN_DIRECT_TRANSACTION_LEDGER_V9__) return;
+  window.__DERIVADMIN_DIRECT_TRANSACTION_LEDGER_V9__ = true;
 
   const JOURNAL_PREFIX = "derivadmin-direct-journal-v1:";
-  const SNAPSHOT_PREFIX = "derivadmin-direct-ledger-snapshot-v8:";
-  // Regression migration marker only; this legacy label is never rendered: V100 (1s)
+  const SNAPSHOT_PREFIX = "derivadmin-unified-ledger-snapshot-v9:";
   let observer = null;
   let observedPanel = null;
   let rootObserver = null;
@@ -42,6 +28,11 @@
     return Number.isFinite(number) ? number : fallback;
   }
 
+  function uiState() {
+    try { return window.FOA_FINAL_UI?.state?.() || {}; }
+    catch (_) { return {}; }
+  }
+
   function selectedManagedId() {
     try {
       const id = Number(window.DERIVADMIN_DIRECT_RUNTIME_UX_V3?.state?.()?.selected_managed_id || 0);
@@ -53,7 +44,10 @@
       const id = Number(account.managed_account_id || account.id || 0);
       if (id > 0) return String(id);
     } catch (_) {}
-    return "";
+    const accounts = uiState()?.accounts?.accounts || [];
+    const selected = accounts.find((row) => row?.selected) || accounts[0];
+    const id = Number(selected?.managed_account_id || 0);
+    return id > 0 ? String(id) : "";
   }
 
   function accountKey() {
@@ -66,19 +60,11 @@
     try {
       const value = JSON.parse(localStorage.getItem(key) || "null");
       return value == null ? fallback : value;
-    } catch (_) {
-      return fallback;
-    }
+    } catch (_) { return fallback; }
   }
 
   function writeJson(key, value) {
     try { localStorage.setItem(key, JSON.stringify(value)); } catch (_) {}
-  }
-
-  function rawJournalRows(key) {
-    if (!key) return [];
-    const rows = readJson(`${JOURNAL_PREFIX}${key}`, []);
-    return Array.isArray(rows) ? rows : [];
   }
 
   function retainedRows(key) {
@@ -95,20 +81,9 @@
 
   function rememberRows(key, rows) {
     if (!key || !Array.isArray(rows) || !rows.length) return;
-    const copy = rows.slice(-500);
+    const copy = rows.slice(0, 500);
     memorySnapshots.set(key, copy);
     writeJson(`${SNAPSHOT_PREFIX}${key}`, copy);
-  }
-
-  function journalRows() {
-    const key = accountKey();
-    if (!key) return [];
-    const live = rawJournalRows(key);
-    if (live.length) {
-      rememberRows(key, live);
-      return live;
-    }
-    return retainedRows(key);
   }
 
   function clearSnapshot() {
@@ -120,39 +95,82 @@
     lastSignature = "";
   }
 
-  function contracts() {
+  function normalizeContract(row, source) {
+    const id = String(row?.contract_id || row?.contractId || "").trim();
+    if (!id) return null;
+    const outcome = String(row?.outcome || "").toUpperCase();
+    const settled = outcome === "WIN" || outcome === "LOSS" || String(row?.state || "").toUpperCase() === "SETTLED";
+    return {
+      ...row,
+      contract_id: id,
+      mode: String(row?.mode || "real"),
+      source,
+      state: settled ? "SETTLED" : String(row?.state || "OPEN").toUpperCase(),
+      outcome: settled ? outcome : "",
+      symbol: row?.symbol || row?.market || "",
+      trade_type: row?.trade_type || row?.type || row?.contract_type || "TRADE",
+      stake: finite(row?.stake ?? row?.buy_price ?? row?.price, 0),
+      payout: row?.payout == null ? null : finite(row.payout, 0),
+      profit: finite(row?.profit, 0),
+      entry_spot: row?.entry_spot ?? row?.entry_tick ?? row?.entrySpot ?? row?.buy_spot ?? null,
+      exit_spot: row?.exit_spot ?? row?.exit_tick ?? row?.exitSpot ?? row?.sell_spot ?? null,
+      opened_at: row?.opened_at || row?.purchase_time || row?.provider_purchase_time || row?.at || "",
+      at: row?.at || row?.settlement_time || row?.provider_settlement_time || row?.purchase_time || "",
+    };
+  }
+
+  function directContracts() {
+    const key = accountKey();
+    if (!key) return [];
+    const rows = readJson(`${JOURNAL_PREFIX}${key}`, []);
+    if (!Array.isArray(rows)) return [];
     const map = new Map();
-    for (const row of journalRows()) {
-      if (String(row?.mode || "") !== "real") continue;
-      const id = String(row?.contract_id || "").trim();
-      if (!id) continue;
-      const previous = map.get(id) || {};
-      map.set(id, {
-        ...previous,
-        ...row,
-        contract_id: id,
-        opened_at: previous.opened_at || row.opened_at || row.at || "",
-        at: row.at || previous.at || "",
-      });
+    for (const raw of rows) {
+      if (String(raw?.mode || "") !== "real") continue;
+      const row = normalizeContract(raw, "browser");
+      if (!row) continue;
+      const previous = map.get(row.contract_id) || {};
+      map.set(row.contract_id, { ...previous, ...row, opened_at: previous.opened_at || row.opened_at });
     }
-    return Array.from(map.values())
+    return Array.from(map.values());
+  }
+
+  function serverContracts() {
+    const rows = uiState()?.trades?.trades || [];
+    if (!Array.isArray(rows)) return [];
+    return rows
+      .filter((row) => !row?.is_virtual)
+      .map((row) => normalizeContract(row, "server"))
+      .filter(Boolean);
+  }
+
+  function contracts() {
+    const key = accountKey();
+    const map = new Map();
+    for (const row of retainedRows(key)) {
+      if (row?.contract_id) map.set(String(row.contract_id), row);
+    }
+    for (const row of serverContracts()) {
+      const previous = map.get(row.contract_id) || {};
+      map.set(row.contract_id, { ...previous, ...row, opened_at: previous.opened_at || row.opened_at });
+    }
+    for (const row of directContracts()) {
+      const previous = map.get(row.contract_id) || {};
+      map.set(row.contract_id, { ...previous, ...row, opened_at: previous.opened_at || row.opened_at });
+    }
+    const rows = Array.from(map.values())
       .sort((a, b) => Date.parse(String(b.opened_at || b.at || 0)) - Date.parse(String(a.opened_at || a.at || 0)))
-      .slice(0, 100);
+      .slice(0, 500);
+    if (rows.length) rememberRows(key, rows);
+    return rows;
   }
 
   function marketLabel(symbol) {
     const raw = String(symbol || "").toUpperCase();
     const labels = {
-      "1HZ10V": "V10 1S",
-      "1HZ25V": "V25 1S",
-      "1HZ50V": "V50 1S",
-      "1HZ75V": "V75 1S",
-      "1HZ100V": "V100 1S",
-      "R_10": "V10",
-      "R_25": "V25",
-      "R_50": "V50",
-      "R_75": "V75",
-      "R_100": "V100",
+      "1HZ10V": "V10 1S", "1HZ25V": "V25 1S", "1HZ50V": "V50 1S",
+      "1HZ75V": "V75 1S", "1HZ100V": "V100 1S",
+      "R_10": "V10", "R_25": "V25", "R_50": "V50", "R_75": "V75", "R_100": "V100",
     };
     return labels[raw] || "Deriv";
   }
@@ -160,36 +178,35 @@
   function timeLabel(value) {
     const date = new Date(String(value || ""));
     if (!Number.isFinite(date.getTime())) return "--:--:--";
-    return date.toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false,
-    });
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
   }
 
   function typeLabel(row) {
-    const type = String(row?.trade_type || "TRADE").toUpperCase().replace(/^DIGIT/, "");
-    const prediction = row?.prediction;
+    let type = String(row?.trade_type || "TRADE").toUpperCase().replace(/^DIGIT/, "");
+    if (type.includes("OVER")) type = "OVER";
+    else if (type.includes("UNDER")) type = "UNDER";
+    else if (type.includes("MATCH")) type = "MATCHES";
+    else if (type.includes("DIFF")) type = "DIFFERS";
+    else if (type.includes("EVEN")) type = "EVEN";
+    else if (type.includes("ODD")) type = "ODD";
+    else if (type.includes("CALL")) type = "RISE";
+    else if (type.includes("PUT")) type = "FALL";
+    const prediction = row?.prediction ?? row?.barrier;
     if (prediction === null || prediction === undefined || prediction === "") return type;
-    return `${type} ${prediction}`;
+    const clean = String(prediction).replace(/^[+-]/, "");
+    return ["OVER", "UNDER", "MATCHES", "DIFFERS"].includes(type) ? `${type} ${clean}` : type;
   }
 
-  function money(value) {
-    return `${finite(value, 0).toFixed(2)} USD`;
-  }
-
-  function isSettled(row) {
-    return String(row?.state || "").toUpperCase() === "SETTLED" || Boolean(row?.outcome);
-  }
+  function money(value) { return `${finite(value, 0).toFixed(2)} USD`; }
+  function isSettled(row) { return String(row?.state || "").toUpperCase() === "SETTLED" || Boolean(row?.outcome); }
 
   function rowMarkup(row) {
     const settled = isSettled(row);
     const profit = finite(row.profit, 0);
-    const entry = row.entry_spot ?? row.entry_tick ?? "—";
-    const exit = settled ? (row.exit_spot ?? row.exit_tick ?? "—") : "OPEN";
+    const entry = row.entry_spot ?? "—";
+    const exit = settled ? (row.exit_spot ?? "—") : "OPEN";
     const pl = settled ? `${profit >= 0 ? "+" : ""}${money(profit)}` : "OPEN";
-    return `<div class="transaction-row transaction-row-v6 direct-local-transaction-row-v6 direct-local-transaction-row-v8" data-direct-contract-id="${esc(row.contract_id)}">
+    return `<div class="transaction-row transaction-row-v6 direct-local-transaction-row-v6 unified-transaction-row-v9" data-direct-contract-id="${esc(row.contract_id)}">
       <span class="tx-time-market"><small>${esc(timeLabel(row.opened_at || row.at))}</small><b>${esc(marketLabel(row.symbol))}</b></span>
       <span class="tx-type"><b>${esc(typeLabel(row))}</b></span>
       <span class="tx-spots"><b>${esc(entry)}</b><small>${esc(exit)}</small></span>
@@ -199,12 +216,7 @@
   }
 
   function stats(rows) {
-    let totalStake = 0;
-    let totalPayout = 0;
-    let profit = 0;
-    let wins = 0;
-    let losses = 0;
-
+    let totalStake = 0, totalPayout = 0, profit = 0, wins = 0, losses = 0;
     for (const row of rows) {
       const stake = Math.max(0, finite(row.stake, 0));
       totalStake += stake;
@@ -212,15 +224,9 @@
       const pnl = finite(row.profit, 0);
       profit += pnl;
       const outcome = String(row.outcome || "").toUpperCase();
-      if (outcome === "WIN") {
-        wins += 1;
-        totalPayout += Math.max(0, finite(row.payout, stake + pnl));
-      } else if (outcome === "LOSS") {
-        losses += 1;
-        totalPayout += Math.max(0, finite(row.payout, 0));
-      } else {
-        totalPayout += Math.max(0, finite(row.payout, pnl > 0 ? stake + pnl : 0));
-      }
+      if (outcome === "WIN") { wins += 1; totalPayout += Math.max(0, finite(row.payout, stake + pnl)); }
+      else if (outcome === "LOSS") { losses += 1; totalPayout += Math.max(0, finite(row.payout, 0)); }
+      else totalPayout += Math.max(0, finite(row.payout, pnl > 0 ? stake + pnl : 0));
     }
     return { totalStake, totalPayout, profit, wins, losses, runs: rows.length };
   }
@@ -239,21 +245,10 @@
   }
 
   function signature(rows) {
-    return rows.map((row) => [
-      row.contract_id,
-      row.state,
-      row.outcome,
-      finite(row.stake, 0),
-      finite(row.profit, 0),
-      row.entry_spot ?? row.entry_tick ?? "",
-      row.exit_spot ?? row.exit_tick ?? "",
-      row.at || "",
-    ].join("|")).join(";");
+    return rows.map((row) => [row.contract_id, row.state, row.outcome, finite(row.stake, 0), finite(row.profit, 0), row.entry_spot ?? "", row.exit_spot ?? "", row.at || ""].join("|")).join(";");
   }
 
-  function disconnectObserver() {
-    try { observer?.disconnect(); } catch (_) {}
-  }
+  function disconnectObserver() { try { observer?.disconnect(); } catch (_) {} }
 
   function connectObserver() {
     const panel = document.querySelector(".global-run-panel");
@@ -286,68 +281,50 @@
   }
 
   function render(force = false) {
-    if (!activeTransactions()) {
-      connectObserver();
-      return;
-    }
-
+    if (!activeTransactions()) { connectObserver(); return; }
     const rows = contracts();
-    if (!rows.length) {
-      lastSignature = "";
-      connectObserver();
-      return;
-    }
-
+    if (!rows.length) { lastSignature = ""; connectObserver(); return; }
     const panel = document.querySelector(".global-run-panel");
     const body = panel?.querySelector(".run-panel-body");
     const summary = panel?.querySelector(".run-panel-stats");
     if (!panel || !body || !summary) return;
-
     const nextSignature = signature(rows);
     const values = stats(rows);
-    const expectedRows = body.querySelectorAll(".direct-local-transaction-row-v8").length;
+    const expectedRows = body.querySelectorAll(".unified-transaction-row-v9").length;
     const displayedRuns = String(summary.children?.[2]?.querySelector("span")?.textContent || "").trim();
-    const canonicalPresent = Boolean(body.querySelector(".direct-canonical-table-v8"));
+    const canonicalPresent = Boolean(body.querySelector(".unified-canonical-table-v9"));
     if (!force && canonicalPresent && nextSignature === lastSignature && expectedRows === rows.length && displayedRuns === String(values.runs)) {
-      connectObserver();
-      return;
+      connectObserver(); return;
     }
-
     applying = true;
     disconnectObserver();
     try {
       lastSignature = nextSignature;
-      body.innerHTML = `<div class="transaction-table transaction-table-v6 direct-canonical-table-v8">
+      body.innerHTML = `<div class="transaction-table transaction-table-v6 unified-canonical-table-v9">
         <div class="transaction-head transaction-head-v6"><span>Time / Market</span><span>Type</span><span>Entry / Exit</span><span>Buy price</span><span>Profit / Loss</span></div>
         <div class="transaction-rows">${rows.map(rowMarkup).join("")}</div>
       </div>`;
       summary.innerHTML = statsMarkup(values);
-      panel.dataset.directLedgerAuthority = "v8";
-    } finally {
-      applying = false;
-      connectObserver();
-    }
+      panel.dataset.directLedgerAuthority = "v9";
+    } finally { applying = false; connectObserver(); }
   }
 
-  function renderNow() {
-    render(true);
-  }
-
+  function renderNow() { render(true); }
   window.addEventListener("derivadmin:direct-trade", renderNow);
   window.addEventListener("derivadmin:direct-clear", () => { clearSnapshot(); renderNow(); });
   window.addEventListener("derivadmin:direct-reset-all", () => { clearSnapshot(); renderNow(); });
+  window.addEventListener("derivadmin:scheduled-runtime", renderNow);
   window.addEventListener("pageshow", renderNow);
   document.addEventListener("foa:vps-live", renderNow);
+  document.addEventListener("foa:backend-lifecycle", renderNow);
   document.addEventListener("click", (event) => {
     if (event.target?.closest?.('[data-run-tab="transactions"]')) queueMicrotask(renderNow);
   });
-
   connectRootObserver();
   connectObserver();
   renderNow();
-
   const api = Object.freeze({
-    version: "20260818-direct-transaction-ledger-v8",
+    version: "20260818-unified-transaction-ledger-v9",
     refresh: renderNow,
     contracts,
     stats: () => stats(contracts()),
@@ -355,4 +332,5 @@
   });
   window.DERIVADMIN_DIRECT_TRANSACTION_LEDGER_V6 = api;
   window.DERIVADMIN_DIRECT_TRANSACTION_LEDGER_V8 = api;
+  window.DERIVADMIN_DIRECT_TRANSACTION_LEDGER_V9 = api;
 })();
