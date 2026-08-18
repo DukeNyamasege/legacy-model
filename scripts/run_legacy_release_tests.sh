@@ -87,6 +87,7 @@ docker compose -f docker-compose.yml run --rm --no-deps api sh -ec '
     app/custom_virtual_post_loss_barrier_authority.py \
     app/vps_direct_execution_checkpoint.py \
     app/global_recovery_execution_policy.py \
+    app/never_auto_stop_repository_authority.py \
     app/account_identity_canonical_authority.py \
     app/account_trade_metrics_authority.py \
     app/vps_runtime_policy_hotfix.py \
