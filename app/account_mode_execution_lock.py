@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.direct_execution_lease import (
+    DIRECT_BROWSER_STATUS,
+    direct_browser_lease_fresh,
+)
 from app.models import ManagedAccount, utc_now
 from app.repositories.test2_repository import Test2Repository
 
@@ -11,7 +15,7 @@ STOPPED_LIKE_STATUSES = {
     "inactive",
     "disabled",
     "stopped",
-    # Real trading is no longer a permanent account pause.  If a stale VPS gate
+    # Real trading is no longer a permanent account pause. If a stale VPS gate
     # marked a real account this way, the trader must be able to press Start Auto
     # Trade again after the fixed real gate is deployed.
     "real_disabled",
@@ -69,11 +73,13 @@ def account_lifecycle_from_row(row: Any) -> str:
         return "paused"
     if status in STARTING_LIKE_STATUSES:
         return "starting"
+    # direct_browser is intentionally presented as a normal running lifecycle to
+    # the UI. Ownership is enforced separately in account_allows_new_execution().
     return "running"
 
 
 def account_allows_new_execution(row: Any) -> bool:
-    """True only after the trader explicitly pressed Start/Resume.
+    """Return whether the VPS worker may create a new financial execution.
 
     Logged-in or linked accounts are not execution accounts by default. The
     per-account lifecycle is:
@@ -83,8 +89,17 @@ def account_allows_new_execution(row: Any) -> bool:
     ``settlement_only`` is intentionally excluded: it may keep a private stream
     alive just long enough to finish already-open contracts, but it must never
     enter proposal or purchase scopes.
+
+    ``direct_browser`` is the browser/server fencing state. While its heartbeat is
+    fresh, browser JavaScript owns proposal/BUY and the worker must fail closed.
+    Once the heartbeat expires, this function deliberately returns True so the
+    persistent worker can continue the already-saved strategy while the browser is
+    offline. Scheduled trades never use direct_browser and remain server-owned.
     """
 
+    status = str(_row_value(row, "execution_status", "inactive") or "inactive").strip().lower()
+    if status == DIRECT_BROWSER_STATUS and direct_browser_lease_fresh(row):
+        return False
     return account_lifecycle_from_row(row) in {"starting", "running"}
 
 
@@ -103,13 +118,28 @@ def _manual_locking_set_status(original_set_status):
             current_status = str(row.execution_status or "inactive").strip().lower()
             current_lifecycle = account_lifecycle_from_row(row)
 
-            # Worker validation, OAuth refresh, balance refresh, dashboard
-            # repair jobs must never promote a mode/account that the user stopped
-            # or paused. The previous guard required enabled=false, which allowed
-            # an impossible mixed row (status=stopped, enabled=true) to be promoted
-            # back to active. Stopped/paused status alone is now enough to block
-            # automatic promotion; only the explicit Start/Resume route can move
-            # the account forward.
+            # While the browser lease is fresh, worker validation/refresh status
+            # writers are not allowed to replace direct_browser with active or
+            # connecting. Doing so would destroy the ownership fence and permit a
+            # duplicate server BUY. Explicit terminal statuses still pass through.
+            if (
+                current_status == DIRECT_BROWSER_STATUS
+                and direct_browser_lease_fresh(row)
+                and status in AUTO_PROMOTION_STATUSES
+            ):
+                row.enabled = True
+                row.execution_status = DIRECT_BROWSER_STATUS
+                row.execution_status_reason = (
+                    "Live execution is owned by the browser; VPS takeover waits for lease expiry"
+                )[:160]
+                row.updated_at = utc_now()
+                return
+
+            # Worker validation, OAuth refresh, balance refresh, dashboard repair
+            # jobs must never promote a mode/account that the user stopped or
+            # paused. Stopped/paused status alone is enough to block automatic
+            # promotion; only the explicit Start/Resume route can move the account
+            # forward.
             if current_lifecycle in {"stopped", "paused", "settlement"} and status in AUTO_PROMOTION_STATUSES:
                 if current_lifecycle in {"stopped", "settlement"}:
                     row.enabled = False
@@ -177,11 +207,11 @@ def stop_mode_account(repository: Test2Repository, account_id: int) -> None:
 
 
 def install_account_mode_execution_lock() -> None:
-    """Require explicit Start per Demo/Real account mode.
+    """Require explicit Start per Demo/Real account mode and fence direct execution.
 
     Demo and Real can both exist and both can be supported, but neither mode is
     allowed to auto-start because the sibling mode is running or because OAuth/API
-    token refresh repaired its credential.  Only the current mode's Start/Resume
+    token refresh repaired its credential. Only the current mode's Start/Resume
     endpoint can enable that exact ManagedAccount row.
     """
 
