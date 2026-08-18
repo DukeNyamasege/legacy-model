@@ -238,3 +238,12 @@ def install_direct_execution_worker_fence() -> None:
     RFDir5TradingBot._direct_execution_worker_fence_installed = True
     RFDir5TradingBot._direct_execution_hard_stop_fence = "uncached_final_pre_buy"
     _INSTALLED = True
+
+    # This fence is the last worker-side execution layer installed by the current
+    # runtime. Install the cross-account recovery/lifecycle policy here so older
+    # Martingale cap and fail-closed wrappers cannot regain authority afterwards.
+    from app.global_recovery_execution_policy import (
+        install_global_recovery_execution_policy,
+    )
+
+    install_global_recovery_execution_policy()
