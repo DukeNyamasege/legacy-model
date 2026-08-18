@@ -18,7 +18,7 @@ class ExecutionStopReasonAuthorityTests(unittest.TestCase):
         self.assertLess(reason_authority, instant_start)
         self.assertLess(instant_start, stampede_guard)
         self.assertIn("stop_reason_authority=durable", source)
-        self.assertIn("execution_liveness_watchdog=true", source)
+        self.assertIn("execution_liveness_watchdog=browser_aware", source)
         self.assertIn("connection_repair=targeted_singleflight", source)
         self.assertIn("sibling_wake=false", source)
         self.assertIn("global_revalidation=false", source)
@@ -124,7 +124,7 @@ class ExecutionStopReasonAuthorityTests(unittest.TestCase):
         self.assertIn("state.lifecycle", shell)
         self.assertIn("state.lifecycle?.lifecycle", shell)
         self.assertNotIn('<script src="/final-ui-shell-v2.js?v=20260817-6f2-1" defer>', index)
-        self.assertIn('/final-ui-shell-v2.js?v=20260817-6f2-1', premium)
+        self.assertIn('/final-ui-shell-v2.js?v=20260818-local-ui-12', premium)
         self.assertNotIn('/final-ui-shell-v1.js', index)
 
 
