@@ -8,6 +8,7 @@ RUN npm install --ignore-scripts --no-audit --no-fund
 COPY dashboard ./dashboard
 COPY scripts/build-vps.mjs ./scripts/build-vps.mjs
 COPY scripts/build-direct-runtime-v2.mjs ./scripts/build-direct-runtime-v2.mjs
+COPY scripts/finalize-direct-runtime-v2.mjs ./scripts/finalize-direct-runtime-v2.mjs
 COPY scripts/export-deriv-quill-icons-v2.mjs ./scripts/export-deriv-quill-icons-v2.mjs
 
 ARG PUBLIC_ORIGIN=https://derivadmin.site
@@ -20,7 +21,10 @@ RUN node scripts/build-vps.mjs
 # guarded UX-v3 source, applies only exact known replacements, and FAILS the image
 # build if those source contracts drift. v2 adds all-even/all-odd parity plus the
 # saved after-loss execution route; UX-v4 follows that active route on every tick.
-RUN node scripts/build-direct-runtime-v2.mjs
+RUN node scripts/build-direct-runtime-v2.mjs \
+  && node scripts/finalize-direct-runtime-v2.mjs \
+  && node --check dist/deriv-direct-execution-v2.js \
+  && node --check dist/direct-runtime-ux-v4.js
 
 # Hybrid execution frontend. Live/manual trading is browser <-> Deriv directly;
 # the VPS remains a control plane for OTP bootstrap, scheduling and offline takeover.
@@ -40,6 +44,16 @@ RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && cp dashboard/direct-ui-cleanup-v1.js dist/direct-ui-cleanup-v1.js \
   && cp dashboard/direct-builder-loaded-v2.js dist/direct-builder-loaded-v2.js \
   && cp dashboard/direct-demo-reset-router-v1.js dist/direct-demo-reset-router-v1.js \
+  && node --check dist/direct-pip-precision-v1.js \
+  && node --check dist/direct-financial-fence-v1.js \
+  && node --check dist/direct-socket-control-v1.js \
+  && node --check dist/direct-reset-authority-v1.js \
+  && node --check dist/direct-interaction-guard-v3.js \
+  && node --check dist/direct-strategy-persistence-v1.js \
+  && node --check dist/direct-continuity-checkpoint-v1.js \
+  && node --check dist/direct-ui-cleanup-v1.js \
+  && node --check dist/direct-builder-loaded-v2.js \
+  && node --check dist/direct-demo-reset-router-v1.js \
   && node -e "const fs=require('fs');const p='dist/index.html';let h=fs.readFileSync(p,'utf8');const scripts=['<script src=\"/direct-pip-precision-v1.js?v=20260818-direct-pip-v1\" defer></script>','<script src=\"/direct-financial-fence-v1.js?v=20260818-direct-fence-v2\" defer></script>','<script src=\"/direct-socket-control-v1.js?v=20260818-direct-socket-v1\" defer></script>','<script src=\"/direct-reset-authority-v1.js?v=20260818-reset-authority-v1\" defer></script>','<script src=\"/direct-interaction-guard-v3.js?v=20260818-interaction-v3\" defer></script>','<script src=\"/deriv-direct-execution-v2.js?v=20260818-browser-direct-v2\" defer></script>','<script src=\"/direct-strategy-persistence-v1.js?v=20260818-direct-persist-v1\" defer></script>','<script src=\"/direct-continuity-checkpoint-v1.js?v=20260818-direct-continuity-v1\" defer></script>','<script src=\"/direct-ui-cleanup-v1.js?v=20260818-direct-cleanup-v1\" defer></script>','<script src=\"/direct-builder-loaded-v2.js?v=20260818-builder-loaded-v2\" defer></script>','<script src=\"/direct-runtime-ux-v4.js?v=20260818-runtime-ux-v4\" defer></script>','<script src=\"/direct-demo-reset-router-v1.js?v=20260818-demo-reset-router-v1\" defer></script>'];for(const s of scripts){if(!h.includes(s))h=h.replace('</body>',s+'\\n</body>');}fs.writeFileSync(p,h);"
 
 FROM nginx:1.27-alpine AS frontend
