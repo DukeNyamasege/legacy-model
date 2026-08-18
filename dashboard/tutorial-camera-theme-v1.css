@@ -1,0 +1,740 @@
+/* DerivAdmin camera-friendly tutorial palette.
+   Loaded LAST in the VPS frontend so old hard-coded dark/light colors cannot
+   reintroduce pure-black, pure-white or over-saturated neon recording surfaces.
+
+   Design goals:
+   - second-phone / TikTok recording readability
+   - no large pure-white panels that blow out on camera
+   - no pure-black panels that crush shadow detail
+   - stable blue/cyan brand accents without neon bloom
+   - stronger muted text for filmed screens
+   - consistent Builder / Scheduler / Run panel / navigation themes
+*/
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --camera-bg: #07111f;
+  --camera-bg-2: #0a1728;
+  --camera-surface: #0e1d2e;
+  --camera-surface-2: #13263a;
+  --camera-surface-3: #172d43;
+  --camera-line: #2c4965;
+  --camera-line-strong: #3b6384;
+  --camera-text: #f1f6fb;
+  --camera-muted: #a9b8c8;
+  --camera-muted-2: #8195aa;
+  --camera-blue: #4b8ff7;
+  --camera-blue-strong: #2f6fdb;
+  --camera-cyan: #4bc2d9;
+  --camera-green: #43d3a0;
+  --camera-red: #ff7182;
+  --camera-amber: #f2c866;
+  --camera-shadow: 0 12px 34px rgba(0, 0, 0, .22);
+
+  --bg: var(--camera-bg);
+  --bg2: var(--camera-bg-2);
+  --panel: var(--camera-surface);
+  --panel2: var(--camera-surface-2);
+  --line: var(--camera-line);
+  --line2: var(--camera-line-strong);
+  --text: var(--camera-text);
+  --muted: var(--camera-muted);
+  --cyan: var(--camera-cyan);
+  --blue: var(--camera-blue);
+  --green: var(--camera-green);
+  --red: var(--camera-red);
+  --amber: var(--camera-amber);
+
+  --phone-bg: var(--camera-bg);
+  --phone-panel: var(--camera-surface);
+  --phone-line: var(--camera-line);
+  --phone-blue: var(--camera-blue);
+  --phone-cyan: var(--camera-cyan);
+  --phone-text: var(--camera-text);
+  --phone-muted: var(--camera-muted);
+  --phone-green: var(--camera-green);
+  --phone-red: var(--camera-red);
+}
+
+html[data-theme="light"] {
+  color-scheme: light;
+  --camera-bg: #e9f0f6;
+  --camera-bg-2: #e1eaf3;
+  --camera-surface: #f4f8fb;
+  --camera-surface-2: #edf3f8;
+  --camera-surface-3: #e4edf5;
+  --camera-line: #aebfd0;
+  --camera-line-strong: #839db5;
+  --camera-text: #12263a;
+  --camera-muted: #536b82;
+  --camera-muted-2: #6e8499;
+  --camera-blue: #246fcb;
+  --camera-blue-strong: #175cae;
+  --camera-cyan: #167f9d;
+  --camera-green: #087f5b;
+  --camera-red: #c84459;
+  --camera-amber: #9b6a10;
+  --camera-shadow: 0 10px 26px rgba(29, 57, 82, .10);
+
+  --bg: var(--camera-bg);
+  --bg2: var(--camera-bg-2);
+  --panel: var(--camera-surface);
+  --panel2: var(--camera-surface-2);
+  --line: var(--camera-line);
+  --line2: var(--camera-line-strong);
+  --text: var(--camera-text);
+  --muted: var(--camera-muted);
+  --cyan: var(--camera-cyan);
+  --blue: var(--camera-blue);
+  --green: var(--camera-green);
+  --red: var(--camera-red);
+  --amber: var(--camera-amber);
+
+  --phone-bg: var(--camera-bg);
+  --phone-panel: var(--camera-surface);
+  --phone-line: var(--camera-line);
+  --phone-blue: var(--camera-blue);
+  --phone-cyan: var(--camera-cyan);
+  --phone-text: var(--camera-text);
+  --phone-muted: var(--camera-muted);
+  --phone-green: var(--camera-green);
+  --phone-red: var(--camera-red);
+}
+
+html,
+body {
+  background: var(--camera-bg) !important;
+  color: var(--camera-text) !important;
+}
+
+.app-shell {
+  color: var(--camera-text) !important;
+  background:
+    radial-gradient(circle at 50% -10%, color-mix(in srgb, var(--camera-blue) 13%, transparent), transparent 34%),
+    linear-gradient(180deg, var(--camera-bg-2), var(--camera-bg) 48%, var(--camera-bg-2)) !important;
+}
+
+/* Keep camera exposure stable: one restrained shadow language everywhere. */
+.panel,
+.feature-card,
+.kpi-strip,
+.welcome-card,
+.dashboard-bot-picker,
+.dashboard-bot-card,
+.builder-panel,
+.schedule-form,
+.ready-card,
+.run-panel,
+.rule-block,
+.interpretation,
+.strategy-facts,
+.compact-schedules {
+  border-color: var(--camera-line) !important;
+  box-shadow: var(--camera-shadow) !important;
+}
+
+.topbar {
+  color: var(--camera-text) !important;
+  background: color-mix(in srgb, var(--camera-bg-2) 96%, transparent) !important;
+  border-bottom-color: var(--camera-line) !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .06) !important;
+}
+
+.brand-lockup b,
+.page-title h1,
+.panel-title h3,
+.section-head h2,
+.ready-title h2,
+.feature-card b,
+.welcome-card h2,
+.strategy-facts b,
+.dashboard-bot-card b,
+.schedule-title h3 {
+  color: var(--camera-text) !important;
+}
+
+.brand-lockup small,
+.page-title p,
+.panel-title > span,
+.feature-card em,
+.welcome-card p,
+.strategy-facts small,
+.ready-title.compact p,
+.page-intro p,
+.lead,
+.muted {
+  color: var(--camera-muted) !important;
+}
+
+.brand-mark,
+.feature-icon,
+.section-number,
+.rule-title span,
+.mode-card span {
+  background: linear-gradient(145deg,
+    color-mix(in srgb, var(--camera-blue) 34%, var(--camera-surface)),
+    color-mix(in srgb, var(--camera-cyan) 18%, var(--camera-surface-2))) !important;
+  border-color: color-mix(in srgb, var(--camera-blue) 58%, var(--camera-line)) !important;
+  color: var(--camera-cyan) !important;
+  box-shadow: none !important;
+}
+
+/* Primary actions stay visibly blue but avoid clipped neon on phone cameras. */
+.btn.primary,
+.login-button,
+.paid-soon-banner button,
+.feature-card strong {
+  background: linear-gradient(120deg, var(--camera-blue-strong), var(--camera-blue)) !important;
+  color: #f8fbff !important;
+  border-color: color-mix(in srgb, var(--camera-blue) 70%, var(--camera-line)) !important;
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--camera-blue) 18%, transparent) !important;
+}
+
+.btn.secondary {
+  background: linear-gradient(120deg,
+    color-mix(in srgb, var(--camera-blue-strong) 82%, var(--camera-surface)),
+    color-mix(in srgb, var(--camera-cyan) 55%, var(--camera-blue-strong))) !important;
+  color: #f8fbff !important;
+}
+
+.btn.ghost,
+.run-shortcut,
+.prompt-chips button {
+  background: var(--camera-surface-2) !important;
+  color: var(--camera-text) !important;
+  border-color: var(--camera-line) !important;
+  box-shadow: none !important;
+}
+
+.positive,
+.transaction-money .positive {
+  color: var(--camera-green) !important;
+}
+
+.negative,
+.transaction-money .negative {
+  color: var(--camera-red) !important;
+}
+
+/* Navigation stays separated from the trading controls in both themes. */
+.bottom-nav {
+  background: color-mix(in srgb, var(--camera-surface) 97%, transparent) !important;
+  border-top-color: var(--camera-line) !important;
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, .10) !important;
+}
+
+.nav-item {
+  color: var(--camera-muted) !important;
+}
+
+.nav-item.active {
+  color: var(--camera-blue) !important;
+}
+
+.nav-item.active:before {
+  background: var(--camera-blue) !important;
+  box-shadow: none !important;
+}
+
+/* Account selector — full balance stays visually centered and readable on video. */
+.theme-toggle,
+.account-switch-summary,
+.currency-pill {
+  background: var(--camera-surface-2) !important;
+  color: var(--camera-text) !important;
+  border-color: var(--camera-line-strong) !important;
+  box-shadow: none !important;
+}
+
+.account-switch-summary > strong {
+  color: var(--camera-cyan) !important;
+  text-shadow: none !important;
+}
+
+.currency-pill svg,
+.switch-caret svg,
+.icon-button,
+.back-button {
+  color: var(--camera-muted) !important;
+}
+
+.account-dropdown {
+  background: var(--camera-surface) !important;
+  color: var(--camera-text) !important;
+  border-color: var(--camera-line-strong) !important;
+  box-shadow: var(--camera-shadow) !important;
+}
+
+.account-tabs,
+.account-tabs button,
+.account-dropdown-title,
+.account-dropdown-title b {
+  background: transparent !important;
+  color: var(--camera-text) !important;
+}
+
+.account-tabs button.active,
+.account-dropdown-row {
+  background: var(--camera-surface-2) !important;
+  color: var(--camera-text) !important;
+}
+
+.account-tabs button.active:after {
+  background: var(--camera-blue) !important;
+}
+
+.account-dropdown-row b,
+.account-dropdown-row strong,
+.account-dropdown-row em {
+  color: var(--camera-text) !important;
+}
+
+.account-dropdown-row small {
+  color: var(--camera-muted) !important;
+}
+
+.account-dropdown-row em {
+  background: var(--camera-surface-3) !important;
+  border-color: var(--camera-line) !important;
+}
+
+/* Cards and KPI surfaces use mid-tone fills instead of black/white extremes. */
+.panel,
+.feature-card,
+.kpi-strip,
+.welcome-card,
+.dashboard-bot-picker,
+.dashboard-bot-card {
+  background: var(--camera-surface) !important;
+  color: var(--camera-text) !important;
+}
+
+.kpi-strip article {
+  border-color: var(--camera-line) !important;
+}
+
+.kpi-strip small,
+.dashboard-bot-card small,
+.library-row small {
+  color: var(--camera-muted) !important;
+}
+
+.kpi-strip b,
+.library-row b {
+  color: var(--camera-text) !important;
+}
+
+.bot-chip,
+.ai-badge {
+  color: var(--camera-cyan) !important;
+  background: color-mix(in srgb, var(--camera-cyan) 10%, var(--camera-surface-2)) !important;
+  border-color: color-mix(in srgb, var(--camera-cyan) 45%, var(--camera-line)) !important;
+}
+
+/* Forms / Builder — no bright white fields in light mode and no crushed navy fields in dark. */
+.builder-panel,
+.schedule-form,
+.rule-card,
+.mode-card,
+.builder-market-card,
+.builder-market-dropdown,
+.market-mode-tabs button,
+.trade-tabs button,
+.recovery-card,
+.condition-card,
+.info-box,
+.overlap-field,
+.session-preview,
+.result-routing-section,
+.result-routing-toggle,
+.result-routing-primary-note,
+.result-routing-recovery-box,
+#recovery-spread-control,
+.schedule-row {
+  background: var(--camera-surface) !important;
+  color: var(--camera-text) !important;
+  border-color: var(--camera-line) !important;
+  box-shadow: none !important;
+}
+
+.mode-card.active,
+.builder-market-card.selected,
+.market-mode-tabs button.active,
+.trade-tabs button.active,
+.recovery-card.active {
+  background: color-mix(in srgb, var(--camera-blue) 11%, var(--camera-surface-2)) !important;
+  color: var(--camera-text) !important;
+  border-color: var(--camera-blue) !important;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--camera-blue) 24%, transparent) !important;
+}
+
+.builder-panel label,
+.schedule-form label,
+.compact-select span,
+.mode-card small,
+.builder-market-card small,
+.recovery-card small,
+.info-box,
+.result-routing-section small,
+#recovery-spread-control small {
+  color: var(--camera-muted) !important;
+}
+
+.rule-title strong,
+.builder-market-card b,
+.recovery-card b,
+.mode-card b,
+.market-mode-tabs button,
+.trade-tabs button,
+.builder-market-dropdown summary {
+  color: var(--camera-text) !important;
+}
+
+label input,
+label select,
+.schedule-form > label select,
+.compact-select select,
+.ai-compose textarea,
+#recovery-spread-control select,
+#recovery-spread-control input,
+#result-routing-section select,
+#result-routing-section input:not([type="checkbox"]),
+.foa-final-prediction-field select {
+  background: var(--camera-surface-2) !important;
+  color: var(--camera-text) !important;
+  border-color: var(--camera-line-strong) !important;
+  box-shadow: none !important;
+}
+
+select option {
+  background: var(--camera-surface-2) !important;
+  color: var(--camera-text) !important;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--camera-muted-2) !important;
+  opacity: 1 !important;
+}
+
+input:focus,
+select:focus,
+textarea:focus,
+.compact-select select:focus {
+  border-color: var(--camera-blue) !important;
+  outline: none !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--camera-blue) 13%, transparent) !important;
+}
+
+.builder-market-card span {
+  color: var(--camera-cyan) !important;
+  border-color: var(--camera-line-strong) !important;
+}
+
+.builder-market-card.selected span {
+  background: color-mix(in srgb, var(--camera-blue) 13%, var(--camera-surface-2)) !important;
+  border-color: var(--camera-blue) !important;
+}
+
+.section-number {
+  color: var(--camera-cyan) !important;
+}
+
+/* Scheduler cards match Builder instead of switching to a different palette. */
+.schedule-row b,
+.overlap-field legend,
+.session-preview b {
+  color: var(--camera-text) !important;
+}
+
+.schedule-row small,
+.session-preview p {
+  color: var(--camera-muted) !important;
+}
+
+.schedule-row-actions button {
+  background: var(--camera-surface-2) !important;
+  color: var(--camera-text) !important;
+  border-color: var(--camera-line) !important;
+}
+
+.schedule-row em {
+  color: var(--camera-green) !important;
+}
+
+/* Run panel is one of the most-recorded screens: keep every layer theme-consistent. */
+.global-run-panel {
+  color: var(--camera-text) !important;
+}
+
+.run-panel-sheet,
+.run-panel-body,
+.transaction-table,
+.transaction-rows {
+  background: var(--camera-bg) !important;
+  color: var(--camera-text) !important;
+}
+
+.run-panel-sheet {
+  border-top-color: var(--camera-line-strong) !important;
+  box-shadow: 0 -10px 28px rgba(0, 0, 0, .16) !important;
+}
+
+.run-panel-top,
+.run-panel-tabs,
+.transaction-head {
+  background: var(--camera-surface-2) !important;
+  color: var(--camera-text) !important;
+  border-color: var(--camera-line) !important;
+}
+
+.run-panel-chevron,
+.run-panel-tabs button,
+.transaction-head,
+.transaction-type b,
+.transaction-spots b,
+.transaction-money b,
+.transaction-money strong,
+.run-panel-empty p,
+.run-panel-mini-ledger b,
+.run-panel-mini-ledger strong,
+.run-panel-journal p,
+.run-panel-journal article b,
+.journal-condition-list b {
+  color: var(--camera-text) !important;
+}
+
+.run-panel-tabs button.active {
+  color: var(--camera-blue) !important;
+}
+
+.transaction-row {
+  background: var(--camera-bg) !important;
+  border-bottom-color: var(--camera-line) !important;
+}
+
+.transaction-row:nth-child(even) {
+  background: color-mix(in srgb, var(--camera-surface) 50%, var(--camera-bg)) !important;
+}
+
+.transaction-spots .entry-dot,
+.transaction-spots .exit-dot {
+  background: var(--camera-bg) !important;
+}
+
+.transaction-spots .entry-dot {
+  border-color: var(--camera-red) !important;
+}
+
+.transaction-spots .exit-dot {
+  border-color: var(--camera-muted) !important;
+}
+
+.run-panel-mini-ledger article,
+.run-panel-journal p,
+.run-panel-journal article,
+.journal-condition-list > div {
+  background: var(--camera-surface) !important;
+  border-color: var(--camera-line) !important;
+  color: var(--camera-text) !important;
+}
+
+.run-panel-mini-ledger small,
+.run-panel-journal article span,
+.run-panel-journal article small,
+.run-help {
+  color: var(--camera-muted) !important;
+}
+
+.run-panel-stats {
+  background: var(--camera-surface-2) !important;
+  border-top-color: var(--camera-line) !important;
+}
+
+.run-panel-stats b,
+.run-panel-stats span,
+.run-panel-execution b {
+  color: var(--camera-text) !important;
+}
+
+.run-panel-execution small {
+  color: var(--camera-muted) !important;
+}
+
+.run-help {
+  text-decoration-color: color-mix(in srgb, var(--camera-muted) 70%, transparent) !important;
+}
+
+/* Start/Stop remain unmistakable but less fluorescent when filmed. */
+.global-run-panel [data-run-start][data-single-run-state="start"],
+.global-run-panel [data-run-start][data-state="start"] {
+  background: #167d60 !important;
+  color: #f7fffb !important;
+}
+
+.global-run-panel [data-run-start][data-single-run-state="stop"],
+.global-run-panel [data-run-start][data-state="stop"],
+.global-run-panel[data-execution-state="running"] .run-panel-run {
+  background: #d94a5e !important;
+  color: #fffafb !important;
+}
+
+/* Journal status chips remain readable after video compression. */
+.journal-condition-list > div > span {
+  background: color-mix(in srgb, var(--camera-blue) 12%, var(--camera-surface-2)) !important;
+  color: var(--camera-blue) !important;
+}
+
+.journal-condition-list em.ready {
+  background: var(--camera-surface-3) !important;
+  color: var(--camera-muted) !important;
+}
+
+.journal-condition-list em.watching {
+  background: color-mix(in srgb, var(--camera-amber) 15%, var(--camera-surface-2)) !important;
+  color: var(--camera-amber) !important;
+}
+
+.journal-condition-list em.met {
+  background: color-mix(in srgb, var(--camera-green) 14%, var(--camera-surface-2)) !important;
+  color: var(--camera-green) !important;
+}
+
+/* Modals / start confirmations follow the selected theme even though their style
+   element is injected later by JavaScript. !important is deliberate here. */
+.direct-confirm-backdrop {
+  background: rgba(4, 12, 22, .68) !important;
+  backdrop-filter: blur(7px) !important;
+}
+
+.direct-confirm-card,
+.direct-strategy-confirm-summary,
+.direct-reset-note {
+  background: var(--camera-surface) !important;
+  color: var(--camera-text) !important;
+  border-color: var(--camera-line) !important;
+  box-shadow: var(--camera-shadow) !important;
+}
+
+.direct-confirm-card h3,
+.direct-strategy-confirm-summary > b {
+  color: var(--camera-text) !important;
+}
+
+.direct-confirm-card > p,
+.direct-confirm-body,
+.direct-strategy-confirm-summary ul,
+.direct-reset-note {
+  color: var(--camera-muted) !important;
+}
+
+.direct-strategy-confirm-summary > span {
+  color: var(--camera-cyan) !important;
+}
+
+.direct-confirm-cancel {
+  background: var(--camera-surface-2) !important;
+  color: var(--camera-text) !important;
+  border-color: var(--camera-line) !important;
+}
+
+.direct-confirm-go {
+  background: linear-gradient(120deg, var(--camera-blue-strong), var(--camera-blue)) !important;
+  color: #f8fbff !important;
+}
+
+/* Global notices: strong enough to read, restrained enough not to blow out video. */
+.global-message.error {
+  background: color-mix(in srgb, var(--camera-red) 18%, var(--camera-surface)) !important;
+  border-color: color-mix(in srgb, var(--camera-red) 62%, var(--camera-line)) !important;
+  color: var(--camera-text) !important;
+}
+
+.global-message.success {
+  background: color-mix(in srgb, var(--camera-green) 16%, var(--camera-surface)) !important;
+  border-color: color-mix(in srgb, var(--camera-green) 55%, var(--camera-line)) !important;
+  color: var(--camera-text) !important;
+}
+
+.paid-soon-banner {
+  background: var(--camera-surface) !important;
+  color: var(--camera-text) !important;
+  border-color: var(--camera-line-strong) !important;
+  box-shadow: var(--camera-shadow) !important;
+}
+
+.paid-soon-banner b {
+  color: var(--camera-text) !important;
+}
+
+.paid-soon-banner p {
+  color: var(--camera-muted) !important;
+}
+
+/* Loader is also tutorial-safe when transitions are captured. */
+#derivadmin-soft-loader {
+  background:
+    radial-gradient(circle at 50% 34%, color-mix(in srgb, var(--camera-blue) 14%, transparent), transparent 40%),
+    linear-gradient(180deg, var(--camera-bg-2), var(--camera-bg)) !important;
+  color: var(--camera-text) !important;
+}
+
+.da-loader-card {
+  background: color-mix(in srgb, var(--camera-surface) 94%, transparent) !important;
+  border-color: var(--camera-line) !important;
+  box-shadow: var(--camera-shadow) !important;
+}
+
+.da-loader-mark {
+  background: linear-gradient(145deg, var(--camera-blue-strong), var(--camera-blue)) !important;
+  box-shadow: none !important;
+}
+
+.da-loader-ring {
+  border-color: color-mix(in srgb, var(--camera-line) 65%, transparent) !important;
+  border-top-color: var(--camera-cyan) !important;
+}
+
+.da-loader-title {
+  color: var(--camera-text) !important;
+}
+
+.da-loader-message {
+  color: var(--camera-muted) !important;
+}
+
+.da-loader-note {
+  color: var(--camera-muted-2) !important;
+}
+
+/* Light mode specifically avoids camera-blown #fff across large areas. */
+html[data-theme="light"] .transaction-row,
+html[data-theme="light"] .run-panel-body,
+html[data-theme="light"] .transaction-table,
+html[data-theme="light"] .transaction-rows {
+  background: var(--camera-bg) !important;
+}
+
+html[data-theme="light"] .transaction-row:nth-child(even) {
+  background: var(--camera-surface-2) !important;
+}
+
+/* Dark mode specifically avoids crushed #000 and excessive cyan bloom. */
+html[data-theme="dark"] .app-shell,
+html[data-theme="dark"] .run-panel-body,
+html[data-theme="dark"] .transaction-table,
+html[data-theme="dark"] .transaction-rows {
+  background-color: var(--camera-bg) !important;
+}
+
+@media (max-width: 700px) {
+  /* Preserve contrast after social-video downscaling. */
+  .nav-item,
+  .builder-panel label,
+  .schedule-form label,
+  .mode-card small,
+  .recovery-card small,
+  .builder-market-card small {
+    font-weight: 650 !important;
+  }
+}
