@@ -12,6 +12,7 @@ COPY scripts/finalize-direct-runtime-v2.mjs ./scripts/finalize-direct-runtime-v2
 COPY scripts/finalize-direct-ux-v4.mjs ./scripts/finalize-direct-ux-v4.mjs
 COPY scripts/finalize-production-controls-v6.mjs ./scripts/finalize-production-controls-v6.mjs
 COPY scripts/finalize-production-controls-v6b.mjs ./scripts/finalize-production-controls-v6b.mjs
+COPY scripts/finalize-scheduler-v2.mjs ./scripts/finalize-scheduler-v2.mjs
 COPY scripts/export-deriv-quill-icons-v2.mjs ./scripts/export-deriv-quill-icons-v2.mjs
 
 ARG PUBLIC_ORIGIN=https://derivadmin.site
@@ -38,13 +39,9 @@ RUN node scripts/build-direct-runtime-v2.mjs \
 # Hybrid execution frontend. deriv-direct-execution-v2 remains the ONLY manual/live
 # start engine. The public-testing helper is access/UI only. The hard-stop socket
 # fence is the outermost BUY guard before the direct engine creates its sockets.
-# direct-transaction-ledger-v6 now carries ledger-v8 behavior: a retained canonical
-# per-account snapshot owns both rows and KPIs and never yields to a slower empty
-# server refresh. Mobile containment comes after Run authority; usability-v2 is
-# loaded LAST to keep navigation clickable and the full balance centered.
-# Previous release-gate migration markers only (not emitted into index.html):
-# /direct-transaction-ledger-v6.js?v=20260818-direct-ledger-v7
-# /run-panel-usability-v1.js?v=20260818-run-panel-usability-v1
+# unified-ledger-v9 merges browser-direct and server-scheduled contracts and keeps
+# them until Reset. Scheduler-v2 finalizes second-precision/future-only scheduling,
+# result cards, live state export and a 1-second visual server-start reconciliation.
 RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && cp dashboard/direct-financial-fence-v1.js dist/direct-financial-fence-v1.js \
   && cp dashboard/direct-socket-control-v1.js dist/direct-socket-control-v1.js \
@@ -60,6 +57,9 @@ RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && cp dashboard/direct-run-panel-authority-v6.js dist/direct-run-panel-authority-v6.js \
   && cp dashboard/mobile-layout-authority-v1.js dist/mobile-layout-authority-v1.js \
   && cp dashboard/run-panel-usability-v1.js dist/run-panel-usability-v1.js \
+  && node scripts/finalize-scheduler-v2.mjs \
+  && node --check dist/final-premium-6f3.js \
+  && node --check dist/final-ui-shell-v2.js \
   && node --check dist/direct-pip-precision-v1.js \
   && node --check dist/direct-financial-fence-v1.js \
   && node --check dist/direct-socket-control-v1.js \
@@ -75,7 +75,7 @@ RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && node --check dist/direct-run-panel-authority-v6.js \
   && node --check dist/mobile-layout-authority-v1.js \
   && node --check dist/run-panel-usability-v1.js \
-  && node -e "const fs=require('fs');const p='dist/index.html';let h=fs.readFileSync(p,'utf8');const scripts=['<script src=\"/direct-pip-precision-v1.js?v=20260818-direct-pip-v1\" defer></script>','<script src=\"/direct-financial-fence-v1.js?v=20260818-direct-fence-v2\" defer></script>','<script src=\"/direct-socket-control-v1.js?v=20260818-direct-socket-v1\" defer></script>','<script src=\"/direct-hard-stop-fence-v1.js?v=20260818-browser-hard-stop-v1\" defer></script>','<script src=\"/direct-reset-authority-v1.js?v=20260818-reset-authority-v1\" defer></script>','<script src=\"/direct-interaction-guard-v3.js?v=20260818-interaction-v3\" defer></script>','<script src=\"/deriv-direct-execution-v2.js?v=20260818-browser-direct-v6b\" defer></script>','<script src=\"/direct-strategy-persistence-v1.js?v=20260818-direct-persist-v1\" defer></script>','<script src=\"/direct-continuity-checkpoint-v1.js?v=20260818-direct-continuity-v2-split\" defer></script>','<script src=\"/direct-ui-cleanup-v1.js?v=20260818-direct-cleanup-v1\" defer></script>','<script src=\"/direct-builder-loaded-v2.js?v=20260818-builder-loaded-v2\" defer></script>','<script src=\"/direct-runtime-ux-v4.js?v=20260818-runtime-ux-v6\" defer></script>','<script src=\"/direct-demo-reset-router-v1.js?v=20260818-demo-reset-router-v1\" defer></script>','<script src=\"/direct-transaction-ledger-v6.js?v=20260818-direct-ledger-v8\" defer></script>','<script src=\"/direct-run-panel-authority-v6.js?v=20260818-single-start-stop-v6\" defer></script>','<script src=\"/mobile-layout-authority-v1.js?v=20260818-mobile-layout-v1\" defer></script>','<script src=\"/run-panel-usability-v1.js?v=20260818-run-panel-usability-v2\" defer></script>'];for(const s of scripts){if(!h.includes(s))h=h.replace('</body>',s+'\\n</body>');}fs.writeFileSync(p,h);"
+  && node -e "const fs=require('fs');const p='dist/index.html';let h=fs.readFileSync(p,'utf8');const scripts=['<script src=\"/direct-pip-precision-v1.js?v=20260818-direct-pip-v1\" defer></script>','<script src=\"/direct-financial-fence-v1.js?v=20260818-direct-fence-v2\" defer></script>','<script src=\"/direct-socket-control-v1.js?v=20260818-direct-socket-v1\" defer></script>','<script src=\"/direct-hard-stop-fence-v1.js?v=20260818-browser-hard-stop-v1\" defer></script>','<script src=\"/direct-reset-authority-v1.js?v=20260818-reset-authority-v1\" defer></script>','<script src=\"/direct-interaction-guard-v3.js?v=20260818-interaction-v3\" defer></script>','<script src=\"/deriv-direct-execution-v2.js?v=20260818-browser-direct-v6b\" defer></script>','<script src=\"/direct-strategy-persistence-v1.js?v=20260818-direct-persist-v1\" defer></script>','<script src=\"/direct-continuity-checkpoint-v1.js?v=20260818-direct-continuity-v2-split\" defer></script>','<script src=\"/direct-ui-cleanup-v1.js?v=20260818-direct-cleanup-v1\" defer></script>','<script src=\"/direct-builder-loaded-v2.js?v=20260818-builder-loaded-v2\" defer></script>','<script src=\"/direct-runtime-ux-v4.js?v=20260818-runtime-ux-v6\" defer></script>','<script src=\"/direct-demo-reset-router-v1.js?v=20260818-demo-reset-router-v1\" defer></script>','<script src=\"/direct-transaction-ledger-v6.js?v=20260818-unified-ledger-v9\" defer></script>','<script src=\"/direct-run-panel-authority-v6.js?v=20260818-scheduler-start-stop-v2\" defer></script>','<script src=\"/mobile-layout-authority-v1.js?v=20260818-mobile-layout-v1\" defer></script>','<script src=\"/run-panel-usability-v1.js?v=20260818-run-panel-usability-v2\" defer></script>'];for(const s of scripts){if(!h.includes(s))h=h.replace('</body>',s+'\\n</body>');}fs.writeFileSync(p,h);"
 
 FROM nginx:1.27-alpine AS frontend
 
