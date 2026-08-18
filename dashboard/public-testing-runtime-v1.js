@@ -223,7 +223,8 @@
       block.className = "testing-tick-journal";
       journal.appendChild(block);
     }
-    block.innerHTML = `<div class="testing-tick-head"><span><i class="testing-live-dot"></i>Live Deriv tick analysis</span><small>${state.connected ? "connected" : state.running ? "connecting" : "stopped"} · ${state.analysisCount} ticks</small></div><div class="testing-tick-list">${latestRowsMarkup()}</div>`;
+    const markup = `<div class="testing-tick-head"><span><i class="testing-live-dot"></i>Live Deriv tick analysis</span><small>${state.connected ? "connected" : state.running ? "connecting" : "stopped"} · ${state.analysisCount} ticks</small></div><div class="testing-tick-list">${latestRowsMarkup()}</div>`;
+    if (block.innerHTML !== markup) block.innerHTML = markup;
   }
 
   function queueRender() {
@@ -280,7 +281,8 @@
   window.addEventListener("beforeunload", closeMirror);
 
   let observerQueued = false;
-  new MutationObserver(() => {
+  new MutationObserver((mutations) => {
+    if (mutations.length && mutations.every((mutation) => mutation.target?.closest?.(".testing-tick-journal"))) return;
     if (observerQueued) return;
     observerQueued = true;
     requestAnimationFrame(() => {
