@@ -240,8 +240,15 @@ def install_direct_execution_worker_fence() -> None:
     from app.never_auto_stop_repository_authority import (
         install_never_auto_stop_repository_authority,
     )
+    from app.stale_split_basis_reconciliation_authority import (
+        install_stale_split_basis_reconciliation_authority,
+    )
 
     install_account_identity_canonical_authority()
     install_account_trade_metrics_authority()
     install_never_auto_stop_repository_authority()
     install_global_recovery_execution_policy()
+    # Install absolutely last around the final global planner. It only repairs an
+    # impossible stale basis before delegating; all sizing/lifecycle decisions stay
+    # inside the global recovery authority.
+    install_stale_split_basis_reconciliation_authority()
