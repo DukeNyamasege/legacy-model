@@ -11,16 +11,14 @@ Custom Strategy accounts:
 * a new/larger loss pool starts a new equal-stake Split N cycle;
 * the Split stake is never below the Deriv Options minimum stake of USD 0.50;
 * historical 10%-of-balance recovery caps cannot stop/disable Auto Trading;
-* only Take Profit, Stop Loss, or an explicit user Stop/Pause may disable execution.
+* only Take Profit, Stop Loss, or an explicit user Stop/Pause may stop execution.
 
 A genuinely unaffordable recovery is a WAIT condition: the account remains enabled,
-debt remains durable, and execution retries later.  It is never a lifecycle stop.
+debt remains durable, and execution retries later. It is never a lifecycle stop.
 """
 
-import asyncio
 import json
 import logging
-from contextlib import suppress
 from datetime import datetime
 from typing import Any
 
@@ -57,6 +55,10 @@ _ORIGINAL_RUN: Any = None
 
 _ALLOWED_TERMINAL = {"take_profit", "stop_loss"}
 _MANUAL_STATUSES = {"stopped", "manual_pause"}
+# These states are all automatic runtime/account failures. They may block one BUY
+# until repaired, but they may never disable a user-started lifecycle. `stopped`
+# and `manual_pause` are intentionally included here too: _terminal_allowed()
+# consumes the genuine manual cases first, so any remaining write is synthetic.
 _AUTOMATIC_TERMINAL = {
     "error",
     "credential_error",
@@ -68,9 +70,24 @@ _AUTOMATIC_TERMINAL = {
     "insufficient_balance",
     "purchase_insufficient_balance",
     "duplicate",
-    "real_disabled",
     "disabled",
     "inactive",
+    "stopped",
+    "manual_pause",
+}
+# Existing rows with one of these explicit automatic reasons can safely be restored
+# on worker startup. Generic inactive/disabled/stopped are not included because an
+# old explicit user Stop may predate the durable hard-stop sentinel.
+_EXISTING_AUTOMATIC_STOP_STATUSES = {
+    "error",
+    "credential_error",
+    "invalid_account",
+    "token_required",
+    "bulk_execution_pat_required",
+    "contract_unavailable",
+    "purchase_registration_error",
+    "insufficient_balance",
+    "purchase_insufficient_balance",
 }
 _RECONNECT_MARKERS = (
     "connect",
@@ -123,9 +140,9 @@ def equal_split_part_stake(
     """Return one fixed stake for every successful leg of a Split-N cycle.
 
     The first proposal of a new loss pool prices the entire recovery target once.
-    That full recovery stake is then divided by configured N.  The resulting part
+    That full recovery stake is then divided by configured N. The resulting part
     stake is persisted and reused, which keeps Split 2/3 legs equal apart from cent
-    rounding.  A small recovery buffer absorbs ordinary provider cent rounding.
+    rounding. A small recovery buffer absorbs ordinary provider cent rounding.
     """
 
     debt = max(0.0, float(recovery_basis_debt or 0.0))
@@ -152,7 +169,18 @@ def _hard_stop(repository: Any, managed_id: int) -> bool:
 
 def _manual_reason(reason: str) -> bool:
     text = str(reason or "").strip().lower()
-    return any(word in text for word in ("user stop", "user pressed", "manual", "paused by user"))
+    markers = (
+        "user stop",
+        "user pressed",
+        "manual stop",
+        "manually stopped",
+        "paused manually",
+        "manual pause",
+        "stopped manually",
+        "start is required before execution",
+        "auto trading stopped for this account mode",
+    )
+    return any(marker in text for marker in markers)
 
 
 def _terminal_allowed(
@@ -377,8 +405,6 @@ def _record_global_recovery(
         )
         return result
 
-    # Any actual loss creates a new enlarged loss pool. Reprice once on the next
-    # proposal, then reuse that new fixed stake for all N successful parts.
     if profit < 0:
         equal_split._write_basis_debt(self, managed_id, debt)
         _write_part_stake(self, managed_id, 0.0)
@@ -458,8 +484,9 @@ def _status_without_automatic_stop(
             return
         debt = max(0.0, float(risk.recovery_loss_debt or 0.0)) if risk is not None else 0.0
         if not bool(row.enabled) and debt <= 0.009:
-            # Respect an already-disabled account unless this call itself is trying
-            # to stop a running/recovery account. This avoids restarting old users.
+            # Do not restart an already-disabled ambiguous historical row here.
+            # Explicit automatic legacy statuses are repaired once at worker boot;
+            # old generic stopped/disabled/inactive rows remain user-controlled.
             row.execution_status_reason = str(reason or row.execution_status_reason or "")[:160]
             row.execution_status_updated_at = utc_now()
             return
@@ -485,14 +512,13 @@ def _session_start(session: Any, managed_id: int) -> datetime | None:
     try:
         payload = json.loads(str(row.preference_value or "{}"))
         raw = str(payload.get("started_at") or "")
-        value = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        return value
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except Exception:
         return None
 
 
 def repair_current_session_trade_metrics(repository: Any) -> int:
-    """Repair only current-session Trade metrics that inherited global BotState P/L."""
+    """Repair current-session Trade metrics that inherited global BotState P/L."""
 
     repaired = 0
     with repository.database.session() as session:
@@ -517,10 +543,37 @@ def repair_current_session_trade_metrics(repository: Any) -> int:
             for trade in rows:
                 cumulative = round(cumulative + float(trade.profit or 0.0), 8)
                 high_water = max(high_water, cumulative)
-                drawdown = max(0.0, high_water - cumulative)
                 trade.cumulative_profit = round(cumulative, 8)
-                trade.drawdown = round(drawdown, 8)
+                trade.drawdown = round(max(0.0, high_water - cumulative), 8)
                 repaired += 1
+    return repaired
+
+
+def _repair_existing_automatic_stops(repository: Any) -> int:
+    """Restore explicitly automatic legacy stop states, never ambiguous user stops."""
+
+    repaired = 0
+    with repository.database.session() as session:
+        rows = list(
+            session.scalars(
+                select(ManagedAccount).where(
+                    ManagedAccount.enabled.is_(False),
+                    ManagedAccount.execution_status.in_(sorted(_EXISTING_AUTOMATIC_STOP_STATUSES)),
+                )
+            ).all()
+        )
+        for account in rows:
+            managed_id = int(account.id)
+            if direct_hard_stop_active(session, managed_id):
+                continue
+            account.enabled = True
+            account.execution_status = _waiting_status(account.execution_status_reason or account.execution_status)
+            account.execution_status_reason = (
+                "Existing automatic execution stop restored to retry under the global lifecycle policy."
+            )[:160]
+            account.execution_status_updated_at = utc_now()
+            account.updated_at = utc_now()
+            repaired += 1
     return repaired
 
 
@@ -539,11 +592,12 @@ def _repair_existing_recovery_accounts(repository: Any) -> int:
             if direct_hard_stop_active(session, managed_id):
                 continue
             status = str(account.execution_status or "").strip().lower()
+            reason = str(account.execution_status_reason or "")
             if status in _ALLOWED_TERMINAL or (
-                status in _MANUAL_STATUSES and _manual_reason(account.execution_status_reason or "")
+                status in _MANUAL_STATUSES and _manual_reason(reason)
             ):
                 continue
-            if status in _AUTOMATIC_TERMINAL or "recovery stake" in str(account.execution_status_reason or "").lower():
+            if status in _AUTOMATIC_TERMINAL or "recovery stake" in reason.lower():
                 account.enabled = True
                 account.execution_status = "recovery_pending"
                 account.execution_status_reason = (
@@ -565,12 +619,14 @@ async def _run_with_global_recovery_policy(self: RFDir5TradingBot) -> None:
     if original is None:
         return
     try:
-        repaired_accounts = _repair_existing_recovery_accounts(self.repository)
+        restored_auto = _repair_existing_automatic_stops(self.repository)
+        restored_recovery = _repair_existing_recovery_accounts(self.repository)
         repaired_metrics = repair_current_session_trade_metrics(self.repository)
         self.logger.warning(
-            "GLOBAL_RECOVERY_STARTUP_REPAIR accounts=%s trade_metrics=%s "
-            "stop_policy=tp_sl_or_manual_only",
-            repaired_accounts,
+            "GLOBAL_RECOVERY_STARTUP_REPAIR automatic_stops=%s recovery_accounts=%s "
+            "trade_metrics=%s stop_policy=tp_sl_or_manual_only",
+            restored_auto,
+            restored_recovery,
             repaired_metrics,
         )
     except Exception:
