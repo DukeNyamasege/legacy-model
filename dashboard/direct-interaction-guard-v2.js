@@ -41,6 +41,8 @@
     if (c.kind === "digit_parity") return `Last ${windowSize} digit${windowSize === 1 ? "" : "s"} ${String(c.parity || "even").toUpperCase()}`;
     if (c.kind === "digit_compare") {
       if (c.operator === "all_same") return `Last ${windowSize} digits all the same`;
+      if (c.operator === "all_even") return `Last ${windowSize} digits all even`;
+      if (c.operator === "all_odd") return `Last ${windowSize} digits all odd`;
       return `Last ${windowSize} digit${windowSize === 1 ? "" : "s"} ${c.operator || "=="} ${c.value ?? 0}`;
     }
     if (c.kind === "direction") return `Last ${windowSize} move${windowSize === 1 ? "" : "s"} ${String(c.direction || "").replaceAll("_", " ")}`;
@@ -148,15 +150,16 @@
   }
 
   async function confirmDemoReset(resetTarget) {
-    const row = resetTarget.closest(".account-dropdown-row.demo");
-    const accountId = String(row?.querySelector("small")?.textContent || "this demo account").trim();
+    const row = resetTarget.closest(".account-dropdown-row.demo,.account-row.demo");
+    const managedId = Number(row?.getAttribute("data-account-id") || 0);
+    const accountId = String(row?.querySelector("small")?.textContent || "this demo account").split("·")[0].trim();
     const ok = await modal({
       title: "Reset demo balance?",
       intro: `Reset ${accountId} to Deriv's default demo balance of $10,000 USD?`,
       confirmText: "Reset balance",
       cancelText: "Cancel",
       danger: true,
-      body: `<div class="direct-reset-note">This calls Deriv's official demo-balance reset API. Real accounts are never reset.</div>`,
+      body: `<div class="direct-reset-note">This calls Deriv's official demo-balance reset API for the exact linked demo account you selected. Real accounts are never reset.</div>`,
     });
     if (!ok) return;
     try {
@@ -164,7 +167,7 @@
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: "{}",
+        body: JSON.stringify({ managed_account_id: managedId || null }),
       });
       let payload = {};
       try { payload = await response.json(); } catch (_) {}
@@ -187,7 +190,7 @@
       return;
     }
 
-    const demoReset = event.target?.closest?.(".account-dropdown-row.demo [data-demo-reset],.account-dropdown-row.demo em");
+    const demoReset = event.target?.closest?.(".account-dropdown-row.demo [data-demo-reset],.account-dropdown-row.demo em,.account-row.demo [data-demo-reset]");
     if (demoReset) {
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -202,14 +205,14 @@
       return;
     }
 
-    const runtime = engineState();
+    const current = engineState();
     const globalRun = Boolean(target.closest(".global-run-panel"));
-    if (runtime.running && globalRun) {
+    if (current.running && globalRun) {
       // A running bot's main button means Stop. Never put a Start confirmation in
       // front of a Stop action.
       return;
     }
-    if (runtime.running && !globalRun) {
+    if (current.running && !globalRun) {
       event.preventDefault();
       event.stopImmediatePropagation();
       modal({
@@ -240,5 +243,5 @@
   `;
   document.head.appendChild(style);
 
-  window.DERIVADMIN_DIRECT_INTERACTION_GUARD_V2 = Object.freeze({ version: "20260818-interaction-v2" });
+  window.DERIVADMIN_DIRECT_INTERACTION_GUARD_V2 = Object.freeze({ version: "20260818-interaction-v2.1" });
 })();
