@@ -94,12 +94,11 @@ def install_vps_runtime_policy_hotfix(app: Any) -> None:
     if _INSTALLED:
         return
 
-    # Keep one exact Demo/Real Deriv identity executable in the API as well as in
-    # the worker. Historical duplicate rows remain intact for audit/trade history.
     install_account_identity_canonical_authority()
 
-    # Successful fresh direct Start and successful Reset both discard stale
-    # checkpoint/Split progress. Failed Start never destroys the existing state.
+    # Only a successful fresh Start resets financial-session recovery state.
+    # Clear/Reset Trades remains a visibility/history action and never changes
+    # recovery debt, Virtual Hook, Start/Stop, TP or SL state.
     @app.middleware("http")
     async def fresh_session_cleanup(request: Request, call_next):  # type: ignore[no-untyped-def]
         path = str(request.url.path or "")
@@ -107,8 +106,6 @@ def install_vps_runtime_policy_hotfix(app: Any) -> None:
         target = method == "POST" and path in {
             "/me/direct-execution/arm",
             "/api/me/direct-execution/arm",
-            "/me/clear-trades",
-            "/api/me/clear-trades",
         }
         account = _account(request) if target else None
         response = await call_next(request)
@@ -124,9 +121,6 @@ def install_vps_runtime_policy_hotfix(app: Any) -> None:
                 )
         return response
 
-    # Replace the status route with one bounded DB session and one batched
-    # RuntimePreference query. This removes repeated preference round-trips from
-    # dashboard polling without caching financial Stop state.
     _remove_route(app, "/me/direct-execution/status", "GET")
 
     @app.get("/me/direct-execution/status")
@@ -184,4 +178,5 @@ def install_vps_runtime_policy_hotfix(app: Any) -> None:
 
     app.state.vps_runtime_policy_hotfix_installed = True
     app.state.direct_status_query_policy = "one_account_read_one_batched_preference_read"
+    app.state.reset_trades_financial_state_policy = "history_only"
     _INSTALLED = True
