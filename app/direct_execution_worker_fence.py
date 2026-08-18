@@ -7,6 +7,10 @@ server Custom Strategy scanner, rechecks ownership immediately before the final
 server purchase scope, explicitly wakes the worker when a browser lease ages out,
 and prevents a takeover BUY while the last browser checkpoint still reports an
 open provider contract.
+
+A durable independent hard-stop sentinel is checked on every final financial
+scope.  A user Stop therefore forbids the next server BUY even if slower
+ManagedAccount lifecycle cleanup is still waiting on another database transaction.
 """
 
 import json
@@ -19,6 +23,7 @@ from sqlalchemy import select
 import app.custom_strategy_runtime as custom_runtime
 import app.shared_system_strategy_clock as shared_clock
 from app.account_mode_execution_lock import account_allows_new_execution
+from app.direct_execution_hard_stop_state import direct_hard_stop_active
 from app.direct_execution_lease import DIRECT_BROWSER_STATUS, direct_browser_lease_fresh
 from app.models import ManagedAccount, RuntimePreference, utc_now
 from app.rf_dir5_bot import RFDir5TradingBot
@@ -92,7 +97,8 @@ def _eligible_map(bot: Any, managed_ids: set[int], *, force: bool = False) -> di
         ).all()
         values = {
             int(row.id): bool(
-                account_allows_new_execution(row)
+                not direct_hard_stop_active(session, int(row.id))
+                and account_allows_new_execution(row)
                 and not _browser_contract_handoff_hold(session, int(row.id))
             )
             for row in rows
@@ -114,7 +120,8 @@ def _promote_expired_browser_leases(bot: Any) -> list[int]:
 
     The core account refresher is revision-driven. Time passing does not change a
     database revision, so an expired direct_browser row needs this one transition
-    to wake account validation even when other users keep the worker busy.
+    to wake account validation even when other users keep the worker busy.  A hard
+    stopped account is never promoted simply because its old browser lease aged.
     """
 
     now_monotonic = time.monotonic()
@@ -132,6 +139,8 @@ def _promote_expired_browser_leases(bot: Any) -> list[int]:
             )
         ).all()
         for row in rows:
+            if direct_hard_stop_active(session, int(row.id)):
+                continue
             if direct_browser_lease_fresh(row):
                 continue
             if _browser_contract_handoff_hold(session, int(row.id)):
@@ -194,15 +203,16 @@ def install_direct_execution_worker_fence() -> None:
     ) -> None:
         requested = {int(value) for value in scope_ids}
         # Force a fresh database read at the final financial boundary. This is the
-        # authoritative server-side equivalent of the browser's pre-BUY epoch check.
+        # authoritative server-side equivalent of the browser's pre-BUY epoch check
+        # and is where the independent user hard-stop sentinel is enforced.
         allowed = _server_ids(bot, requested, force=True)
-        browser_or_stopped = requested - allowed
-        if browser_or_stopped:
+        blocked = requested - allowed
+        if blocked:
             bot.logger.info(
                 "DIRECT_EXECUTION_SERVER_SCOPE_FENCED signal_id=%s blocked_ids=%s "
-                "purchase=false reason=browser_owner_stopped_or_open_handoff",
+                "purchase=false reason=hard_stop_browser_owner_stopped_or_open_handoff",
                 str(getattr(signal, "signal_id", "-")),
-                sorted(browser_or_stopped),
+                sorted(blocked),
             )
         if not allowed:
             try:
@@ -225,4 +235,6 @@ def install_direct_execution_worker_fence() -> None:
     custom_runtime._custom_routes = server_owned_custom_routes
     shared_clock._exact_scope_buy = fenced_exact_scope_buy
     RFDir5TradingBot._refresh_runtime_accounts_if_needed = refresh_with_direct_takeover
+    RFDir5TradingBot._direct_execution_worker_fence_installed = True
+    RFDir5TradingBot._direct_execution_hard_stop_fence = "uncached_final_pre_buy"
     _INSTALLED = True
