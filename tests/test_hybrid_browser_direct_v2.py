@@ -40,15 +40,18 @@ class HybridBrowserDirectV2Contract(unittest.TestCase):
         self.assertIn('"account_id_masked": base_api.mask_account_id(account_id)', linked)
         self.assertIn("vps-linked-accounts-stale-while-revalidate-v2-full-id", linked)
 
-    def test_frontend_build_uses_generated_direct_v2_and_one_runtime_ux(self) -> None:
+    def test_frontend_build_ships_production_v6_single_authority(self) -> None:
         dockerfile = self.text("Dockerfile.frontend")
         self.assertIn("node scripts/build-direct-runtime-v2.mjs", dockerfile)
         self.assertIn("node scripts/finalize-direct-runtime-v2.mjs", dockerfile)
         self.assertIn("node scripts/finalize-direct-ux-v4.mjs", dockerfile)
-        self.assertIn("/deriv-direct-execution-v2.js?v=20260818-browser-direct-v2", dockerfile)
-        self.assertIn("/direct-runtime-ux-v4.js?v=20260818-runtime-ux-v4", dockerfile)
-        self.assertIn("/direct-run-panel-authority-v5.js?v=20260818-single-run-v5", dockerfile)
+        self.assertIn("node scripts/finalize-production-controls-v6.mjs", dockerfile)
+        self.assertIn("/direct-hard-stop-fence-v1.js?v=20260818-browser-hard-stop-v1", dockerfile)
+        self.assertIn("/deriv-direct-execution-v2.js?v=20260818-browser-direct-v6", dockerfile)
+        self.assertIn("/direct-runtime-ux-v4.js?v=20260818-runtime-ux-v6", dockerfile)
+        self.assertIn("/direct-run-panel-authority-v6.js?v=20260818-single-start-stop-v6", dockerfile)
         self.assertNotIn('/single-run-controller-v1.js', dockerfile)
+        self.assertNotIn('/direct-run-panel-authority-v5.js?v=', dockerfile)
         self.assertNotIn('/deriv-direct-execution-v1.js?v=', dockerfile)
         self.assertNotIn('/direct-runtime-ux-v3.js?v=', dockerfile)
 
@@ -62,17 +65,108 @@ class HybridBrowserDirectV2Contract(unittest.TestCase):
         self.assertNotIn("setOptimisticRunUi", testing)
         self.assertNotIn("ACTIVE_RUNTIME_STATES", testing)
 
-    def test_final_run_panel_authority_stops_both_owners_but_never_starts(self) -> None:
-        authority = self.text("dashboard/direct-run-panel-authority-v5.js")
+    def test_free_testing_premium_finalizer_can_never_render_fail_closed_gate(self) -> None:
+        finalizer = self.text("scripts/finalize-production-controls-v6.mjs")
+        self.assertIn("testing-free gate cannot render premium lock", finalizer)
+        self.assertIn("testing-free boot catch fail-open", finalizer)
+        self.assertIn("if (TESTING_FREE_ACCESS)", finalizer)
+        self.assertIn('dataset.premiumState = "testing-free"', finalizer)
+        self.assertIn("20260818-production-v6", finalizer)
+
+    def test_browser_hard_stop_blocks_buy_synchronously(self) -> None:
+        fence = self.text("dashboard/direct-hard-stop-fence-v1.js")
+        self.assertIn("function hardStop()", fence)
+        self.assertIn("state.stopped = true", fence)
+        self.assertIn('hasOwnProperty.call(payload, "buy") && state.stopped', fence)
+        self.assertIn("Trading is stopped; BUY blocked locally", fence)
+        self.assertIn('path === "/me/direct-execution/arm"', fence)
+        self.assertIn("armAfterServerAck", fence)
+
+    def test_server_hard_stop_is_checked_at_uncached_final_buy_boundary(self) -> None:
+        state = self.text("app/direct_execution_hard_stop_state.py")
+        api = self.text("app/vps_direct_hard_stop_v2.py")
+        worker = self.text("app/direct_execution_worker_fence.py")
+        backend = self.text("app/vps_backend_api.py")
+        self.assertIn("direct_execution:hard_stop:v2:", state)
+        self.assertIn("set_direct_hard_stop", api)
+        self.assertIn("background_tasks.add_task(_normalize_stopped_account", api)
+        self.assertIn('"purchase_allowed": False', api)
+        self.assertIn("not direct_hard_stop_active(session, int(row.id))", worker)
+        self.assertIn("force=True", worker)
+        self.assertIn("hard_stop_browser_owner_stopped_or_open_handoff", worker)
+        self.assertIn("install_vps_direct_hard_stop_v2(app)", backend)
+
+    def test_saved_virtual_hook_is_final_server_loss_threshold(self) -> None:
+        barrier = self.text("app/custom_virtual_post_loss_barrier_authority.py")
+        self.assertIn("virtual_hook_settings_from_session", barrier)
+        self.assertIn('patched["virtual_trigger_actual_losses"]', barrier)
+        self.assertIn('patched["virtual_protection_enabled"]', barrier)
+        self.assertIn("losses >= threshold and debt >= 0.01", barrier)
+        self.assertIn("VIRTUAL_WAITING_FOR_WIN", barrier)
+        self.assertIn("saved_hook_authoritative=true", barrier)
+
+    def test_equal_split_never_falls_back_to_base_while_debt_exists(self) -> None:
+        authority = self.text("app/custom_split_debt_continuity_authority.py")
+        cap = self.text("app/custom_split_cap_defaults_authority.py")
+        self.assertIn("debt <= 0.009", authority)
+        self.assertIn("remaining = split_count", authority)
+        self.assertIn("basis = debt", authority)
+        self.assertIn("manual._arm_next_split", authority)
+        self.assertIn("equal_split_recovery_stake", authority)
+        self.assertIn("base_fallback_forbidden=true", authority)
+        self.assertIn("install_custom_split_debt_continuity_authority()", cap)
+
+    def test_browser_split_has_persistent_remaining_success_ledger(self) -> None:
+        finalizer = self.text("scripts/finalize-production-controls-v6.mjs")
+        self.assertIn("splitBasisDebt", finalizer)
+        self.assertIn("splitRemainingWins", finalizer)
+        self.assertIn("targetProfitPerSuccessfulLeg", finalizer)
+        self.assertIn("A losing recovery does not consume a successful part", finalizer)
+        self.assertIn("Never fall", finalizer)
+
+    def test_run_panel_v6_is_start_stop_only_and_has_no_status_strips(self) -> None:
+        authority = self.text("dashboard/direct-run-panel-authority-v6.js")
         self.assertIn('/api/me/direct-execution/status', authority)
         self.assertIn('/api/me/direct-execution/stop', authority)
-        self.assertIn('window.addEventListener("click"', authority)
-        self.assertIn("function effectiveRunning()", authority)
-        self.assertIn("stopEverything", authority)
-        self.assertIn("direct-live-transactions-v5", authority)
-        self.assertIn("height:calc(100dvh - 72px)", authority)
-        self.assertNotIn('nativeFetch("/api/me/resume-trading"', authority)
+        self.assertIn("hardStopEverything", authority)
+        self.assertIn("DERIVADMIN_DIRECT_HARD_STOP_FENCE_V1", authority)
+        self.assertIn('content:"Start"', authority)
+        self.assertIn('content:"Stop"', authority)
+        self.assertIn("#0c9365", authority)
+        self.assertIn("#ef4444", authority)
+        self.assertIn("run-panel-execution", authority)
+        self.assertIn("direct-bot-state-pill", authority)
+        self.assertNotIn("Stopping bot —", authority)
+        self.assertNotIn("Bot currently stopped", authority)
+        self.assertNotIn("MutationObserver", authority)
         self.assertNotIn("startEverything", authority)
+
+    def test_reset_is_local_first_and_never_toggles_execution(self) -> None:
+        authority = self.text("dashboard/direct-run-panel-authority-v6.js")
+        reset = authority.split("function resetTrades()", 1)[1].split("// Window capture", 1)[0]
+        self.assertIn('window.confirm("Do you want to reset all trades?")', reset)
+        self.assertIn("engine()?.clear?.()", reset)
+        self.assertIn("derivadmin:direct-reset-all", reset)
+        self.assertIn("xhrClearAll()", reset)
+        self.assertNotIn("hardStopEverything", reset)
+        self.assertNotIn("state.serverActive =", reset)
+
+    def test_transactions_have_time_market_type_spots_buy_and_profit_columns(self) -> None:
+        finalizer = self.text("scripts/finalize-production-controls-v6.mjs")
+        self.assertIn("Time / Market", finalizer)
+        self.assertIn("Entry / Exit", finalizer)
+        self.assertIn("Buy price", finalizer)
+        self.assertIn("Profit / Loss", finalizer)
+        self.assertIn("transactionMarketLabel", finalizer)
+        self.assertIn("transactionTimeLabel", finalizer)
+        self.assertIn('"1HZ100V": "V100 (1s)"', finalizer)
+        self.assertIn('second: "2-digit"', finalizer)
+
+    def test_transactions_no_longer_get_strategy_checker_and_no_400ms_loop(self) -> None:
+        finalizer = self.text("scripts/finalize-production-controls-v6.mjs")
+        self.assertIn("remove strategy checker from Transactions", finalizer)
+        self.assertIn("renderLoadedBadge", finalizer)
+        self.assertIn("setInterval(() => { unobserve(); try { renderRunState();", finalizer)
 
     def test_build_compiler_preserves_result_route_and_special_comparators(self) -> None:
         compiler = self.text("scripts/build-direct-runtime-v2.mjs")
@@ -90,26 +184,6 @@ class HybridBrowserDirectV2Contract(unittest.TestCase):
         self.assertIn("ticks_history", fence)
         self.assertIn("__history_hydration: true", fence)
         self.assertIn("hydrationPending", fence)
-
-    def test_single_run_button_sticky_journal_and_full_balance_contract(self) -> None:
-        ux = self.text("dashboard/direct-runtime-ux-v3.js")
-        self.assertIn('[data-run-execution-toggle]', ux)
-        self.assertIn("node.remove()", ux)
-        self.assertIn("Bot currently executing trades", ux)
-        self.assertIn("Bot currently stopped", ux)
-        self.assertIn("NOT MET · ANALYZING", ux)
-        self.assertIn("MET · ENTRY FOUND", ux)
-        self.assertIn("TAB_STORE", ux)
-        self.assertIn("text-overflow:clip", ux)
-        selected = self.text("scripts/finalize-direct-ux-v4.mjs")
-        self.assertIn("account-switch-summary small", selected)
-
-    def test_reset_waits_for_real_api_confirmation(self) -> None:
-        reset = self.text("dashboard/direct-reset-authority-v1.js")
-        self.assertIn('window.confirm("Do you want to reset all trades?")', reset)
-        self.assertIn('body: JSON.stringify({ scope: "all" })', reset)
-        self.assertIn("if (!response.ok)", reset)
-        self.assertIn("DERIVADMIN_DIRECT_EXECUTION_V1?.clear", reset)
 
     def test_start_confirmation_summarizes_current_builder(self) -> None:
         guard = self.text("dashboard/direct-interaction-guard-v3.js")
