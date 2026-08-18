@@ -60,6 +60,7 @@ from app.per_account_virtual_runtime import install_account_isolation_invariants
 from app.premium_worker_guard import install_premium_worker_guard
 from app.private_websocket_rate_limit import install_private_websocket_rate_limit
 from app.profit_accuracy_guard import install_profit_accuracy_guard
+from app.public_testing_access import public_testing_free_access_enabled
 from app.public_websocket_resilience import install_public_websocket_resilience
 from app.real_demo_trading_support import install_dual_demo_real_trading_support
 from app.rf_dir5_bot import RFDir5TradingBot
@@ -194,11 +195,13 @@ async def run_worker() -> None:
     install_custom_virtual_post_loss_barrier_authority()
     install_telegram_silence()
 
-    # Action 6A installs last. The current subscription timestamp is therefore
-    # checked outside every previously-installed execution wrapper, including at
-    # task entry, proposal, and immediately before BUY. Settlement-only work is
-    # preserved, but an unpaid/expired account cannot create a new contract.
-    install_premium_worker_guard()
+    # Keep the complete premium execution guard available for the paid launch, but
+    # do not install it while public testing is free. This is critical because the
+    # worker guard sits immediately before proposal and BUY and would otherwise
+    # pause every unpaid tester even when the HTTP gate has been bypassed.
+    public_testing = public_testing_free_access_enabled()
+    if not public_testing:
+        install_premium_worker_guard()
 
     bot = RFDir5TradingBot()
     bot.logger.warning(
@@ -208,7 +211,7 @@ async def run_worker() -> None:
         "bulk=false tick_db_persistence=false start_required=true "
         "explicit_start_pickup=true instant_start=true provider_account_sweep_blocking=false "
         "history_startup=parallel_bounded exact_entry_guard=true manual_stop_buy_guard=true "
-        "premium_access_gate=exact_timestamp_before_proposal_and_buy "
+        "premium_access_gate=%s "
         "premium_settlement_preserved=true "
         "result_routing=account_outcome_debt "
         "martingale_multiplier=previous_actual_stake_times_multiplier "
@@ -222,7 +225,8 @@ async def run_worker() -> None:
         "ambiguous_buy_policy=reconcile_before_next_real duplicate_buy_retry=false "
         "stop_reason_authority=durable execution_liveness_watchdog=true "
         "connection_repair=targeted_singleflight sibling_wake=false global_revalidation=false "
-        "vps_low_latency=true provider_rate_limit_backoff=preserved"
+        "vps_low_latency=true provider_rate_limit_backoff=preserved",
+        "public_testing_bypass" if public_testing else "exact_timestamp_before_proposal_and_buy",
     )
     loop = asyncio.get_running_loop()
 
