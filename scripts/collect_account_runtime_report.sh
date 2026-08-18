@@ -135,8 +135,7 @@ section "CUSTOM STRATEGY / HARD STOP / RECOVERY PREFERENCES"
 psql_query "
 SELECT preference_key, preference_value, updated_at
 FROM runtime_preferences
-WHERE preference_key ~ ':[0-9]+$'
-  AND split_part(preference_key, ':', array_length(string_to_array(preference_key, ':'), 1))::integer IN (${ID_LIST})
+WHERE substring(preference_key from ':([0-9]+)$')::integer IN (${ID_LIST})
 ORDER BY preference_key;
 " || true
 
