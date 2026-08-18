@@ -23,6 +23,7 @@ from app.public_testing_access import (
 from app.text_to_strategy_api import install_text_to_strategy_api
 from app.vps_dashboard_latency_hotfix import install_vps_dashboard_latency_hotfix
 from app.vps_direct_execution_api import install_vps_direct_execution_api
+from app.vps_direct_execution_arm_guard import install_vps_direct_execution_arm_guard
 from app.vps_fast_execution_controls import install_vps_fast_execution_controls
 from app.vps_linked_accounts_latency_hotfix import install_vps_linked_accounts_latency_hotfix
 from app.vps_login_observability_hotfix import install_vps_login_observability_hotfix
@@ -58,8 +59,10 @@ install_final_linked_accounts_6f2(app)
 install_vps_linked_accounts_latency_hotfix(app)
 # Live/manual execution uses a browser <-> Deriv authenticated WebSocket. The VPS
 # only issues the short-lived OTP URL and maintains the browser/server ownership
-# lease. The worker becomes eligible only after the browser heartbeat expires.
+# lease. The atomic arm guard prevents a second browser/device from sharing that
+# financial lease. The worker becomes eligible only after the heartbeat expires.
 install_vps_direct_execution_api(app)
+install_vps_direct_execution_arm_guard(app)
 # Legacy lifecycle routes remain as safe fallbacks and for explicit server-owned
 # operations. They are not on the live browser proposal/BUY path.
 install_vps_fast_execution_controls(app)
