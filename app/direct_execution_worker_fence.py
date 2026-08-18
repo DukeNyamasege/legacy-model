@@ -9,7 +9,7 @@ and prevents a takeover BUY while the last browser checkpoint still reports an
 open provider contract.
 
 A durable independent hard-stop sentinel is checked on every final financial
-scope.  A user Stop therefore forbids the next server BUY even if slower
+scope. A user Stop therefore forbids the next server BUY even if slower
 ManagedAccount lifecycle cleanup is still waiting on another database transaction.
 """
 
@@ -116,8 +116,6 @@ def _server_ids(bot: Any, managed_ids: set[int], *, force: bool = False) -> set[
 
 
 def _promote_expired_browser_leases(bot: Any) -> list[int]:
-    """Convert elapsed browser ownership into an explicit server takeover write."""
-
     now_monotonic = time.monotonic()
     previous = float(getattr(bot, "_direct_takeover_scan_at", 0.0) or 0.0)
     if now_monotonic - previous < TAKEOVER_SCAN_SECONDS:
@@ -228,8 +226,8 @@ def install_direct_execution_worker_fence() -> None:
     RFDir5TradingBot._direct_execution_hard_stop_fence = "uncached_final_pre_buy"
     _INSTALLED = True
 
-    # These are the final worker-side authorities. Older cap/fail-closed/global-P&L
-    # layers are captured underneath and cannot regain financial/lifecycle control.
+    # Final worker-side authorities. Older cap/fail-closed/quarantine/global-P&L
+    # layers are captured underneath and cannot regain execution lifecycle control.
     from app.account_identity_canonical_authority import (
         install_account_identity_canonical_authority,
     )
@@ -239,7 +237,11 @@ def install_direct_execution_worker_fence() -> None:
     from app.global_recovery_execution_policy import (
         install_global_recovery_execution_policy,
     )
+    from app.never_auto_stop_repository_authority import (
+        install_never_auto_stop_repository_authority,
+    )
 
     install_account_identity_canonical_authority()
     install_account_trade_metrics_authority()
+    install_never_auto_stop_repository_authority()
     install_global_recovery_execution_policy()
