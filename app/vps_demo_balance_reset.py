@@ -2,10 +2,10 @@ from __future__ import annotations
 
 """Secure control-plane bridge to Deriv's official demo-balance reset REST API.
 
-The browser never receives the user's long-lived OAuth/PAT credential.  This route
-uses the selected ManagedAccount credential server-side only for the low-frequency
-account-management call, while live tick/proposal/BUY execution remains browser ↔
-Deriv direct.
+The browser never receives the user's long-lived OAuth/PAT credential. This route
+uses the target linked ManagedAccount credential server-side only for the
+low-frequency account-management call, while live tick/proposal/BUY execution
+remains browser ↔ Deriv direct.
 """
 
 import json
@@ -14,6 +14,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request as UrlRequest, urlopen
 
 from fastapi import HTTPException, Request
+from pydantic import BaseModel
 
 import app.api as base_api
 from app.deriv.http import deriv_headers
@@ -22,6 +23,10 @@ from app.vps_direct_execution_api import _trade_credential
 
 _INSTALLED = False
 DEFAULT_DEMO_BALANCE = 10000.0
+
+
+class DemoBalanceResetRequest(BaseModel):
+    managed_account_id: int | None = None
 
 
 def _provider_error(exc: HTTPError) -> str:
@@ -35,31 +40,47 @@ def _provider_error(exc: HTTPError) -> str:
     return "Deriv rejected the balance reset"
 
 
+def _managed_payload(managed_id: int) -> tuple[dict[str, Any], dict[str, Any]]:
+    row = base_api.REPOSITORY.managed_account(int(managed_id))
+    if not row:
+        raise HTTPException(status_code=404, detail="Managed account was not found")
+    try:
+        payload = decrypt_auth_payload(
+            row["token_secret"],
+            base_api.CONFIG.deriv.token_encryption_key,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail="Trading credential is unreadable") from exc
+    return row, payload
+
+
+def _identity(payload: dict[str, Any]) -> str:
+    account_id = str(payload.get("account_id") or "").strip()
+    return base_api.login_identity_from_payload(payload) or f"account:{account_id}"
+
+
 def install_vps_demo_balance_reset(app: Any) -> None:
     global _INSTALLED
     if _INSTALLED:
         return
 
     @app.post("/me/reset-demo-balance")
-    def reset_demo_balance(request: Request) -> dict[str, Any]:
-        account = base_api.get_current_account(request)
-        if not account:
+    def reset_demo_balance(request: Request, body: DemoBalanceResetRequest) -> dict[str, Any]:
+        current = base_api.get_current_account(request)
+        if not current:
             raise HTTPException(status_code=401, detail="Not authenticated")
 
-        managed_id = int(account["id"])
-        row = base_api.REPOSITORY.managed_account(managed_id)
-        if not row:
-            raise HTTPException(status_code=404, detail="Managed account was not found")
+        current_id = int(current["id"])
+        _current_row, current_payload = _managed_payload(current_id)
+        target_id = int(body.managed_account_id or current_id)
+        _target_row, payload = _managed_payload(target_id)
 
-        try:
-            payload = decrypt_auth_payload(
-                row["token_secret"],
-                base_api.CONFIG.deriv.token_encryption_key,
-            )
-        except Exception as exc:
-            raise HTTPException(status_code=409, detail="Trading credential is unreadable") from exc
+        # A caller may reset a linked demo row without first switching the selected
+        # account, but never an arbitrary ManagedAccount belonging to another login.
+        if _identity(payload) != _identity(current_payload):
+            raise HTTPException(status_code=404, detail="That demo account is not linked to this Deriv login")
 
-        account_id = str(payload.get("account_id") or account.get("account_id") or "").strip()
+        account_id = str(payload.get("account_id") or "").strip()
         account_type = base_api.account_type_from_payload(payload)
         if account_type != "demo":
             raise HTTPException(status_code=400, detail="Only Deriv demo accounts can have their balance reset")
@@ -90,7 +111,7 @@ def install_vps_demo_balance_reset(app: Any) -> None:
 
         # Deriv's current Options API defines the reset target as USD 10,000. Keep
         # the local dashboard snapshot immediately consistent; the authenticated
-        # browser balance subscription will then confirm future provider changes.
+        # browser balance subscription will confirm the selected account live.
         try:
             base_api.REPOSITORY.update_account_balance(
                 account_id=account_id,
@@ -107,6 +128,7 @@ def install_vps_demo_balance_reset(app: Any) -> None:
 
         return {
             "success": True,
+            "managed_account_id": target_id,
             "account_id": account_id,
             "account_type": "demo",
             "balance": DEFAULT_DEMO_BALANCE,
