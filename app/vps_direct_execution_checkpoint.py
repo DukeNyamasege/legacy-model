@@ -2,6 +2,7 @@ from __future__ import annotations
 
 """Persist a tiny browser runtime checkpoint for safe offline worker takeover."""
 
+import json
 from typing import Any
 
 from fastapi import HTTPException, Request
@@ -13,11 +14,16 @@ from app.models import AccountRiskState, RuntimePreference, utc_now
 from app.vps_direct_execution_api import _current_account, _key, _managed_row, _preference_payload
 
 _INSTALLED = False
+CHECKPOINT_PREFIX = "direct_execution:checkpoint:v1:"
 
 
 class DirectCheckpointRequest(BaseModel):
     epoch: str = Field(min_length=8, max_length=96)
     runtime: dict[str, Any] = Field(default_factory=dict)
+
+
+def checkpoint_key(managed_id: int) -> str:
+    return f"{CHECKPOINT_PREFIX}{int(managed_id)}"
 
 
 def _bounded_float(value: Any, *, low: float = 0.0, high: float = 1_000_000.0) -> float:
@@ -36,6 +42,17 @@ def _bounded_int(value: Any, *, low: int = 0, high: int = 100_000) -> int:
     except (TypeError, ValueError):
         number = 0
     return max(low, min(high, number))
+
+
+def _write_checkpoint(session: Any, managed_id: int, payload: dict[str, Any]) -> None:
+    key = checkpoint_key(managed_id)
+    value = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    row = session.get(RuntimePreference, key)
+    if row is None:
+        session.add(RuntimePreference(preference_key=key, preference_value=value))
+    else:
+        row.preference_value = value
+        row.updated_at = utc_now()
 
 
 def install_vps_direct_execution_checkpoint(app: Any) -> None:
@@ -75,6 +92,7 @@ def install_vps_direct_execution_checkpoint(app: Any) -> None:
             virtual_wins = _bounded_int(runtime.get("virtual_wins"), high=1000)
             virtual_losses = _bounded_int(runtime.get("virtual_losses"), high=1000)
             observations = _bounded_int(runtime.get("virtual_observations"), high=100000)
+            open_contracts = _bounded_int(runtime.get("open_contracts"), high=100)
 
             risk.session_profit = _bounded_float(
                 runtime.get("session_profit"), low=-1_000_000.0, high=1_000_000.0
@@ -99,12 +117,36 @@ def install_vps_direct_execution_checkpoint(app: Any) -> None:
                 risk.recovery_pending_since = None
             risk.updated_at = now
 
+            # Keep a small non-financial handoff record. The worker uses this only
+            # to avoid starting a new contract while a browser-owned contract may
+            # still be settling after an abrupt disconnect.
+            _write_checkpoint(
+                session,
+                managed_id,
+                {
+                    "epoch": body.epoch,
+                    "checkpointed_at": now.isoformat(),
+                    "open_contracts": open_contracts,
+                    "open_contract_ids": [
+                        str(value)[:100]
+                        for value in list(runtime.get("open_contract_ids") or [])[:20]
+                        if str(value or "").strip()
+                    ],
+                    "session_profit": float(risk.session_profit or 0.0),
+                    "recovery_debt": debt,
+                    "consecutive_losses": losses,
+                    "virtual_mode": virtual_mode,
+                    "virtual_wins": virtual_wins,
+                },
+            )
+
         return {
             "success": True,
             "epoch": body.epoch,
             "checkpointed": True,
             "recovery_debt": round(debt, 8),
             "virtual_mode": virtual_mode,
+            "open_contracts": open_contracts,
         }
 
     app.state.vps_direct_execution_checkpoint_installed = True
