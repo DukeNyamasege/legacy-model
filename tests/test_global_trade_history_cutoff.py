@@ -33,13 +33,14 @@ class GlobalTradeHistoryCutoffTests(unittest.TestCase):
         self.assertIn('"history_cleared_at": cutoff_iso', source)
         self.assertIn('"history_visibility_global": True', source)
 
-    def test_reset_cutoff_keeps_new_trades_visible_across_midnight(self) -> None:
+    def test_first_read_seeds_today_start_then_keeps_trades_across_midnight_until_reset(self) -> None:
         source = (ROOT / "app" / "global_trade_history_cutoff.py").read_text(encoding="utf-8")
-        cutoff_branch = source.split("if cutoff is not None:", 1)[1].split("else:", 1)[0]
-        self.assertIn("Trade.purchase_time >= cutoff", cutoff_branch)
-        self.assertIn("VirtualTrade.created_at >= cutoff", cutoff_branch)
-        self.assertNotIn("between(today_start, today_end)", cutoff_branch)
-        self.assertIn('"history_preserved_across_midnight": cutoff is not None', source)
+        self.assertIn("if cutoff is None:", source)
+        self.assertIn("_write_cutoff_value(session, managed_id, today_start)", source)
+        self.assertIn("Trade.purchase_time >= cutoff", source)
+        self.assertIn("VirtualTrade.created_at >= cutoff", source)
+        self.assertNotIn("Trade.purchase_time.between(today_start, today_end)", source)
+        self.assertIn('"history_preserved_across_midnight": True', source)
         self.assertIn("from_cutoff_forward_until_next_reset", source)
 
     def test_final_builder_authority_reasserts_global_history_routes_last(self) -> None:
