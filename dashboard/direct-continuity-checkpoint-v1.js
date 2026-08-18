@@ -6,6 +6,7 @@
 
   const JOURNAL_PREFIX = "derivadmin-direct-journal-v1:";
   let inFlight = false;
+  let retryAfterFlight = false;
 
   function journalRowsSince(timestamp) {
     const rows = [];
@@ -81,7 +82,10 @@
   }
 
   function checkpoint() {
-    if (inFlight) return;
+    if (inFlight) {
+      retryAfterFlight = true;
+      return;
+    }
     const payload = checkpointPayload();
     if (!payload) return;
     inFlight = true;
@@ -91,9 +95,16 @@
       request.withCredentials = true;
       request.timeout = 3500;
       request.setRequestHeader("Content-Type", "application/json");
-      request.onloadend = () => { inFlight = false; };
-      request.onerror = () => { inFlight = false; };
-      request.ontimeout = () => { inFlight = false; };
+      const done = () => {
+        inFlight = false;
+        if (retryAfterFlight) {
+          retryAfterFlight = false;
+          setTimeout(checkpoint, 40);
+        }
+      };
+      request.onloadend = done;
+      request.onerror = done;
+      request.ontimeout = done;
       request.send(JSON.stringify(payload));
     } catch (_) {
       inFlight = false;
@@ -101,6 +112,9 @@
   }
 
   const timer = setInterval(checkpoint, 5000);
+  // OPEN and SETTLED journal events are safety-critical handoff boundaries. Push a
+  // checkpoint immediately instead of waiting for the next five-second interval.
+  window.addEventListener("derivadmin:direct-trade", () => setTimeout(checkpoint, 0));
   window.addEventListener("pagehide", () => {
     clearInterval(timer);
     checkpoint();
