@@ -17,12 +17,15 @@ ENV PUBLIC_TESTING_FREE_ACCESS=${PUBLIC_TESTING_FREE_ACCESS}
 RUN node scripts/build-vps.mjs
 # Hybrid execution frontend. Live/manual trading is browser <-> Deriv directly;
 # the VPS remains a control plane for OTP bootstrap, scheduling and offline takeover.
-# The old single-run controller is intentionally no longer injected because it
-# polled backend lifecycle state and could fight the browser-owned Run state.
-RUN cp dashboard/deriv-direct-execution-v1.js dist/deriv-direct-execution-v1.js \
+# The financial fence loads first so the direct runtime cannot send BUY before an
+# exclusive browser lease is acknowledged. The old backend-polling Run controller
+# is intentionally not injected.
+RUN cp dashboard/direct-financial-fence-v1.js dist/direct-financial-fence-v1.js \
+  && cp dashboard/deriv-direct-execution-v1.js dist/deriv-direct-execution-v1.js \
   && cp dashboard/direct-strategy-persistence-v1.js dist/direct-strategy-persistence-v1.js \
+  && cp dashboard/direct-continuity-checkpoint-v1.js dist/direct-continuity-checkpoint-v1.js \
   && cp dashboard/direct-ui-cleanup-v1.js dist/direct-ui-cleanup-v1.js \
-  && node -e "const fs=require('fs');const p='dist/index.html';let h=fs.readFileSync(p,'utf8');const scripts=['<script src=\"/deriv-direct-execution-v1.js?v=20260818-browser-direct-v1\" defer></script>','<script src=\"/direct-strategy-persistence-v1.js?v=20260818-direct-persist-v1\" defer></script>','<script src=\"/direct-ui-cleanup-v1.js?v=20260818-direct-cleanup-v1\" defer></script>'];for(const s of scripts){if(!h.includes(s))h=h.replace('</body>',s+'\\n</body>');}fs.writeFileSync(p,h);"
+  && node -e "const fs=require('fs');const p='dist/index.html';let h=fs.readFileSync(p,'utf8');const scripts=['<script src=\"/direct-financial-fence-v1.js?v=20260818-direct-fence-v1\" defer></script>','<script src=\"/deriv-direct-execution-v1.js?v=20260818-browser-direct-v1\" defer></script>','<script src=\"/direct-strategy-persistence-v1.js?v=20260818-direct-persist-v1\" defer></script>','<script src=\"/direct-continuity-checkpoint-v1.js?v=20260818-direct-continuity-v1\" defer></script>','<script src=\"/direct-ui-cleanup-v1.js?v=20260818-direct-cleanup-v1\" defer></script>'];for(const s of scripts){if(!h.includes(s))h=h.replace('</body>',s+'\\n</body>');}fs.writeFileSync(p,h);"
 
 FROM nginx:1.27-alpine AS frontend
 
