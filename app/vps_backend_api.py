@@ -23,6 +23,7 @@ from app.public_testing_access import (
 from app.text_to_strategy_api import install_text_to_strategy_api
 from app.vps_dashboard_latency_hotfix import install_vps_dashboard_latency_hotfix
 from app.vps_fast_execution_controls import install_vps_fast_execution_controls
+from app.vps_linked_accounts_latency_hotfix import install_vps_linked_accounts_latency_hotfix
 from app.vps_login_observability_hotfix import install_vps_login_observability_hotfix
 from app.vps_session_observability import install_vps_session_observability
 from app.vps_telegram_control import install_vps_telegram_control
@@ -47,11 +48,13 @@ install_premium_renewal_action6d(app)
 # skip scheduled starts or pause accounts just because an old premium period ended.
 apply_public_testing_scheduler_bypass()
 install_public_testing_access_api(app)
-# 6F-2 replaces only the account selector route. It changes the selected
-# ClientSession account and never starts/stops trading or changes strategy/risk.
+# 6F-2 installs the canonical linked-account semantics first. The VPS hotfix then
+# keeps expensive all-account discovery off ordinary dashboard polling while exact
+# current/target identity validation remains authoritative for an actual switch.
 install_final_linked_accounts_6f2(app)
+install_vps_linked_accounts_latency_hotfix(app)
 # The Full-VPS Stop/Pause/Reset routes are installed after every compatibility
-# layer.  Manual Stop now commits the minimal disabled lifecycle immediately, so
+# layer. Manual Stop now commits the minimal disabled lifecycle immediately, so
 # the worker's before-proposal/before-BUY guard sees it without the browser waiting
 # on account cleanup or a table-wide preference scan.
 install_vps_fast_execution_controls(app)
