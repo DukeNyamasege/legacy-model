@@ -7,6 +7,7 @@
   const NativeWebSocket = window.WebSocket;
   const nativeFetch = window.fetch.bind(window);
   let hydrationReq = 900000000;
+  let balanceReq = 850000000;
   const state = {
     armed: false,
     epoch: "",
@@ -117,8 +118,35 @@
       ? new NativeWebSocket(url)
       : new NativeWebSocket(url, protocols);
     const nativeSend = socket.send.bind(socket);
-    const publicSocket = String(url || "").includes("/trading/v1/options/ws/public");
+    const urlText = String(url || "");
+    const publicSocket = urlText.includes("/trading/v1/options/ws/public");
+    const authenticatedOptionsSocket = /\/trading\/v1\/options\/ws\/(demo|real)(?:\?|$)/.test(urlText);
     const historyRequests = new Map();
+
+    function emitMarketTick(message) {
+      if (!publicSocket || message?.msg_type !== "tick" || !message?.tick) return;
+      const symbol = String(message.tick.symbol || message?.echo_req?.ticks || "").toUpperCase();
+      if (!symbol) return;
+      window.dispatchEvent(new CustomEvent("derivadmin:direct-market-tick", {
+        detail: {
+          symbol,
+          tick: { ...message.tick },
+          hydrated: Boolean(message.tick.__history_hydration),
+        },
+      }));
+    }
+
+    function emitBalance(message) {
+      if (!authenticatedOptionsSocket || message?.msg_type !== "balance" || !message?.balance) return;
+      const payload = message.balance;
+      window.dispatchEvent(new CustomEvent("derivadmin:direct-balance", {
+        detail: {
+          balance: payload.balance,
+          currency: String(payload.currency || "USD").toUpperCase(),
+          loginid: String(payload.loginid || ""),
+        },
+      }));
+    }
 
     function finishHydration(reqId, message = null) {
       const pending = historyRequests.get(reqId);
@@ -136,6 +164,7 @@
             symbol: pending.symbol,
             quote: prices[index],
             epoch: Number(times[index]),
+            __history_hydration: true,
           };
           if (Number.isInteger(pipSize) && pipSize >= 0) tick.pip_size = pipSize;
           try {
@@ -147,21 +176,39 @@
       }
 
       state.hydrationPending = Math.max(0, state.hydrationPending - 1);
+      window.dispatchEvent(new CustomEvent("derivadmin:direct-history-state", {
+        detail: { pending: state.hydrationPending, symbol: pending.symbol },
+      }));
       try { nativeSend(pending.livePayload); } catch (_) {}
     }
 
+    socket.addEventListener("message", (event) => {
+      let message = null;
+      try { message = JSON.parse(String(event.data || "")); } catch (_) { return; }
+      emitMarketTick(message);
+      emitBalance(message);
+      if (!publicSocket) return;
+      const reqId = Number(message?.req_id || 0);
+      if (!reqId || !historyRequests.has(reqId)) return;
+      if (message?.msg_type === "history" || message?.history || message?.error) {
+        finishHydration(reqId, message);
+      }
+    });
+
     if (publicSocket) {
-      socket.addEventListener("message", (event) => {
-        let message = null;
-        try { message = JSON.parse(String(event.data || "")); } catch (_) {}
-        const reqId = Number(message?.req_id || 0);
-        if (!reqId || !historyRequests.has(reqId)) return;
-        if (message?.msg_type === "history" || message?.history || message?.error) {
-          finishHydration(reqId, message);
-        }
-      });
       socket.addEventListener("close", () => {
         for (const reqId of Array.from(historyRequests.keys())) finishHydration(reqId, null);
+      });
+    }
+
+    if (authenticatedOptionsSocket) {
+      socket.addEventListener("open", () => {
+        // New Deriv API balance is account-scoped, so one authenticated socket is
+        // exactly one selected account. Subscribe once and surface provider pushes
+        // directly to the UI; no dashboard polling is required for live balance.
+        try {
+          nativeSend(JSON.stringify({ balance: 1, subscribe: 1, req_id: ++balanceReq }));
+        } catch (_) {}
       });
     }
 
@@ -180,6 +227,9 @@
         const symbol = String(payload.ticks || "").toUpperCase();
         const reqId = ++hydrationReq;
         state.hydrationPending += 1;
+        window.dispatchEvent(new CustomEvent("derivadmin:direct-history-state", {
+          detail: { pending: state.hydrationPending, symbol },
+        }));
         const timer = setTimeout(() => finishHydration(reqId, null), 3500);
         historyRequests.set(reqId, {
           symbol,
@@ -215,7 +265,7 @@
   window.WebSocket = GuardedWebSocket;
 
   window.DERIVADMIN_DIRECT_FINANCIAL_FENCE_V1 = Object.freeze({
-    version: "20260818-direct-financial-fence-v1",
+    version: "20260818-direct-financial-fence-v2",
     state: () => ({ ...state, buy_allowed: leaseAllowsBuy() }),
   });
 })();
