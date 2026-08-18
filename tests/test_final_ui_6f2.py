@@ -20,7 +20,7 @@ class FinalUi6F2Tests(unittest.TestCase):
         self.assertIn('/final-ui-shell-v2.css?v=20260817-6f2-1', html)
         self.assertIn('/final-premium-6f3.css?v=20260817-6f3-1', html)
         self.assertIn('/final-premium-6f3.js?v=20260818-local-ui-12', html)
-        self.assertIn('/public-testing-runtime-v1.js?v=20260818-public-testing-run-v3', html)
+        self.assertIn('/public-testing-runtime-v1.js?v=20260818-public-testing-run-v4', html)
         self.assertNotIn('<script src="/vps-realtime-client-v2.js?v=20260817-6f2-1" defer>', html)
         self.assertNotIn('<script src="/final-ui-shell-v2.js?v=20260817-6f2-1" defer>', html)
         self.assertIn('/vps-realtime-client-v2.js?v=20260817-local-ui-2', premium)
@@ -39,27 +39,15 @@ class FinalUi6F2Tests(unittest.TestCase):
     def test_approved_screens_are_functional_not_scaffolds(self) -> None:
         js = (ROOT / "dashboard" / "final-ui-shell-v2.js").read_text(encoding="utf-8")
         for text in (
-            "Home of Automation",
-            "Strategy Builder",
-            "Text to Strategy",
-            "Strategy Ready",
-            "Schedule Trading",
-            "Choose your timezone",
-            "PROFILE & SETTINGS",
-            "Live Runs",
-            "250 words",
-            "Best possible interpretation",
-            "Unsupported or adjusted items",
+            "Home of Automation", "Strategy Builder", "Text to Strategy", "Strategy Ready",
+            "Schedule Trading", "Choose your timezone", "PROFILE & SETTINGS", "Live Runs",
+            "250 words", "Best possible interpretation", "Unsupported or adjusted items",
         ):
             self.assertIn(text, js)
         for route in (
-            'json("/me")',
-            'json("/me/accounts")',
-            'json("/me/trades/today?limit=5000")',
-            'json("/me/trading-lifecycle")',
-            'json("/me/automation-schedules?limit=80")',
-            'json("/me/automation-preferences")',
-            'json("/me/custom-strategy")',
+            'json("/me")', 'json("/me/accounts")', 'json("/me/trades/today?limit=5000")',
+            'json("/me/trading-lifecycle")', 'json("/me/automation-schedules?limit=80")',
+            'json("/me/automation-preferences")', 'json("/me/custom-strategy")',
             'json("/me/text-to-strategy/compile"',
         ):
             self.assertIn(route, js)
@@ -72,17 +60,9 @@ class FinalUi6F2Tests(unittest.TestCase):
         css = (ROOT / "dashboard" / "final-ui-shell-v2.css").read_text(encoding="utf-8")
         exporter = (ROOT / "scripts" / "export-deriv-quill-icons-v2.mjs").read_text(encoding="utf-8")
         for text in (
-            "Type",
-            "Entry / Exit spot",
-            "Stake and P/L",
-            "Total stake",
-            "Total payout",
-            "No. of runs",
-            "Contracts lost",
-            "Contracts won",
-            "Total profit/loss",
-            "run-account-select",
-            "managed_account_id",
+            "Type", "Entry / Exit spot", "Stake and P/L", "Total stake", "Total payout",
+            "No. of runs", "Contracts lost", "Contracts won", "Total profit/loss",
+            "run-account-select", "managed_account_id",
         ):
             self.assertIn(text, js)
         self.assertIn('state.me?.account_type === "real" ? "realAccount" : "demoAccount"', js)
@@ -130,26 +110,17 @@ class FinalUi6F2Tests(unittest.TestCase):
             "def switch_linked_personal_account(\n"
             "        request: Request,\n"
             "        body: LinkedAccountSwitchRequest,\n"
-            "    ) -> Any:",
-            source,
+            "    ) -> Any:", source,
         )
         self.assertNotIn(") -> dict[str, Any] | JSONResponse:", source)
         self.assertIn("managed_account_id", source)
         self.assertIn("login_identity_from_payload", source)
         self.assertIn("set_client_session_account", source)
         self.assertIn('"trading_state_mutated": False', source)
-        for forbidden in (
-            "set_managed_account_enabled(",
-            "_reset_risk_state(",
-            "write_custom_strategy(",
-            "write_strategy(",
-        ):
+        for forbidden in ("set_managed_account_enabled(", "_reset_risk_state(", "write_custom_strategy(", "write_strategy("):
             self.assertNotIn(forbidden, source)
         self.assertIn("install_final_linked_accounts_6f2(app)", vps)
-        self.assertLess(
-            vps.index("install_final_linked_accounts_6f2(app)"),
-            vps.index("install_premium_access_action6a(app)"),
-        )
+        self.assertLess(vps.index("install_final_linked_accounts_6f2(app)"), vps.index("install_premium_access_action6a(app)"))
 
     def test_browser_shell_never_becomes_deriv_purchase_authority(self) -> None:
         js = (ROOT / "dashboard" / "final-ui-shell-v2.js").read_text(encoding="utf-8")
@@ -157,13 +128,7 @@ class FinalUi6F2Tests(unittest.TestCase):
         self.assertIn('json("/me/custom-strategy"', js)
         self.assertIn('json("/me/resume-trading"', js)
         self.assertIn('json("/me/automation-schedules"', js)
-        for forbidden in (
-            "api.derivws.com",
-            "proposal_open_contract",
-            '"proposal":',
-            '"buy":',
-            "new WebSocket(\"wss://ws.derivws.com",
-        ):
+        for forbidden in ("api.derivws.com", "proposal_open_contract", '"proposal":', '"buy":', "new WebSocket(\"wss://ws.derivws.com"):
             self.assertNotIn(forbidden, js)
         self.assertIn("existing recovery toggle", boundary)
         self.assertIn("payload.execution_settings.martingale_enabled = current", boundary)
@@ -181,14 +146,9 @@ class FinalUi6F2Tests(unittest.TestCase):
         self.assertIn('legacy_ui_shipped: false', build)
         self.assertIn('netlify_runtime_loaded: false', build)
         for asset in (
-            '"index.html"',
-            '"final-ui-shell-v2.css"',
-            '"final-ui-shell-v2.js"',
-            '"final-premium-6f3.css"',
-            '"final-premium-6f3.js"',
-            '"public-testing-runtime-v1.js"',
-            '"vps-api-boundary-v2.js"',
-            '"vps-realtime-client-v2.js"',
+            '"index.html"', '"final-ui-shell-v2.css"', '"final-ui-shell-v2.js"',
+            '"final-premium-6f3.css"', '"final-premium-6f3.js"', '"public-testing-runtime-v1.js"',
+            '"vps-api-boundary-v2.js"', '"vps-realtime-client-v2.js"',
         ):
             self.assertIn(asset, build)
         self.assertNotIn('"final-ui-shell-v1.js",', build)
@@ -205,19 +165,8 @@ class FinalUi6F2Tests(unittest.TestCase):
             ROOT / "scripts" / "export-deriv-quill-icons-v2.mjs",
             ROOT / "scripts" / "build-vps.mjs",
         ):
-            result = subprocess.run(
-                ["node", "--check", str(path)],
-                cwd=ROOT,
-                capture_output=True,
-                text=True,
-                timeout=20,
-                check=False,
-            )
-            self.assertEqual(
-                result.returncode,
-                0,
-                msg=f"{path.name}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}",
-            )
+            result = subprocess.run(["node", "--check", str(path)], cwd=ROOT, capture_output=True, text=True, timeout=20, check=False)
+            self.assertEqual(result.returncode, 0, msg=f"{path.name}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}")
 
 
 if __name__ == "__main__":
