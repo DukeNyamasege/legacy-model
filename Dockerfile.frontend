@@ -15,6 +15,11 @@ ENV PUBLIC_ORIGIN=${PUBLIC_ORIGIN}
 ENV PUBLIC_TESTING_FREE_ACCESS=${PUBLIC_TESTING_FREE_ACCESS}
 
 RUN node scripts/build-vps.mjs
+# Full-VPS hotfix controller is intentionally injected after the canonical build.
+# It removes the duplicate page-level Run controls, keeps one Start/Stop authority,
+# and suppresses raw transport timeout text while the backend reconnects/retries.
+RUN cp dashboard/single-run-controller-v1.js dist/single-run-controller-v1.js \
+  && node -e "const fs=require('fs');const p='dist/index.html';let h=fs.readFileSync(p,'utf8');const s='<script src=\"/single-run-controller-v1.js?v=20260818-single-run-v1\" defer></script>';if(!h.includes(s))h=h.replace('</body>',s+'\\n</body>');fs.writeFileSync(p,h);"
 
 FROM nginx:1.27-alpine AS frontend
 
