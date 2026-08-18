@@ -17,7 +17,7 @@ class FinalUi6F3Tests(unittest.TestCase):
         self.assertIn('frontend-authority" content="final-ui-shell-v2"', html)
         self.assertIn('/final-premium-6f3.css?v=20260817-6f3-1', html)
         self.assertIn('/final-premium-6f3.js?v=20260818-local-ui-12', html)
-        self.assertIn('/public-testing-runtime-v1.js?v=20260818-public-testing-run-v2', html)
+        self.assertIn('/public-testing-runtime-v1.js?v=20260818-public-testing-run-v3', html)
         self.assertNotIn('<script src="/vps-realtime-client-v2.js?v=20260817-6f2-1" defer>', html)
         self.assertNotIn('<script src="/final-ui-shell-v2.js?v=20260817-6f2-1" defer>', html)
         self.assertNotIn("premium-subscription-action6e", html)
@@ -57,7 +57,9 @@ class FinalUi6F3Tests(unittest.TestCase):
         for marker in (
             'fetch("/me/public-testing-access"',
             "public_testing_free_access",
-            ".paid-soon-banner,.premium-reminder,.premium-profile",
+            ".paid-soon-banner",
+            ".premium-reminder",
+            ".premium-profile",
             "premium use only",
             "pay kes 250",
             '"[data-run-start]"',
