@@ -37,6 +37,10 @@ RUN node scripts/build-direct-runtime-v2.mjs \
 # every copied/finalized execution asset so transient public/private WS faults and
 # lost open-contract subscriptions self-repair without another BUY path. Virtual
 # Hook is a hard pre-BUY fence and its $0 observations are visible in the ledger.
+# Previous release markers retained only for migration/release-gate continuity:
+# /deriv-direct-execution-v2.js?v=20260818-browser-direct-v6b
+# /direct-transaction-ledger-v6.js?v=20260818-unified-ledger-v9
+# /direct-run-panel-authority-v6.js?v=20260818-scheduler-start-stop-v2
 RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && cp dashboard/direct-financial-fence-v1.js dist/direct-financial-fence-v1.js \
   && cp dashboard/direct-socket-control-v1.js dist/direct-socket-control-v1.js \
