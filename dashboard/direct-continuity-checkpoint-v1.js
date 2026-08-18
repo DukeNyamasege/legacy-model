@@ -65,12 +65,23 @@
       }
     }
 
+    // The engine is the exact live financial ledger. Journal reconstruction is
+    // retained only as a compatibility fallback for older cached builds.
+    const engineDebt = Number(engine.recovery_debt);
+    const exactDebt = Number.isFinite(engineDebt) ? Math.max(0, engineDebt) : debt;
+    const engineLosses = Number(engine.consecutive_losses);
+    const exactLosses = Number.isFinite(engineLosses) ? Math.max(0, Math.trunc(engineLosses)) : consecutiveLosses;
+    const splitBasis = Number(engine.split_basis_debt || 0);
+    const splitRemaining = Number(engine.split_remaining_wins || 0);
+
     return {
       epoch: String(fence.epoch),
       runtime: {
         session_profit: Number(engine.session_profit || 0),
-        recovery_debt: Math.round(debt * 100000000) / 100000000,
-        consecutive_losses: consecutiveLosses,
+        recovery_debt: Math.round(exactDebt * 100000000) / 100000000,
+        split_basis_debt: Number.isFinite(splitBasis) ? Math.max(0, splitBasis) : 0,
+        split_remaining_wins: Number.isFinite(splitRemaining) ? Math.max(0, Math.trunc(splitRemaining)) : 0,
+        consecutive_losses: exactLosses,
         virtual_mode: Boolean(engine.virtual_mode),
         virtual_wins: virtualWins,
         virtual_losses: virtualLosses,
@@ -121,7 +132,7 @@
   }, { once: true });
 
   window.DERIVADMIN_DIRECT_CONTINUITY_CHECKPOINT_V1 = Object.freeze({
-    version: "20260818-direct-continuity-v1",
+    version: "20260818-direct-continuity-v2-split",
     checkpoint,
   });
 })();
