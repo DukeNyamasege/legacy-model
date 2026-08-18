@@ -133,7 +133,7 @@
     const entry = row.entry_spot ?? row.entry_tick ?? "—";
     const exit = settled ? (row.exit_spot ?? row.exit_tick ?? "—") : "OPEN";
     const pl = settled ? `${profit >= 0 ? "+" : ""}${money(profit)}` : "OPEN";
-    return `<div class="transaction-row transaction-row-v6 direct-local-transaction-row-v7" data-direct-contract-id="${esc(row.contract_id)}">
+    return `<div class="transaction-row transaction-row-v6 direct-local-transaction-row-v6 direct-local-transaction-row-v7" data-direct-contract-id="${esc(row.contract_id)}">
       <span class="tx-time-market"><small>${esc(timeLabel(row.opened_at || row.at))}</small><b>${esc(marketLabel(row.symbol))}</b></span>
       <span class="tx-type"><b>${esc(typeLabel(row))}</b></span>
       <span class="tx-spots"><b>${esc(entry)}</b><small>${esc(exit)}</small></span>
