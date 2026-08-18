@@ -46,8 +46,11 @@ class HybridBrowserDirectV2Contract(unittest.TestCase):
         self.assertIn("node scripts/finalize-direct-runtime-v2.mjs", dockerfile)
         self.assertIn("node scripts/finalize-direct-ux-v4.mjs", dockerfile)
         self.assertIn("node scripts/finalize-production-controls-v6.mjs", dockerfile)
+        self.assertIn("node scripts/finalize-production-controls-v6b.mjs", dockerfile)
         self.assertIn("/direct-hard-stop-fence-v1.js?v=20260818-browser-hard-stop-v1", dockerfile)
-        self.assertIn("/deriv-direct-execution-v2.js?v=20260818-browser-direct-v6", dockerfile)
+        self.assertIn("/deriv-direct-execution-v2.js?v=20260818-browser-direct-v6b", dockerfile)
+        self.assertIn("/direct-continuity-checkpoint-v1.js?v=20260818-direct-continuity-v2-split", dockerfile)
+        self.assertIn("/direct-transaction-ledger-v6.js?v=20260818-direct-ledger-v6", dockerfile)
         self.assertIn("/direct-runtime-ux-v4.js?v=20260818-runtime-ux-v6", dockerfile)
         self.assertIn("/direct-run-panel-authority-v6.js?v=20260818-single-start-stop-v6", dockerfile)
         self.assertNotIn('/single-run-controller-v1.js', dockerfile)
@@ -124,6 +127,18 @@ class HybridBrowserDirectV2Contract(unittest.TestCase):
         self.assertIn("A losing recovery does not consume a successful part", finalizer)
         self.assertIn("Never fall", finalizer)
 
+    def test_split_state_survives_browser_to_vps_takeover(self) -> None:
+        exporter = self.text("scripts/finalize-production-controls-v6b.mjs")
+        browser = self.text("dashboard/direct-continuity-checkpoint-v1.js")
+        server = self.text("app/vps_direct_execution_checkpoint.py")
+        self.assertIn("split_basis_debt: state.splitBasisDebt", exporter)
+        self.assertIn("split_remaining_wins: state.splitRemainingWins", exporter)
+        self.assertIn("split_basis_debt", browser)
+        self.assertIn("split_remaining_wins", browser)
+        self.assertIn("_persist_split_handoff", server)
+        self.assertIn("equal_split._write_basis_debt", server)
+        self.assertIn("manual._write_split_remaining", server)
+
     def test_run_panel_v6_is_start_stop_only_and_has_no_status_strips(self) -> None:
         authority = self.text("dashboard/direct-run-panel-authority-v6.js")
         self.assertIn('/api/me/direct-execution/status', authority)
@@ -153,6 +168,8 @@ class HybridBrowserDirectV2Contract(unittest.TestCase):
 
     def test_transactions_have_time_market_type_spots_buy_and_profit_columns(self) -> None:
         finalizer = self.text("scripts/finalize-production-controls-v6.mjs")
+        ledger = self.text("dashboard/direct-transaction-ledger-v6.js")
+        exporter = self.text("scripts/finalize-production-controls-v6b.mjs")
         self.assertIn("Time / Market", finalizer)
         self.assertIn("Entry / Exit", finalizer)
         self.assertIn("Buy price", finalizer)
@@ -161,6 +178,10 @@ class HybridBrowserDirectV2Contract(unittest.TestCase):
         self.assertIn("transactionTimeLabel", finalizer)
         self.assertIn('"1HZ100V": "V100 (1s)"', finalizer)
         self.assertIn('second: "2-digit"', finalizer)
+        self.assertIn("direct-local-transaction-row-v6", ledger)
+        self.assertIn("V100 (1s)", ledger)
+        self.assertIn('second: "2-digit"', ledger)
+        self.assertIn("entry_spot: contract?.entry_spot", exporter)
 
     def test_transactions_no_longer_get_strategy_checker_and_no_400ms_loop(self) -> None:
         finalizer = self.text("scripts/finalize-production-controls-v6.mjs")
