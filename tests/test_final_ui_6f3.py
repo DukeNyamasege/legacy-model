@@ -17,7 +17,7 @@ class FinalUi6F3Tests(unittest.TestCase):
         self.assertIn('frontend-authority" content="final-ui-shell-v2"', html)
         self.assertIn('/final-premium-6f3.css?v=20260817-6f3-1', html)
         self.assertIn('/final-premium-6f3.js?v=20260818-local-ui-12', html)
-        self.assertIn('/public-testing-runtime-v1.js?v=20260818-public-testing-run-v3', html)
+        self.assertIn('/public-testing-runtime-v1.js?v=20260818-public-testing-run-v4', html)
         self.assertNotIn('<script src="/vps-realtime-client-v2.js?v=20260817-6f2-1" defer>', html)
         self.assertNotIn('<script src="/final-ui-shell-v2.js?v=20260817-6f2-1" defer>', html)
         self.assertNotIn("premium-subscription-action6e", html)
@@ -26,26 +26,17 @@ class FinalUi6F3Tests(unittest.TestCase):
     def test_future_mpesa_premium_flow_is_retained(self) -> None:
         js = (DASHBOARD / "final-premium-6f3.js").read_text(encoding="utf-8")
         for route in (
-            'api("/me")',
-            'api("/me/premium-access")',
-            'api("/me/premium-access/payment-options")',
-            'api("/me/accounts")',
-            'api("/me/premium-access/mpesa/payments/latest")',
+            'api("/me")', 'api("/me/premium-access")', 'api("/me/premium-access/payment-options")',
+            'api("/me/accounts")', 'api("/me/premium-access/mpesa/payments/latest")',
             'api("/me/premium-access/mpesa/stk-push"',
             'api(`/me/premium-access/mpesa/payments/${encodeURIComponent(state.payment.id)}`)',
-            'api("/me/premium-access/renewal-status")',
-            'api("/me/premium-access/renewal-history?limit=8")',
+            'api("/me/premium-access/renewal-status")', 'api("/me/premium-access/renewal-history?limit=8")',
         ):
             self.assertIn(route, js)
         for marker in (
-            "KES 250",
-            "7 days",
-            "M-PESA · LIPANA",
-            "DOT & ROT access",
-            "signed Lipana callback",
-            "server-side transaction verification",
-            "payment?.activated",
-            "premium?.active",
+            "KES 250", "7 days", "M-PESA · LIPANA", "DOT & ROT access",
+            "signed Lipana callback", "server-side transaction verification",
+            "payment?.activated", "premium?.active",
         ):
             self.assertIn(marker, js)
         self.assertIn("const TESTING_FREE_ACCESS = true;", js)
@@ -55,21 +46,13 @@ class FinalUi6F3Tests(unittest.TestCase):
     def test_public_testing_controller_hides_paywall_and_syncs_instant_run(self) -> None:
         js = (DASHBOARD / "public-testing-runtime-v1.js").read_text(encoding="utf-8")
         for marker in (
-            'fetch("/me/public-testing-access"',
-            "public_testing_free_access",
-            ".paid-soon-banner",
-            ".premium-reminder",
-            ".premium-profile",
-            "premium use only",
-            "pay kes 250",
-            '"[data-run-start]"',
-            '"[data-run-execution-toggle]"',
-            '"[data-builder-trade]"',
-            '"[data-ready-trade]"',
-            '"[data-trade-now-selected]"',
-            '"[data-start-trading]"',
-            'data-run-tab="transactions"',
-            'label.textContent = running ? "Stop" : "Run"',
+            'fetch("/me/public-testing-access"', "public_testing_free_access",
+            ".paid-soon-banner", ".premium-reminder", ".premium-profile",
+            "premium use only", "pay kes 250", '"[data-run-start]"',
+            '"[data-run-execution-toggle]"', '"[data-builder-trade]"',
+            '"[data-ready-trade]"', '"[data-trade-now-selected]"', '"[data-start-trading]"',
+            'data-run-tab="transactions"', 'label.textContent = running ? "Stop" : "Run"',
+            "if (running && !state.defaultTransactionsApplied) chooseTransactions();",
         ):
             self.assertIn(marker, js)
 
@@ -147,13 +130,9 @@ class FinalUi6F3Tests(unittest.TestCase):
         direct = (ROOT / "app" / "custom_strategy_direct_runtime.py").read_text(encoding="utf-8")
         execution = (ROOT / "app" / "account_execution_session.py").read_text(encoding="utf-8")
         for route in (
-            'json("/me/accounts")',
-            'json("/me/trades/today?limit=5000")',
-            'json("/me/automation-schedules?limit=80")',
-            'json("/me/custom-strategy")',
-            'json("/me/text-to-strategy/compile"',
-            'json("/me/resume-trading"',
-            'json("/me/switch-account"',
+            'json("/me/accounts")', 'json("/me/trades/today?limit=5000")',
+            'json("/me/automation-schedules?limit=80")', 'json("/me/custom-strategy")',
+            'json("/me/text-to-strategy/compile"', 'json("/me/resume-trading"', 'json("/me/switch-account"',
         ):
             self.assertIn(route, shell)
         self.assertIn('@app.post("/me/resume-trading")', runtime)
@@ -167,21 +146,11 @@ class FinalUi6F3Tests(unittest.TestCase):
 
     def test_javascript_syntax_is_valid(self) -> None:
         for path in (
-            DASHBOARD / "final-premium-6f3.js",
-            DASHBOARD / "final-ui-shell-v2.js",
-            DASHBOARD / "public-testing-runtime-v1.js",
-            DASHBOARD / "vps-api-boundary-v2.js",
-            DASHBOARD / "vps-realtime-client-v2.js",
-            ROOT / "scripts" / "build-vps.mjs",
+            DASHBOARD / "final-premium-6f3.js", DASHBOARD / "final-ui-shell-v2.js",
+            DASHBOARD / "public-testing-runtime-v1.js", DASHBOARD / "vps-api-boundary-v2.js",
+            DASHBOARD / "vps-realtime-client-v2.js", ROOT / "scripts" / "build-vps.mjs",
         ):
-            result = subprocess.run(
-                ["node", "--check", str(path)],
-                cwd=ROOT,
-                capture_output=True,
-                text=True,
-                timeout=20,
-                check=False,
-            )
+            result = subprocess.run(["node", "--check", str(path)], cwd=ROOT, capture_output=True, text=True, timeout=20, check=False)
             self.assertEqual(result.returncode, 0, msg=f"{path.name}\n{result.stderr}")
 
 
