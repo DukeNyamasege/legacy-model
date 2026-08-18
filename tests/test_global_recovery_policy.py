@@ -38,12 +38,16 @@ class GlobalRecoveryPolicyTests(unittest.TestCase):
         self.assertIn("if debt <= 0.009", source)
         self.assertIn("is_recovery=True", source)
         self.assertIn("legacy_cap_ignored=true", source)
-        self.assertIn("splitPartStake", (ROOT / "scripts" / "finalize-production-controls-v6.mjs").read_text(encoding="utf-8"))
+        self.assertIn(
+            "splitPartStake",
+            (ROOT / "scripts" / "finalize-production-controls-v6.mjs").read_text(encoding="utf-8"),
+        )
 
     def test_only_tp_sl_or_explicit_manual_stop_are_terminal(self) -> None:
         source = (ROOT / "app" / "global_recovery_execution_policy.py").read_text(encoding="utf-8")
         self.assertIn('_ALLOWED_TERMINAL = {"take_profit", "stop_loss"}', source)
         self.assertIn('_MANUAL_STATUSES = {"stopped", "manual_pause"}', source)
+        self.assertIn('"stopped",\n    "manual_pause",', source)
         self.assertIn("GLOBAL_AUTOMATIC_STOP_BLOCKED", source)
         self.assertIn("lifecycle_stop=false enabled_preserved=true auto_retry=true", source)
         fence = (ROOT / "app" / "direct_execution_worker_fence.py").read_text(encoding="utf-8")
@@ -51,6 +55,26 @@ class GlobalRecoveryPolicyTests(unittest.TestCase):
             fence.index("install_global_recovery_execution_policy()"),
             fence.index("_direct_execution_hard_stop_fence"),
         )
+
+    def test_repository_quarantine_and_token_faults_become_retry_not_stop(self) -> None:
+        source = (ROOT / "app" / "never_auto_stop_repository_authority.py").read_text(encoding="utf-8")
+        fence = (ROOT / "app" / "direct_execution_worker_fence.py").read_text(encoding="utf-8")
+        self.assertIn("quarantine_as_retry", source)
+        self.assertIn("discard_token_without_terminal_stop", source)
+        self.assertIn("row.enabled = True", source)
+        self.assertIn("automatic recovery required", source)
+        self.assertIn("install_never_auto_stop_repository_authority()", fence)
+        self.assertLess(
+            fence.index("install_never_auto_stop_repository_authority()"),
+            fence.index("install_global_recovery_execution_policy()"),
+        )
+
+    def test_existing_explicit_automatic_stops_are_repaired_at_worker_start(self) -> None:
+        source = (ROOT / "app" / "global_recovery_execution_policy.py").read_text(encoding="utf-8")
+        self.assertIn("_EXISTING_AUTOMATIC_STOP_STATUSES", source)
+        self.assertIn("_repair_existing_automatic_stops", source)
+        self.assertIn("Existing automatic execution stop restored to retry", source)
+        self.assertNotIn('"real_disabled",\n}', source)
 
     def test_fresh_start_clears_stale_checkpoint_but_reset_is_history_only(self) -> None:
         source = (ROOT / "app" / "vps_runtime_policy_hotfix.py").read_text(encoding="utf-8")
@@ -88,12 +112,23 @@ class GlobalRecoveryPolicyTests(unittest.TestCase):
         self.assertIn("row.cumulative_profit", source)
         self.assertNotIn("BotState", source)
 
-    def test_status_poll_load_and_status_query_are_bounded(self) -> None:
+    def test_status_poll_load_and_database_pool_are_bounded(self) -> None:
         finalizer = (ROOT / "scripts" / "finalize-global-recovery-v1.mjs").read_text(encoding="utf-8")
         api = (ROOT / "app" / "vps_runtime_policy_hotfix.py").read_text(encoding="utf-8")
+        compose = (ROOT / "docker-compose.vps.yml").read_text(encoding="utf-8")
         self.assertIn('"  }, 10000);"', finalizer)
         self.assertIn("RuntimePreference.preference_key.in_((owner_key, stop_key))", api)
         self.assertIn("one_account_read_one_batched_preference_read", api)
+        self.assertIn("DATABASE_POOL_SIZE", compose)
+        self.assertIn("DATABASE_POOL_TIMEOUT_SECONDS", compose)
+
+    def test_ordinary_ws_reconnect_is_fast_but_rate_limit_backoff_is_retained(self) -> None:
+        compose = (ROOT / "docker-compose.vps.yml").read_text(encoding="utf-8")
+        self.assertIn("PRIVATE_WS_NORMAL_RECONNECT_BASE_SECONDS", compose)
+        self.assertIn("PRIVATE_WS_NORMAL_RECONNECT_MAX_SECONDS", compose)
+        self.assertIn("VPS_PRIVATE_WS_NORMAL_RECONNECT_MAX_SECONDS:-4", compose)
+        self.assertIn("PRIVATE_WS_RATE_LIMIT_BACKOFF_SECONDS", compose)
+        self.assertIn("PRIVATE_WS_MAX_BACKOFF_SECONDS", compose)
 
     def test_runtime_report_matches_exact_managed_id_suffix(self) -> None:
         source = (ROOT / "scripts" / "collect_account_runtime_report.sh").read_text(encoding="utf-8")
