@@ -20,8 +20,7 @@ class FinalUi6F2Tests(unittest.TestCase):
         self.assertIn('/final-ui-shell-v2.css?v=20260817-6f2-1', html)
         self.assertIn('/final-premium-6f3.css?v=20260817-6f3-1', html)
         self.assertIn('/final-premium-6f3.js?v=20260818-local-ui-12', html)
-        self.assertIn('/public-testing-runtime-v1.js?v=20260818-public-testing-run-v2', html)
-        # The heavy F2 runtime is admitted dynamically by the 6F-3 bootstrap.
+        self.assertIn('/public-testing-runtime-v1.js?v=20260818-public-testing-run-v3', html)
         self.assertNotIn('<script src="/vps-realtime-client-v2.js?v=20260817-6f2-1" defer>', html)
         self.assertNotIn('<script src="/final-ui-shell-v2.js?v=20260817-6f2-1" defer>', html)
         self.assertIn('/vps-realtime-client-v2.js?v=20260817-local-ui-2', premium)
