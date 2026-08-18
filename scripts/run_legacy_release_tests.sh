@@ -4,10 +4,6 @@ set -eu
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT_DIR"
 
-# Legacy strategy tests deliberately create temporary SQLite databases and local
-# token files. Production services retain PostgreSQL, encrypted credentials and
-# account-scoped execution, but the release suite itself runs isolated from the
-# production DATABASE_URL.
 export ALLOW_LEGACY_GLOBAL_TOKENS=true
 export COPYTRADING_ALLOW_LEGACY_GLOBAL_TOKENS=true
 export FRONTEND_ORIGINS="http://127.0.0.1:8080,http://localhost:8080,https://derivadmin.site"
@@ -44,11 +40,9 @@ scripts/finalize-production-controls-v6.mjs
 scripts/finalize-production-controls-v6b.mjs
 scripts/finalize-scheduler-v2.mjs
 scripts/finalize-execution-continuity-v1.mjs
+scripts/finalize-global-recovery-v1.mjs
 "
 
-# VPS hosts do not need Node installed. If Node is unavailable locally, run the
-# same syntax checks in an ephemeral Node 22 container, matching the frontend
-# build stage and avoiding host-package drift.
 if command -v node >/dev/null 2>&1; then
   for file in $NODE_CHECK_FILES; do
     node --check "$file"
@@ -70,9 +64,6 @@ fi
 grep -q -- '--camera-bg: #07111f' dashboard/tutorial-camera-theme-v1.css
 grep -q -- '--camera-bg: #e9f0f6' dashboard/tutorial-camera-theme-v1.css
 
-# Python release tests must use the same dependency set as production. Bare VPS
-# hosts intentionally do not carry FastAPI/SQLAlchemy/aiohttp, so build and run
-# the API target instead of mutating the host Python installation.
 command -v docker >/dev/null 2>&1 || {
   echo "ERROR: Docker is required for Python release tests." >&2
   exit 1
@@ -95,10 +86,15 @@ docker compose -f docker-compose.yml run --rm --no-deps api sh -ec '
     app/custom_split_debt_continuity_authority.py \
     app/custom_virtual_post_loss_barrier_authority.py \
     app/vps_direct_execution_checkpoint.py \
+    app/global_recovery_execution_policy.py \
+    app/account_identity_canonical_authority.py \
+    app/account_trade_metrics_authority.py \
+    app/vps_runtime_policy_hotfix.py \
     app/automation_scheduler_v2_authority.py \
     app/vps_backend_api.py
 
   python -m unittest -q \
+    tests.test_global_recovery_policy \
     tests.test_tutorial_camera_theme \
     tests.test_execution_continuity_v10 \
     tests.test_scheduler_v2_authority \
