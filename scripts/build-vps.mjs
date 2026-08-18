@@ -113,7 +113,7 @@ const required = [
   '/final-premium-6f3.css?v=20260817-6f3-1',
   '/mobile-reference-ui.css?v=20260818-local-ui-12',
   '/final-premium-6f3.js?v=20260818-local-ui-12',
-  '/public-testing-runtime-v1.js?v=20260818-public-testing-run-v2',
+  '/public-testing-runtime-v1.js?v=20260818-public-testing-run-v3',
 ];
 for (const marker of required) {
   if (!html.includes(marker)) throw new Error(`Action 6F-3 VPS marker missing: ${marker}`);
