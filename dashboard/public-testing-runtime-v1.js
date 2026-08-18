@@ -27,7 +27,23 @@
     defaultTransactionsApplied: false,
     renderQueued: false,
     strategyRefreshAt: 0,
+    testingFree: false,
   };
+
+  async function loadAccessMode() {
+    try {
+      const response = await fetch("/me/public-testing-access", {
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+      });
+      const payload = response.ok ? await response.json() : {};
+      state.testingFree = payload?.public_testing_free_access === true;
+    } catch (_) {
+      state.testingFree = false;
+    }
+    queueRender();
+  }
 
   function isPremiumNoise(node) {
     const text = String(node?.textContent || "").toLowerCase();
@@ -38,6 +54,7 @@
   }
 
   function removeTestingPhasePremiumUi() {
+    if (!state.testingFree) return;
     document.querySelectorAll(".paid-soon-banner,.premium-reminder,.premium-profile").forEach((node) => node.remove());
     document.querySelectorAll(".global-message.error,.global-message.success,.premium-message").forEach((node) => {
       if (isPremiumNoise(node)) node.remove();
@@ -151,13 +168,7 @@
       const digitMatch = quote.replace(/\D/g, "").match(/(\d)$/);
       const digit = digitMatch ? digitMatch[1] : "-";
       state.analysisCount += 1;
-      state.ticks.unshift({
-        symbol,
-        quote,
-        digit,
-        epoch: Number(tick.epoch || 0),
-        at: Date.now(),
-      });
+      state.ticks.unshift({ symbol, quote, digit, epoch: Number(tick.epoch || 0), at: Date.now() });
       if (state.ticks.length > 80) state.ticks.length = 80;
       document.dispatchEvent(new CustomEvent("derivadmin:analysis-tick", {
         detail: { symbol, quote, digit, count: state.analysisCount },
@@ -180,9 +191,7 @@
   }
 
   function latestRowsMarkup() {
-    if (!state.ticks.length) {
-      return `<div class="testing-tick-empty">Waiting for the first Deriv tick…</div>`;
-    }
+    if (!state.ticks.length) return `<div class="testing-tick-empty">Waiting for the first Deriv tick…</div>`;
     return state.ticks.slice(0, 18).map((tick) => {
       const when = tick.epoch ? new Date(tick.epoch * 1000) : new Date(tick.at);
       const time = Number.isFinite(when.getTime()) ? when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "";
@@ -245,7 +254,6 @@
       if (running) startMirror();
       else closeMirror();
     }
-    if (document.querySelector(".global-run-panel") && !state.defaultTransactionsApplied) chooseTransactions();
     queueRender();
   }
 
@@ -269,15 +277,13 @@
       }, 0);
       return;
     }
-    if (event.target?.closest?.('[data-run-tab="journal"]')) {
-      window.setTimeout(renderTickJournal, 0);
-    }
+    if (event.target?.closest?.('[data-run-tab="journal"]')) window.setTimeout(renderTickJournal, 0);
   }, true);
 
   document.addEventListener("foa:vps-live", () => window.setTimeout(syncFromDom, 0));
   document.addEventListener("foa:backend-lifecycle", () => window.setTimeout(syncFromDom, 0));
   window.addEventListener("pageshow", syncFromDom);
-  window.addEventListener("focus", syncFromDom);
+  window.addEventListener("focus", () => { loadAccessMode(); syncFromDom(); });
   window.addEventListener("beforeunload", closeMirror);
 
   let observerQueued = false;
@@ -292,10 +298,10 @@
   }).observe(document.documentElement, { childList: true, subtree: true });
 
   injectStyles();
-  removeTestingPhasePremiumUi();
+  loadAccessMode();
   window.setTimeout(syncFromDom, 0);
   window.DERIVADMIN_PUBLIC_TESTING_RUNTIME_V1 = Object.freeze({
-    version: "20260818-public-testing-run-v1",
+    version: "20260818-public-testing-run-v2",
     publicWebSocket: PUBLIC_WS,
     refresh: syncFromDom,
   });
