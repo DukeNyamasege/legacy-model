@@ -22,6 +22,7 @@ from app.public_testing_access import (
 )
 from app.text_to_strategy_api import install_text_to_strategy_api
 from app.vps_dashboard_latency_hotfix import install_vps_dashboard_latency_hotfix
+from app.vps_demo_balance_reset import install_vps_demo_balance_reset
 from app.vps_direct_execution_api import install_vps_direct_execution_api
 from app.vps_direct_execution_arm_guard import install_vps_direct_execution_arm_guard
 from app.vps_direct_execution_checkpoint import install_vps_direct_execution_checkpoint
@@ -58,6 +59,10 @@ install_public_testing_access_api(app)
 # current/target identity validation remains authoritative for an actual switch.
 install_final_linked_accounts_6f2(app)
 install_vps_linked_accounts_latency_hotfix(app)
+# Account management remains a low-frequency control-plane operation. Demo balance
+# reset calls Deriv's official REST endpoint with the server-held trade credential;
+# no long-lived OAuth/PAT token is exposed to the browser.
+install_vps_demo_balance_reset(app)
 # Live/manual execution uses a browser <-> Deriv authenticated WebSocket. The VPS
 # only issues the short-lived OTP URL and maintains the browser/server ownership
 # lease. The atomic arm guard prevents a second browser/device from sharing that
@@ -76,5 +81,5 @@ install_premium_access_action6a(app)
 
 app.state.production_frontend_host = "vps_nginx"
 app.state.production_backend_role = "control_plane_scheduler_offline_takeover"
-app.state.production_architecture = "hybrid_browser_direct_v1"
+app.state.production_architecture = "hybrid_browser_direct_v2"
 app.state.public_testing_free_access = PUBLIC_TESTING_FREE_ACCESS
