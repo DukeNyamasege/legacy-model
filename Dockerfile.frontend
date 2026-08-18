@@ -10,7 +10,9 @@ COPY scripts/build-vps.mjs ./scripts/build-vps.mjs
 COPY scripts/export-deriv-quill-icons-v2.mjs ./scripts/export-deriv-quill-icons-v2.mjs
 
 ARG PUBLIC_ORIGIN=https://derivadmin.site
+ARG PUBLIC_TESTING_FREE_ACCESS=true
 ENV PUBLIC_ORIGIN=${PUBLIC_ORIGIN}
+ENV PUBLIC_TESTING_FREE_ACCESS=${PUBLIC_TESTING_FREE_ACCESS}
 
 RUN node scripts/build-vps.mjs
 
