@@ -10,6 +10,9 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import delete, select
 
 import app.api as base_api
+from app.account_identity_canonical_authority import (
+    install_account_identity_canonical_authority,
+)
 from app.direct_execution_hard_stop_state import direct_hard_stop_key
 from app.direct_execution_lease import (
     DIRECT_BROWSER_STATUS,
@@ -90,6 +93,10 @@ def install_vps_runtime_policy_hotfix(app: Any) -> None:
     global _INSTALLED
     if _INSTALLED:
         return
+
+    # Keep one exact Demo/Real Deriv identity executable in the API as well as in
+    # the worker. Historical duplicate rows remain intact for audit/trade history.
+    install_account_identity_canonical_authority()
 
     # Successful fresh direct Start and successful Reset both discard stale
     # checkpoint/Split progress. Failed Start never destroys the existing state.
