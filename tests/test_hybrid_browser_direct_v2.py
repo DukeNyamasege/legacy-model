@@ -71,7 +71,8 @@ class HybridBrowserDirectV2Contract(unittest.TestCase):
         self.assertIn("stopEverything", authority)
         self.assertIn("direct-live-transactions-v5", authority)
         self.assertIn("height:calc(100dvh - 72px)", authority)
-        self.assertNotIn("/me/resume-trading", authority)
+        self.assertNotIn('nativeFetch("/api/me/resume-trading"', authority)
+        self.assertNotIn("startEverything", authority)
 
     def test_build_compiler_preserves_result_route_and_special_comparators(self) -> None:
         compiler = self.text("scripts/build-direct-runtime-v2.mjs")
