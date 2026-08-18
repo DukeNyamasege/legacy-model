@@ -4,7 +4,7 @@
   if (window.__DERIVADMIN_DIRECT_EXECUTION_V1__) return;
   window.__DERIVADMIN_DIRECT_EXECUTION_V1__ = true;
 
-  const VERSION = "20260818-browser-direct-v1";
+  const VERSION = "20260819-browser-direct-source-v2-history-only-clear";
   const PUBLIC_WS_URL = "wss://api.derivws.com/trading/v1/options/ws/public";
   const CACHE_PREFIX = "derivadmin-direct-strategy-v1:";
   const JOURNAL_PREFIX = "derivadmin-direct-journal-v1:";
@@ -151,17 +151,21 @@
   }
 
   function clearLocalTrades() {
+    // HISTORY ONLY. Clearing the visible ledger must never rewrite live financial
+    // state. sessionProfit still owns TP/SL; recoveryDebt/consecutiveLosses still
+    // own recovery; Virtual Hook and any open contract remain untouched.
     try { localStorage.removeItem(journalKey()); } catch (_) {}
-    state.sessionProfit = 0;
-    state.recoveryDebt = 0;
-    state.consecutiveLosses = 0;
-    state.virtualMode = false;
-    state.virtualWins = 0;
-    state.virtualPending = null;
-    state.currentStake = baseStake();
     const panel = document.querySelector(".global-run-panel");
     panel?.querySelectorAll(".run-panel-stats b,.run-stat b").forEach((node) => { node.textContent = "0"; });
-    window.dispatchEvent(new CustomEvent("derivadmin:direct-clear"));
+    window.dispatchEvent(new CustomEvent("derivadmin:direct-clear", {
+      detail: {
+        history_only: true,
+        financial_state_preserved: true,
+        session_profit_preserved: state.sessionProfit,
+        recovery_debt_preserved: state.recoveryDebt,
+        virtual_mode_preserved: state.virtualMode,
+      },
+    }));
   }
 
   function normalizeCondition(raw) {
@@ -219,29 +223,28 @@
     return {
       ...source,
       configured: true,
+      trade_type: tradeType,
       market_mode: marketMode,
       markets,
-      trade_type: tradeType,
-      prediction,
-      duration_ticks: clampInt(source.duration_ticks, 1, 100, 1),
       conditions,
       match: "all",
-      execution_settings: {
-        ...execution,
-        stake_amount: finiteNumber(execution.stake_amount, finiteNumber(state.account?.stake_amount, 0.5)),
-        take_profit: finiteNumber(execution.take_profit, finiteNumber(state.account?.take_profit, 0)),
-        stop_loss: finiteNumber(execution.stop_loss, finiteNumber(state.account?.stop_loss, 0)),
-      },
+      prediction,
+      duration_ticks: clampInt(source.duration_ticks, 1, 100, 1),
       martingale: {
-        mode: ["system", "multiplier", "split"].includes(String(martingale.mode || "system")) ? String(martingale.mode || "system") : "system",
-        multiplier: Math.max(1.1, Math.min(10, finiteNumber(martingale.multiplier, 2))),
+        mode: ["multiplier", "split"].includes(String(martingale.mode || "")) ? String(martingale.mode) : "system",
+        multiplier: Math.max(1, Math.min(10, finiteNumber(martingale.multiplier, 2))),
         split_count: clampInt(martingale.split_count, 1, 3, 2),
       },
       virtual_hook_enabled: source.virtual_hook_enabled !== false && hookRaw.enabled !== false,
       virtual_hook: {
         enabled: source.virtual_hook_enabled !== false && hookRaw.enabled !== false,
-        enter_after_losses: clampInt(hookRaw.enter_after_losses ?? hookRaw.enter_after_runs, 1, 50, 2),
-        exit_after_consecutive_wins: clampInt(hookRaw.exit_after_consecutive_wins ?? hookRaw.exit_after_wins, 1, 50, 2),
+        enter_after_losses: clampInt(hookRaw.enter_after_losses, 1, 50, 2),
+        exit_after_consecutive_wins: clampInt(hookRaw.exit_after_consecutive_wins, 1, 50, 1),
+      },
+      execution_settings: {
+        stake_amount: Math.max(0.35, finiteNumber(execution.stake_amount ?? state.account?.stake_amount, 0.5)),
+        take_profit: Math.max(0, finiteNumber(execution.take_profit ?? state.account?.take_profit, 0)),
+        stop_loss: Math.max(0, Math.abs(finiteNumber(execution.stop_loss ?? state.account?.stop_loss, 0))),
       },
     };
   }
@@ -251,249 +254,240 @@
     if (!normalized) return null;
     state.strategy = normalized;
     try { localStorage.setItem(strategyCacheKey(), JSON.stringify(normalized)); } catch (_) {}
+    window.dispatchEvent(new CustomEvent("derivadmin:direct-strategy", { detail: normalized }));
     return normalized;
   }
 
   function loadCachedStrategy() {
-    const direct = safeJson(localStorage.getItem(strategyCacheKey()), null);
-    const normalized = normalizeStrategy(direct);
+    const normalized = normalizeStrategy(safeJson(localStorage.getItem(strategyCacheKey()), null));
     if (normalized) state.strategy = normalized;
     return normalized;
   }
 
   function baseStake() {
-    return Math.max(0.01, Math.round(finiteNumber(state.strategy?.execution_settings?.stake_amount, finiteNumber(state.account?.stake_amount, 0.5)) * 100) / 100);
+    return Math.max(0.35, finiteNumber(state.strategy?.execution_settings?.stake_amount, state.account?.stake_amount || 0.5));
   }
 
   function takeProfit() {
-    return Math.max(0, finiteNumber(state.strategy?.execution_settings?.take_profit, finiteNumber(state.account?.take_profit, 0)));
+    return Math.max(0, finiteNumber(state.strategy?.execution_settings?.take_profit, state.account?.take_profit || 0));
   }
 
   function stopLoss() {
-    return Math.max(0, finiteNumber(state.strategy?.execution_settings?.stop_loss, finiteNumber(state.account?.stop_loss, 0)));
+    return Math.max(0, Math.abs(finiteNumber(state.strategy?.execution_settings?.stop_loss, state.account?.stop_loss || 0)));
   }
 
-  function updateStatus(message) {
-    state.status = String(message || "");
-    const panel = document.querySelector(".global-run-panel");
-    if (!panel) return;
-    let note = panel.querySelector(".direct-execution-state");
-    if (!note) {
-      note = document.createElement("div");
-      note.className = "direct-execution-state";
-      const body = panel.querySelector(".run-panel-body") || panel;
-      body.prepend(note);
+  function requiredHistory() {
+    return Math.max(1, ...state.strategy.conditions.map((item) => item.window || 1));
+  }
+
+  function historyState(symbol) {
+    if (!state.histories.has(symbol)) {
+      state.histories.set(symbol, { digits: [], quotes: [], lastEpoch: 0, ready: false });
     }
-    note.textContent = state.status;
-    note.dataset.owner = state.ownerLost ? "server" : state.running ? "browser" : "stopped";
-  }
-
-  function updateRunUI() {
-    const panel = document.querySelector(".global-run-panel");
-    if (panel) {
-      panel.dataset.executionState = state.running ? "running" : "stopped";
-      panel.dataset.executionTransport = "deriv-direct";
-      panel.querySelectorAll("[data-run-start]").forEach((button) => {
-        button.dataset.singleRunState = state.running ? "stop" : "start";
-        button.setAttribute("aria-label", state.running ? "Stop trading" : "Start trading");
-        const span = button.querySelector("span");
-        if (span) span.textContent = state.running ? "Stop" : "Run";
-      });
-      panel.querySelectorAll("[data-run-execution-toggle]").forEach((toggle) => {
-        toggle.classList.toggle("on", state.running);
-        toggle.dataset.singleRunState = state.running ? "stop" : "start";
-        toggle.setAttribute("aria-pressed", state.running ? "true" : "false");
-      });
-    }
-    document.querySelectorAll("[data-start-trading]").forEach((button) => {
-      button.textContent = state.running ? "Trading" : button.textContent;
-    });
-  }
-
-  function compare(value, operator, target) {
-    if (operator === "<") return value < target;
-    if (operator === "<=") return value <= target;
-    if (operator === "==") return Math.abs(value - target) < 0.000001;
-    if (operator === "!=") return Math.abs(value - target) >= 0.000001;
-    if (operator === ">=") return value >= target;
-    if (operator === ">") return value > target;
-    return false;
-  }
-
-  function conditionMatches(condition, history) {
-    const digits = history.digits;
-    const quotes = history.quotes;
-    const windowSize = Number(condition.window || 0);
-    if (windowSize <= 0) return false;
-    if (condition.kind === "digit_parity") {
-      if (digits.length < windowSize) return false;
-      const even = condition.parity === "even";
-      return digits.slice(-windowSize).every((digit) => (digit % 2 === 0) === even);
-    }
-    if (condition.kind === "digit_compare") {
-      if (digits.length < windowSize) return false;
-      const sample = digits.slice(-windowSize);
-      if (condition.operator === "all_same") return sample.length > 0 && sample.every((digit) => digit === sample[0]);
-      return sample.every((digit) => compare(digit, condition.operator, Number(condition.value)));
-    }
-    if (condition.kind === "direction") {
-      if (quotes.length < windowSize + 1) return false;
-      const sample = quotes.slice(-(windowSize + 1));
-      const moves = sample.slice(1).map((quote, index) => quote - sample[index]);
-      if (["rise", "rising"].includes(condition.direction)) return moves.every((move) => move > 0);
-      if (["fall", "falling"].includes(condition.direction)) return moves.every((move) => move < 0);
-      return moves.every((move) => move === 0);
-    }
-    if (condition.kind === "percentage") {
-      let total = 0;
-      let matches = 0;
-      if (["rise", "fall", "no_move"].includes(condition.target)) {
-        if (quotes.length < windowSize + 1) return false;
-        const sample = quotes.slice(-(windowSize + 1));
-        const moves = sample.slice(1).map((quote, index) => quote - sample[index]);
-        total = moves.length;
-        if (condition.target === "rise") matches = moves.filter((move) => move > 0).length;
-        else if (condition.target === "fall") matches = moves.filter((move) => move < 0).length;
-        else matches = moves.filter((move) => move === 0).length;
-      } else {
-        if (digits.length < windowSize) return false;
-        const sample = digits.slice(-windowSize);
-        total = sample.length;
-        if (condition.target === "even") matches = sample.filter((digit) => digit % 2 === 0).length;
-        else if (condition.target === "odd") matches = sample.filter((digit) => digit % 2 === 1).length;
-        else if (condition.target === "over") matches = sample.filter((digit) => digit > Number(condition.value)).length;
-        else if (condition.target === "under") matches = sample.filter((digit) => digit < Number(condition.value)).length;
-        else if (condition.target === "digit") matches = sample.filter((digit) => digit === Number(condition.value)).length;
-      }
-      if (!total) return false;
-      return compare(matches * 100 / total, condition.operator, Number(condition.threshold || 0));
-    }
-    return false;
-  }
-
-  function strategyMatches(history) {
-    const strategy = state.strategy;
-    return Boolean(strategy && strategy.conditions.every((condition) => conditionMatches(condition, history)));
-  }
-
-  function digitFromTick(tick) {
-    const quote = finiteNumber(tick?.quote, NaN);
-    if (!Number.isFinite(quote)) return null;
-    const pipSize = Number(tick?.pip_size);
-    let text = Number.isInteger(pipSize) && pipSize >= 0 && pipSize <= 12
-      ? quote.toFixed(pipSize)
-      : String(tick.quote);
-    text = text.replace(/\D/g, "");
-    return text ? Number(text[text.length - 1]) : null;
-  }
-
-  function historyFor(symbol) {
-    if (!state.histories.has(symbol)) state.histories.set(symbol, { quotes: [], digits: [], sequence: 0 });
     return state.histories.get(symbol);
+  }
+
+  function seedHistory(symbol, prices, times = []) {
+    const market = historyState(symbol);
+    market.digits = [];
+    market.quotes = [];
+    const pipSize = window.DERIVADMIN_DIRECT_PIP_PRECISION_V1?.pip_size?.(symbol) ?? null;
+    for (let index = 0; index < prices.length; index += 1) {
+      const quote = finiteNumber(prices[index], NaN);
+      if (!Number.isFinite(quote)) continue;
+      market.quotes.push(quote);
+      const digit = window.DERIVADMIN_DIRECT_PIP_PRECISION_V1?.last_digit?.(symbol, quote, pipSize);
+      market.digits.push(Number.isInteger(digit) ? digit : Math.abs(Math.trunc(quote * 1000)) % 10);
+      market.lastEpoch = Math.max(market.lastEpoch, finiteNumber(times[index], 0));
+    }
+    if (market.digits.length > MAX_HISTORY) market.digits = market.digits.slice(-MAX_HISTORY);
+    if (market.quotes.length > MAX_HISTORY) market.quotes = market.quotes.slice(-MAX_HISTORY);
+    market.ready = market.digits.length >= requiredHistory();
   }
 
   function recordTick(symbol, tick) {
     const quote = finiteNumber(tick?.quote, NaN);
-    const digit = digitFromTick(tick);
-    if (!Number.isFinite(quote) || digit == null) return null;
-    const history = historyFor(symbol);
-    history.quotes.push(quote);
-    history.digits.push(digit);
-    history.sequence += 1;
-    if (history.quotes.length > MAX_HISTORY) history.quotes.splice(0, history.quotes.length - MAX_HISTORY);
-    if (history.digits.length > MAX_HISTORY) history.digits.splice(0, history.digits.length - MAX_HISTORY);
-    return history;
+    const epoch = finiteNumber(tick?.epoch, 0);
+    if (!Number.isFinite(quote)) return null;
+    const market = historyState(symbol);
+    const pipSize = window.DERIVADMIN_DIRECT_PIP_PRECISION_V1?.pip_size?.(symbol) ?? null;
+    const digit = window.DERIVADMIN_DIRECT_PIP_PRECISION_V1?.last_digit?.(symbol, quote, pipSize);
+    market.quotes.push(quote);
+    market.digits.push(Number.isInteger(digit) ? digit : Math.abs(Math.trunc(quote * 1000)) % 10);
+    if (market.quotes.length > MAX_HISTORY) market.quotes.shift();
+    if (market.digits.length > MAX_HISTORY) market.digits.shift();
+    market.lastEpoch = Math.max(market.lastEpoch, epoch);
+    market.ready = market.digits.length >= requiredHistory();
+    return market;
   }
 
-  function virtualOutcome(pending, exitQuote, exitDigit) {
-    const type = pending.tradeType;
-    const prediction = pending.prediction;
-    if (type === "even") return exitDigit % 2 === 0;
-    if (type === "odd") return exitDigit % 2 === 1;
-    if (type === "over") return exitDigit > prediction;
-    if (type === "under") return exitDigit < prediction;
-    if (type === "matches") return exitDigit === prediction;
-    if (type === "differs") return exitDigit !== prediction;
-    if (type === "rise") return exitQuote > pending.entryQuote;
-    if (type === "fall") return exitQuote < pending.entryQuote;
-    return false;
+  function compare(a, operator, b) {
+    if (operator === ">") return a > b;
+    if (operator === "<") return a < b;
+    if (operator === ">=") return a >= b;
+    if (operator === "<=") return a <= b;
+    return a === b;
   }
 
-  function advanceVirtual(symbol, history) {
-    const pending = state.virtualPending;
-    if (!pending || pending.symbol !== symbol || history.sequence <= pending.entrySequence) return;
-    pending.remaining -= 1;
-    if (pending.remaining > 0) return;
-    const exitQuote = history.quotes[history.quotes.length - 1];
+  function conditionMatches(condition, history) {
+    if (!history?.ready) return false;
+    const digits = history.digits.slice(-condition.window);
+    const quotes = history.quotes.slice(-condition.window);
+    if (digits.length < condition.window || quotes.length < condition.window) return false;
+    if (condition.kind === "digit_parity") {
+      return digits.every((digit) => condition.parity === "even" ? digit % 2 === 0 : digit % 2 === 1);
+    }
+    if (condition.kind === "digit_compare") {
+      if (condition.operator === "all_same") return digits.every((digit) => digit === digits[0]);
+      if (condition.operator === "all_even") return digits.every((digit) => digit % 2 === 0);
+      if (condition.operator === "all_odd") return digits.every((digit) => digit % 2 === 1);
+      return digits.every((digit) => compare(digit, condition.operator, condition.value));
+    }
+    if (condition.kind === "direction") {
+      if (quotes.length < 2) return false;
+      const moves = quotes.slice(1).map((value, index) => Math.sign(value - quotes[index]));
+      if (condition.direction === "rising") return moves.every((move) => move > 0);
+      if (condition.direction === "falling") return moves.every((move) => move < 0);
+      return moves.every((move) => move === 0);
+    }
+    const target = String(condition.target || "even");
+    let hits = 0;
+    if (target === "even") hits = digits.filter((digit) => digit % 2 === 0).length;
+    else if (target === "odd") hits = digits.filter((digit) => digit % 2 === 1).length;
+    else if (target === "digit") hits = digits.filter((digit) => digit === condition.value).length;
+    else if (target === "over") hits = digits.filter((digit) => digit > Number(condition.value || 0)).length;
+    else if (target === "under") hits = digits.filter((digit) => digit < Number(condition.value || 0)).length;
+    else {
+      const moves = quotes.slice(1).map((value, index) => Math.sign(value - quotes[index]));
+      if (target === "rise") hits = moves.filter((move) => move > 0).length;
+      else if (target === "fall") hits = moves.filter((move) => move < 0).length;
+      else hits = moves.filter((move) => move === 0).length;
+      const pct = moves.length ? (hits / moves.length) * 100 : 0;
+      return compare(pct, condition.operator, condition.threshold);
+    }
+    const pct = (hits / digits.length) * 100;
+    return compare(pct, condition.operator, condition.threshold);
+  }
+
+  function strategyMatches(history) {
+    if (!state.strategy || !history?.ready) return false;
+    return state.strategy.conditions.every((condition) => conditionMatches(condition, history));
+  }
+
+  function updateStatus(text) {
+    state.status = String(text || "");
+    window.dispatchEvent(new CustomEvent("derivadmin:direct-status", {
+      detail: { running: state.running, text: state.status, ownerLost: state.ownerLost, epoch: state.epoch },
+    }));
+  }
+
+  function updateRunUI() {
+    window.dispatchEvent(new CustomEvent("derivadmin:direct-run-state", {
+      detail: { running: state.running, ownerLost: state.ownerLost, epoch: state.epoch },
+    }));
+  }
+
+  function rejectPending(map, reason) {
+    for (const [id, item] of map.entries()) {
+      clearTimeout(item.timer);
+      item.reject(new Error(reason));
+      map.delete(id);
+    }
+  }
+
+  function settleVirtual(history, pending) {
     const exitDigit = history.digits[history.digits.length - 1];
-    const win = virtualOutcome(pending, exitQuote, exitDigit);
-    state.virtualPending = null;
-    state.virtualWins = win ? state.virtualWins + 1 : 0;
+    let won = false;
+    if (pending.tradeType === "even") won = exitDigit % 2 === 0;
+    else if (pending.tradeType === "odd") won = exitDigit % 2 === 1;
+    else if (pending.tradeType === "over") won = exitDigit > pending.prediction;
+    else if (pending.tradeType === "under") won = exitDigit < pending.prediction;
+    else if (pending.tradeType === "matches") won = exitDigit === pending.prediction;
+    else if (pending.tradeType === "differs") won = exitDigit !== pending.prediction;
+    else {
+      const entry = pending.entryQuote;
+      const exit = history.quotes[history.quotes.length - 1];
+      won = pending.tradeType === "rise" ? exit > entry : exit < entry;
+    }
     appendJournal({
       mode: "virtual",
-      symbol,
+      state: "SETTLED",
+      contract_id: pending.id,
+      symbol: pending.symbol,
       trade_type: pending.tradeType,
       prediction: pending.prediction,
-      outcome: win ? "WIN" : "LOSS",
+      stake: 0,
+      outcome: won ? "WIN" : "LOSS",
       profit: 0,
-      entry_quote: pending.entryQuote,
-      exit_quote: exitQuote,
-      exit_digit: exitDigit,
+      amount_charged: 0,
     });
-    const required = clampInt(state.strategy?.virtual_hook?.exit_after_consecutive_wins, 1, 50, 2);
-    if (win && state.virtualWins >= required) {
+    if (won) state.virtualWins += 1;
+    else state.virtualWins = 0;
+    const needed = clampInt(state.strategy?.virtual_hook?.exit_after_consecutive_wins, 1, 50, 1);
+    if (won && state.virtualWins >= needed) {
       state.virtualMode = false;
       state.virtualWins = 0;
-      updateStatus("Direct • virtual protection cleared • waiting for real entry");
     }
   }
 
   function beginVirtual(symbol, history) {
-    if (state.virtualPending) return;
+    const latest = history.quotes[history.quotes.length - 1];
     state.virtualPending = {
+      id: `virtual-${Date.now()}-${Math.random().toString(16).slice(2)}`,
       symbol,
-      entrySequence: history.sequence,
-      entryQuote: history.quotes[history.quotes.length - 1],
-      remaining: Math.max(1, Number(state.strategy.duration_ticks || 1)),
       tradeType: state.strategy.trade_type,
       prediction: state.strategy.prediction,
+      entryQuote: latest,
+      remaining: Math.max(1, Number(state.strategy.duration_ticks || 1)),
     };
-    updateStatus("Direct • virtual protection observing next result");
+    appendJournal({
+      mode: "virtual",
+      state: "OPEN",
+      contract_id: state.virtualPending.id,
+      symbol,
+      trade_type: state.strategy.trade_type,
+      prediction: state.strategy.prediction,
+      stake: 0,
+      profit: 0,
+      amount_charged: 0,
+    });
+    updateStatus("Direct • virtual protection observation running • $0 charged");
   }
 
-  function wsErrorMessage(message) {
-    const error = message?.error;
-    if (!error) return "Deriv request failed";
-    return String(error.message || error.code || "Deriv request failed");
-  }
-
-  function rejectPending(map, reason) {
-    for (const pending of map.values()) {
-      clearTimeout(pending.timer);
-      pending.reject(new Error(reason));
-    }
-    map.clear();
+  function advanceVirtual(symbol, history) {
+    const pending = state.virtualPending;
+    if (!pending || pending.symbol !== symbol) return;
+    pending.remaining -= 1;
+    if (pending.remaining > 0) return;
+    state.virtualPending = null;
+    settleVirtual(history, pending);
   }
 
   function handleWsMessage(kind, event) {
-    let message;
-    try { message = JSON.parse(event.data); } catch (_) { return; }
-    const map = kind === "public" ? state.publicPending : state.privatePending;
-    const reqId = Number(message?.req_id || 0);
-    if (reqId && map.has(reqId)) {
+    let payload;
+    try { payload = JSON.parse(String(event.data || "{}")); } catch (_) { return; }
+    const reqId = Number(payload.req_id || 0);
+    if (reqId) {
+      const map = kind === "public" ? state.publicPending : state.privatePending;
       const pending = map.get(reqId);
-      map.delete(reqId);
-      clearTimeout(pending.timer);
-      if (message.error) pending.reject(new Error(wsErrorMessage(message)));
-      else pending.resolve(message);
+      if (pending) {
+        clearTimeout(pending.timer);
+        map.delete(reqId);
+        if (payload.error) pending.reject(new Error(String(payload.error.message || payload.error.code || "Deriv request failed")));
+        else pending.resolve(payload);
+      }
     }
-    if (message.msg_type === "tick" && message.tick) {
-      const symbol = String(message.tick.symbol || message.echo_req?.ticks || "").toUpperCase();
-      if (symbol) onTick(symbol, message.tick);
+    if (kind === "public" && payload.tick) {
+      const symbol = String(payload.tick.symbol || payload.echo_req?.ticks || "").toUpperCase();
+      if (symbol) onTick(symbol, payload.tick);
     }
-    if (kind === "private" && message.msg_type === "proposal_open_contract" && message.proposal_open_contract) {
-      onContractUpdate(message.proposal_open_contract);
+    if (kind === "public" && payload.history && payload.echo_req?.ticks_history) {
+      const symbol = String(payload.echo_req.ticks_history || "").toUpperCase();
+      seedHistory(symbol, payload.history.prices || [], payload.history.times || []);
+      sendNoWait("public", { ticks: symbol, subscribe: 1 });
+      state.subscribedMarkets.add(symbol);
     }
+    if (kind === "private" && payload.proposal_open_contract) onContractUpdate(payload.proposal_open_contract);
   }
 
   function sendRequest(kind, payload, timeoutMs = 5000) {
@@ -714,9 +708,6 @@
       if (!proposalId) throw new Error("Deriv proposal ID missing");
       if (!state.running || state.ownerLost || state.epoch !== epoch) return;
 
-      // Final browser-side financial fence. JavaScript runs this check immediately
-      // before the only BUY send. Stop changes epoch synchronously, so a proposal
-      // that resolves after Stop cannot become a purchase.
       const buyResponse = await sendRequest("private", { buy: proposalId, price: Math.round(stake * 100) / 100 }, 5000);
       const buy = buyResponse?.buy || {};
       const contractId = String(buy.contract_id || "");
@@ -862,22 +853,20 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ epoch }),
       },
-      4000,
+      5000,
     );
     if (!response.ok) throw new Error("heartbeat unavailable");
-    if (state.running && state.epoch === epoch && !state.ownerLost) state.lastLeaseAckAt = Date.now();
+    const payload = await response.json();
+    if (!state.running || state.epoch !== epoch) return;
+    state.lastLeaseAckAt = Date.now();
+    if (String(payload?.epoch || "") !== epoch) state.ownerLost = true;
   }
 
   function ownershipWatch() {
     clearInterval(state.heartbeatTimer);
     state.heartbeatTimer = setInterval(() => {
-      if (!state.running || !state.armed || state.ownerLost) return;
-      const elapsed = Date.now() - state.lastLeaseAckAt;
-      const surrenderAt = Math.max(5000, state.leaseMs - LEASE_SAFETY_MS);
-      if (elapsed >= surrenderAt) {
-        // Fail closed before the server lease can expire. From this point the
-        // browser performs no proposal/BUY and does not send another heartbeat;
-        // the VPS may safely assume ownership after the remaining lease window.
+      if (!state.running || state.ownerLost) return;
+      if (state.lastLeaseAckAt && Date.now() - state.lastLeaseAckAt > state.leaseMs - LEASE_SAFETY_MS) {
         state.ownerLost = true;
         updateStatus("Server continuity • browser surrendered execution ownership");
         return;
@@ -1026,8 +1015,6 @@
       const body = await requestBodyJson(input, init);
       const strategy = cacheStrategy(body);
       if (strategy) {
-        // Saving in the live UI is instant. The authoritative server copy is
-        // persisted by /direct-execution/arm in the background when Run starts.
         return jsonResponse({
           success: true,
           config: strategy,
@@ -1066,7 +1053,7 @@
       const body = await requestBodyJson(input, init);
       clearLocalTrades();
       backgroundClearServer(String(body?.scope || "today"));
-      return jsonResponse({ success: true, scope: String(body?.scope || "today"), direct_local_clear: true, message: "Run history cleared." });
+      return jsonResponse({ success: true, scope: String(body?.scope || "today"), direct_local_clear: true, history_only: true, financial_state_preserved: true, message: "Run history cleared; live trading state preserved." });
     }
 
     const response = await originalFetch(input, init);
@@ -1077,9 +1064,6 @@
   document.addEventListener("click", (event) => {
     const pageStart = event.target?.closest?.("[data-start-trading]");
     if (pageStart && !pageStart.closest(".global-run-panel")) {
-      // Let the canonical builder collect the current unsaved DOM into its normal
-      // custom-strategy POST. Our fetch shim stores that payload locally instantly
-      // and converts only the subsequent manual Resume call to direct execution.
       state.manualIntentUntil = Date.now() + MANUAL_INTENT_MS;
       return;
     }
@@ -1118,53 +1102,52 @@
 
   window.addEventListener("pageshow", () => {
     connectPublic().catch(() => {});
-    if (!state.running) connectPrivate().catch(() => {});
-  });
-
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") {
-      connectPublic().catch(() => {});
-      if (!state.running || !state.ownerLost) connectPrivate().catch(() => {});
+    if (!state.running) {
+      connectPrivate().catch(() => {});
+      prewarmData();
     }
   });
 
-  state.keepaliveTimer = setInterval(() => {
-    try { if (state.publicWs?.readyState === WebSocket.OPEN) state.publicWs.send(JSON.stringify({ ping: 1 })); } catch (_) {}
-    try { if (state.privateWs?.readyState === WebSocket.OPEN) state.privateWs.send(JSON.stringify({ ping: 1 })); } catch (_) {}
-  }, 25000);
+  window.addEventListener("pagehide", () => {
+    if (state.running) updateStatus("Server continuity • browser closing • VPS takeover after lease timeout");
+  });
 
-  const style = document.createElement("style");
-  style.id = "deriv-direct-execution-v1-style";
-  style.textContent = `
-    .direct-execution-state{margin:0 0 8px;padding:7px 10px;border-radius:9px;background:rgba(10,82,134,.14);font-size:11px;line-height:1.35;color:#9fc8eb;border:1px solid rgba(93,175,236,.15)}
-    .direct-execution-state[data-owner="browser"]::before{content:"● ";font-size:9px}
-    .direct-execution-state[data-owner="server"]{background:rgba(128,91,19,.13);color:#e3c58a}
-    .global-run-panel[data-execution-transport="deriv-direct"] [data-run-start]{cursor:pointer}
-  `;
-  document.head.appendChild(style);
-
-  loadCachedStrategy();
-  connectPublic().catch(() => {});
-  prewarmData().finally(() => connectPrivate().catch(() => {}));
-  updateRunUI();
-  updateStatus("Direct • preparing Deriv connection before Run");
+  document.readyState === "loading"
+    ? document.addEventListener("DOMContentLoaded", () => {
+        connectPublic().catch(() => {});
+        prewarmData();
+        connectPrivate().catch(() => {});
+      }, { once: true })
+    : (() => {
+        connectPublic().catch(() => {});
+        prewarmData();
+        connectPrivate().catch(() => {});
+      })();
 
   window.DERIVADMIN_DIRECT_EXECUTION_V1 = Object.freeze({
     version: VERSION,
     start: startDirect,
     stop: stopDirect,
     clear: clearLocalTrades,
-    prewarm: () => Promise.allSettled([connectPublic(), connectPrivate(), prewarmData()]),
-    state: () => ({
-      running: state.running,
-      owner: state.ownerLost ? "server_takeover" : state.running ? "browser" : "stopped",
-      armed: state.armed,
-      secure_ws: state.privateWs?.readyState === WebSocket.OPEN,
-      market_ws: state.publicWs?.readyState === WebSocket.OPEN,
-      open_contracts: state.openContracts.size,
-      session_profit: state.sessionProfit,
-      virtual_mode: state.virtualMode,
-      strategy: state.strategy,
-    }),
+    markManualIntent() { state.manualIntentUntil = Date.now() + MANUAL_INTENT_MS; },
+    state() {
+      return {
+        version: VERSION,
+        running: state.running,
+        owner: state.ownerLost ? "server" : (state.running ? "browser" : "stopped"),
+        epoch: state.epoch,
+        armed: state.armed,
+        strategy: state.strategy,
+        status: state.status,
+        session_profit: state.sessionProfit,
+        recovery_debt: state.recoveryDebt,
+        consecutive_losses: state.consecutiveLosses,
+        virtual_mode: state.virtualMode,
+        current_stake: state.currentStake,
+        private_connected: state.privateWs?.readyState === WebSocket.OPEN,
+        public_connected: state.publicWs?.readyState === WebSocket.OPEN,
+        open_contracts: state.openContracts.size,
+      };
+    },
   });
 })();
