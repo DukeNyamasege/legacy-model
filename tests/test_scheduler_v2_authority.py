@@ -89,13 +89,15 @@ class SchedulerV2AuthorityContract(unittest.TestCase):
         self.assertIn(".schedule-result", ui)
         self.assertIn("max-width:100%", ui)
 
-    def test_frontend_build_runs_scheduler_finalizer_and_unified_ledger_v9(self) -> None:
+    def test_frontend_build_runs_scheduler_then_execution_continuity(self) -> None:
         docker = self.text("Dockerfile.frontend")
         self.assertIn("COPY scripts/finalize-scheduler-v2.mjs", docker)
+        self.assertIn("COPY scripts/finalize-execution-continuity-v1.mjs", docker)
         self.assertIn("node scripts/finalize-scheduler-v2.mjs", docker)
+        self.assertIn("node scripts/finalize-execution-continuity-v1.mjs", docker)
         self.assertIn("cp dashboard/scheduler-v2-ui.js", docker)
-        self.assertIn("20260818-unified-ledger-v9", docker)
-        self.assertIn("20260818-scheduler-start-stop-v2", docker)
+        self.assertIn("20260818-unified-ledger-v10-virtual", docker)
+        self.assertIn("20260818-run-reset-v3", docker)
         self.assertIn("20260818-scheduler-v2-ui-1", docker)
         self.assertIn("node --check dist/final-ui-shell-v2.js", docker)
 
