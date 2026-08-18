@@ -6,6 +6,7 @@ const root = resolve(import.meta.dirname, "..");
 const dashboard = resolve(root, "dashboard");
 const output = resolve(root, "dist");
 const indexPath = resolve(output, "index.html");
+const premiumPath = resolve(output, "final-premium-6f3.js");
 const bundledIconExporter = resolve(root, "scripts", ".quill-export-bundle-6f3.mjs");
 
 const publicOrigin = String(
@@ -13,6 +14,9 @@ const publicOrigin = String(
   || process.env.BACKEND_ORIGIN
   || "https://derivadmin.site",
 ).trim().replace(/\/+$/, "");
+const publicTestingFreeAccess = !["0", "false", "no", "off"].includes(
+  String(process.env.PUBLIC_TESTING_FREE_ACCESS ?? "true").trim().toLowerCase(),
+);
 
 const parsed = new URL(publicOrigin);
 if (parsed.protocol !== "https:" && parsed.hostname !== "localhost") {
@@ -56,6 +60,20 @@ const productionAssets = [
 for (const asset of productionAssets) {
   await copyFile(resolve(dashboard, asset), resolve(output, asset));
 }
+
+// Keep one switch for API, worker, scheduler and browser admission. Source keeps
+// the future Premium implementation intact; the built artifact follows the VPS
+// environment value so PUBLIC_TESTING_FREE_ACCESS=false restores the paid gate.
+let premiumSource = await readFile(premiumPath, "utf8");
+const testingFlagMarker = "const TESTING_FREE_ACCESS = true;";
+if (!premiumSource.includes(testingFlagMarker)) {
+  throw new Error("6F-3 testing access marker is missing from premium bootstrap");
+}
+premiumSource = premiumSource.replace(
+  testingFlagMarker,
+  `const TESTING_FREE_ACCESS = ${publicTestingFreeAccess ? "true" : "false"};`,
+);
+await writeFile(premiumPath, premiumSource, "utf8");
 
 await esbuild({
   entryPoints: [resolve(root, "scripts", "export-deriv-quill-icons-v2.mjs")],
@@ -154,6 +172,7 @@ await writeFile(
     deriv_icon_build_resolution: "esbuild-quill-only-react-native-externals-v1",
     linked_account_selector: "specific-linked-options-account-v1",
     public_origin: publicOrigin,
+    public_testing_free_access: publicTestingFreeAccess,
     api_base: "/api",
     oauth_base: "/oauth",
     websocket_base: streamBase,
@@ -165,13 +184,17 @@ await writeFile(
     schedule_execution: "persistent-server-scheduler-existing-worker-authority-v1",
     schedule_persistence: "postgres-restart-safe-exactly-once-claim-v1",
     schedule_ui_and_library: "reconstructed-6f2-v1",
-    premium_access: "public-testing-free-bypass-premium-retained-v2",
+    premium_access: publicTestingFreeAccess
+      ? "public-testing-free-bypass-premium-retained-v2"
+      : "weekly-linked-options-server-gate-action6a-v1",
     premium_period: "exact-7-days-no-grace-v1",
     premium_prices: "KES250-mpesa-only-retained-for-later-v1",
     premium_payment: "lipana-stk-verified-webhook-v1",
     premium_renewal: "manual-mpesa-after-exact-expiry-retained-v1",
-    premium_ui: "hidden-during-public-testing-v1",
-    premium_runtime_admission: "testing-users-load-shell-realtime-and-run-controller-v2",
+    premium_ui: publicTestingFreeAccess ? "hidden-during-public-testing-v1" : "paid-gate-active-v1",
+    premium_runtime_admission: publicTestingFreeAccess
+      ? "testing-users-load-shell-realtime-and-run-controller-v2"
+      : "unpaid-users-do-not-load-shell-or-realtime-v2",
     premium_unlock_authority: "future-paid-mode-server-entitlement-only-v1",
     final_product_qa: "oauth-accounts-free-testing-builder-ai-schedule-instant-trades-mobile-v2",
     generated_at: new Date().toISOString(),
@@ -182,8 +205,11 @@ await writeFile(
 console.log("Direct VPS Action 6F-3 frontend built.");
 console.log(`Public origin: ${publicOrigin}`);
 console.log(`Realtime: ${streamBase}/ws/me/live (loaded immediately after authenticated testing access)`);
+console.log(`Public testing free access: ${publicTestingFreeAccess ? "enabled" : "disabled"}`);
 console.log("UI authority: final-ui-shell-v2 with public-testing run controller");
-console.log("Premium: retained for later launch; public testing is free and paywall UI is hidden");
+console.log(publicTestingFreeAccess
+  ? "Premium: retained for later launch; public testing is free and paywall UI is hidden"
+  : "Premium: paid server entitlement gate is active");
 console.log("Run flow: instant start -> backend worker; scheduled start -> persistent scheduler -> same worker");
 console.log("Journal: live public Deriv tick mirror; proposal/BUY remain backend private-WebSocket only");
 console.log("No Netlify or retired Action UI is shipped in the production artifact");
