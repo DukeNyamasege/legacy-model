@@ -11,6 +11,7 @@ premium/payment layers wrap the final routes.
 from app.netlify_backend_api import app
 from app.automation_preferences_api import install_automation_preferences_api
 from app.automation_scheduler_action5 import install_automation_scheduler_action5
+from app.automation_scheduler_v2_authority import install_automation_scheduler_v2_authority
 from app.final_linked_accounts_6f2 import install_final_linked_accounts_6f2
 from app.lipana_mpesa_action6b import install_lipana_mpesa_action6b
 from app.premium_access_api import install_premium_access_action6a
@@ -49,6 +50,9 @@ install_automation_preferences_api(app)
 # Scheduling deliberately remains server-owned. A scheduled job is durable even
 # when the user's browser is closed and therefore continues through the VPS worker.
 install_automation_scheduler_action5(app)
+# V2 patches the already-installed Action 5 globals before FastAPI lifespan starts:
+# exact-second polling, future-session hard-stop clearing, and durable result cards.
+install_automation_scheduler_v2_authority()
 install_lipana_mpesa_action6b(app)
 install_premium_renewal_action6d(app)
 # Action 6D keeps its payment/renewal routes, but while testing is free it may not
@@ -71,9 +75,9 @@ install_vps_demo_balance_reset(app)
 install_vps_direct_execution_api(app)
 install_vps_direct_execution_arm_guard(app)
 install_vps_direct_execution_checkpoint(app)
-# Stop is a separate financial invariant.  Persist its independent sentinel before
+# Stop is a separate financial invariant. Persist its independent sentinel before
 # any slower account-row lifecycle cleanup so a single Stop click forbids the next
-# server BUY immediately.  Successful explicit Start/Arm clears that sentinel.
+# server BUY immediately. Successful explicit Start/Arm clears that sentinel.
 install_vps_direct_hard_stop_v2(app)
 # Legacy lifecycle routes remain as safe fallbacks and for explicit server-owned
 # operations. They are not on the live browser proposal/BUY path.
@@ -86,5 +90,5 @@ install_premium_access_action6a(app)
 
 app.state.production_frontend_host = "vps_nginx"
 app.state.production_backend_role = "control_plane_scheduler_offline_takeover"
-app.state.production_architecture = "hybrid_browser_direct_v2_hard_stop"
+app.state.production_architecture = "hybrid_browser_direct_v2_hard_stop_scheduler_v2"
 app.state.public_testing_free_access = PUBLIC_TESTING_FREE_ACCESS
