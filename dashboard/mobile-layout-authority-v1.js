@@ -29,6 +29,14 @@
       handle.dataset.runPanelToggle = "";
       handle.setAttribute("aria-label", "Expand run panel");
       handle.innerHTML = `<span aria-hidden="true">⌃</span><b>Run panel</b>`;
+      handle.addEventListener("click", (event) => {
+        event.preventDefault();
+        const currentPanel = handle.closest(".global-run-panel");
+        const nativeToggle = currentPanel?.querySelector(".run-panel-chevron[data-run-panel-toggle]");
+        if (nativeToggle && nativeToggle !== handle) nativeToggle.click();
+        setTimeout(scheduleEnsure, 0);
+        setTimeout(scheduleEnsure, 80);
+      });
       const bar = panel.querySelector(".run-panel-bar");
       if (bar) panel.insertBefore(handle, bar);
       else panel.appendChild(handle);
