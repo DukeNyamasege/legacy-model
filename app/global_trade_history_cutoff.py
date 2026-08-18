@@ -72,12 +72,14 @@ def _write_cutoff(session: Any, managed_account_id: int) -> datetime:
 
 
 def install_global_trade_history_cutoff(app: Any) -> None:
-    """Make Clear Trades a persistent account-wide visibility boundary.
+    """Make Reset/Clear the persistent account-wide visibility boundary.
 
-    Clearing history must survive logout/login, another browser and another device.
-    Historical database rows remain available for audit/settlement integrity; the
-    personal dashboard simply never returns rows whose trade was opened before the
-    latest account cutoff. Clearing history never stops or resets trading.
+    Once a trader has pressed Reset, every contract opened after that timestamp is
+    returned across midnight, logout/login, browsers and devices until the next
+    Reset. Historical database rows remain intact for audit/settlement integrity;
+    visibility is controlled by the durable cutoff only. Accounts with no cutoff
+    keep the legacy today-only bootstrap so an existing user is not suddenly shown
+    years of historical contracts after an upgrade.
     """
 
     global _INSTALLED
@@ -121,19 +123,20 @@ def install_global_trade_history_cutoff(app: Any) -> None:
             "success": True,
             "scope": scope,
             "history_cleared_at": cutoff.isoformat(),
-            "history_visibility": "from_cutoff_forward",
+            "history_visibility": "from_cutoff_forward_until_next_reset",
             "global_across_sessions": True,
+            "cross_day_until_next_reset": True,
             "execution_preserved": True,
             "enabled": enabled,
             "execution_status": execution_status,
-            "message": "Trade view cleared globally. Only trades opened after this point will appear.",
+            "message": "Trade view reset globally. New trades remain visible until the next Reset.",
         }
 
     @app.get("/me/trades/today")
     def global_personal_trade_stream(request: Request) -> dict[str, Any]:
         account = _current_account_payload(request)
         managed_id = int(account["id"])
-        start, end = _today_bounds_utc()
+        today_start, today_end = _today_bounds_utc()
 
         with base_api.DATABASE.session() as session:
             cutoff = _read_cutoff(session, managed_id)
@@ -149,29 +152,15 @@ def install_global_trade_history_cutoff(app: Any) -> None:
                     DirectionalSignal.signal_id == Trade.signal_id,
                 )
                 .where(Trade.managed_account_id == managed_id)
-                .where(
-                    or_(
-                        Trade.purchase_time.between(start, end),
-                        Trade.settlement_time.between(start, end),
-                        Trade.provider_purchase_time.between(start, end),
-                    )
-                )
             )
-            virtual_query = (
-                select(VirtualTrade)
-                .where(VirtualTrade.managed_account_id == managed_id)
-                .where(
-                    or_(
-                        VirtualTrade.created_at.between(start, end),
-                        VirtualTrade.settled_at.between(start, end),
-                    )
-                )
+            virtual_query = select(VirtualTrade).where(
+                VirtualTrade.managed_account_id == managed_id
             )
 
             if cutoff is not None:
-                # Visibility is anchored to when the trade/observation opened. A
-                # contract opened before Clear Trades must not reappear merely
-                # because it settles after the cutoff.
+                # Reset is the durable session boundary. Do not add a midnight
+                # upper/lower bound here: scheduled/server trades must still be
+                # visible tomorrow until the trader explicitly resets again.
                 actual_query = actual_query.where(
                     or_(
                         Trade.purchase_time >= cutoff,
@@ -179,6 +168,22 @@ def install_global_trade_history_cutoff(app: Any) -> None:
                     )
                 )
                 virtual_query = virtual_query.where(VirtualTrade.created_at >= cutoff)
+            else:
+                # Backward-compatible bootstrap for accounts that have never used
+                # Reset. Their first Reset creates the durable cross-day boundary.
+                actual_query = actual_query.where(
+                    or_(
+                        Trade.purchase_time.between(today_start, today_end),
+                        Trade.settlement_time.between(today_start, today_end),
+                        Trade.provider_purchase_time.between(today_start, today_end),
+                    )
+                )
+                virtual_query = virtual_query.where(
+                    or_(
+                        VirtualTrade.created_at.between(today_start, today_end),
+                        VirtualTrade.settled_at.between(today_start, today_end),
+                    )
+                )
 
             actual_rows = session.execute(
                 actual_query.order_by(Trade.purchase_time.desc()).limit(5000)
@@ -222,12 +227,17 @@ def install_global_trade_history_cutoff(app: Any) -> None:
             "account": str(account.get("account_id_masked") or ""),
             "account_type": str(account.get("account_type") or "demo"),
             "timezone": str(_reporting_timezone()),
-            "date": start.astimezone(_reporting_timezone()).date().isoformat(),
+            "date": datetime.now(_reporting_timezone()).date().isoformat(),
             "session_started_at": cutoff_iso,
             "history_cleared_at": cutoff_iso,
-            "history_visibility": "from_cutoff_forward",
+            "history_visibility": (
+                "from_cutoff_forward_until_next_reset"
+                if cutoff is not None
+                else "legacy_today_until_first_reset"
+            ),
             "history_visibility_global": True,
             "history_preserved_across_stop": True,
+            "history_preserved_across_midnight": cutoff is not None,
             "trades": trades,
             "aidr": aidr,
             "summary": {
