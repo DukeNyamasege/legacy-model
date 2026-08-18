@@ -18,8 +18,8 @@ RUN node scripts/build-vps.mjs
 # Hybrid execution frontend. Live/manual trading is browser <-> Deriv directly;
 # the VPS remains a control plane for OTP bootstrap, scheduling and offline takeover.
 # Interaction guards load before the direct engine so a user confirmation owns the
-# first click. Runtime UX loads last and is the visible authority for one Run/Stop
-# button, sticky Journal, exact balances and the single live strategy-checker card.
+# first click. Guarded runtime UX loads last and is the visible authority for one
+# Run/Stop button, sticky Journal, exact balances and one live strategy-checker card.
 RUN cp dashboard/direct-financial-fence-v1.js dist/direct-financial-fence-v1.js \
   && cp dashboard/direct-socket-control-v1.js dist/direct-socket-control-v1.js \
   && cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
@@ -28,8 +28,8 @@ RUN cp dashboard/direct-financial-fence-v1.js dist/direct-financial-fence-v1.js 
   && cp dashboard/direct-strategy-persistence-v1.js dist/direct-strategy-persistence-v1.js \
   && cp dashboard/direct-continuity-checkpoint-v1.js dist/direct-continuity-checkpoint-v1.js \
   && cp dashboard/direct-ui-cleanup-v1.js dist/direct-ui-cleanup-v1.js \
-  && cp dashboard/direct-runtime-ux-v2.js dist/direct-runtime-ux-v2.js \
-  && node -e "const fs=require('fs');const p='dist/index.html';let h=fs.readFileSync(p,'utf8');const scripts=['<script src=\"/direct-financial-fence-v1.js?v=20260818-direct-fence-v2\" defer></script>','<script src=\"/direct-socket-control-v1.js?v=20260818-direct-socket-v1\" defer></script>','<script src=\"/direct-pip-precision-v1.js?v=20260818-direct-pip-v1\" defer></script>','<script src=\"/direct-interaction-guard-v2.js?v=20260818-interaction-v2\" defer></script>','<script src=\"/deriv-direct-execution-v1.js?v=20260818-browser-direct-v1\" defer></script>','<script src=\"/direct-strategy-persistence-v1.js?v=20260818-direct-persist-v1\" defer></script>','<script src=\"/direct-continuity-checkpoint-v1.js?v=20260818-direct-continuity-v1\" defer></script>','<script src=\"/direct-ui-cleanup-v1.js?v=20260818-direct-cleanup-v1\" defer></script>','<script src=\"/direct-runtime-ux-v2.js?v=20260818-runtime-ux-v2\" defer></script>'];for(const s of scripts){if(!h.includes(s))h=h.replace('</body>',s+'\\n</body>');}fs.writeFileSync(p,h);"
+  && cp dashboard/direct-runtime-ux-v3.js dist/direct-runtime-ux-v3.js \
+  && node -e "const fs=require('fs');const p='dist/index.html';let h=fs.readFileSync(p,'utf8');const scripts=['<script src=\"/direct-financial-fence-v1.js?v=20260818-direct-fence-v2\" defer></script>','<script src=\"/direct-socket-control-v1.js?v=20260818-direct-socket-v1\" defer></script>','<script src=\"/direct-pip-precision-v1.js?v=20260818-direct-pip-v1\" defer></script>','<script src=\"/direct-interaction-guard-v2.js?v=20260818-interaction-v2\" defer></script>','<script src=\"/deriv-direct-execution-v1.js?v=20260818-browser-direct-v1\" defer></script>','<script src=\"/direct-strategy-persistence-v1.js?v=20260818-direct-persist-v1\" defer></script>','<script src=\"/direct-continuity-checkpoint-v1.js?v=20260818-direct-continuity-v1\" defer></script>','<script src=\"/direct-ui-cleanup-v1.js?v=20260818-direct-cleanup-v1\" defer></script>','<script src=\"/direct-runtime-ux-v3.js?v=20260818-runtime-ux-v3\" defer></script>'];for(const s of scripts){if(!h.includes(s))h=h.replace('</body>',s+'\\n</body>');}fs.writeFileSync(p,h);"
 
 FROM nginx:1.27-alpine AS frontend
 
