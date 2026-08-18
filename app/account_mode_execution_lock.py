@@ -44,11 +44,18 @@ STARTING_LIKE_STATUSES = {
     "reconnecting",
 }
 
+# Every worker-generated state that could replace the browser ownership marker is
+# listed here. While the direct-browser heartbeat is fresh, none of these writes
+# may erase the fence. Explicit Stop/Pause/TP/SL remain allowed.
 AUTO_PROMOTION_STATUSES = {
+    "starting",
     "validating",
     "connecting",
     "watching",
+    "waiting_for_condition",
+    "executing",
     "active",
+    "running",
     "reconnecting",
     "base_stake_protection",
     "recovery_pending",
@@ -119,9 +126,9 @@ def _manual_locking_set_status(original_set_status):
             current_lifecycle = account_lifecycle_from_row(row)
 
             # While the browser lease is fresh, worker validation/refresh status
-            # writers are not allowed to replace direct_browser with active or
-            # connecting. Doing so would destroy the ownership fence and permit a
-            # duplicate server BUY. Explicit terminal statuses still pass through.
+            # writers are not allowed to replace direct_browser with runnable
+            # server states. Doing so would destroy the ownership fence and permit
+            # a duplicate server BUY. Explicit terminal statuses still pass through.
             if (
                 current_status == DIRECT_BROWSER_STATUS
                 and direct_browser_lease_fresh(row)
