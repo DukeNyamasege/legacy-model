@@ -4,8 +4,8 @@ from __future__ import annotations
 
 The proven backend/realtime route stack is imported first so every compatibility
 layer finishes installing before Full-VPS-only observability, Telegram control,
-preferences, the persistent Action 5 scheduler, and the Action 6 premium/payment
-layers wrap the final routes/lifespan. None of these replaces the financial worker.
+preferences, persistent scheduling, direct-browser execution bootstrap, and the
+premium/payment layers wrap the final routes.
 """
 
 from app.netlify_backend_api import app
@@ -22,6 +22,7 @@ from app.public_testing_access import (
 )
 from app.text_to_strategy_api import install_text_to_strategy_api
 from app.vps_dashboard_latency_hotfix import install_vps_dashboard_latency_hotfix
+from app.vps_direct_execution_api import install_vps_direct_execution_api
 from app.vps_fast_execution_controls import install_vps_fast_execution_controls
 from app.vps_linked_accounts_latency_hotfix import install_vps_linked_accounts_latency_hotfix
 from app.vps_login_observability_hotfix import install_vps_login_observability_hotfix
@@ -41,6 +42,8 @@ install_vps_telegram_control(app)
 install_vps_dashboard_latency_hotfix(app)
 install_text_to_strategy_api(app)
 install_automation_preferences_api(app)
+# Scheduling deliberately remains server-owned. A scheduled job is durable even
+# when the user's browser is closed and therefore continues through the VPS worker.
 install_automation_scheduler_action5(app)
 install_lipana_mpesa_action6b(app)
 install_premium_renewal_action6d(app)
@@ -53,10 +56,12 @@ install_public_testing_access_api(app)
 # current/target identity validation remains authoritative for an actual switch.
 install_final_linked_accounts_6f2(app)
 install_vps_linked_accounts_latency_hotfix(app)
-# The Full-VPS Stop/Pause/Reset routes are installed after every compatibility
-# layer. Manual Stop now commits the minimal disabled lifecycle immediately, so
-# the worker's before-proposal/before-BUY guard sees it without the browser waiting
-# on account cleanup or a table-wide preference scan.
+# Live/manual execution uses a browser <-> Deriv authenticated WebSocket. The VPS
+# only issues the short-lived OTP URL and maintains the browser/server ownership
+# lease. The worker becomes eligible only after the browser heartbeat expires.
+install_vps_direct_execution_api(app)
+# Legacy lifecycle routes remain as safe fallbacks and for explicit server-owned
+# operations. They are not on the live browser proposal/BUY path.
 install_vps_fast_execution_controls(app)
 # Install last so every personal mutation route, including future feature routes,
 # passes through one subscription authority. Payment/setup and safe stop operations
@@ -65,6 +70,6 @@ install_vps_fast_execution_controls(app)
 install_premium_access_action6a(app)
 
 app.state.production_frontend_host = "vps_nginx"
-app.state.production_backend_role = "same_origin_api_realtime"
-app.state.production_architecture = "full_vps"
+app.state.production_backend_role = "control_plane_scheduler_offline_takeover"
+app.state.production_architecture = "hybrid_browser_direct_v1"
 app.state.public_testing_free_access = PUBLIC_TESTING_FREE_ACCESS
