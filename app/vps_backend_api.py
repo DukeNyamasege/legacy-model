@@ -81,11 +81,13 @@ install_vps_direct_execution_checkpoint(app)
 # server BUY immediately. Successful explicit Start/Arm clears that sentinel.
 install_vps_direct_hard_stop_v2(app)
 # Legacy lifecycle routes remain as safe fallbacks and for explicit server-owned
-# operations. They are not on the live browser proposal/BUY path.
+# operations. They are not on the live browser proposal/BUY path. Clear Trades is
+# history-only and never mutates recovery/Virtual Hook/TP/SL state.
 install_vps_fast_execution_controls(app)
-# Install after all direct/legacy controls. A successful fresh Start/Reset now
-# discards stale checkpoint/Split state, and status polling uses one bounded account
-# query plus one batched preference read without caching financial Stop state.
+# Install after all direct/legacy controls. A successful fresh Start discards stale
+# checkpoint/Split state; ordinary Reset leaves financial state intact. Status
+# polling uses one bounded account query plus one batched preference read without
+# caching financial Stop state.
 install_vps_runtime_policy_hotfix(app)
 # Install last so every personal mutation route, including future feature routes,
 # passes through one subscription authority. Payment/setup and safe stop operations
