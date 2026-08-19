@@ -155,7 +155,7 @@ ux = ensureOnce(
 ux = ensureOnce(
   ux,
   "UX strategy card uses active route",
-  "const s = effectiveStrategy();",
+  "const s = effectiveStrategy();\n    if (!s) return",
   `    const current = runtime();\n    const s = current.strategy;\n    if (!s) return`,
   `    const current = runtime();\n    const s = effectiveStrategy();\n    if (!s) return`,
 );
