@@ -261,16 +261,17 @@
     .global-run-panel .direct-execution-state,
     .global-run-panel .direct-loaded-strategy-badge{display:none!important}
     .global-run-panel .run-panel-bar{grid-template-columns:1fr!important;min-height:48px!important;height:48px!important;flex:0 0 48px!important}
-    .global-run-panel .run-panel-run{width:100%!important;height:48px!important;min-height:48px!important;border:0!important;border-radius:0!important;color:#fff!important;font-weight:900!important;font-size:16px!important;letter-spacing:.01em!important;display:flex!important;align-items:center!important;justify-content:center!important;gap:8px!important;background:linear-gradient(100deg,#0c9365,#10b981)!important;box-shadow:0 -1px rgba(255,255,255,.08) inset!important}
+    .global-run-panel{font-family:Inter,Segoe UI,Roboto,Arial,sans-serif!important;color:#f4fbff!important}
+    .global-run-panel .run-panel-run{width:100%!important;height:48px!important;min-height:48px!important;border:0!important;border-radius:0!important;color:#ffffff!important;font-weight:800!important;font-size:16px!important;letter-spacing:0!important;display:flex!important;align-items:center!important;justify-content:center!important;gap:8px!important;background:#11936f!important;box-shadow:0 -1px rgba(255,255,255,.12) inset!important}
     .global-run-panel .run-panel-run>span,.global-run-panel .run-panel-run>svg{display:none!important}
     .global-run-panel .run-panel-run::before{content:"▶";font-size:13px}
     .global-run-panel .run-panel-run::after{content:"Start"}
-    html[data-final-run-state="running"] .global-run-panel .run-panel-run{background:linear-gradient(100deg,#b42337,#ef4444)!important}
+    html[data-final-run-state="running"] .global-run-panel .run-panel-run{background:#d13f4d!important}
     html[data-final-run-state="running"] .global-run-panel .run-panel-run::before{content:"■"}
     html[data-final-run-state="running"] .global-run-panel .run-panel-run::after{content:"Stop"}
 
     /* Stable expand/collapse: only the top chevron owns it. */
-    .global-run-panel.open{position:fixed!important;top:72px!important;left:0!important;right:0!important;bottom:0!important;height:calc(100dvh - 72px)!important;max-height:none!important;display:flex!important;flex-direction:column!important;overflow:hidden!important;background:#03142a!important;transition:none!important}
+    .global-run-panel.open{position:fixed!important;top:72px!important;left:0!important;right:0!important;bottom:0!important;height:calc(100dvh - 72px)!important;max-height:none!important;display:flex!important;flex-direction:column!important;overflow:hidden!important;background:#061526!important;transition:none!important}
     .global-run-panel.open .run-panel-sheet{position:relative!important;inset:auto!important;transform:none!important;display:flex!important;flex-direction:column!important;flex:1 1 auto!important;min-height:0!important;max-height:none!important;overflow:hidden!important;transition:none!important}
     .global-run-panel .run-panel-top{min-height:38px!important;height:38px!important;padding:4px 12px!important;flex:0 0 38px!important}
     .global-run-panel .run-panel-tabs{min-height:38px!important;height:38px!important;flex:0 0 38px!important;margin:0!important}
@@ -281,19 +282,19 @@
     .global-run-panel .direct-strategy-checker.compact{display:none!important}
     .global-run-panel .transaction-table{margin:0!important;border-radius:0!important;border-left:0!important;border-right:0!important}
     .global-run-panel .transaction-head-v6,.global-run-panel .transaction-row-v6{display:grid!important;grid-template-columns:1.25fr .72fr 1fr .78fr .9fr!important;gap:5px!important;align-items:center!important}
-    .global-run-panel .transaction-head-v6{position:sticky;top:0;z-index:3;padding:8px 8px!important;background:#071b37!important;border-bottom:1px solid rgba(105,183,255,.2)!important;font-size:8px!important;line-height:1.15!important}
-    .global-run-panel .transaction-row-v6{padding:8px!important;min-height:48px!important;border-bottom:1px solid rgba(115,167,218,.12)!important;font-size:9px!important;font-variant-numeric:tabular-nums;transition:none!important}
+    .global-run-panel .transaction-head-v6{position:sticky;top:0;z-index:3;padding:8px 8px!important;background:#092344!important;border-bottom:1px solid rgba(122,194,255,.28)!important;font-size:8px!important;line-height:1.15!important;color:#f8fcff!important}
+    .global-run-panel .transaction-row-v6{padding:8px!important;min-height:48px!important;border-bottom:1px solid rgba(125,180,230,.18)!important;font-size:9px!important;font-variant-numeric:tabular-nums;transition:none!important;background:#071421!important;color:#f5fbff!important}
     .global-run-panel .transaction-row-v6 span,.global-run-panel .transaction-row-v6 strong{min-width:0!important;overflow-wrap:anywhere}
-    .global-run-panel .transaction-row-v6 small{display:block!important;font-size:7px!important;line-height:1.2!important;color:#7e98b3!important;margin-top:2px!important}
+    .global-run-panel .transaction-row-v6 small{display:block!important;font-size:7px!important;line-height:1.2!important;color:#bed4e9!important;margin-top:2px!important}
     .global-run-panel .transaction-row-v6 b,.global-run-panel .transaction-row-v6 strong{font-size:9px!important;line-height:1.25!important}
-    .global-run-panel .tx-time-market b{color:#56dfff!important}.global-run-panel .tx-time-market small{margin:0 0 2px!important;color:#b4c7db!important}
+    .global-run-panel .tx-time-market b{color:#66e7ff!important}.global-run-panel .tx-time-market small{margin:0 0 2px!important;color:#d7e8f6!important}
     .global-run-panel .tx-spots b::before{content:"● ";color:#ff506b}.global-run-panel .tx-spots small::before{content:"○ ";color:#a9b8c8}
 
     /* Compact fixed-footprint KPIs: tabular figures cannot resize the sheet. */
-    .global-run-panel .run-panel-stats{flex:0 0 auto!important;min-height:82px!important;max-height:96px!important;padding:8px 10px!important;margin:0!important;display:grid!important;grid-template-columns:repeat(3,1fr)!important;gap:5px 8px!important;align-items:center!important;border-top:1px solid rgba(95,175,235,.16)!important;overflow:hidden!important;contain:layout paint;transition:none!important}
+    .global-run-panel .run-panel-stats{flex:0 0 auto!important;min-height:82px!important;max-height:96px!important;padding:8px 10px!important;margin:0!important;display:grid!important;grid-template-columns:repeat(3,1fr)!important;gap:5px 8px!important;align-items:center!important;border-top:1px solid rgba(122,194,255,.24)!important;background:#102b44!important;overflow:hidden!important;contain:layout paint;transition:none!important}
     .global-run-panel .run-panel-stats>*,.global-run-panel .run-stat{padding:0!important;margin:0!important;min-width:0!important;text-align:center!important}
-    .global-run-panel .run-panel-stats small,.global-run-panel .run-panel-stats span,.global-run-panel .run-stat small{font-size:7px!important;line-height:1.1!important}
-    .global-run-panel .run-panel-stats b,.global-run-panel .run-stat b{font-size:10px!important;line-height:1.2!important;font-variant-numeric:tabular-nums;white-space:nowrap!important}
+    .global-run-panel .run-panel-stats small,.global-run-panel .run-panel-stats span,.global-run-panel .run-stat small{font-size:7px!important;line-height:1.1!important;color:#e6f6ff!important}
+    .global-run-panel .run-panel-stats b,.global-run-panel .run-stat b{font-size:10px!important;line-height:1.2!important;font-variant-numeric:tabular-nums;white-space:nowrap!important;color:#ffffff!important;font-weight:800!important}
     .global-run-panel .run-panel-reset{min-height:30px!important;height:30px!important;padding:0 14px!important;font-size:11px!important}
 
     @media(max-width:520px){

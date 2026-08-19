@@ -82,7 +82,24 @@ class ExecutionContinuityV10Contract(unittest.TestCase):
         engine = self.text("dashboard/deriv-direct-execution-v1.js")
         self.assertIn("function lastDigit", precision)
         self.assertIn("numeric.toFixed(pip)", precision)
-        self.assertIn("pip_size: (symbol)", precision)
+        self.assertIn("DEFAULT_PIP_BY_SYMBOL", precision)
+        for symbol, pip in {
+            "1HZ10V": 4,
+            "1HZ25V": 4,
+            "1HZ50V": 4,
+            "1HZ75V": 2,
+            "1HZ100V": 2,
+            "R_10": 2,
+            "R_25": 2,
+            "R_50": 2,
+            "R_75": 2,
+            "R_100": 2,
+        }.items():
+            self.assertIn(f'"{symbol}": {pip}', precision)
+        self.assertIn("const explicitPip = validPip(explicitPipSize)", precision)
+        self.assertIn("const pip = explicitPip !== null ? explicitPip : getPipSize(symbol)", precision)
+        self.assertIn("precision: getPipSize", precision)
+        self.assertIn("pip_size: getPipSize", precision)
         self.assertIn("last_digit: lastDigit", precision)
         self.assertIn("contract?.entry_tick ?? contract?.entry_tick_display_value", engine)
         self.assertIn("contract?.exit_tick ?? contract?.exit_tick_display_value", engine)

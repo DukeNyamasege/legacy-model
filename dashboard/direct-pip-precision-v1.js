@@ -5,7 +5,39 @@
   window.__DERIVADMIN_DIRECT_PIP_PRECISION_V1__ = true;
 
   const UpstreamWebSocket = window.WebSocket;
-  const pipBySymbol = new Map();
+  const DEFAULT_PIP_BY_SYMBOL = Object.freeze({
+    "1HZ10V": 4,
+    "1HZ25V": 4,
+    "1HZ50V": 4,
+    "1HZ75V": 2,
+    "1HZ100V": 2,
+    "R_10": 2,
+    "R_25": 2,
+    "R_50": 2,
+    "R_75": 2,
+    "R_100": 2,
+  });
+  const pipBySymbol = new Map(Object.entries(DEFAULT_PIP_BY_SYMBOL));
+
+  function normalizeSymbol(symbol) {
+    return String(symbol || "").toUpperCase();
+  }
+
+  function validPip(value) {
+    const pip = Number(value);
+    return Number.isInteger(pip) && pip >= 0 && pip <= 12 ? pip : null;
+  }
+
+  function rememberPip(symbol, value) {
+    const normalized = normalizeSymbol(symbol);
+    const pip = validPip(value);
+    if (normalized && pip !== null) pipBySymbol.set(normalized, pip);
+  }
+
+  function getPipSize(symbol) {
+    const normalized = normalizeSymbol(symbol);
+    return pipBySymbol.get(normalized) ?? DEFAULT_PIP_BY_SYMBOL[normalized] ?? null;
+  }
 
   function PrecisionWebSocket(url, protocols) {
     const socket = protocols === undefined
@@ -20,19 +52,18 @@
 
       if (message?.msg_type === "history") {
         const symbol = String(message?.echo_req?.ticks_history || "").toUpperCase();
-        const pip = Number(message?.pip_size);
-        if (symbol && Number.isInteger(pip) && pip >= 0 && pip <= 12) pipBySymbol.set(symbol, pip);
+        rememberPip(symbol, message?.pip_size);
         return;
       }
 
       if (message?.msg_type !== "tick" || !message?.tick) return;
       const symbol = String(message.tick.symbol || message?.echo_req?.ticks || "").toUpperCase();
-      const livePip = Number(message.tick.pip_size);
-      if (symbol && Number.isInteger(livePip) && livePip >= 0 && livePip <= 12) {
+      const livePip = validPip(message.tick.pip_size);
+      if (symbol && livePip !== null) {
         pipBySymbol.set(symbol, livePip);
         return;
       }
-      const cachedPip = pipBySymbol.get(symbol);
+      const cachedPip = getPipSize(symbol);
       if (!Number.isInteger(cachedPip)) return;
 
       // The direct strategy must see a precision-complete tick exactly once. Stop
@@ -58,8 +89,9 @@
   }
   window.WebSocket = PrecisionWebSocket;
 
-  function lastDigit(symbol, quote, pipSize = null) {
-    const pip = Number.isInteger(Number(pipSize)) ? Number(pipSize) : pipBySymbol.get(String(symbol || "").toUpperCase());
+  function lastDigit(symbol, quote, explicitPipSize = null) {
+    const explicitPip = validPip(explicitPipSize);
+    const pip = explicitPip !== null ? explicitPip : getPipSize(symbol);
     const numeric = Number(quote);
     if (Number.isFinite(numeric) && Number.isInteger(pip) && pip >= 0 && pip <= 12) {
       const fixed = numeric.toFixed(pip);
@@ -73,8 +105,9 @@
 
   window.DERIVADMIN_DIRECT_PIP_PRECISION_V1 = Object.freeze({
     version: "20260818-direct-pip-precision-v1",
-    precision: (symbol) => pipBySymbol.get(String(symbol || "").toUpperCase()),
-    pip_size: (symbol) => pipBySymbol.get(String(symbol || "").toUpperCase()),
+    defaults: DEFAULT_PIP_BY_SYMBOL,
+    precision: getPipSize,
+    pip_size: getPipSize,
     last_digit: lastDigit,
   });
 })();

@@ -55,6 +55,16 @@ class RunPanelLedgerV10Contract(unittest.TestCase):
         self.assertIn("node --check dist/direct-transaction-ledger-v6.js", dockerfile)
         self.assertIn("node --check dist/direct-run-panel-authority-v6.js", dockerfile)
 
+    def test_run_panel_uses_brighter_readable_dashboard_theme(self) -> None:
+        run_panel = self.text("dashboard/direct-run-panel-authority-v6.js")
+        self.assertIn("font-family:Inter,Segoe UI,Roboto,Arial,sans-serif", run_panel)
+        self.assertIn("background:#061526", run_panel)
+        self.assertIn("background:#102b44", run_panel)
+        self.assertIn("color:#f4fbff", run_panel)
+        self.assertIn("color:#e6f6ff", run_panel)
+        self.assertIn("color:#ffffff!important;font-weight:800", run_panel)
+        self.assertIn("letter-spacing:0", run_panel)
+
 
 if __name__ == "__main__":
     unittest.main()
