@@ -126,3 +126,13 @@ docker compose -f docker-compose.yml run --rm --no-deps api sh -ec '
     tests.test_websocket_execution_hardening \
     tests.test_performance_hardening
 '
+
+echo "Building full frontend release image so every production finalizer executes."
+docker build \
+  -f Dockerfile.frontend \
+  --build-arg PUBLIC_ORIGIN=https://derivadmin.site \
+  --build-arg PUBLIC_TESTING_FREE_ACCESS=true \
+  -t legacy-model-frontend-release-check:latest \
+  .
+
+echo "Release gate passed: Python tests and full frontend finalizer pipeline succeeded."
