@@ -3,10 +3,9 @@ from __future__ import annotations
 """Low-latency execution controls for the Full-VPS runtime.
 
 The browser must never wait for recovery-history cleanup or audit bookkeeping
-before a manual Stop is acknowledged. The persisted ManagedAccount lifecycle is
-the financial authority; the worker's manual-stop guard re-reads that row before
-execution, proposal and BUY. These VPS routes therefore commit the smallest
-possible lifecycle mutation first and keep reset work bounded/account-scoped.
+before a manual Stop is acknowledged. The independent hard-stop sentinel is the
+first financial write for every explicit Stop/Pause path; the ManagedAccount row is
+then normalized for lifecycle/UI state. Clear Trades is history-only.
 """
 
 from inspect import isawaitable
@@ -17,6 +16,7 @@ from sqlalchemy import delete, or_, select
 
 import app.api as base_api
 import app.api_performance_hardening as performance
+from app.direct_execution_hard_stop_state import clear_direct_hard_stop, set_direct_hard_stop
 from app.final_public_controls import ClearTradesRequest, _today_bounds_utc
 from app.models import AccountRiskState, ManagedAccount, RuntimePreference, Trade, VirtualTrade, utc_now
 
@@ -90,9 +90,22 @@ def _delete_runtime_preferences_bounded(session: Any, managed_id: int) -> int:
     return int(result.rowcount or 0)
 
 
+def _write_manual_hard_stop(managed_id: int, reason: str) -> None:
+    # Independent transaction: financial Stop is durable before any account-row
+    # lock or UI normalization can delay the request.
+    with base_api.DATABASE.session() as session:
+        set_direct_hard_stop(session, int(managed_id), reason=str(reason or "User pressed Stop"))
+
+
+def _clear_manual_hard_stop(managed_id: int) -> None:
+    with base_api.DATABASE.session() as session:
+        clear_direct_hard_stop(session, int(managed_id))
+
+
 def _mark_stopped_now(request: Request, *, status: str, reason: str) -> tuple[int, str, str]:
     account = _current_account(request)
     managed_id = int(account["id"])
+    _write_manual_hard_stop(managed_id, reason)
     with base_api.DATABASE.session() as session:
         row = session.get(ManagedAccount, managed_id)
         if row is None:
@@ -151,6 +164,7 @@ def install_vps_fast_execution_controls(app: Any) -> None:
             "runtime_state": "STOPPED",
             "enabled": False,
             "stop_acknowledged": True,
+            "hard_stop": True,
             "message": "Trading stopped. No new purchases are permitted.",
         }
 
@@ -174,6 +188,7 @@ def install_vps_fast_execution_controls(app: Any) -> None:
             "runtime_state": "STOPPED",
             "enabled": False,
             "stop_acknowledged": True,
+            "hard_stop": True,
         }
 
     @app.post("/me/auto-trade")
@@ -182,12 +197,18 @@ def install_vps_fast_execution_controls(app: Any) -> None:
         body: base_api.AutoTradeRequest,
         background_tasks: BackgroundTasks,
     ) -> Any:
+        account = _current_account(request)
+        managed_id = int(account["id"])
         if not bool(body.enabled):
             return fast_stop_trading(request, background_tasks)
         if original_auto is None:
             raise HTTPException(status_code=503, detail="Start execution route is unavailable")
         result = original_auto(request, body)
-        return await result if isawaitable(result) else result
+        resolved = await result if isawaitable(result) else result
+        # A legacy Start path is just as explicit as Resume/Direct Arm. Clear the
+        # manual sentinel only after the canonical start handler returned normally.
+        _clear_manual_hard_stop(managed_id)
+        return resolved
 
     @app.post("/me/clear-trades")
     def fast_clear_personal_trades(
@@ -277,4 +298,5 @@ def install_vps_fast_execution_controls(app: Any) -> None:
 
     app.state.vps_fast_execution_controls_installed = True
     app.state.clear_trades_policy = "history_only_financial_state_preserved"
+    app.state.legacy_stop_policy = "independent_hard_stop_before_account_row"
     _INSTALLED = True
