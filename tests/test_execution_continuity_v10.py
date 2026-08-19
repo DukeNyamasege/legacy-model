@@ -63,10 +63,10 @@ class ExecutionContinuityV10Contract(unittest.TestCase):
         copied_run = docker.index("cp dashboard/direct-run-panel-authority-v6.js")
         self.assertGreater(scheduler, copied_run)
         self.assertGreater(continuity, scheduler)
-        self.assertIn("20260818-browser-direct-v7-continuity", docker)
+        self.assertIn("20260819-browser-direct-v8-global-recovery", docker)
         self.assertIn("20260818-unified-ledger-v10-virtual", docker)
         self.assertIn("20260818-interaction-v4-one-flow", docker)
-        self.assertIn("20260818-run-reset-v3", docker)
+        self.assertIn("20260819-run-reset-global-recovery-v4", docker)
 
 
 if __name__ == "__main__":
