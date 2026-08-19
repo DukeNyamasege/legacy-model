@@ -57,13 +57,16 @@ class RunPanelLedgerV10Contract(unittest.TestCase):
 
     def test_run_panel_uses_brighter_readable_dashboard_theme(self) -> None:
         run_panel = self.text("dashboard/direct-run-panel-authority-v6.js")
+        theme = self.text("dashboard/tutorial-camera-theme-v1.css")
         self.assertIn("font-family:Inter,Segoe UI,Roboto,Arial,sans-serif", run_panel)
         self.assertIn("background:#061526", run_panel)
-        self.assertIn("background:#102b44", run_panel)
         self.assertIn("color:#f4fbff", run_panel)
-        self.assertIn("color:#e6f6ff", run_panel)
         self.assertIn("color:#ffffff!important;font-weight:800", run_panel)
         self.assertIn("letter-spacing:0", run_panel)
+        self.assertIn("Canonical run summary: one theme authority", theme)
+        self.assertIn("background: #102b44", theme)
+        self.assertIn("color: #b9d7ee", theme)
+        self.assertIn('html[data-theme="light"] .global-run-panel.global-run-panel .run-panel-stats', theme)
 
 
 if __name__ == "__main__":
