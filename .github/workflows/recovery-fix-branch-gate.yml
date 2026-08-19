@@ -74,8 +74,10 @@ jobs:
             app/account_identity_canonical_authority.py \
             app/account_trade_metrics_authority.py \
             app/custom_split_recovery_authority.py \
+            app/stale_split_basis_reconciliation_authority.py \
             app/direct_execution_worker_fence.py \
             app/vps_direct_execution_checkpoint.py \
+            app/vps_fast_execution_controls.py \
             app/vps_runtime_policy_hotfix.py \
             app/vps_backend_api.py \
             tests/test_global_recovery_policy.py
