@@ -299,13 +299,13 @@
       .global-run-panel .transaction-head-v6{padding:7px 5px!important;font-size:7px!important}
     }
 
-    /* Desktop uses a left-docked drawer. Mobile remains the existing bottom sheet. */
+    /* Desktop uses a right-docked drawer beside the balance control. Mobile remains the existing bottom sheet. */
     @media(min-width:901px){
       .global-run-panel{
         position:fixed!important;
         top:72px!important;
-        left:0!important;
-        right:auto!important;
+        left:auto!important;
+        right:0!important;
         bottom:0!important;
         width:clamp(360px,25vw,460px)!important;
         height:calc(100dvh - 72px)!important;
@@ -314,8 +314,8 @@
         flex-direction:column!important;
         overflow:hidden!important;
         background:#061526!important;
-        box-shadow:12px 0 34px rgba(0,0,0,.22)!important;
-        transform:translateX(calc(-100% + 48px));
+        box-shadow:-12px 0 34px rgba(0,0,0,.22)!important;
+        transform:translateX(calc(100% - 48px));
         transition:transform 220ms ease!important;
       }
       .global-run-panel.open{transform:translateX(0)!important;}

@@ -66,6 +66,9 @@ class RunPanelLedgerV10Contract(unittest.TestCase):
         self.assertIn("Canonical run summary: one theme authority", theme)
         self.assertIn("background: #102b44", theme)
         self.assertIn("color: #b9d7ee", theme)
+        self.assertIn("Canonical light transaction palette", theme)
+        self.assertIn('html[data-theme="light"] .global-run-panel.global-run-panel .transaction-head-v6', theme)
+        self.assertIn("background: #e4f0f8", theme)
         self.assertIn('html[data-theme="light"] .global-run-panel.global-run-panel .run-panel-stats', theme)
 
 

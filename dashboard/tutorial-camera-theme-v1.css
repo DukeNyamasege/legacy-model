@@ -579,6 +579,36 @@ textarea:focus,
 .global-run-panel.global-run-panel [data-run-start].run-panel-run { background:#11936f!important; color:#ffffff!important; }
 html[data-final-run-state="running"] .global-run-panel.global-run-panel [data-run-start].run-panel-run,.global-run-panel.global-run-panel[data-execution-state="running"] [data-run-start].run-panel-run { background:#d13f4d!important; }
 
+/* Canonical light transaction palette: keep the ledger as readable as the summary. */
+html[data-theme="light"] .global-run-panel.global-run-panel {
+  color: #173850 !important;
+  background: #f3f8fc !important;
+}
+
+html[data-theme="light"] .global-run-panel.global-run-panel .run-panel-body,
+html[data-theme="light"] .global-run-panel.global-run-panel .transaction-table,
+html[data-theme="light"] .global-run-panel.global-run-panel .transaction-rows {
+  background: #f3f8fc !important;
+  color: #173850 !important;
+}
+
+html[data-theme="light"] .global-run-panel.global-run-panel .transaction-head-v6 {
+  background: #e4f0f8 !important;
+  border-color: #b8d2e3 !important;
+  color: #244963 !important;
+}
+
+html[data-theme="light"] .global-run-panel.global-run-panel .transaction-row-v6,
+html[data-theme="light"] .global-run-panel.global-run-panel .transaction-row-v6:nth-child(even) {
+  background: #f9fcfe !important;
+  border-bottom-color: #c8dce9 !important;
+  color: #173850 !important;
+}
+
+html[data-theme="light"] .global-run-panel.global-run-panel .transaction-row-v6 small,
+html[data-theme="light"] .global-run-panel.global-run-panel .tx-time-market small { color: #597b92 !important; }
+html[data-theme="light"] .global-run-panel.global-run-panel .tx-time-market b { color: #087ea4 !important; }
+
 /* Canonical run summary: one theme authority for the six fixed metrics. */
 .global-run-panel.global-run-panel .run-panel-stats {
   display: grid !important;
