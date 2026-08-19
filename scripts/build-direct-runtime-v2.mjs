@@ -28,12 +28,22 @@ function replaceCount(source, label, before, after, expected) {
 fs.mkdirSync(distDir, { recursive: true });
 let engine = fs.readFileSync(engineSourcePath, "utf8");
 
-engine = replaceOnce(
-  engine,
-  "browser all-even/all-odd comparator parity",
-  `      if (condition.operator === "all_same") return sample.length > 0 && sample.every((digit) => digit === sample[0]);\n      return sample.every((digit) => compare(digit, condition.operator, Number(condition.value)));`,
-  `      if (condition.operator === "all_same") return sample.length > 0 && sample.every((digit) => digit === sample[0]);\n      if (condition.operator === "all_even") return sample.length > 0 && sample.every((digit) => digit % 2 === 0);\n      if (condition.operator === "all_odd") return sample.length > 0 && sample.every((digit) => digit % 2 === 1);\n      return sample.every((digit) => compare(digit, condition.operator, Number(condition.value)));`,
-);
+// Comparator parity was originally a build-time migration. The canonical browser
+// source now already carries all_even/all_odd, so keep this migration idempotent:
+// patch only an older source and otherwise verify the current source already has it.
+const hasAllEven = engine.includes('condition.operator === "all_even"');
+const hasAllOdd = engine.includes('condition.operator === "all_odd"');
+if (hasAllEven !== hasAllOdd) {
+  throw new Error("Direct runtime comparator parity is only partially installed");
+}
+if (!hasAllEven) {
+  engine = replaceOnce(
+    engine,
+    "browser all-even/all-odd comparator parity",
+    `      if (condition.operator === "all_same") return sample.length > 0 && sample.every((digit) => digit === sample[0]);\n      return sample.every((digit) => compare(digit, condition.operator, Number(condition.value)));`,
+    `      if (condition.operator === "all_same") return sample.length > 0 && sample.every((digit) => digit === sample[0]);\n      if (condition.operator === "all_even") return sample.length > 0 && sample.every((digit) => digit % 2 === 0);\n      if (condition.operator === "all_odd") return sample.length > 0 && sample.every((digit) => digit % 2 === 1);\n      return sample.every((digit) => compare(digit, condition.operator, Number(condition.value)));`,
+  );
+}
 
 engine = replaceOnce(
   engine,
