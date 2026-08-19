@@ -132,11 +132,14 @@ class GlobalRecoveryPolicyTests(unittest.TestCase):
         self.assertNotIn("session.delete", source)
         self.assertNotIn("delete(ManagedAccount", source)
 
-    def test_trade_metrics_are_repaired_per_account_session(self) -> None:
+    def test_trade_metrics_are_per_account_and_incremental_after_seed(self) -> None:
         source = (ROOT / "app" / "account_trade_metrics_authority.py").read_text(encoding="utf-8")
         self.assertIn("Trade.managed_account_id == int(managed_id)", source)
         self.assertIn("Trade.purchase_time >= started_at", source)
         self.assertIn("row.cumulative_profit", source)
+        self.assertIn("account_trade_metrics:v1:", source)
+        self.assertIn("_apply_incremental_trade_metrics", source)
+        self.assertIn("startup_repair_then_incremental_cursor", source)
         self.assertNotIn("BotState", source)
 
     def test_status_poll_load_and_database_pool_are_bounded(self) -> None:
