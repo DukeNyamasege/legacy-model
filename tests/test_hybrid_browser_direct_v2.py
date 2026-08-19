@@ -57,8 +57,8 @@ class HybridBrowserDirectV2Contract(unittest.TestCase):
         self.assertIn('["direct-transaction-ledger-v6.js", "20260819-provider-ledger-v11"]', assets)
         self.assertIn('["direct-runtime-ux-v4.js", "20260818-runtime-ux-v6"]', assets)
         self.assertIn('["direct-run-panel-authority-v6.js", "20260819-single-run-panel-v3"]', assets)
-        self.assertIn('["mobile-layout-authority-v1.js", "20260819-desktop-panel-handle-v4"]', assets)
-        self.assertIn('["run-panel-usability-v1.js", "20260819-summary-clear-v3"]', assets)
+        self.assertIn('["mobile-layout-authority-v1.js", "20260819-right-quarter-drawer-v6-right-edge"]', assets)
+        self.assertIn('["run-panel-usability-v1.js", "20260819-mobile-summary-nav-lane-v4"]', assets)
         self.assertIn("node scripts/inject-frontend-assets.mjs", dockerfile)
         self.assertNotIn('single-run-controller-v1.js', assets)
         self.assertNotIn('direct-run-panel-authority-v5.js', assets)
@@ -168,17 +168,22 @@ class HybridBrowserDirectV2Contract(unittest.TestCase):
 
     def test_responsive_run_panel_totals_and_reopen_handle_cannot_be_hidden(self) -> None:
         authority = self.text("dashboard/mobile-layout-authority-v1.js")
+        usability = self.text("dashboard/run-panel-usability-v1.js")
         self.assertIn("run-panel-reopen-v1", authority)
-        self.assertIn('handle.dataset.runPanelToggle = ""', authority)
-        self.assertIn(".global-run-panel.collapsed .run-panel-reopen-v1", authority)
+        self.assertIn('handle.addEventListener("click"', authority)
+        self.assertIn("nativeToggle.click()", authority)
+        self.assertIn(".global-run-panel.global-run-panel.collapsed .run-panel-reopen-v1", authority)
         self.assertIn("@media(min-width:901px)", authority)
-        self.assertIn('content:"Collapse"', authority)
+        self.assertIn("<b>Collapse</b>", authority)
         self.assertIn("writing-mode:vertical-rl", authority)
         self.assertIn("right:0!important", authority)
         self.assertIn("grid-template-rows:repeat(2,minmax(40px,auto))", authority)
         self.assertIn(".global-run-panel.open .run-panel-bar", authority)
         self.assertIn("position:relative!important", authority)
         self.assertIn("env(safe-area-inset-bottom", authority)
+        self.assertIn('html[data-run-panel-visibility="open"] .bottom-nav', usability)
+        self.assertIn("padding-bottom:calc(72px + env(safe-area-inset-bottom, 0px))!important", usability)
+        self.assertIn("min-height:106px!important", usability)
         self.assertNotIn("setInterval", authority)
 
     def test_builder_uses_one_connected_block_workspace(self) -> None:
@@ -193,7 +198,7 @@ class HybridBrowserDirectV2Contract(unittest.TestCase):
 
     def test_mobile_builder_is_strictly_contained_inside_phone_viewport(self) -> None:
         authority = self.text("dashboard/mobile-layout-authority-v1.js")
-        self.assertIn("@media (max-width:700px)", authority)
+        self.assertIn("@media(max-width:700px)", authority)
         self.assertIn("max-width:100vw!important", authority)
         self.assertIn("overflow-x:hidden!important", authority)
         self.assertIn(".restored-builder .form-grid.two", authority)
