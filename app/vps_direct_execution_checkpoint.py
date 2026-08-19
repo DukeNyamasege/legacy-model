@@ -17,6 +17,7 @@ from app.vps_direct_execution_api import _current_account, _key, _managed_row, _
 
 _INSTALLED = False
 CHECKPOINT_PREFIX = "direct_execution:checkpoint:v1:"
+SPLIT_PART_STAKE_PREFIX = "custom_equal_split_part_stake:"
 
 
 class DirectCheckpointRequest(BaseModel):
@@ -57,18 +58,31 @@ def _write_checkpoint(session: Any, managed_id: int, payload: dict[str, Any]) ->
         row.updated_at = utc_now()
 
 
+def _write_split_part_stake(managed_id: int, value: float) -> None:
+    base = manual._base_repository(base_api.REPOSITORY)
+    try:
+        base.set_runtime_preference(
+            f"{SPLIT_PART_STAKE_PREFIX}{int(managed_id)}",
+            f"{max(0.0, float(value or 0.0)):.8f}",
+        )
+    except Exception:
+        pass
+
+
 def _persist_split_handoff(
     managed_id: int,
     *,
     debt: float,
     split_basis_debt: float,
     split_remaining_wins: int,
+    split_part_stake: float,
 ) -> None:
     """Keep browser Split-N progress identical when the VPS takes ownership."""
 
     if debt <= 0.009 or split_basis_debt <= 0.009 or split_remaining_wins <= 0:
         manual._write_split_remaining(base_api.REPOSITORY, managed_id, 0)
         equal_split._clear_basis_debt(base_api.REPOSITORY, managed_id)
+        _write_split_part_stake(managed_id, 0.0)
         return
     equal_split._write_basis_debt(
         base_api.REPOSITORY,
@@ -80,6 +94,7 @@ def _persist_split_handoff(
         managed_id,
         split_remaining_wins,
     )
+    _write_split_part_stake(managed_id, split_part_stake)
 
 
 def install_vps_direct_execution_checkpoint(app: Any) -> None:
@@ -116,6 +131,7 @@ def install_vps_direct_execution_checkpoint(app: Any) -> None:
             debt = _bounded_float(runtime.get("recovery_debt"))
             split_basis_debt = _bounded_float(runtime.get("split_basis_debt"))
             split_remaining_wins = _bounded_int(runtime.get("split_remaining_wins"), high=3)
+            split_part_stake = _bounded_float(runtime.get("split_part_stake"), high=1_000_000.0)
             losses = _bounded_int(runtime.get("consecutive_losses"), high=1000)
             virtual_mode = bool(runtime.get("virtual_mode"))
             virtual_wins = _bounded_int(runtime.get("virtual_wins"), high=1000)
@@ -165,6 +181,7 @@ def install_vps_direct_execution_checkpoint(app: Any) -> None:
                     "recovery_debt": debt,
                     "split_basis_debt": split_basis_debt,
                     "split_remaining_wins": split_remaining_wins,
+                    "split_part_stake": split_part_stake,
                     "consecutive_losses": losses,
                     "virtual_mode": virtual_mode,
                     "virtual_wins": virtual_wins,
@@ -173,12 +190,13 @@ def install_vps_direct_execution_checkpoint(app: Any) -> None:
 
         # These preferences are deliberately outside the ManagedAccount row lock.
         # If the browser disappears after this response, the worker continues the
-        # exact same equal Split basis and remaining-success count.
+        # exact same equal Split basis, fixed stake and remaining-success count.
         _persist_split_handoff(
             managed_id,
             debt=debt,
             split_basis_debt=split_basis_debt,
             split_remaining_wins=split_remaining_wins,
+            split_part_stake=split_part_stake,
         )
 
         return {
@@ -188,10 +206,12 @@ def install_vps_direct_execution_checkpoint(app: Any) -> None:
             "recovery_debt": round(debt, 8),
             "split_basis_debt": round(split_basis_debt, 8),
             "split_remaining_wins": split_remaining_wins,
+            "split_part_stake": round(split_part_stake, 8),
             "virtual_mode": virtual_mode,
             "open_contracts": open_contracts,
         }
 
     app.state.vps_direct_execution_checkpoint_installed = True
     app.state.vps_direct_execution_checkpoint_split_continuity = True
+    app.state.vps_direct_execution_checkpoint_fixed_split_stake = True
     _INSTALLED = True

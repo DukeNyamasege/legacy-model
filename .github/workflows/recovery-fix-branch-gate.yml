@@ -1,0 +1,110 @@
+name: Recovery Fix Branch Gate
+
+on:
+  push:
+    branches:
+      - fix/global-recovery-policy-20260819
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recovery-fix-branch-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      POSTGRES_PASSWORD: ci-postgres-password
+      CONTROL_API_KEY: ci-control-api-key
+      DASHBOARD_STREAM_SIGNING_KEY: ci-dashboard-stream-signing-key-123456789
+      DERIV_TOKEN_ENCRYPTION_KEY: ""
+      DERIV_TRADING_ENABLED: "false"
+      TRADING_MODE: demo
+      ALLOW_REAL_TRADING: "false"
+      TELEGRAM_ALERTS_ENABLED: false
+      TELEGRAM_NOTIFICATIONS_SUSPENDED: "true"
+      PUBLIC_TESTING_FREE_ACCESS: "false"
+      PREMIUM_ACCESS_ENFORCEMENT: "true"
+      LIPANA_ENVIRONMENT: sandbox
+      LIPANA_SECRET_KEY: ""
+      LIPANA_WEBHOOK_SECRET: ""
+      FRONTEND_ORIGINS: "http://127.0.0.1:8080,http://localhost:8080,https://derivadmin.site"
+      ALLOW_LEGACY_GLOBAL_TOKENS: "true"
+      COPYTRADING_ALLOW_LEGACY_GLOBAL_TOKENS: "true"
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: |
+          python -m pip install -r requirements.txt
+          python -m pip install ruff mypy
+          npm install --ignore-scripts --no-audit --no-fund
+          umask 077
+          : > .env
+
+      - name: Validate Compose and shell scripts
+        run: |
+          sh -n scripts/deploy_full_vps.sh scripts/collect_account_runtime_report.sh scripts/run_legacy_release_tests.sh
+          docker compose -f docker-compose.yml config --quiet
+          PUBLIC_ORIGIN=https://release-gate.example PUBLIC_TESTING_FREE_ACCESS=true docker compose -f docker-compose.yml -f docker-compose.vps.yml config --quiet
+
+      - name: Compile all Python
+        run: python -m compileall -q app scripts tests migrations
+
+      - name: Lint changed recovery authorities
+        run: |
+          ruff check --output-format=github --select E9,F63,F7,F82 \
+            app/global_recovery_execution_policy.py \
+            app/never_auto_stop_repository_authority.py \
+            app/account_identity_canonical_authority.py \
+            app/account_trade_metrics_authority.py \
+            app/custom_split_recovery_authority.py \
+            app/stale_split_basis_reconciliation_authority.py \
+            app/direct_execution_worker_fence.py \
+            app/vps_direct_execution_checkpoint.py \
+            app/vps_fast_execution_controls.py \
+            app/vps_runtime_policy_hotfix.py \
+            app/vps_backend_api.py \
+            tests/test_global_recovery_policy.py
+
+      - name: Check changed JavaScript
+        run: |
+          node --check dashboard/deriv-direct-execution-v1.js
+          node --check dashboard/direct-continuity-checkpoint-v1.js
+          node --check scripts/finalize-production-controls-v6.mjs
+          node --check scripts/finalize-production-controls-v6b.mjs
+          node --check scripts/finalize-global-recovery-v1.mjs
+
+      - name: Run global recovery regression gate
+        run: |
+          python -m unittest -q tests.test_global_recovery_policy
+          python -m unittest -q tests.test_hybrid_browser_direct_v2
+          python -m unittest -q tests.test_post_loss_split_and_virtual_neutrality
+          python -m unittest -q tests.test_execution_stop_reason_authority
+          python -m unittest -q tests.test_execution_continuity_v10
+          python -m unittest -q tests.test_performance_hardening
+
+      - name: Build production frontend image
+        run: |
+          docker build -f Dockerfile.frontend \
+            --build-arg PUBLIC_ORIGIN=https://release-gate.example \
+            --build-arg PUBLIC_TESTING_FREE_ACCESS=true \
+            -t legacy-model-recovery-fix-frontend:${{ github.sha }} .
+
+      - name: Run full legacy release suite
+        run: sh scripts/run_legacy_release_tests.sh

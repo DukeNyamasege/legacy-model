@@ -78,17 +78,21 @@ section "DOCKER SERVICES"
 
 section "HEALTH"
 "${COMPOSE[@]}" exec -T api python - <<'PY' || true
+import time
 import urllib.request
 for url in (
     "http://127.0.0.1:8080/health/database",
     "http://127.0.0.1:8080/health/frontend-backend",
 ):
+    started = time.monotonic()
     try:
-        with urllib.request.urlopen(url, timeout=5) as response:
+        with urllib.request.urlopen(url, timeout=10) as response:
             raw = response.read().decode("utf-8", "replace")
-            print(url, response.status, raw[:2000])
+            elapsed = round((time.monotonic() - started) * 1000, 1)
+            print(url, response.status, f"duration_ms={elapsed}", raw[:2000])
     except Exception as exc:
-        print(url, "ERROR", type(exc).__name__, str(exc))
+        elapsed = round((time.monotonic() - started) * 1000, 1)
+        print(url, "ERROR", f"duration_ms={elapsed}", type(exc).__name__, str(exc))
 PY
 
 MANAGED_IDS="$(resolve_ids 2>/dev/null | tr -d '\r' | sed '/^[[:space:]]*$/d' || true)"
@@ -131,7 +135,7 @@ section "CUSTOM STRATEGY / HARD STOP / RECOVERY PREFERENCES"
 psql_query "
 SELECT preference_key, preference_value, updated_at
 FROM runtime_preferences
-WHERE preference_key ~ ('(' || replace('${ID_LIST}', ',', '|') || ')$')
+WHERE substring(preference_key from ':([0-9]+)$')::integer IN (${ID_LIST})
 ORDER BY preference_key;
 " || true
 

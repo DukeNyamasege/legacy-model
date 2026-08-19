@@ -31,6 +31,7 @@ from app.vps_direct_hard_stop_v2 import install_vps_direct_hard_stop_v2
 from app.vps_fast_execution_controls import install_vps_fast_execution_controls
 from app.vps_linked_accounts_latency_hotfix import install_vps_linked_accounts_latency_hotfix
 from app.vps_login_observability_hotfix import install_vps_login_observability_hotfix
+from app.vps_runtime_policy_hotfix import install_vps_runtime_policy_hotfix
 from app.vps_session_observability import install_vps_session_observability
 from app.vps_telegram_control import install_vps_telegram_control
 
@@ -80,8 +81,14 @@ install_vps_direct_execution_checkpoint(app)
 # server BUY immediately. Successful explicit Start/Arm clears that sentinel.
 install_vps_direct_hard_stop_v2(app)
 # Legacy lifecycle routes remain as safe fallbacks and for explicit server-owned
-# operations. They are not on the live browser proposal/BUY path.
+# operations. They are not on the live browser proposal/BUY path. Clear Trades is
+# history-only and never mutates recovery/Virtual Hook/TP/SL state.
 install_vps_fast_execution_controls(app)
+# Install after all direct/legacy controls. A successful fresh Start discards stale
+# checkpoint/Split state; ordinary Reset leaves financial state intact. Status
+# polling uses one bounded account query plus one batched preference read without
+# caching financial Stop state.
+install_vps_runtime_policy_hotfix(app)
 # Install last so every personal mutation route, including future feature routes,
 # passes through one subscription authority. Payment/setup and safe stop operations
 # are explicitly exempted inside the gate. During public testing the middleware is
@@ -90,5 +97,5 @@ install_premium_access_action6a(app)
 
 app.state.production_frontend_host = "vps_nginx"
 app.state.production_backend_role = "control_plane_scheduler_offline_takeover"
-app.state.production_architecture = "hybrid_browser_direct_v2_hard_stop_scheduler_v2"
+app.state.production_architecture = "hybrid_browser_direct_v2_global_recovery_policy"
 app.state.public_testing_free_access = PUBLIC_TESTING_FREE_ACCESS

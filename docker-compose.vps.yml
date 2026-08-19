@@ -7,13 +7,17 @@ services:
     environment:
       FRONTEND_HOSTING_MODE: vps
       DASHBOARD_FRONTEND_ORIGINS: ${DASHBOARD_FRONTEND_ORIGINS:-https://derivadmin.site,https://www.derivadmin.site}
+      # Full-VPS account/status reads are frequent but short. Give the API its own
+      # bounded connection budget and fail pool acquisition quickly instead of
+      # letting one status/health request sit for the historical 10-second timeout.
+      DATABASE_POOL_SIZE: ${VPS_API_DATABASE_POOL_SIZE:-20}
+      DATABASE_MAX_OVERFLOW: ${VPS_API_DATABASE_MAX_OVERFLOW:-10}
+      DATABASE_POOL_TIMEOUT_SECONDS: ${VPS_API_DATABASE_POOL_TIMEOUT_SECONDS:-3}
+      DATABASE_CONNECT_TIMEOUT_SECONDS: ${VPS_API_DATABASE_CONNECT_TIMEOUT_SECONDS:-3}
       # Private admin alerts and the single Telegram poller are explicitly enabled
       # on Full VPS. This overrides an old .env suspension left from the pause.
       TELEGRAM_NOTIFICATIONS_SUSPENDED: ${VPS_TELEGRAM_NOTIFICATIONS_SUSPENDED:-false}
     volumes:
-      # API owns getUpdates/private admin control. Sharing the durable Telegram
-      # cache lets it reuse the already-discovered channel without asking for a
-      # numeric channel/chat ID again.
       - test2_models:/app/model_artifacts
 
   worker:
@@ -21,12 +25,10 @@ services:
       FRONTEND_HOSTING_MODE: vps
       TELEGRAM_NOTIFICATIONS_SUSPENDED: ${VPS_TELEGRAM_NOTIFICATIONS_SUSPENDED:-false}
 
-      # Full-VPS connection policy. OTP generation and private WSS opening are now
-      # one atomic bootstrap lane, so do not create dozens of one-time OTP URLs
-      # before a socket is actually ready to consume them. Six lanes keeps useful
-      # parallelism for a large fleet while leaving headroom for urgent settlement
-      # reconciliation and freshly started accounts. Provider 429/1015 protection
-      # remains governed by the base 60-300 second rate-limit circuit.
+      # Full-VPS connection policy. OTP generation and private WSS opening are one
+      # atomic bootstrap lane. Ordinary non-rate-limited network drops reconnect
+      # quickly; the independent Deriv rate-limit circuit still owns 429/1015
+      # backoff and may wait much longer when the provider explicitly asks us to.
       ACCOUNT_REFRESH_INTERVAL_SECONDS: ${VPS_ACCOUNT_REFRESH_INTERVAL_SECONDS:-1}
       DERIV_HTTP_CONNECTOR_LIMIT: ${VPS_DERIV_HTTP_CONNECTOR_LIMIT:-24}
       DERIV_HTTP_LIMIT_PER_HOST: ${VPS_DERIV_HTTP_LIMIT_PER_HOST:-12}
@@ -36,7 +38,17 @@ services:
       VPS_PRIVATE_WS_BOOTSTRAP_CONCURRENCY: ${VPS_PRIVATE_WS_BOOTSTRAP_CONCURRENCY:-6}
       VPS_OTP_HTTP_CONCURRENCY: ${VPS_OTP_HTTP_CONCURRENCY:-8}
       PRIVATE_WS_OTP_FAILURE_BACKOFF_SECONDS: ${VPS_PRIVATE_WS_OTP_FAILURE_BACKOFF_SECONDS:-1.5}
-      VPS_PRIVATE_WS_TRANSIENT_BACKOFF_MAX_SECONDS: ${VPS_PRIVATE_WS_TRANSIENT_BACKOFF_MAX_SECONDS:-12}
+      PRIVATE_WS_NORMAL_RECONNECT_BASE_SECONDS: ${VPS_PRIVATE_WS_NORMAL_RECONNECT_BASE_SECONDS:-0.5}
+      PRIVATE_WS_NORMAL_RECONNECT_MAX_SECONDS: ${VPS_PRIVATE_WS_NORMAL_RECONNECT_MAX_SECONDS:-4}
+      VPS_PRIVATE_WS_TRANSIENT_BACKOFF_MAX_SECONDS: ${VPS_PRIVATE_WS_TRANSIENT_BACKOFF_MAX_SECONDS:-4}
+
+      # Provider/rate-limit backoff stays deliberately separate from ordinary
+      # connectivity retry so faster normal recovery never causes a 429 loop.
+      PRIVATE_WS_RATE_LIMIT_BACKOFF_SECONDS: ${PRIVATE_WS_RATE_LIMIT_BACKOFF_SECONDS:-60}
+      PRIVATE_WS_MAX_BACKOFF_SECONDS: ${PRIVATE_WS_MAX_BACKOFF_SECONDS:-300}
+      PRIVATE_WS_RECONNECT_JITTER_SECONDS: ${PRIVATE_WS_RECONNECT_JITTER_SECONDS:-1.0}
+
+      DERIV_PUBLIC_WS_PLANNED_RESTART_SECONDS: ${VPS_DERIV_PUBLIC_WS_PLANNED_RESTART_SECONDS:-0.35}
 
   frontend:
     build:
