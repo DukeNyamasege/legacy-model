@@ -83,6 +83,8 @@ class ExecutionContinuityV10Contract(unittest.TestCase):
         self.assertIn("function lastDigit", precision)
         self.assertIn("numeric.toFixed(pip)", precision)
         self.assertIn("DEFAULT_PIP_BY_SYMBOL", precision)
+        self.assertIn('active_symbols: "brief"', precision)
+        self.assertIn('message?.msg_type === "active_symbols"', precision)
         for symbol, pip in {
             "1HZ10V": 4,
             "1HZ25V": 4,
@@ -135,7 +137,7 @@ class ExecutionContinuityV10Contract(unittest.TestCase):
         self.assertIn("20260819-browser-direct-v8-global-recovery", docker)
         self.assertIn("20260818-unified-ledger-v10-virtual", docker)
         self.assertIn("20260818-interaction-v4-one-flow", docker)
-        self.assertIn("20260819-run-reset-global-recovery-v4", docker)
+        self.assertIn("20260819-live-fix-v2", docker)
 
 
 if __name__ == "__main__":

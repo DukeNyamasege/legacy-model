@@ -92,11 +92,15 @@ const newRow = `  function scheduleRow(item) {
     const result = hasResult
       ? \`<span class="schedule-result \${numericProfit >= 0 ? "positive" : "negative"}"><b>\${numericProfit >= 0 ? "+" : ""}\${numericProfit.toFixed(2)} USD</b><small>\${esc(item.result_label || "Session finished")} · \${Number(item.result_runs || 0)} runs · \${Number(item.result_wins || 0)}W/\${Number(item.result_losses || 0)}L</small></span>\`
       : "";
+    const reason = item.status_reason
+      ? \`<small class="schedule-reason">\${esc(item.status_reason)}</small>\`
+      : "";
     return \`<div class="schedule-row compact \${status}">
       <div class="schedule-row-actions">\${editable ? \`<button data-delete-schedule="\${esc(item.id)}">Delete</button><button data-edit-schedule="\${esc(item.id)}">Edit</button>\` : ""}</div>
       <span><b>\${esc(item.strategy_name || "Strategy")}</b><small>\${esc(item.date_time_local || item.scheduled_local || item.scheduled_for_utc || "")}</small></span>
       <em>\${esc(status.replaceAll("_", " "))}</em>
       \${result}
+      \${reason}
     </div>\`;
   }`;
 shell = replaceOnce(shell, oldRow, newRow, "schedule result card");

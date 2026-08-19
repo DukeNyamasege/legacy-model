@@ -97,7 +97,7 @@ curl -fsS --max-time 5 http://127.0.0.1:8080/health >/dev/null \
   || fail "API liveness endpoint failed."
 
 printf '%s\n' "8. Recreate worker and frontend"
-compose up -d --force-recreate --no-deps worker frontend \
+compose up -d --force-recreate --remove-orphans --no-deps worker frontend \
   || fail "Worker/frontend cutover failed."
 
 printf '%s\n' "9. Wait for frontend health"
@@ -112,6 +112,11 @@ while [ "$attempt" -lt 30 ]; do
 done
 curl -fsS --max-time 5 http://127.0.0.1:8081/ >/dev/null \
   || fail "Frontend index failed."
+
+printf '%s\n' "9b. Verify the running frontend carries this release"
+curl -fsS --max-time 5 http://127.0.0.1:8081/ \
+  | grep -q 'frontend-release-20260819-live-fix-v1' \
+  || fail "Frontend is healthy but is not serving the expected release marker."
 
 printf '%s\n' "10. Validate/reload public edge when already installed"
 if command -v caddy >/dev/null 2>&1 && [ -f /etc/caddy/Caddyfile ]; then

@@ -97,8 +97,7 @@ class SchedulerV2AuthorityContract(unittest.TestCase):
         self.assertIn("node scripts/finalize-execution-continuity-v1.mjs", docker)
         self.assertIn("cp dashboard/scheduler-v2-ui.js", docker)
         self.assertIn("20260818-unified-ledger-v10-virtual", docker)
-        self.assertIn("20260819-run-reset-global-recovery-v4", docker)
-        self.assertIn("20260818-scheduler-v2-ui-1", docker)
+        self.assertIn("20260819-live-fix-v2", docker)
         self.assertIn("node --check dist/final-ui-shell-v2.js", docker)
 
     def test_vps_entrypoint_installs_scheduler_v2_after_action5(self) -> None:

@@ -50,6 +50,13 @@
       let message = null;
       try { message = JSON.parse(String(event.data || "")); } catch (_) { return; }
 
+      if (message?.msg_type === "active_symbols") {
+        for (const item of Array.isArray(message?.active_symbols) ? message.active_symbols : []) {
+          rememberPip(item?.symbol, item?.pip);
+        }
+        return;
+      }
+
       if (message?.msg_type === "history") {
         const symbol = String(message?.echo_req?.ticks_history || "").toUpperCase();
         rememberPip(symbol, message?.pip_size);
@@ -79,6 +86,11 @@
         }));
       } catch (_) {}
     });
+    socket.addEventListener("open", () => {
+      // Active Symbols is Deriv's authoritative market metadata. Defaults below
+      // only cover the short interval before this provider response arrives.
+      try { socket.send(JSON.stringify({ active_symbols: "brief" })); } catch (_) {}
+    }, { once: true });
     return socket;
   }
 

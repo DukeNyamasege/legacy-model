@@ -568,16 +568,30 @@ textarea:focus,
 /* Start/Stop remain unmistakable but less fluorescent when filmed. */
 .global-run-panel [data-run-start][data-single-run-state="start"],
 .global-run-panel [data-run-start][data-state="start"] {
-  background: #167d60 !important;
-  color: #f7fffb !important;
+  background: #11936f !important;
+  color: #ffffff !important;
 }
 
 .global-run-panel [data-run-start][data-single-run-state="stop"],
 .global-run-panel [data-run-start][data-state="stop"],
 .global-run-panel[data-execution-state="running"] .run-panel-run {
-  background: #d94a5e !important;
-  color: #fffafb !important;
+  background: #d13f4d !important;
+  color: #ffffff !important;
 }
+
+/* Final live run-panel palette. This stylesheet is loaded after the base shell. */
+.global-run-panel.global-run-panel { font-family:Inter,"Segoe UI",Roboto,Arial,sans-serif!important; color:#f4fbff!important; background:#061526!important; }
+.global-run-panel.global-run-panel .run-panel-body,.global-run-panel.global-run-panel .transaction-table,.global-run-panel.global-run-panel .transaction-rows { background:#061526!important; color:#f4fbff!important; }
+.global-run-panel.global-run-panel .transaction-head-v6 { background:#092344!important; border-color:rgba(122,194,255,.28)!important; color:#f8fcff!important; }
+.global-run-panel.global-run-panel .transaction-row-v6,.global-run-panel.global-run-panel .transaction-row-v6:nth-child(even) { background:#071421!important; border-bottom-color:rgba(125,180,230,.18)!important; color:#f5fbff!important; }
+.global-run-panel.global-run-panel .transaction-row-v6 small { color:#bed4e9!important; }
+.global-run-panel.global-run-panel .tx-time-market b { color:#66e7ff!important; }
+.global-run-panel.global-run-panel .tx-time-market small { color:#d7e8f6!important; }
+.global-run-panel.global-run-panel .run-panel-stats { background:#102b44!important; border-top-color:rgba(122,194,255,.24)!important; }
+.global-run-panel.global-run-panel .run-panel-stats small,.global-run-panel.global-run-panel .run-panel-stats span,.global-run-panel.global-run-panel .run-stat small { color:#e6f6ff!important; }
+.global-run-panel.global-run-panel .run-panel-stats b,.global-run-panel.global-run-panel .run-stat b { color:#ffffff!important; font-weight:800!important; }
+.global-run-panel.global-run-panel [data-run-start].run-panel-run { background:#11936f!important; color:#ffffff!important; }
+html[data-final-run-state="running"] .global-run-panel.global-run-panel [data-run-start].run-panel-run,.global-run-panel.global-run-panel[data-execution-state="running"] [data-run-start].run-panel-run { background:#d13f4d!important; }
 
 /* Journal status chips remain readable after video compression. */
 .journal-condition-list > div > span {

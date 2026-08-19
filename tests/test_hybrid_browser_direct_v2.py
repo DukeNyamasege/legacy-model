@@ -55,7 +55,7 @@ class HybridBrowserDirectV2Contract(unittest.TestCase):
         self.assertIn("/direct-continuity-checkpoint-v1.js?v=20260819-direct-continuity-v3-fixed-split-stake", dockerfile)
         self.assertIn("/direct-transaction-ledger-v6.js?v=20260818-unified-ledger-v10-virtual", dockerfile)
         self.assertIn("/direct-runtime-ux-v4.js?v=20260818-runtime-ux-v6", dockerfile)
-        self.assertIn("/direct-run-panel-authority-v6.js?v=20260819-run-reset-global-recovery-v4", dockerfile)
+        self.assertIn("/direct-run-panel-authority-v6.js?v=20260819-live-fix-v2", dockerfile)
         self.assertIn("/mobile-layout-authority-v1.js?v=20260818-mobile-layout-v1", dockerfile)
         self.assertIn("/run-panel-usability-v1.js?v=20260818-run-panel-usability-v2", dockerfile)
         self.assertNotIn('/single-run-controller-v1.js', dockerfile)

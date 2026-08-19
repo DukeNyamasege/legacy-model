@@ -93,11 +93,12 @@ html = html
   )
   .replace(
     '<meta name="frontend-runtime" content="direct-vps-final-ui-6f3">',
-    '<meta name="frontend-runtime" content="full-vps-final-ui-6f3">',
+    '<meta name="frontend-runtime" content="full-vps-final-ui-6f3">\n  <meta name="frontend-release-20260819-live-fix-v1" content="present">',
   );
 
 const required = [
   '<meta name="frontend-runtime" content="full-vps-final-ui-6f3">',
+  'meta name="frontend-release-20260819-live-fix-v1" content="present"',
   '<meta name="frontend-authority" content="final-ui-shell-v2">',
   'meta name="stream-base-url"',
   '/vps-api-boundary-v2.js?v=20260818-local-ui-12',

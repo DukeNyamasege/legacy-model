@@ -21,6 +21,7 @@
     .schedule-row .schedule-result{display:flex!important;flex-direction:column!important;gap:3px!important;margin-top:7px!important;grid-column:1/-1!important}
     .schedule-row .schedule-result>b{font-size:13px!important;font-variant-numeric:tabular-nums}
     .schedule-row .schedule-result>small{font-size:9px!important;color:#89a0b8!important;line-height:1.35!important}
+    .schedule-row .schedule-reason{display:block!important;grid-column:1/-1!important;margin-top:5px!important;color:#bed4e9!important;font-size:9px!important;line-height:1.35!important}
     @media(max-width:700px){
       .schedule-clock-grid{grid-template-columns:minmax(0,1fr) minmax(0,.72fr)!important}
       .schedule-clock-grid>label{overflow:hidden!important}

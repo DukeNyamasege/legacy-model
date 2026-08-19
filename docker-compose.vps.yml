@@ -17,6 +17,7 @@ services:
       # Private admin alerts and the single Telegram poller are explicitly enabled
       # on Full VPS. This overrides an old .env suspension left from the pause.
       TELEGRAM_NOTIFICATIONS_SUSPENDED: ${VPS_TELEGRAM_NOTIFICATIONS_SUSPENDED:-false}
+      AUTOMATION_SCHEDULE_LATE_GRACE_SECONDS: ${AUTOMATION_SCHEDULE_LATE_GRACE_SECONDS:-86400}
     volumes:
       - test2_models:/app/model_artifacts
 

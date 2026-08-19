@@ -49,13 +49,13 @@ class TutorialCameraThemeContract(unittest.TestCase):
         self.assertIn("--camera-red: #c84459", css)
         self.assertIn('data-single-run-state="start"', css)
         self.assertIn('data-single-run-state="stop"', css)
-        self.assertIn("#167d60", css)
-        self.assertIn("#d94a5e", css)
+        self.assertIn("#11936f", css)
+        self.assertIn("#d13f4d", css)
 
     def test_frontend_loads_camera_palette_last_in_head(self) -> None:
         docker = self.text("Dockerfile.frontend")
         self.assertIn("cp dashboard/tutorial-camera-theme-v1.css dist/tutorial-camera-theme-v1.css", docker)
-        self.assertIn("20260818-camera-theme-v1", docker)
+        self.assertIn("20260819-live-fix-v2", docker)
         self.assertIn("grep -q -- '--camera-bg' dist/tutorial-camera-theme-v1.css", docker)
         self.assertIn("const camera='<link rel=", docker)
         self.assertIn("h.replace('</head>',camera+", docker)

@@ -511,7 +511,7 @@ def _reconcile_running_schedules() -> None:
                             int(
                                 os.getenv(
                                     "AUTOMATION_SCHEDULE_LATE_GRACE_SECONDS",
-                                    "900",
+                                    "86400",
                                 )
                             ),
                         )
@@ -588,7 +588,7 @@ def _claim_next_due(worker_id: str) -> str | None:
         grace = timedelta(
             seconds=max(
                 60,
-                int(os.getenv("AUTOMATION_SCHEDULE_LATE_GRACE_SECONDS", "900")),
+                int(os.getenv("AUTOMATION_SCHEDULE_LATE_GRACE_SECONDS", "86400")),
             )
         )
         # Waiting is allowed to remain due indefinitely because the trader chose
