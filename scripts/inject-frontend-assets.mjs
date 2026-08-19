@@ -19,7 +19,7 @@ const scripts = [
   ["direct-demo-reset-router-v1.js", "20260818-demo-reset-router-v1"],
   ["direct-transaction-ledger-v6.js", "20260819-provider-ledger-v11"],
   ["direct-run-panel-authority-v6.js", "20260819-single-run-panel-v3"],
-  ["mobile-layout-authority-v1.js", "20260819-right-quarter-drawer-v5"],
+  ["mobile-layout-authority-v1.js", "20260819-right-quarter-drawer-v6-right-edge"],
   ["run-panel-usability-v1.js", "20260819-summary-clear-v3"],
   ["scheduler-v2-ui.js", "20260819-live-fix-v2"],
 ];
@@ -32,4 +32,4 @@ for (const [file, version] of scripts) {
 const theme = '<link rel="stylesheet" href="/tutorial-camera-theme-v1.css?v=20260819-block-workspace-v5">';
 if (!html.includes(theme)) html = html.replace("</head>", `${theme}\n</head>`);
 
-writeFileSync(path, html);
+writeFileSync(path, html, "utf8");
