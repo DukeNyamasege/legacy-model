@@ -19,7 +19,7 @@ const scripts = [
   ["direct-demo-reset-router-v1.js", "20260818-demo-reset-router-v1"],
   ["direct-transaction-ledger-v6.js", "20260819-provider-ledger-v11"],
   ["direct-run-panel-authority-v6.js", "20260819-single-run-panel-v3"],
-  ["mobile-layout-authority-v1.js", "20260819-desktop-panel-handle-v4"],
+  ["mobile-layout-authority-v1.js", "20260819-right-quarter-drawer-v5"],
   ["run-panel-usability-v1.js", "20260819-summary-clear-v3"],
   ["scheduler-v2-ui.js", "20260819-live-fix-v2"],
 ];
