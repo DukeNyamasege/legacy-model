@@ -1,7 +1,8 @@
 (() => {
   "use strict";
 
-  if (window.__DERIVADMIN_MOBILE_LAYOUT_AUTHORITY_V1__) return;
+  const VERSION = "20260819-right-quarter-drawer-v6-right-edge";
+  if (window.DERIVADMIN_MOBILE_LAYOUT_AUTHORITY_V1?.version === VERSION) return;
   window.__DERIVADMIN_MOBILE_LAYOUT_AUTHORITY_V1__ = true;
 
   /*
@@ -13,6 +14,11 @@
    * - open desktop: the native top control is a clear `Collapse` button;
    * - phone/tablet: full-width bottom/full-height sheet behavior is preserved;
    * - all surfaces inherit the camera theme variables for dark and light mode.
+   *
+   * IMPORTANT: the camera theme contains older high-specificity Run-panel geometry.
+   * Desktop selectors here intentionally match/exceed that specificity and this
+   * runtime style is appended later, so presentation colors cannot re-anchor the
+   * drawer to the left side again.
    *
    * Builder:
    * - phone layout remains width-contained and vertically scrollable.
@@ -94,6 +100,7 @@
     new MutationObserver(scheduleEnsure).observe(root, { childList: true, subtree: false });
   }
 
+  document.getElementById("mobile-layout-authority-v1-style")?.remove();
   const style = document.createElement("style");
   style.id = "mobile-layout-authority-v1-style";
   style.textContent = `
@@ -102,14 +109,16 @@
 
     /* ------------------------------------------------------------------ */
     /* DESKTOP: fixed right-side quarter-width drawer.                    */
+    /* Double class specificity intentionally beats old theme geometry.   */
     /* ------------------------------------------------------------------ */
     @media(min-width:901px){
-      .global-run-panel{
+      .global-run-panel.global-run-panel{
         position:fixed!important;
         top:72px!important;
         right:0!important;
         bottom:0!important;
         left:auto!important;
+        margin:0!important;
         width:clamp(320px,25vw,460px)!important;
         min-width:320px!important;
         max-width:calc(100vw - 72px)!important;
@@ -123,18 +132,23 @@
         background:var(--camera-surface,var(--panel,#0e1d2e))!important;
         border-left:1px solid var(--camera-line-strong,var(--line2,#3b6384))!important;
         box-shadow:-14px 0 34px color-mix(in srgb,var(--camera-bg,#07111f) 30%,transparent)!important;
+        transform-origin:right center!important;
         transition:transform .18s ease!important;
       }
 
-      .global-run-panel.open{
+      .global-run-panel.global-run-panel.open{
+        right:0!important;
+        left:auto!important;
         transform:translateX(0)!important;
       }
 
-      .global-run-panel.collapsed{
+      .global-run-panel.global-run-panel.collapsed{
+        right:0!important;
+        left:auto!important;
         transform:translateX(calc(100% - 48px))!important;
       }
 
-      .global-run-panel .run-panel-sheet{
+      .global-run-panel.global-run-panel .run-panel-sheet{
         position:relative!important;
         inset:auto!important;
         width:100%!important;
@@ -152,14 +166,14 @@
         transform:none!important;
       }
 
-      .global-run-panel.collapsed .run-panel-sheet,
-      .global-run-panel.collapsed .run-panel-bar{
+      .global-run-panel.global-run-panel.collapsed .run-panel-sheet,
+      .global-run-panel.global-run-panel.collapsed .run-panel-bar{
         opacity:0!important;
         visibility:hidden!important;
         pointer-events:none!important;
       }
 
-      .global-run-panel .run-panel-top{
+      .global-run-panel.global-run-panel .run-panel-top{
         position:relative!important;
         flex:0 0 48px!important;
         min-height:48px!important;
@@ -173,7 +187,7 @@
         border-bottom:1px solid var(--camera-line,var(--line,#2c4965))!important;
       }
 
-      .global-run-panel.open .run-panel-chevron{
+      .global-run-panel.global-run-panel.open .run-panel-chevron{
         width:auto!important;
         min-width:118px!important;
         height:36px!important;
@@ -189,19 +203,19 @@
         box-shadow:none!important;
         cursor:pointer!important;
       }
-      .global-run-panel.open .run-panel-chevron .run-panel-collapse-arrow{
+      .global-run-panel.global-run-panel.open .run-panel-chevron .run-panel-collapse-arrow{
         color:var(--camera-blue,var(--blue,#4b8ff7))!important;
         font-size:22px!important;
         line-height:1!important;
       }
-      .global-run-panel.open .run-panel-chevron b{
+      .global-run-panel.global-run-panel.open .run-panel-chevron b{
         color:inherit!important;
         font-size:12px!important;
         line-height:1!important;
         font-weight:800!important;
       }
 
-      .global-run-panel .run-panel-tabs{
+      .global-run-panel.global-run-panel .run-panel-tabs{
         flex:0 0 40px!important;
         min-height:40px!important;
         height:40px!important;
@@ -209,15 +223,15 @@
         background:var(--camera-surface,var(--panel,#0e1d2e))!important;
         border-bottom:1px solid var(--camera-line,var(--line,#2c4965))!important;
       }
-      .global-run-panel .run-panel-tabs button{
+      .global-run-panel.global-run-panel .run-panel-tabs button{
         min-height:40px!important;
         color:var(--camera-muted,var(--muted,#a9b8c8))!important;
       }
-      .global-run-panel .run-panel-tabs button.active{
+      .global-run-panel.global-run-panel .run-panel-tabs button.active{
         color:var(--camera-blue,var(--blue,#4b8ff7))!important;
       }
 
-      .global-run-panel .run-panel-body{
+      .global-run-panel.global-run-panel .run-panel-body{
         flex:1 1 auto!important;
         min-height:0!important;
         width:100%!important;
@@ -230,7 +244,7 @@
         scrollbar-gutter:stable;
       }
 
-      .global-run-panel .run-panel-stats{
+      .global-run-panel.global-run-panel .run-panel-stats{
         position:relative!important;
         inset:auto!important;
         flex:0 0 auto!important;
@@ -248,13 +262,13 @@
         background:var(--camera-surface-2,var(--panel2,#13263a))!important;
         border-top:1px solid var(--camera-line,var(--line,#2c4965))!important;
       }
-      .global-run-panel .run-stat{
+      .global-run-panel.global-run-panel .run-stat{
         min-width:0!important;
         color:var(--camera-text,var(--text,#f1f6fb))!important;
       }
-      .global-run-panel .run-stat small{color:var(--camera-muted,var(--muted,#a9b8c8))!important}
+      .global-run-panel.global-run-panel .run-stat small{color:var(--camera-muted,var(--muted,#a9b8c8))!important}
 
-      .global-run-panel .run-panel-bar{
+      .global-run-panel.global-run-panel .run-panel-bar{
         position:relative!important;
         inset:auto!important;
         left:auto!important;
@@ -271,10 +285,10 @@
         background:var(--camera-surface-2,var(--panel2,#13263a))!important;
         border-top:1px solid var(--camera-line,var(--line,#2c4965))!important;
       }
-      .global-run-panel .run-panel-run{min-height:52px!important;height:52px!important}
+      .global-run-panel.global-run-panel .run-panel-run{min-height:52px!important;height:52px!important}
 
       /* Only this compact vertical tab remains when the desktop drawer closes. */
-      .global-run-panel.collapsed .run-panel-reopen-v1{
+      .global-run-panel.global-run-panel.collapsed .run-panel-reopen-v1{
         display:flex!important;
         visibility:visible!important;
         opacity:1!important;
@@ -303,7 +317,7 @@
         box-shadow:-7px 0 22px color-mix(in srgb,var(--camera-bg,#07111f) 24%,transparent)!important;
         cursor:pointer!important;
       }
-      .global-run-panel.collapsed .run-panel-reopen-v1 span{
+      .global-run-panel.global-run-panel.collapsed .run-panel-reopen-v1 span{
         display:grid!important;
         place-items:center!important;
         width:30px!important;
@@ -316,7 +330,7 @@
         font-weight:800!important;
         line-height:1!important;
       }
-      .global-run-panel.collapsed .run-panel-reopen-v1 b{
+      .global-run-panel.global-run-panel.collapsed .run-panel-reopen-v1 b{
         writing-mode:vertical-rl!important;
         transform:rotate(180deg)!important;
         color:var(--camera-text,var(--text,#f1f6fb))!important;
@@ -325,7 +339,7 @@
         line-height:1!important;
         letter-spacing:.03em!important;
       }
-      .global-run-panel.open .run-panel-reopen-v1{display:none!important}
+      .global-run-panel.global-run-panel.open .run-panel-reopen-v1{display:none!important}
     }
 
     /* ------------------------------------------------------------------ */
@@ -544,7 +558,7 @@
 
   scheduleEnsure();
   window.DERIVADMIN_MOBILE_LAYOUT_AUTHORITY_V1 = Object.freeze({
-    version: "20260819-right-quarter-drawer-v5",
+    version: VERSION,
     refresh: ensureRunHandle,
   });
 })();
