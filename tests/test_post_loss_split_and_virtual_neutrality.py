@@ -80,16 +80,16 @@ class PostLossSplitAndVirtualNeutralityTests(unittest.TestCase):
         self.assertIn("summary.losses ?? meStats.losses", metrics)
         self.assertIn("summary.profit ?? meStats.profit", metrics)
         self.assertNotIn("state.trades?.trades", metrics)
-        # 6F-2 may request a large row window for the dedicated Run ledger, but
-        # Home KPI values still come exclusively from the unbounded server summary.
+        # The dedicated Run ledger may request a large row window, but Home KPI
+        # values still come exclusively from the unbounded server summary.
         self.assertIn('json("/me/trades/today?limit=5000")', shell)
 
         self.assertNotIn("virtual-kpi-neutrality.js", index)
         self.assertNotIn("netlify-realtime-client.js", index)
-        self.assertNotIn('<script src="/vps-realtime-client-v2.js?v=20260817-6f2-1" defer>', index)
-        self.assertNotIn('<script src="/final-ui-shell-v2.js?v=20260817-6f2-1" defer>', index)
-        self.assertIn("vps-realtime-client-v2.js?v=20260817-6f2-1", premium)
-        self.assertIn("final-ui-shell-v2.js?v=20260817-6f2-1", premium)
+        self.assertNotIn('<script src="/vps-realtime-client-v2.js?v=20260817-local-ui-2" defer>', index)
+        self.assertNotIn('<script src="/final-ui-shell-v2.js?v=20260818-local-ui-12" defer>', index)
+        self.assertIn("vps-realtime-client-v2.js?v=20260817-local-ui-2", premium)
+        self.assertIn("final-ui-shell-v2.js?v=20260818-local-ui-12", premium)
         self.assertNotIn("final-ui-shell-v1.js", index)
 
 
