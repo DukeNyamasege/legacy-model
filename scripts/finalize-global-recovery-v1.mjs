@@ -8,12 +8,6 @@ function read(path) {
   return fs.readFileSync(path, "utf8");
 }
 
-function replaceOnce(text, before, after, label) {
-  const count = text.split(before).length - 1;
-  if (count !== 1) throw new Error(`global-recovery ${label}: expected one source match, got ${count}`);
-  return text.replace(before, after);
-}
-
 let engine = read(enginePath);
 for (const required of [
   "splitPartStake",
@@ -22,19 +16,20 @@ for (const required of [
 ]) {
   if (!engine.includes(required)) throw new Error(`global-recovery engine invariant missing: ${required}`);
 }
-engine = engine.replace(
-  /const VERSION = \"20260818-browser-direct-v[^\"]+\";/,
-  'const VERSION = "20260819-browser-direct-v8-global-recovery";',
-);
+
+const versionPattern = /const VERSION = "[^"]*browser-direct[^"]*";/;
+if (!versionPattern.test(engine)) throw new Error("global-recovery browser runtime VERSION anchor missing");
+engine = engine.replace(versionPattern, 'const VERSION = "20260819-browser-direct-v8-global-recovery";');
 fs.writeFileSync(enginePath, engine, "utf8");
 
 let run = read(runPath);
-run = replaceOnce(
-  run,
-  "  }, 4000);",
-  "  }, 10000);",
-  "direct status polling throttle",
-);
+const statusTimerPattern = /(state\.statusTimer\s*=\s*setInterval\(\(\)\s*=>\s*\{[\s\S]*?if \(!document\.hidden\) readServerStatus\(\);[\s\S]*?\},\s*)\d+(\s*\);)/;
+const match = run.match(statusTimerPattern);
+if (!match) throw new Error("global-recovery direct status timer anchor missing");
+run = run.replace(statusTimerPattern, "$1" + "10000" + "$2");
+if (!/state\.statusTimer\s*=\s*setInterval\([\s\S]*?10000\s*\);/.test(run)) {
+  throw new Error("global-recovery direct status polling throttle was not installed");
+}
 fs.writeFileSync(runPath, run, "utf8");
 
 console.log("Global recovery v1 finalized: fixed equal Split stake, 0.50 minimum, lower status-poll load");
