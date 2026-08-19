@@ -97,7 +97,7 @@ class SchedulerV2AuthorityContract(unittest.TestCase):
         self.assertIn("node scripts/finalize-execution-continuity-v1.mjs", docker)
         self.assertIn("cp dashboard/scheduler-v2-ui.js", docker)
         self.assertIn("20260818-unified-ledger-v10-virtual", docker)
-        self.assertIn("20260818-run-reset-v3", docker)
+        self.assertIn("20260819-run-reset-global-recovery-v4", docker)
         self.assertIn("20260818-scheduler-v2-ui-1", docker)
         self.assertIn("node --check dist/final-ui-shell-v2.js", docker)
 
@@ -106,7 +106,7 @@ class SchedulerV2AuthorityContract(unittest.TestCase):
         first = entry.index("install_automation_scheduler_action5(app)")
         second = entry.index("install_automation_scheduler_v2_authority()")
         self.assertGreater(second, first)
-        self.assertIn("hybrid_browser_direct_v2_hard_stop_scheduler_v2", entry)
+        self.assertIn("hybrid_browser_direct_v2_global_recovery_policy", entry)
 
 
 if __name__ == "__main__":
