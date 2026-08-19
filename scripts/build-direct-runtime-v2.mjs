@@ -35,7 +35,7 @@ function ensureCount(source, label, before, after, expected) {
 }
 
 fs.mkdirSync(distDir, { recursive: true });
-let engine = fs.readFileSync(engineSourcePath, "utf8");
+let engine = fs.readFileSync(engineSourcePath, "utf8").replace(/\r\n/g, "\n");
 
 // Comparator parity was originally a build-time migration. The canonical browser
 // source now already carries all_even/all_odd, so patch older source only.
@@ -127,7 +127,7 @@ engine = ensureOnce(
 
 fs.writeFileSync(engineOut, engine, "utf8");
 
-let ux = fs.readFileSync(uxSourcePath, "utf8");
+let ux = fs.readFileSync(uxSourcePath, "utf8").replace(/\r\n/g, "\n");
 ux = ensureOnce(
   ux,
   "UX effective after-loss route helper",

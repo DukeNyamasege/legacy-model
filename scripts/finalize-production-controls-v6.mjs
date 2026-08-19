@@ -5,7 +5,7 @@ const root = process.cwd();
 const dist = path.join(root, "dist");
 
 function read(name) {
-  return fs.readFileSync(path.join(dist, name), "utf8");
+  return fs.readFileSync(path.join(dist, name), "utf8").replace(/\r\n/g, "\n");
 }
 
 function write(name, source) {

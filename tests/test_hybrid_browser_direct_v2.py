@@ -230,6 +230,14 @@ class HybridBrowserDirectV2Contract(unittest.TestCase):
         self.assertIn("activeExecutionRoute()", compiler)
         self.assertIn("active-route MET/NOT-MET parity", compiler)
 
+    def test_frontend_patch_scripts_normalize_windows_newlines_before_matching(self) -> None:
+        for path in [
+            "scripts/build-direct-runtime-v2.mjs",
+            "scripts/finalize-production-controls-v6.mjs",
+            "scripts/finalize-production-controls-v6b.mjs",
+        ]:
+            self.assertIn('.replace(/\\r\\n/g, "\\n")', self.text(path))
+
     def test_hydrated_history_can_never_own_a_buy_entry(self) -> None:
         finalizer = self.text("scripts/finalize-direct-runtime-v2.mjs")
         fence = self.text("dashboard/direct-financial-fence-v1.js")

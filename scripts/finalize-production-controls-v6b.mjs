@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 const file = path.join(process.cwd(), "dist", "deriv-direct-execution-v2.js");
-let source = fs.readFileSync(file, "utf8");
+let source = fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n");
 
 function ensureEntrySpot() {
   if (source.includes("entry_spot: contract?.entry_spot ?? contract?.entry_tick ?? null")) return;
