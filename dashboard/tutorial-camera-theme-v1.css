@@ -182,7 +182,6 @@ body {
 /* Primary actions stay visibly blue but avoid clipped neon on phone cameras. */
 .btn.primary,
 .login-button,
-.paid-soon-banner button,
 .feature-card strong {
   background: linear-gradient(120deg, var(--camera-blue-strong), var(--camera-blue)) !important;
   color: #f8fbff !important;
@@ -356,6 +355,84 @@ body {
   border-color: var(--camera-line) !important;
   box-shadow: none !important;
 }
+
+/* Connected strategy blocks preserve the canonical form controls and payload. */
+.builder-block-workspace {
+  min-width: 0;
+  padding: 14px !important;
+  background: var(--camera-bg-2) !important;
+}
+
+.builder-block-stack {
+  min-width: 0;
+  margin-top: 16px;
+  padding: 18px 12px 24px;
+  background: var(--camera-bg) !important;
+  border: 1px solid var(--camera-line) !important;
+  border-radius: 6px;
+}
+
+.builder-workspace-block {
+  --builder-block-accent: var(--camera-blue);
+  position: relative;
+  min-width: 0;
+  margin: 0 0 12px;
+  padding: 0 16px 18px;
+  background: var(--camera-surface) !important;
+  color: var(--camera-text) !important;
+  border: 1px solid var(--camera-line) !important;
+  border-left: 5px solid var(--builder-block-accent) !important;
+  border-radius: 6px;
+  box-shadow: 0 5px 14px rgba(0, 0, 0, .10) !important;
+}
+
+.builder-workspace-block::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 34px;
+  width: 42px;
+  height: 8px;
+  background: var(--camera-bg) !important;
+  border: 1px solid var(--camera-line) !important;
+  border-top: 0 !important;
+  border-radius: 0 0 5px 5px;
+}
+
+.builder-workspace-block::after {
+  content: "";
+  position: absolute;
+  left: 54px;
+  bottom: -13px;
+  width: 3px;
+  height: 13px;
+  background: var(--builder-block-accent) !important;
+}
+
+.builder-workspace-block:last-child {
+  margin-bottom: 0;
+}
+
+.builder-workspace-block:last-child::after {
+  display: none;
+}
+
+.builder-workspace-block .builder-section {
+  margin: 0 -16px 14px;
+  padding: 14px 16px 10px;
+  border-top: 0 !important;
+  border-bottom: 1px solid var(--camera-line) !important;
+  background: color-mix(in srgb, var(--builder-block-accent) 9%, var(--camera-surface-2)) !important;
+}
+
+.builder-workspace-block.block-markets { --builder-block-accent: var(--camera-cyan); }
+.builder-workspace-block.block-mode { --builder-block-accent: var(--camera-blue); }
+.builder-workspace-block.block-conditions { --builder-block-accent: var(--camera-green); }
+.builder-workspace-block.block-contract { --builder-block-accent: var(--camera-amber); }
+.builder-workspace-block.block-analysis { --builder-block-accent: #cf71d8; }
+.builder-workspace-block.block-money { --builder-block-accent: #e36d76; }
+.builder-workspace-block.block-after-loss { --builder-block-accent: #e69c4a; }
+.builder-workspace-block.block-virtual { --builder-block-accent: #55a8d8; }
 
 .mode-card.active,
 .builder-market-card.selected,
@@ -579,6 +656,79 @@ textarea:focus,
 .global-run-panel.global-run-panel [data-run-start].run-panel-run { background:#11936f!important; color:#ffffff!important; }
 html[data-final-run-state="running"] .global-run-panel.global-run-panel [data-run-start].run-panel-run,.global-run-panel.global-run-panel[data-execution-state="running"] [data-run-start].run-panel-run { background:#d13f4d!important; }
 
+/* Desktop drawer geometry is owned here so it cannot fall back to the mobile full sheet. */
+@media (min-width: 901px) {
+  .global-run-panel.global-run-panel {
+    position: fixed !important;
+    top: 72px !important;
+    right: auto !important;
+    left: 0 !important;
+    bottom: 0 !important;
+    width: clamp(360px, 25vw, 460px) !important;
+    height: calc(100dvh - 72px) !important;
+    max-width: none !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    z-index: 7000 !important;
+    box-shadow: 12px 0 34px rgba(0, 0, 0, .22) !important;
+    transform: translateX(calc(-100% + 48px));
+    transition: transform 220ms ease !important;
+  }
+
+  .global-run-panel.global-run-panel.open {
+    right: auto !important;
+    left: 0 !important;
+    transform: translateX(0) !important;
+  }
+
+  .global-run-panel.global-run-panel .run-panel-sheet {
+    position: relative !important;
+    inset: auto !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    flex: 1 1 auto !important;
+    order: 1 !important;
+    display: none !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    transform: none !important;
+  }
+
+  .global-run-panel.global-run-panel.open .run-panel-sheet {
+    display: flex !important;
+  }
+
+  .global-run-panel.global-run-panel .run-panel-bar {
+    position: relative !important;
+    inset: auto !important;
+    width: 100% !important;
+    min-height: 48px !important;
+    height: 48px !important;
+    flex: 0 0 48px !important;
+    order: 2 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    transform: none !important;
+  }
+
+  .bottom-nav.bottom-nav {
+    bottom: 0 !important;
+    z-index: 70 !important;
+  }
+
+  .global-run-panel.global-run-panel:not(.open) .run-panel-bar,
+  .global-run-panel.global-run-panel:not(.open) .run-panel-run {
+    width: 48px !important;
+    min-width: 48px !important;
+  }
+
+  .global-run-panel.global-run-panel:not(.open) .run-panel-run { padding: 0 !important; }
+  .global-run-panel.global-run-panel:not(.open) .run-panel-run::after { display: none !important; }
+}
+
 /* Canonical light transaction palette: keep the ledger as readable as the summary. */
 html[data-theme="light"] .global-run-panel.global-run-panel {
   color: #173850 !important;
@@ -782,21 +932,6 @@ html[data-theme="light"] .global-run-panel.global-run-panel .run-help { color: #
   color: var(--camera-text) !important;
 }
 
-.paid-soon-banner {
-  background: var(--camera-surface) !important;
-  color: var(--camera-text) !important;
-  border-color: var(--camera-line-strong) !important;
-  box-shadow: var(--camera-shadow) !important;
-}
-
-.paid-soon-banner b {
-  color: var(--camera-text) !important;
-}
-
-.paid-soon-banner p {
-  color: var(--camera-muted) !important;
-}
-
 /* Loader is also tutorial-safe when transitions are captured. */
 #derivadmin-soft-loader {
   background:
@@ -862,5 +997,25 @@ html[data-theme="dark"] .transaction-rows {
   .recovery-card small,
   .builder-market-card small {
     font-weight: 650 !important;
+  }
+
+  .builder-block-workspace {
+    padding: 8px !important;
+  }
+
+  .builder-block-stack {
+    padding: 14px 6px 18px;
+  }
+
+  .builder-workspace-block {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .builder-workspace-block .builder-section {
+    margin-left: -10px;
+    margin-right: -10px;
+    padding-left: 10px;
+    padding-right: 10px;
   }
 }

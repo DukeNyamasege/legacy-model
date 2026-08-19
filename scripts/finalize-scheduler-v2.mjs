@@ -135,7 +135,7 @@ shell = replaceOnce(
 shell = replaceOnce(
   shell,
   'window.FOA_FINAL_UI = Object.freeze({ version: "20260818-local-ui-12", refresh, go });',
-  'window.FOA_FINAL_UI = Object.freeze({ version: "20260818-scheduler-v2", refresh, go, state: () => state });',
+  'window.FOA_FINAL_UI = Object.freeze({ version: "20260819-scheduler-blocks-v14", refresh, go, state: () => state });',
   "expose scheduler/live ledger state",
 );
 fs.writeFileSync(shellPath, shell);
@@ -153,9 +153,9 @@ fs.writeFileSync(runPath, run);
 let premium = read(premiumPath);
 premium = replaceOnce(
   premium,
-  'await loadScript("/final-ui-shell-v2.js?v=20260818-production-v6", "final-ui-shell-v2");',
-  'await loadScript("/final-ui-shell-v2.js?v=20260818-scheduler-v2", "final-ui-shell-v2");',
-  "final shell cache bust after production-v6",
+  'await loadScript("/final-ui-shell-v2.js?v=20260819-block-workspace-v13", "final-ui-shell-v2");',
+  'await loadScript("/final-ui-shell-v2.js?v=20260819-scheduler-blocks-v14", "final-ui-shell-v2");',
+  "final shell cache bust after block workspace",
 );
 fs.writeFileSync(premiumPath, premium);
 

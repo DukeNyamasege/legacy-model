@@ -87,9 +87,9 @@ class PostLossSplitAndVirtualNeutralityTests(unittest.TestCase):
         self.assertNotIn("virtual-kpi-neutrality.js", index)
         self.assertNotIn("netlify-realtime-client.js", index)
         self.assertNotIn('<script src="/vps-realtime-client-v2.js?v=20260817-local-ui-2" defer>', index)
-        self.assertNotIn('<script src="/final-ui-shell-v2.js?v=20260818-local-ui-12" defer>', index)
+        self.assertNotIn('<script src="/final-ui-shell-v2.js?v=20260819-block-workspace-v13" defer>', index)
         self.assertIn("vps-realtime-client-v2.js?v=20260817-local-ui-2", premium)
-        self.assertIn("final-ui-shell-v2.js?v=20260818-local-ui-12", premium)
+        self.assertIn("final-ui-shell-v2.js?v=20260819-block-workspace-v13", premium)
         self.assertNotIn("final-ui-shell-v1.js", index)
 
 

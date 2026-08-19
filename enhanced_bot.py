@@ -64,6 +64,11 @@ from app.account_mode_execution_lock import (
     account_lifecycle_from_row,
 )
 from app.models import Trade, VirtualTrade
+from app.provider_contract_spots import (
+    provider_contract_digit,
+    provider_contract_number,
+    provider_contract_spot,
+)
 
 try:
     from cryptography.fernet import Fernet
@@ -4722,29 +4727,22 @@ class TradingBot:
             or contract.get("exit_spot_time")
             or contract.get("date_expiry")
         )
-        entry_value = contract.get("entry_tick", contract.get("entry_spot"))
-        exit_value = contract.get("exit_tick", contract.get("exit_spot"))
-        try:
-            entry_tick = float(entry_value) if entry_value is not None else None
-        except (TypeError, ValueError):
-            entry_tick = None
-        try:
-            exit_tick = float(exit_value) if exit_value is not None else None
-        except (TypeError, ValueError):
-            exit_tick = None
-        exit_digit = None
-        if exit_tick is not None:
-            contract_symbol = str(
-                contract.get("underlying")
-                or contract.get("underlying_symbol")
-                or self.contract_symbols.get(contract_id)
-                or self.symbol
-            )
-            precision = self.market_states.get(
-                contract_symbol,
-                self.market_states[self.symbol],
-            ).pip_size
-            exit_digit = int(f"{exit_tick:.{precision}f}"[-1])
+        contract_symbol = str(
+            contract.get("underlying")
+            or contract.get("underlying_symbol")
+            or self.contract_symbols.get(contract_id)
+            or self.symbol
+        )
+        market_state = self.market_states.get(contract_symbol) or self.market_states.get(
+            self.symbol
+        )
+        precision = int(market_state.pip_size) if market_state is not None else 2
+        entry_spot_display = provider_contract_spot(contract, "entry")
+        exit_spot_display = provider_contract_spot(contract, "exit")
+        entry_tick = provider_contract_number(entry_spot_display)
+        exit_tick = provider_contract_number(exit_spot_display)
+        entry_digit = provider_contract_digit(entry_spot_display, precision)
+        exit_digit = provider_contract_digit(exit_spot_display, precision)
 
         if status == "won":
             outcome = "win"
@@ -4758,6 +4756,9 @@ class TradingBot:
             outcome=outcome,
             entry_tick=entry_tick,
             exit_tick=exit_tick,
+            entry_spot_display=entry_spot_display,
+            exit_spot_display=exit_spot_display,
+            entry_digit=entry_digit,
             exit_digit=exit_digit,
             buy_price=buy_price,
             payout=payout,

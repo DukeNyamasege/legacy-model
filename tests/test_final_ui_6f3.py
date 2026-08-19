@@ -16,8 +16,8 @@ class FinalUi6F3Tests(unittest.TestCase):
         self.assertIn('frontend-runtime" content="direct-vps-final-ui-6f3"', html)
         self.assertIn('frontend-authority" content="final-ui-shell-v2"', html)
         self.assertIn('/final-premium-6f3.css?v=20260817-6f3-1', html)
-        self.assertIn('/final-premium-6f3.js?v=20260818-local-ui-12', html)
-        self.assertIn('/public-testing-runtime-v1.js?v=20260818-public-testing-run-v5', html)
+        self.assertIn('/final-premium-6f3.js?v=20260819-block-workspace-v13', html)
+        self.assertIn('/public-testing-runtime-v1.js?v=20260819-banner-removed-v6', html)
         self.assertNotIn('<script src="/vps-realtime-client-v2.js?v=20260817-6f2-1" defer>', html)
         self.assertNotIn('<script src="/final-ui-shell-v2.js?v=20260817-6f2-1" defer>', html)
         self.assertNotIn("premium-subscription-action6e", html)
@@ -42,30 +42,38 @@ class FinalUi6F3Tests(unittest.TestCase):
         self.assertNotIn("api.derivws.com", js)
         self.assertNotIn("proposal_open_contract", js)
 
-    def test_public_testing_controller_hides_paywall_and_syncs_instant_run(self) -> None:
+    def test_public_testing_controller_is_access_only(self) -> None:
         js = (DASHBOARD / "public-testing-runtime-v1.js").read_text(encoding="utf-8")
         for marker in (
-            'fetch("/me/public-testing-access"', "public_testing_free_access",
-            ".paid-soon-banner", ".premium-reminder", ".premium-profile",
-            "premium use only", "pay kes 250", '"[data-run-start]"', '"[data-run-execution-toggle]"',
-            '"[data-builder-trade]"', '"[data-ready-trade]"', '"[data-trade-now-selected]"',
-            '"[data-start-trading]"', 'data-run-tab="transactions"',
-            'label.textContent = running ? "Stop" : "Run"',
-            "if (running && !state.defaultTransactionsApplied) chooseTransactions();",
-            "const isToggle = target.matches(TOGGLE_SELECTORS);",
-            "const starting = isToggle ? !wasRunning : true;",
+            'window.fetch("/api/me/public-testing-access"', "public_testing_free_access",
+            ".premium-reminder", "premium use only", "pay kes 250",
+            'execution_authority: "none"', "deriv-direct-execution-v2",
         ):
             self.assertIn(marker, js)
+        for forbidden in (
+            "wss://", "proposal_open_contract", "ticks: symbol",
+            '"[data-run-start]"', '"[data-run-execution-toggle]"',
+            '"[data-builder-trade]"', '"[data-start-trading]"',
+            'data-run-tab="transactions"', "/me/resume-trading", "/me/stop-trading",
+        ):
+            self.assertNotIn(forbidden, js)
 
-    def test_journal_uses_public_deriv_ticks_only_for_observability(self) -> None:
+    def test_testing_price_banner_is_removed_from_the_ui(self) -> None:
+        shell = (DASHBOARD / "final-ui-shell-v2.js").read_text(encoding="utf-8")
+        testing = (DASHBOARD / "public-testing-runtime-v1.js").read_text(encoding="utf-8")
+        mobile_css = (DASHBOARD / "mobile-reference-ui.css").read_text(encoding="utf-8")
+        theme = (DASHBOARD / "tutorial-camera-theme-v1.css").read_text(encoding="utf-8")
+        combined = "\n".join((shell, testing, mobile_css, theme))
+        self.assertNotIn("paid-soon-banner", combined)
+        self.assertNotIn("DerivAdmin is free during this testing phase", combined)
+        self.assertNotIn("Weekly access will soon be KES 250", combined)
+
+    def test_public_testing_runtime_has_no_deriv_market_or_trading_authority(self) -> None:
         js = (DASHBOARD / "public-testing-runtime-v1.js").read_text(encoding="utf-8")
-        self.assertIn("wss://api.derivws.com/trading/v1/options/ws/public", js)
-        self.assertIn("ticks: symbol", js)
-        self.assertIn("subscribe: 1", js)
-        self.assertIn('payload?.msg_type !== "tick"', js)
-        self.assertIn("derivadmin:analysis-tick", js)
-        self.assertIn("Live Deriv tick analysis", js)
-        self.assertIn("analyzed", js)
+        self.assertIn("NO Deriv tick mirror", js)
+        self.assertIn("deriv-direct-execution-v2", js)
+        self.assertNotIn("wss://", js)
+        self.assertNotIn("ticks: symbol", js)
         self.assertNotIn('"buy":', js)
         self.assertNotIn("proposal_open_contract", js)
         self.assertNotIn("access_token", js)

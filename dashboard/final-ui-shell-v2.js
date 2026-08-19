@@ -8,7 +8,6 @@
   const STORE_TEMPLATES = "foa-user-strategy-templates-v2";
   const STORE_READY = "foa-text-strategy-result-v2";
   const STORE_THEME = "derivadmin-ui-theme-v1";
-  const STORE_PAID_SOON = "derivadmin-paid-soon-dismissed-v1";
   const DEFAULT_TZ = "Africa/Nairobi";
   const TIMEZONES = [
     ["Africa/Nairobi", "Nairobi", "East Africa Time"],
@@ -286,7 +285,6 @@
     busy: "",
     error: "",
     notice: "",
-    paidSoonDismissed: readJSON(STORE_PAID_SOON, false),
     loaded: false,
     theme: readTheme(),
     runPanelOpen: false,
@@ -549,7 +547,6 @@
         </button><div class="topbar-tools">${themeToggle()}${topAccountControl()}</div>` : `<button class="icon-button back-button" data-route="home" aria-label="Back">${miniIcon("back")}</button><div class="page-spacer" aria-hidden="true"></div><div class="topbar-tools">${themeToggle()}${topAccountControl()}</div>`}
       </header>
       ${messages()}
-      ${paidSoonBanner()}
       <main class="app-main">${content}</main>
       ${state.me?.authenticated ? globalRunPanel() : ""}
       ${showNav ? nav() : ""}
@@ -558,15 +555,6 @@
 
   function messages() {
     return `${state.error ? `<div class="global-message error">${esc(state.error)}</div>` : ""}${state.notice ? `<div class="global-message success">${esc(state.notice)}</div>` : ""}`;
-  }
-
-  function paidSoonBanner() {
-    if (!state.me?.authenticated || state.paidSoonDismissed) return "";
-    return `<section class="paid-soon-banner" role="status">
-      <span>${miniIcon("spark")}</span>
-      <div><b>DerivAdmin is free during this testing phase.</b><p>Weekly access will soon be KES 250. You will be notified before billing is turned on. For now, maximize it and get the most from every feature.</p></div>
-      <button type="button" data-paid-soon-ok>OK</button>
-    </section>`;
   }
 
   function landing() {
@@ -1204,20 +1192,26 @@
     return `When ${parts.join(" AND ") || "conditions qualify"}, trade ${tradeLabel}${prediction} on ${marketText}. Recovery uses ${recoveryText}. Virtual Hook ${b.virtualHook.enabled ? "enters after " + b.virtualHook.enterAfterLosses + " losses" : "is off"}.${afterLoss}`;
   }
 
+  function builderWorkspaceBlock(kind, content) {
+    return `<section class="builder-workspace-block block-${esc(kind)}" data-builder-block="${esc(kind)}">${content}</section>`;
+  }
+
   function builderPage() {
     const b = currentBuilderConfig();
     const content = `<section class="builder-layout restored-builder">
-      <article class="panel builder-panel">
+      <article class="builder-panel builder-block-workspace">
         <div class="form-grid one"><label><span>Strategy name</span><input id="b-name" value="${esc(b.name)}" ${b.lockedName ? "readonly" : ""}></label></div>
         ${builderTemplatesSection()}
-        ${marketBlock(b)}
-        ${modeCards(b)}
-        ${conditionBuilder(b)}
-        ${tradeBuilder(b)}
-        ${reanalyzeBlock(b)}
-        ${moneyBlock(b)}
-        ${resultRoutingBlock(b)}
-        ${virtualHookBlock(b)}
+        <div class="builder-block-stack" role="group" aria-label="Strategy blocks">
+          ${builderWorkspaceBlock("markets", marketBlock(b))}
+          ${builderWorkspaceBlock("mode", modeCards(b))}
+          ${builderWorkspaceBlock("conditions", conditionBuilder(b))}
+          ${builderWorkspaceBlock("contract", tradeBuilder(b))}
+          ${builderWorkspaceBlock("analysis", reanalyzeBlock(b))}
+          ${builderWorkspaceBlock("money", moneyBlock(b))}
+          ${builderWorkspaceBlock("after-loss", resultRoutingBlock(b))}
+          ${builderWorkspaceBlock("virtual", virtualHookBlock(b))}
+        </div>
       </article>
       <aside class="panel builder-preview"><span class="eyebrow">LIVE PREVIEW</span><h3>${esc((b.side || "over").toUpperCase())}${["over", "under", "matches", "differs"].includes(b.side) ? " " + esc(b.prediction) : ""}</h3><p>${esc(builderSummaryText(b))}</p><div class="preview-icon">${quill(b.side || "over")}</div><small>Server validator remains execution authority.</small></aside>
     </section>
@@ -1848,11 +1842,6 @@
     root.querySelectorAll("[data-theme-toggle]").forEach((button) => button.addEventListener("click", () => {
       state.theme = state.theme === "light" ? "dark" : "light";
       applyTheme(state.theme);
-      render();
-    }));
-    root.querySelectorAll("[data-paid-soon-ok]").forEach((button) => button.addEventListener("click", () => {
-      state.paidSoonDismissed = true;
-      writeJSON(STORE_PAID_SOON, true);
       render();
     }));
     root.querySelectorAll("[data-run-panel-toggle]").forEach((button) => button.addEventListener("click", () => {

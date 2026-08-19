@@ -13,6 +13,8 @@ class RunPanelLedgerV10Contract(unittest.TestCase):
 
     def test_browser_and_server_rows_share_one_retained_snapshot_without_timer(self) -> None:
         ledger = self.text("dashboard/direct-transaction-ledger-v6.js")
+        self.assertIn('explicit !== null && explicit !== undefined && explicit !== ""', ledger)
+        self.assertNotIn("const explicitDigit = Number(explicit);", ledger)
         self.assertIn("__DERIVADMIN_DIRECT_TRANSACTION_LEDGER_V9__", ledger)
         self.assertIn("derivadmin-unified-ledger-snapshot-v9:", ledger)
         self.assertIn("function serverContracts()", ledger)
@@ -47,13 +49,15 @@ class RunPanelLedgerV10Contract(unittest.TestCase):
 
     def test_frontend_cache_busts_continuity_v10_assets(self) -> None:
         dockerfile = self.text("Dockerfile.frontend")
-        self.assertIn("/direct-transaction-ledger-v6.js?v=20260818-unified-ledger-v10-virtual", dockerfile)
-        self.assertIn("/direct-run-panel-authority-v6.js?v=20260819-live-fix-v2", dockerfile)
-        self.assertIn("/run-panel-usability-v1.js?v=20260818-run-panel-usability-v2", dockerfile)
+        assets = self.text("scripts/inject-frontend-assets.mjs")
+        self.assertIn('["direct-transaction-ledger-v6.js", "20260819-provider-ledger-v11"]', assets)
+        self.assertIn('["direct-run-panel-authority-v6.js", "20260819-single-run-panel-v3"]', assets)
+        self.assertIn('["run-panel-usability-v1.js", "20260819-summary-clear-v3"]', assets)
         self.assertIn("node scripts/finalize-execution-continuity-v1.mjs", dockerfile)
         self.assertIn("node scripts/finalize-global-recovery-v1.mjs", dockerfile)
         self.assertIn("node --check dist/direct-transaction-ledger-v6.js", dockerfile)
         self.assertIn("node --check dist/direct-run-panel-authority-v6.js", dockerfile)
+        self.assertIn("node scripts/inject-frontend-assets.mjs", dockerfile)
 
     def test_run_panel_uses_brighter_readable_dashboard_theme(self) -> None:
         run_panel = self.text("dashboard/direct-run-panel-authority-v6.js")

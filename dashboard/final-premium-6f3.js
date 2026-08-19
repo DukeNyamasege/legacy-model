@@ -133,7 +133,7 @@
       state.realtimeLoaded = true;
     }
     if (!state.shellLoaded) {
-      await loadScript("/final-ui-shell-v2.js?v=20260818-local-ui-12", "final-ui-shell-v2");
+      await loadScript("/final-ui-shell-v2.js?v=20260819-block-workspace-v13", "final-ui-shell-v2");
       state.shellLoaded = true;
     } else if (window.FOA_FINAL_UI?.refresh) {
       await window.FOA_FINAL_UI.refresh({ quiet: true });

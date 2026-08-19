@@ -74,7 +74,8 @@
       pointer-events:none!important;
     }
 
-    /* Keep primary navigation visible and clickable above the Run panel. */
+    /* On phones, keep primary navigation visible above the bottom-sheet control. */
+    @media(max-width:900px){
     html[data-run-panel-visibility="open"] .bottom-nav,
     html[data-run-panel-visibility="collapsed"] .bottom-nav{
       position:fixed!important;
@@ -96,6 +97,7 @@
       min-width:0!important;
       pointer-events:auto!important;
       touch-action:manipulation;
+    }
     }
 
     /* About 20-30% larger than the compact v6 typography. */

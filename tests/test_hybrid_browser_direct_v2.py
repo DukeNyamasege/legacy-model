@@ -42,6 +42,7 @@ class HybridBrowserDirectV2Contract(unittest.TestCase):
 
     def test_frontend_build_ships_production_single_authority_and_scheduler_v2(self) -> None:
         dockerfile = self.text("Dockerfile.frontend")
+        assets = self.text("scripts/inject-frontend-assets.mjs")
         self.assertIn("node scripts/build-direct-runtime-v2.mjs", dockerfile)
         self.assertIn("node scripts/finalize-direct-runtime-v2.mjs", dockerfile)
         self.assertIn("node scripts/finalize-direct-ux-v4.mjs", dockerfile)
@@ -50,18 +51,19 @@ class HybridBrowserDirectV2Contract(unittest.TestCase):
         self.assertIn("node scripts/finalize-scheduler-v2.mjs", dockerfile)
         self.assertIn("node scripts/finalize-execution-continuity-v1.mjs", dockerfile)
         self.assertIn("node scripts/finalize-global-recovery-v1.mjs", dockerfile)
-        self.assertIn("/direct-hard-stop-fence-v1.js?v=20260818-browser-hard-stop-v1", dockerfile)
-        self.assertIn("/deriv-direct-execution-v2.js?v=20260819-browser-direct-v8-global-recovery", dockerfile)
-        self.assertIn("/direct-continuity-checkpoint-v1.js?v=20260819-direct-continuity-v3-fixed-split-stake", dockerfile)
-        self.assertIn("/direct-transaction-ledger-v6.js?v=20260818-unified-ledger-v10-virtual", dockerfile)
-        self.assertIn("/direct-runtime-ux-v4.js?v=20260818-runtime-ux-v6", dockerfile)
-        self.assertIn("/direct-run-panel-authority-v6.js?v=20260819-live-fix-v2", dockerfile)
-        self.assertIn("/mobile-layout-authority-v1.js?v=20260818-mobile-layout-v1", dockerfile)
-        self.assertIn("/run-panel-usability-v1.js?v=20260818-run-panel-usability-v2", dockerfile)
-        self.assertNotIn('/single-run-controller-v1.js', dockerfile)
-        self.assertNotIn('/direct-run-panel-authority-v5.js?v=', dockerfile)
-        self.assertNotIn('/deriv-direct-execution-v1.js?v=', dockerfile)
-        self.assertNotIn('/direct-runtime-ux-v3.js?v=', dockerfile)
+        self.assertIn('["direct-hard-stop-fence-v1.js", "20260818-browser-hard-stop-v1"]', assets)
+        self.assertIn('["deriv-direct-execution-v2.js", "20260819-provider-settlement-v9"]', assets)
+        self.assertIn('["direct-continuity-checkpoint-v1.js", "20260819-direct-continuity-v3-fixed-split-stake"]', assets)
+        self.assertIn('["direct-transaction-ledger-v6.js", "20260819-provider-ledger-v11"]', assets)
+        self.assertIn('["direct-runtime-ux-v4.js", "20260818-runtime-ux-v6"]', assets)
+        self.assertIn('["direct-run-panel-authority-v6.js", "20260819-single-run-panel-v3"]', assets)
+        self.assertIn('["mobile-layout-authority-v1.js", "20260819-desktop-panel-handle-v4"]', assets)
+        self.assertIn('["run-panel-usability-v1.js", "20260819-summary-clear-v3"]', assets)
+        self.assertIn("node scripts/inject-frontend-assets.mjs", dockerfile)
+        self.assertNotIn('single-run-controller-v1.js', assets)
+        self.assertNotIn('direct-run-panel-authority-v5.js', assets)
+        self.assertNotIn('deriv-direct-execution-v1.js', assets)
+        self.assertNotIn('direct-runtime-ux-v3.js', assets)
 
     def test_public_testing_runtime_has_zero_execution_authority(self) -> None:
         testing = self.text("dashboard/public-testing-runtime-v1.js")
@@ -164,16 +166,30 @@ class HybridBrowserDirectV2Contract(unittest.TestCase):
         self.assertNotIn("new MutationObserver", authority)
         self.assertNotIn("startEverything", authority)
 
-    def test_mobile_run_panel_totals_and_reopen_handle_cannot_be_hidden(self) -> None:
+    def test_responsive_run_panel_totals_and_reopen_handle_cannot_be_hidden(self) -> None:
         authority = self.text("dashboard/mobile-layout-authority-v1.js")
         self.assertIn("run-panel-reopen-v1", authority)
         self.assertIn('handle.dataset.runPanelToggle = ""', authority)
         self.assertIn(".global-run-panel.collapsed .run-panel-reopen-v1", authority)
+        self.assertIn("@media(min-width:901px)", authority)
+        self.assertIn('content:"Collapse"', authority)
+        self.assertIn("writing-mode:vertical-rl", authority)
+        self.assertIn("right:0!important", authority)
         self.assertIn("grid-template-rows:repeat(2,minmax(40px,auto))", authority)
         self.assertIn(".global-run-panel.open .run-panel-bar", authority)
         self.assertIn("position:relative!important", authority)
         self.assertIn("env(safe-area-inset-bottom", authority)
         self.assertNotIn("setInterval", authority)
+
+    def test_builder_uses_one_connected_block_workspace(self) -> None:
+        shell = self.text("dashboard/final-ui-shell-v2.js")
+        theme = self.text("dashboard/tutorial-camera-theme-v1.css")
+        self.assertIn('class="builder-block-stack"', shell)
+        self.assertIn("function builderWorkspaceBlock", shell)
+        self.assertEqual(shell.count('builderWorkspaceBlock("'), 8)
+        self.assertIn(".builder-workspace-block::before", theme)
+        self.assertIn(".builder-workspace-block::after", theme)
+        self.assertIn(".builder-workspace-block.block-money", theme)
 
     def test_mobile_builder_is_strictly_contained_inside_phone_viewport(self) -> None:
         authority = self.text("dashboard/mobile-layout-authority-v1.js")

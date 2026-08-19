@@ -270,9 +270,11 @@
     html[data-final-run-state="running"] .global-run-panel .run-panel-run::before{content:"■"}
     html[data-final-run-state="running"] .global-run-panel .run-panel-run::after{content:"Stop"}
 
-    /* Stable expand/collapse: only the top chevron owns it. */
-    .global-run-panel.open{position:fixed!important;top:72px!important;left:0!important;right:0!important;bottom:0!important;height:calc(100dvh - 72px)!important;max-height:none!important;display:flex!important;flex-direction:column!important;overflow:hidden!important;background:#061526!important;transition:none!important}
-    .global-run-panel.open .run-panel-sheet{position:relative!important;inset:auto!important;transform:none!important;display:flex!important;flex-direction:column!important;flex:1 1 auto!important;min-height:0!important;max-height:none!important;overflow:hidden!important;transition:none!important}
+    /* Phones use a full sheet. Desktop geometry belongs to the final theme drawer. */
+    @media(max-width:900px){
+      .global-run-panel.open{position:fixed!important;top:72px!important;left:0!important;right:0!important;bottom:0!important;height:calc(100dvh - 72px)!important;max-height:none!important;display:flex!important;flex-direction:column!important;overflow:hidden!important;background:#061526!important;transition:none!important}
+      .global-run-panel.open .run-panel-sheet{position:relative!important;inset:auto!important;transform:none!important;display:flex!important;flex-direction:column!important;flex:1 1 auto!important;min-height:0!important;max-height:none!important;overflow:hidden!important;transition:none!important}
+    }
     .global-run-panel .run-panel-top{min-height:38px!important;height:38px!important;padding:4px 12px!important;flex:0 0 38px!important}
     .global-run-panel .run-panel-tabs{min-height:38px!important;height:38px!important;flex:0 0 38px!important;margin:0!important}
     .global-run-panel .run-panel-tabs button{min-height:38px!important;padding:0 8px!important;font-size:12px!important}
@@ -299,31 +301,6 @@
       .global-run-panel .transaction-head-v6{padding:7px 5px!important;font-size:7px!important}
     }
 
-    /* Desktop uses a right-docked drawer beside the balance control. Mobile remains the existing bottom sheet. */
-    @media(min-width:901px){
-      .global-run-panel{
-        position:fixed!important;
-        top:72px!important;
-        left:auto!important;
-        right:0!important;
-        bottom:0!important;
-        width:clamp(360px,25vw,460px)!important;
-        height:calc(100dvh - 72px)!important;
-        max-width:none!important;
-        display:flex!important;
-        flex-direction:column!important;
-        overflow:hidden!important;
-        background:#061526!important;
-        box-shadow:-12px 0 34px rgba(0,0,0,.22)!important;
-        transform:translateX(calc(100% - 48px));
-        transition:transform 220ms ease!important;
-      }
-      .global-run-panel.open{transform:translateX(0)!important;}
-      .global-run-panel:not(.open) .run-panel-bar{width:48px!important;min-width:48px!important;}
-      .global-run-panel:not(.open) .run-panel-run{width:48px!important;min-width:48px!important;padding:0!important;}
-      .global-run-panel:not(.open) .run-panel-run::after{display:none!important;}
-      .global-run-panel.open .run-panel-sheet{display:flex!important;}
-    }
   `;
   document.head.appendChild(style);
 

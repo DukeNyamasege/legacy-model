@@ -54,11 +54,12 @@ class TutorialCameraThemeContract(unittest.TestCase):
 
     def test_frontend_loads_camera_palette_last_in_head(self) -> None:
         docker = self.text("Dockerfile.frontend")
+        injector = self.text("scripts/inject-frontend-assets.mjs")
         self.assertIn("cp dashboard/tutorial-camera-theme-v1.css dist/tutorial-camera-theme-v1.css", docker)
-        self.assertIn("20260819-live-fix-v2", docker)
         self.assertIn("grep -q -- '--camera-bg' dist/tutorial-camera-theme-v1.css", docker)
-        self.assertIn("const camera='<link rel=", docker)
-        self.assertIn("h.replace('</head>',camera+", docker)
+        self.assertIn("node scripts/inject-frontend-assets.mjs", docker)
+        self.assertIn('/tutorial-camera-theme-v1.css?v=20260819-block-workspace-v5', injector)
+        self.assertIn("html.replace(\"</head>\", `${theme}\\n</head>`)", injector)
 
 
 if __name__ == "__main__":

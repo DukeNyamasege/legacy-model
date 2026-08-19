@@ -106,10 +106,10 @@ const required = [
   '/deriv-quill-icons-v2.js?v=2.4.18',
   '/final-ui-shell-v2.css?v=20260817-6f2-1',
   '/final-premium-6f3.css?v=20260817-6f3-1',
-  '/mobile-reference-ui.css?v=20260818-local-ui-12',
-  '/tutorial-camera-theme-v1.css?v=20260819-run-summary-v1',
-  '/final-premium-6f3.js?v=20260818-local-ui-12',
-  '/public-testing-runtime-v1.js?v=20260818-public-testing-run-v5',
+  '/mobile-reference-ui.css?v=20260819-banner-removed-v13',
+  '/tutorial-camera-theme-v1.css?v=20260819-block-workspace-v5',
+  '/final-premium-6f3.js?v=20260819-block-workspace-v13',
+  '/public-testing-runtime-v1.js?v=20260819-banner-removed-v6',
 ];
 for (const marker of required) {
   if (!html.includes(marker)) throw new Error(`Action 6F-3 VPS marker missing: ${marker}`);
@@ -186,7 +186,7 @@ await writeFile(
     premium_renewal: "manual-mpesa-after-exact-expiry-retained-v1",
     premium_ui: publicTestingFreeAccess ? "hidden-during-public-testing-v1" : "paid-gate-active-v1",
     premium_runtime_admission: publicTestingFreeAccess
-      ? "testing-users-load-shell-realtime-and-run-controller-v2"
+      ? "testing-users-load-shell-with-access-only-helper-v3"
       : "unpaid-users-do-not-load-shell-or-realtime-v2",
     premium_unlock_authority: "future-paid-mode-server-entitlement-only-v1",
     final_product_qa: "oauth-accounts-free-testing-builder-ai-schedule-instant-trades-mobile-v2",
@@ -199,10 +199,10 @@ console.log("Direct VPS Action 6F-3 frontend built.");
 console.log(`Public origin: ${publicOrigin}`);
 console.log(`Realtime: ${streamBase}/ws/me/live (loaded immediately after authenticated testing access)`);
 console.log(`Public testing free access: ${publicTestingFreeAccess ? "enabled" : "disabled"}`);
-console.log("UI authority: final-ui-shell-v2 with public-testing run controller");
+console.log("UI authority: final-ui-shell-v2; public-testing helper is access-only");
 console.log(publicTestingFreeAccess
   ? "Premium: retained for later launch; public testing is free and paywall UI is hidden"
   : "Premium: paid server entitlement gate is active");
-console.log("Run flow: instant start -> backend worker; scheduled start -> persistent scheduler -> same worker");
-console.log("Journal: live public Deriv tick mirror; proposal/BUY remain backend private-WebSocket only");
+console.log("Run flow: manual start -> browser-direct engine; scheduled start -> persistent scheduler -> VPS worker");
+console.log("Journal: provider contract settlement via the owning execution engine; no duplicate public tick mirror");
 console.log("No Netlify or retired Action UI is shipped in the production artifact");

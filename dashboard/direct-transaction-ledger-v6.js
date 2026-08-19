@@ -114,6 +114,8 @@
       profit: finite(row?.profit, 0),
       entry_spot: row?.entry_spot ?? row?.entry_tick ?? row?.entrySpot ?? row?.buy_spot ?? null,
       exit_spot: row?.exit_spot ?? row?.exit_tick ?? row?.exitSpot ?? row?.sell_spot ?? null,
+      entry_digit: row?.entry_digit ?? null,
+      actual_last_digit: row?.actual_last_digit ?? row?.exit_digit ?? null,
       opened_at: row?.opened_at || row?.purchase_time || row?.provider_purchase_time || row?.at || "",
       at: row?.at || row?.settlement_time || row?.provider_settlement_time || row?.purchase_time || "",
     };
@@ -198,13 +200,28 @@
   }
 
   function money(value) { return `${finite(value, 0).toFixed(2)} USD`; }
+  function spotDigit(value, symbol = "", explicit = null) {
+    const hasExplicit = explicit !== null && explicit !== undefined && explicit !== "";
+    const explicitDigit = hasExplicit ? Number(explicit) : NaN;
+    if (Number.isInteger(explicitDigit) && explicitDigit >= 0 && explicitDigit <= 9) return String(explicitDigit);
+    if (typeof value === "string") {
+      const digits = value.trim().replace(/[^0-9]/g, "");
+      if (digits) return digits[digits.length - 1];
+    }
+    const precisionDigit = value !== null && value !== undefined && value !== ""
+      ? window.DERIVADMIN_DIRECT_PIP_PRECISION_V1?.last_digit?.(symbol, value)
+      : null;
+    return Number.isInteger(precisionDigit) && precisionDigit >= 0 && precisionDigit <= 9
+      ? String(precisionDigit)
+      : null;
+  }
   function isSettled(row) { return String(row?.state || "").toUpperCase() === "SETTLED" || Boolean(row?.outcome); }
 
   function rowMarkup(row) {
     const settled = isSettled(row);
     const profit = finite(row.profit, 0);
-    const entry = row.entry_spot ?? "—";
-    const exit = settled ? (row.exit_spot ?? "—") : "OPEN";
+    const entry = spotDigit(row.entry_spot, row.symbol, row.entry_digit) ?? "—";
+    const exit = settled ? (spotDigit(row.exit_spot, row.symbol, row.actual_last_digit) ?? "—") : "OPEN";
     const pl = settled ? `${profit >= 0 ? "+" : ""}${money(profit)}` : "OPEN";
     return `<div class="transaction-row transaction-row-v6 direct-local-transaction-row-v6 unified-transaction-row-v9" data-direct-contract-id="${esc(row.contract_id)}">
       <span class="tx-time-market"><small>${esc(timeLabel(row.opened_at || row.at))}</small><b>${esc(marketLabel(row.symbol))}</b></span>

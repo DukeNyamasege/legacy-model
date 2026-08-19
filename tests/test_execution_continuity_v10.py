@@ -75,6 +75,7 @@ class ExecutionContinuityV10Contract(unittest.TestCase):
         self.assertIn("DERIVADMIN_DIRECT_PIP_PRECISION_V1?.last_digit", finalizer)
         self.assertIn("row?.actual_last_digit ?? row?.exit_digit", finalizer)
         self.assertIn('"spotDigit(row.entry_spot, row.symbol, row.entry_digit)"', finalizer)
+        self.assertIn('explicit !== null && explicit !== undefined && explicit !== ""', finalizer)
         self.assertIn('"spotDigit(row.exit_spot, row.symbol, row.actual_last_digit)"', finalizer)
 
     def test_browser_direct_uses_pip_precision_for_digit_display_and_settlement(self) -> None:
@@ -103,9 +104,14 @@ class ExecutionContinuityV10Contract(unittest.TestCase):
         self.assertIn("precision: getPipSize", precision)
         self.assertIn("pip_size: getPipSize", precision)
         self.assertIn("last_digit: lastDigit", precision)
-        self.assertIn("contract?.entry_tick ?? contract?.entry_tick_display_value", engine)
-        self.assertIn("contract?.exit_tick ?? contract?.exit_tick_display_value", engine)
-        self.assertIn("actual_last_digit:", engine)
+        self.assertIn('const direct = side === "entry" ? contract?.entry_spot : contract?.exit_spot', engine)
+        self.assertIn("tick?.tick_display_value", engine)
+        self.assertIn('contractSpot(contract, "entry")', engine)
+        self.assertIn('contractSpot(contract, "exit")', engine)
+        self.assertIn("entry_digit: entryDigit", engine)
+        self.assertIn("actual_last_digit: exitDigit", engine)
+        self.assertIn("provider_settlement: true", engine)
+        self.assertNotIn("exit_spot: exitSpot ?? contract?.current_spot", engine)
 
     def test_start_flow_survives_shell_rerender_without_second_human_attempt(self) -> None:
         finalizer = self.text("scripts/finalize-execution-continuity-v1.mjs")
@@ -132,12 +138,13 @@ class ExecutionContinuityV10Contract(unittest.TestCase):
         scheduler = docker.index("node scripts/finalize-scheduler-v2.mjs")
         continuity = docker.index("node scripts/finalize-execution-continuity-v1.mjs")
         copied_run = docker.index("cp dashboard/direct-run-panel-authority-v6.js")
+        assets = self.text("scripts/inject-frontend-assets.mjs")
         self.assertGreater(scheduler, copied_run)
         self.assertGreater(continuity, scheduler)
-        self.assertIn("20260819-browser-direct-v8-global-recovery", docker)
-        self.assertIn("20260818-unified-ledger-v10-virtual", docker)
-        self.assertIn("20260818-interaction-v4-one-flow", docker)
-        self.assertIn("20260819-live-fix-v2", docker)
+        self.assertIn("20260819-provider-settlement-v9", assets)
+        self.assertIn("20260819-provider-ledger-v11", assets)
+        self.assertIn("20260818-interaction-v4-one-flow", assets)
+        self.assertIn("20260819-live-fix-v2", assets)
 
 
 if __name__ == "__main__":

@@ -23,7 +23,6 @@
     const text = String(node?.textContent || "").toLowerCase();
     return text.includes("premium use only")
       || text.includes("pay kes 250")
-      || text.includes("weekly access will soon")
       || text.includes("premium renewal reminder");
   }
 
@@ -31,8 +30,8 @@
     state.renderQueued = false;
     document.documentElement.dataset.publicTestingAccess = state.testingFree ? "free" : "paid";
     if (!state.testingFree) return;
-    document.querySelectorAll(".global-message,.premium-message,.paid-soon-banner,.premium-reminder").forEach((node) => {
-      if (isPremiumNoise(node) || node.matches?.(".paid-soon-banner,.premium-reminder")) node.remove();
+    document.querySelectorAll(".global-message,.premium-message,.premium-reminder").forEach((node) => {
+      if (isPremiumNoise(node) || node.matches?.(".premium-reminder")) node.remove();
     });
   }
 

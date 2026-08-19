@@ -202,24 +202,26 @@ ledger = replaceOne(
 );
 ledger = replaceOne(ledger, '      entry_spot: row?.entry_spot ?? row?.entry_tick ?? row?.entrySpot ?? row?.buy_spot ?? null,', '      entry_spot: row?.entry_spot ?? row?.entry_tick ?? row?.entrySpot ?? row?.buy_spot ?? row?.entry_quote ?? null,', "virtual entry spot");
 ledger = replaceOne(ledger, '      exit_spot: row?.exit_spot ?? row?.exit_tick ?? row?.exitSpot ?? row?.sell_spot ?? null,', '      exit_spot: row?.exit_spot ?? row?.exit_tick ?? row?.exitSpot ?? row?.sell_spot ?? row?.exit_quote ?? null,', "virtual exit spot");
-ledger = replaceOne(ledger, '      opened_at: row?.opened_at || row?.purchase_time || row?.provider_purchase_time || row?.at || "",', '      entry_digit: row?.entry_digit ?? null,\n      actual_last_digit: row?.actual_last_digit ?? row?.exit_digit ?? null,\n      opened_at: row?.opened_at || row?.purchase_time || row?.provider_purchase_time || row?.at || "",', "explicit settlement digits");
+if (!ledger.includes("entry_digit: row?.entry_digit")) {
+  ledger = replaceOne(ledger, '      opened_at: row?.opened_at || row?.purchase_time || row?.provider_purchase_time || row?.at || "",', '      entry_digit: row?.entry_digit ?? null,\n      actual_last_digit: row?.actual_last_digit ?? row?.exit_digit ?? null,\n      opened_at: row?.opened_at || row?.purchase_time || row?.provider_purchase_time || row?.at || "",', "explicit settlement digits");
+}
 ledger = replaceOne(ledger, '    for (const raw of rows) {\n      if (String(raw?.mode || "") !== "real") continue;', '    for (const raw of rows) {', "browser virtual rows");
 ledger = replaceOne(ledger, '    return rows\n      .filter((row) => !row?.is_virtual)\n      .map((row) => normalizeContract(row, "server"))', '    return rows\n      .map((row) => normalizeContract(row, "server"))', "server virtual rows");
 ledger = replaceOne(ledger, "  function contracts() {\n    const key = accountKey();", '  function contracts() {\n    if (Date.now() < Number(window.__DERIVADMIN_RESET_PENDING_UNTIL || 0)) return [];\n    const key = accountKey();', "reset latch");
-ledger = replaceOne(
+if (!ledger.includes("function spotDigit")) ledger = replaceOne(
   ledger,
   '  function money(value) { return `${finite(value, 0).toFixed(2)} USD`; }\n  function isSettled(row) { return String(row?.state || "").toUpperCase() === "SETTLED" || Boolean(row?.outcome); }',
-  '  function money(value) { return `${finite(value, 0).toFixed(2)} USD`; }\n  function spotDigit(value, symbol = "", explicit = null) {\n    // The quote is the source of truth. Some old persisted rows accidentally\n    // carried a default exit digit of 0 even when their settlement quote differed.\n    const hasSpot = value !== null && value !== undefined && value !== "";\n    const precisionDigit = hasSpot ? window.DERIVADMIN_DIRECT_PIP_PRECISION_V1?.last_digit?.(symbol, value) : null;\n    if (Number.isInteger(precisionDigit) && precisionDigit >= 0 && precisionDigit <= 9) return String(precisionDigit);\n    const explicitDigit = Number(explicit);\n    if (Number.isInteger(explicitDigit) && explicitDigit >= 0 && explicitDigit <= 9) return String(explicitDigit);\n    if (!hasSpot) return null;\n    const digits = String(value).trim().replace(/[^0-9]/g, "");\n    return digits ? digits[digits.length - 1] : null;\n  }\n  function isSettled(row) { return String(row?.state || "").toUpperCase() === "SETTLED" || Boolean(row?.outcome); }',
-  "provider quote wins over stale stored digit",
+  '  function money(value) { return `${finite(value, 0).toFixed(2)} USD`; }\n  function spotDigit(value, symbol = "", explicit = null) {\n    const hasExplicit = explicit !== null && explicit !== undefined && explicit !== "";\n    const explicitDigit = hasExplicit ? Number(explicit) : NaN;\n    if (Number.isInteger(explicitDigit) && explicitDigit >= 0 && explicitDigit <= 9) return String(explicitDigit);\n    if (typeof value === "string") {\n      const digits = value.trim().replace(/[^0-9]/g, "");\n      if (digits) return digits[digits.length - 1];\n    }\n    const precisionDigit = value !== null && value !== undefined && value !== "" ? window.DERIVADMIN_DIRECT_PIP_PRECISION_V1?.last_digit?.(symbol, value) : null;\n    return Number.isInteger(precisionDigit) && precisionDigit >= 0 && precisionDigit <= 9 ? String(precisionDigit) : null;\n  }\n  function isSettled(row) { return String(row?.state || "").toUpperCase() === "SETTLED" || Boolean(row?.outcome); }',
+  "provider settlement digit authority",
 );
-ledger = replaceOne(
+if (!ledger.includes("spotDigit(row.entry_spot, row.symbol, row.entry_digit)")) ledger = replaceOne(
   ledger,
   '    const entry = row.entry_spot ?? "—";\n    const exit = settled ? (row.exit_spot ?? "—") : "OPEN";',
   '    const entry = spotDigit(row.entry_spot) ?? "—";\n    const exit = settled ? (spotDigit(row.exit_spot) ?? "—") : "OPEN";',
   "entry exit exact digit display",
 );
-ledger = replaceOne(ledger, "spotDigit(row.entry_spot)", "spotDigit(row.entry_spot, row.symbol, row.entry_digit)", "entry provider digit");
-ledger = replaceOne(ledger, "spotDigit(row.exit_spot)", "spotDigit(row.exit_spot, row.symbol, row.actual_last_digit)", "exit provider digit");
+if (ledger.includes("spotDigit(row.entry_spot)")) ledger = replaceOne(ledger, "spotDigit(row.entry_spot)", "spotDigit(row.entry_spot, row.symbol, row.entry_digit)", "entry provider digit");
+if (ledger.includes("spotDigit(row.exit_spot)")) ledger = replaceOne(ledger, "spotDigit(row.exit_spot)", "spotDigit(row.exit_spot, row.symbol, row.actual_last_digit)", "exit provider digit");
 ledger = replaceOne(
   ledger,
   '    const pl = settled ? `${profit >= 0 ? "+" : ""}${money(profit)}` : "OPEN";',

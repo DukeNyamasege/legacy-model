@@ -143,52 +143,6 @@ html, body {
   width: 17px;
   height: 17px;
 }
-.paid-soon-banner {
-  width: min(940px, calc(100% - 24px));
-  margin: 10px auto 4px;
-  display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  padding: 13px 14px;
-  border: 1px solid rgba(0, 186, 255, .48);
-  border-radius: 16px;
-  background: linear-gradient(135deg, rgba(7, 35, 70, .96), rgba(4, 18, 39, .98));
-  box-shadow: inset 0 0 30px rgba(0, 151, 255, .14), 0 12px 30px rgba(0, 0, 0, .18);
-}
-.paid-soon-banner > span {
-  width: 40px;
-  height: 40px;
-  display: grid;
-  place-items: center;
-  border-radius: 13px;
-  color: #21d6ff;
-  background: rgba(0, 151, 255, .16);
-  border: 1px solid rgba(0, 186, 255, .42);
-}
-.paid-soon-banner svg {
-  width: 23px;
-  height: 23px;
-}
-.paid-soon-banner b {
-  color: #fff;
-  font-size: 15px;
-}
-.paid-soon-banner p {
-  margin: 4px 0 0;
-  color: #a9b9d7;
-  font-size: 12px;
-  line-height: 1.45;
-}
-.paid-soon-banner button {
-  min-width: 66px;
-  height: 38px;
-  border: 1px solid rgba(86, 211, 255, .54);
-  border-radius: 10px;
-  background: linear-gradient(120deg, #00b7ff, #075ee2);
-  color: #fff;
-  font-weight: 900;
-}
 .top-account-switch {
   width: min(220px, 56vw);
   min-height: 46px;
@@ -508,18 +462,6 @@ html[data-theme="light"] .account-dropdown-row {
 html[data-theme="light"] .account-dropdown-row strong,
 html[data-theme="light"] .account-dropdown-row em {
   color: #102033;
-}
-html[data-theme="light"] .paid-soon-banner {
-  background: linear-gradient(135deg, rgba(255, 255, 255, .98), rgba(230, 241, 255, .98));
-  border-color: rgba(34, 113, 188, .36);
-  color: #102033;
-  box-shadow: inset 0 0 24px rgba(0, 118, 214, .08), 0 12px 28px rgba(24, 82, 140, .10);
-}
-html[data-theme="light"] .paid-soon-banner b {
-  color: #102033;
-}
-html[data-theme="light"] .paid-soon-banner p {
-  color: #51677d;
 }
 html[data-theme="light"] .bottom-nav {
   background: rgba(245, 250, 255, .96);

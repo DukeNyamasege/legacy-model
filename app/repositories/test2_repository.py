@@ -1172,6 +1172,9 @@ class Test2Repository:
         entry_tick: float | None,
         exit_tick: float | None,
         exit_digit: int | None,
+        entry_spot_display: str | None = None,
+        exit_spot_display: str | None = None,
+        entry_digit: int | None = None,
         buy_price: float | None = None,
         payout: float | None = None,
         app_markup_amount: float | None = None,
@@ -1221,6 +1224,9 @@ class Test2Repository:
             trade.outcome = outcome.upper()
             trade.entry_tick = entry_tick
             trade.exit_tick = exit_tick
+            trade.entry_spot_display = entry_spot_display
+            trade.exit_spot_display = exit_spot_display
+            trade.entry_digit = entry_digit
             trade.exit_digit = exit_digit
             if buy_price is not None:
                 trade.buy_price = buy_price
@@ -2002,7 +2008,11 @@ class Test2Repository:
                     "commission": trade.commission,
                     "entry_tick": trade.entry_tick,
                     "exit_tick": trade.exit_tick,
+                    "entry_spot": trade.entry_spot_display or trade.entry_tick,
+                    "exit_spot": trade.exit_spot_display or trade.exit_tick,
+                    "entry_digit": trade.entry_digit,
                     "exit_digit": trade.exit_digit,
+                    "actual_last_digit": trade.exit_digit,
                     "closure_summary": (
                         f"{trade.outcome} exit digit {trade.exit_digit}"
                         if trade.settlement_time is not None and trade.exit_digit is not None

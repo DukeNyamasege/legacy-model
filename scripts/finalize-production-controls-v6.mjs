@@ -128,11 +128,11 @@ write("final-ui-shell-v2.js", shell);
 let index = read("index.html");
 index = index.replace(
   /\/final-premium-6f3\.js\?v=[^"']+/g,
-  "/final-premium-6f3.js?v=20260818-production-v6",
+  "/final-premium-6f3.js?v=20260819-production-blocks-v14",
 );
 index = index.replace(
   /\/public-testing-runtime-v1\.js\?v=[^"']+(?:&amp;hotfix=\d+)?/g,
-  "/public-testing-runtime-v1.js?v=20260818-access-only-v7",
+  "/public-testing-runtime-v1.js?v=20260819-banner-removed-v6",
 );
 write("index.html", index);
 

@@ -124,7 +124,7 @@ class ExecutionStopReasonAuthorityTests(unittest.TestCase):
         self.assertIn("state.lifecycle", shell)
         self.assertIn("state.lifecycle?.lifecycle", shell)
         self.assertNotIn('<script src="/final-ui-shell-v2.js?v=20260817-6f2-1" defer>', index)
-        self.assertIn('/final-ui-shell-v2.js?v=20260818-local-ui-12', premium)
+        self.assertIn('/final-ui-shell-v2.js?v=20260819-block-workspace-v13', premium)
         self.assertNotIn('/final-ui-shell-v1.js', index)
 
 

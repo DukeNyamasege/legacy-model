@@ -768,13 +768,42 @@
     }
   }
 
+  function contractSpot(contract, side) {
+    const direct = side === "entry" ? contract?.entry_spot : contract?.exit_spot;
+    if (typeof direct === "string" && direct.trim()) return direct.trim();
+
+    const ticks = Array.isArray(contract?.tick_stream) ? contract.tick_stream : [];
+    const tick = side === "entry" ? ticks[0] : ticks[ticks.length - 1];
+    if (tick?.tick_display_value !== null && tick?.tick_display_value !== undefined && tick?.tick_display_value !== "") {
+      return String(tick.tick_display_value);
+    }
+
+    const legacyDisplay = side === "entry"
+      ? contract?.entry_tick_display_value
+      : contract?.exit_tick_display_value;
+    if (legacyDisplay !== null && legacyDisplay !== undefined && legacyDisplay !== "") return String(legacyDisplay);
+    if (direct !== null && direct !== undefined && direct !== "") return direct;
+
+    const legacyNumeric = side === "entry" ? contract?.entry_tick : contract?.exit_tick;
+    return legacyNumeric !== null && legacyNumeric !== undefined && legacyNumeric !== "" ? legacyNumeric : null;
+  }
+
+  function contractDigit(value, symbol) {
+    if (typeof value === "string") {
+      const digits = value.trim().replace(/[^0-9]/g, "");
+      if (digits) return Number(digits[digits.length - 1]);
+    }
+    const digit = window.DERIVADMIN_DIRECT_PIP_PRECISION_V1?.last_digit?.(symbol, value);
+    return Number.isInteger(digit) && digit >= 0 && digit <= 9 ? digit : null;
+  }
+
   function onContractUpdate(contract) {
     const contractId = String(contract?.contract_id || "");
     if (!contractId || !state.openContracts.has(contractId)) return;
     const sold = Boolean(contract?.is_sold) || ["won", "lost", "sold"].includes(String(contract?.status || "").toLowerCase());
     const open = state.openContracts.get(contractId);
-    const entrySpot = contract?.entry_tick ?? contract?.entry_tick_display_value ?? contract?.entry_spot ?? open.entrySpot ?? null;
-    const exitSpot = contract?.exit_tick ?? contract?.exit_tick_display_value ?? contract?.exit_spot ?? contract?.sell_spot ?? null;
+    const entrySpot = contractSpot(contract, "entry") ?? open.entrySpot ?? null;
+    const exitSpot = contractSpot(contract, "exit");
     if (entrySpot !== null && entrySpot !== undefined && entrySpot !== "") open.entrySpot = entrySpot;
     if (!sold) return;
     state.openContracts.delete(contractId);
@@ -788,7 +817,10 @@
     } else if (profit > 0) {
       emitBalanceUpdate({ delta: open.stake + profit, reason: "settlement", contract_id: contractId });
     }
-    const outcome = profit >= 0 ? "WIN" : "LOSS";
+    const providerStatus = String(contract?.status || "").toLowerCase();
+    const outcome = providerStatus === "won" ? "WIN" : providerStatus === "lost" ? "LOSS" : (profit > 0 ? "WIN" : "LOSS");
+    const entryDigit = contractDigit(entrySpot, open.symbol);
+    const exitDigit = contractDigit(exitSpot, open.symbol);
     state.sessionProfit = Math.round((state.sessionProfit + profit) * 100000000) / 100000000;
     if (profit < 0) {
       state.consecutiveLosses += 1;
@@ -813,8 +845,10 @@
       profit,
       session_profit: state.sessionProfit,
       entry_spot: entrySpot,
-      exit_spot: exitSpot ?? contract?.current_spot ?? null,
-      actual_last_digit: contract?.exit_tick ?? contract?.exit_tick_display_value ?? contract?.actual_last_digit ?? contract?.exit_digit ?? null,
+      exit_spot: exitSpot,
+      entry_digit: entryDigit,
+      actual_last_digit: exitDigit,
+      provider_settlement: true,
     });
 
     const hook = state.strategy?.virtual_hook;

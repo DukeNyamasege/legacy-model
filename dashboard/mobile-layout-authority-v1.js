@@ -5,10 +5,11 @@
   window.__DERIVADMIN_MOBILE_LAYOUT_AUTHORITY_V1__ = true;
 
   /*
-   * Final mobile layout authority.
+   * Final responsive layout authority.
    *
    * 1. The Run statistics stay fully visible above Start/Stop.
-   * 2. A collapsed Run panel always keeps a dedicated visible reopen handle.
+   * 2. A collapsed Run panel always keeps a dedicated visible reopen handle on
+   *    both desktop and mobile layouts.
    * 3. The Strategy Builder is width-contained on phones: no negative/off-screen
    *    placement, no fixed-width grid child can push left/right, and all controls
    *    remain reachable through the normal vertical page scroll.
@@ -22,13 +23,14 @@
     if (!panel) return;
 
     let handle = panel.querySelector(".run-panel-reopen-v1");
+    const mobile = window.matchMedia("(max-width: 900px)").matches;
+
     if (!handle) {
       handle = document.createElement("button");
       handle.type = "button";
       handle.className = "run-panel-reopen-v1";
       handle.dataset.runPanelToggle = "";
       handle.setAttribute("aria-label", "Expand run panel");
-      handle.innerHTML = `<span aria-hidden="true">⌃</span><b>Run panel</b>`;
       handle.addEventListener("click", (event) => {
         event.preventDefault();
         const currentPanel = handle.closest(".global-run-panel");
@@ -43,7 +45,11 @@
     }
 
     const collapsed = panel.classList.contains("collapsed") && !panel.classList.contains("open");
+    handle.innerHTML = mobile
+      ? `<span aria-hidden="true">^</span><b>Run panel</b>`
+      : `<span aria-hidden="true">&gt;</span><b>Run panel</b>`;
     handle.setAttribute("aria-label", collapsed ? "Expand run panel" : "Collapse run panel");
+    handle.setAttribute("title", collapsed ? "Expand run panel" : "Collapse run panel");
   }
 
   function scheduleEnsure() {
@@ -78,6 +84,7 @@
     .global-run-panel,
     .global-run-panel *{box-sizing:border-box}
 
+    @media(max-width:900px){
     .global-run-panel.open{
       display:flex!important;
       flex-direction:column!important;
@@ -154,6 +161,71 @@
       font:inherit!important;
       cursor:pointer!important;
     }
+    }
+    @media(min-width:901px){
+      .global-run-panel.collapsed .run-panel-reopen-v1{
+        display:flex!important;
+        position:absolute!important;
+        top:0!important;
+        right:0!important;
+        left:auto!important;
+        bottom:48px!important;
+        width:48px!important;
+        min-width:48px!important;
+        height:auto!important;
+        z-index:194!important;
+        flex-direction:column!important;
+        align-items:center!important;
+        justify-content:center!important;
+        gap:10px!important;
+        padding:10px 0!important;
+        color:var(--camera-text,#dff4ff)!important;
+        background:var(--camera-surface-2,#082142)!important;
+        border:0!important;
+        border-left:1px solid var(--camera-line-strong,rgba(73,174,255,.42))!important;
+        border-right:1px solid var(--camera-line-strong,rgba(73,174,255,.42))!important;
+        box-shadow:8px 0 24px rgba(0,0,0,.22)!important;
+      }
+      .global-run-panel.collapsed .run-panel-reopen-v1 span{
+        display:grid!important;
+        place-items:center!important;
+        width:28px!important;
+        height:28px!important;
+        border:1px solid var(--camera-line-strong,rgba(73,174,255,.42))!important;
+        border-radius:50%!important;
+        color:var(--camera-blue,#66d8ff)!important;
+        font-size:22px!important;
+        line-height:1!important;
+      }
+      .global-run-panel.collapsed .run-panel-reopen-v1 b{
+        writing-mode:vertical-rl!important;
+        transform:rotate(180deg)!important;
+        color:var(--camera-text,#dff4ff)!important;
+        font-size:12px!important;
+        line-height:1!important;
+        letter-spacing:0!important;
+      }
+      .global-run-panel.open .run-panel-reopen-v1{display:none!important}
+      .global-run-panel.open .run-panel-chevron{
+        width:auto!important;
+        min-width:112px!important;
+        padding:0 12px!important;
+        display:inline-flex!important;
+        align-items:center!important;
+        justify-content:center!important;
+        gap:7px!important;
+        border:1px solid var(--camera-line-strong,rgba(73,174,255,.42))!important;
+        border-radius:4px!important;
+        background:var(--camera-surface,#0a2039)!important;
+        color:var(--camera-text,#f4fbff)!important;
+      }
+      .global-run-panel.open .run-panel-chevron::after{
+        content:"Collapse"!important;
+        font-size:12px!important;
+        font-weight:800!important;
+      }
+    }
+    @media(max-width:900px){
     .global-run-panel.collapsed{
       position:fixed!important;
       left:0!important;
@@ -217,6 +289,7 @@
     .global-run-panel.collapsed .run-panel-run{
       min-height:52px!important;
       height:52px!important;
+    }
     }
 
     /* --------------------------------------------------------------------- */
