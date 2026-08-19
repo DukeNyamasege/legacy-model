@@ -47,6 +47,7 @@
     inFlight: false,
     openContracts: new Map(),
     virtualPending: null,
+    virtualNextEntryAtBySymbol: new Map(),
     virtualMode: false,
     virtualWins: 0,
     consecutiveLosses: 0,
@@ -416,11 +417,14 @@
       symbol: pending.symbol,
       trade_type: pending.tradeType,
       prediction: pending.prediction,
+      entry_quote: pending.entryQuote,
+      exit_quote: history.quotes[history.quotes.length - 1],
       stake: 0,
       outcome: won ? "WIN" : "LOSS",
       profit: 0,
       amount_charged: 0,
     });
+    state.virtualNextEntryAtBySymbol.set(pending.symbol, Date.now() + 3000);
     if (won) state.virtualWins += 1;
     else state.virtualWins = 0;
     const needed = clampInt(state.strategy?.virtual_hook?.exit_after_consecutive_wins, 1, 50, 1);
@@ -431,6 +435,7 @@
   }
 
   function beginVirtual(symbol, history) {
+    if (Date.now() < Number(state.virtualNextEntryAtBySymbol.get(symbol) || 0)) return;
     const latest = history.quotes[history.quotes.length - 1];
     state.virtualPending = {
       id: `virtual-${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -447,6 +452,7 @@
       symbol,
       trade_type: state.strategy.trade_type,
       prediction: state.strategy.prediction,
+      entry_quote: latest,
       stake: 0,
       profit: 0,
       amount_charged: 0,
@@ -456,11 +462,12 @@
 
   function advanceVirtual(symbol, history) {
     const pending = state.virtualPending;
-    if (!pending || pending.symbol !== symbol) return;
+    if (!pending || pending.symbol !== symbol) return false;
     pending.remaining -= 1;
-    if (pending.remaining > 0) return;
+    if (pending.remaining > 0) return false;
     state.virtualPending = null;
     settleVirtual(history, pending);
+    return true;
   }
 
   function handleWsMessage(kind, event) {
@@ -805,7 +812,7 @@
     const history = recordTick(symbol, tick);
     if (!history || !state.running || !state.strategy || state.ownerLost) return;
     if (!state.strategy.markets.includes(symbol)) return;
-    if (state.virtualPending) advanceVirtual(symbol, history);
+    if (state.virtualPending && advanceVirtual(symbol, history)) return;
     if (state.virtualPending || state.inFlight || state.openContracts.size) return;
     if (!strategyMatches(history)) return;
     if (state.virtualMode) beginVirtual(symbol, history);
@@ -914,6 +921,7 @@
     state.subscribedMarkets.clear();
     state.inFlight = false;
     state.virtualPending = null;
+    state.virtualNextEntryAtBySymbol.clear();
     state.virtualMode = false;
     state.virtualWins = 0;
     state.consecutiveLosses = 0;
@@ -960,6 +968,7 @@
     state.armed = false;
     state.inFlight = false;
     state.virtualPending = null;
+    state.virtualNextEntryAtBySymbol.clear();
     clearInterval(state.heartbeatTimer);
     state.heartbeatTimer = null;
     updateRunUI();

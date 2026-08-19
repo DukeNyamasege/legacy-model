@@ -58,6 +58,22 @@ class ExecutionContinuityV10Contract(unittest.TestCase):
             "actual-only financial KPI loop",
         ):
             self.assertIn(marker, finalizer)
+        runtime = self.text("dashboard/deriv-direct-execution-v1.js")
+        self.assertIn("entry_quote: pending.entryQuote", runtime)
+        self.assertIn("exit_quote: history.quotes[history.quotes.length - 1]", runtime)
+        self.assertIn("virtualNextEntryAtBySymbol: new Map()", runtime)
+        self.assertIn("state.virtualNextEntryAtBySymbol.set(pending.symbol, Date.now() + 3000)", runtime)
+        self.assertIn("Date.now() < Number(state.virtualNextEntryAtBySymbol.get(symbol) || 0)", runtime)
+        self.assertIn("if (state.virtualPending && advanceVirtual(symbol, history)) return;", runtime)
+        self.assertIn("return true;", runtime.split("function advanceVirtual", 1)[1])
+        compiler = self.text("scripts/build-direct-runtime-v2.mjs")
+        self.assertIn("entry_quote: latest", compiler)
+        self.assertIn("virtualNextEntryAtBySymbol.get(symbol)", compiler)
+        self.assertIn("row?.entry_quote", finalizer)
+        self.assertIn("row?.exit_quote", finalizer)
+        self.assertIn("function spotDigit", finalizer)
+        self.assertIn("const entry = spotDigit(row.entry_spot)", finalizer)
+        self.assertIn("const exit = settled ? (spotDigit(row.exit_spot)", finalizer)
 
     def test_start_flow_survives_shell_rerender_without_second_human_attempt(self) -> None:
         finalizer = self.text("scripts/finalize-execution-continuity-v1.mjs")

@@ -207,6 +207,18 @@ ledger = replaceOne(ledger, '    return rows\n      .filter((row) => !row?.is_vi
 ledger = replaceOne(ledger, "  function contracts() {\n    const key = accountKey();", '  function contracts() {\n    if (Date.now() < Number(window.__DERIVADMIN_RESET_PENDING_UNTIL || 0)) return [];\n    const key = accountKey();', "reset latch");
 ledger = replaceOne(
   ledger,
+  '  function money(value) { return `${finite(value, 0).toFixed(2)} USD`; }\n  function isSettled(row) { return String(row?.state || "").toUpperCase() === "SETTLED" || Boolean(row?.outcome); }',
+  '  function money(value) { return `${finite(value, 0).toFixed(2)} USD`; }\n  function spotDigit(value) {\n    if (value === null || value === undefined || value === "") return null;\n    const digits = String(value).trim().replace(/[^0-9]/g, "");\n    return digits ? digits[digits.length - 1] : null;\n  }\n  function isSettled(row) { return String(row?.state || "").toUpperCase() === "SETTLED" || Boolean(row?.outcome); }',
+  "entry exit digit helper",
+);
+ledger = replaceOne(
+  ledger,
+  '    const entry = row.entry_spot ?? "—";\n    const exit = settled ? (row.exit_spot ?? "—") : "OPEN";',
+  '    const entry = spotDigit(row.entry_spot) ?? "—";\n    const exit = settled ? (spotDigit(row.exit_spot) ?? "—") : "OPEN";',
+  "entry exit exact digit display",
+);
+ledger = replaceOne(
+  ledger,
   '    const pl = settled ? `${profit >= 0 ? "+" : ""}${money(profit)}` : "OPEN";',
   '    const virtual = String(row?.mode || "").toLowerCase() === "virtual";\n    const pl = virtual ? `VIRTUAL ${String(row.outcome || "OBSERVING").toUpperCase()}` : (settled ? `${profit >= 0 ? "+" : ""}${money(profit)}` : "OPEN");\n    const shownType = virtual ? `VIRTUAL · ${typeLabel(row)}` : typeLabel(row);',
   "virtual row presentation",
