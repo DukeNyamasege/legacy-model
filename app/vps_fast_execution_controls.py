@@ -49,7 +49,7 @@ def _current_account(request: Request) -> dict[str, Any]:
 
 
 def _reset_risk_state_bounded(session: Any, managed_id: int) -> None:
-    """Reset only the one account risk row; never scan unrelated account data."""
+    """Reset one account's financial state for an explicit fresh Start only."""
 
     state = session.get(AccountRiskState, int(managed_id))
     if state is None:
@@ -73,7 +73,7 @@ def _reset_risk_state_bounded(session: Any, managed_id: int) -> None:
 
 
 def _delete_runtime_preferences_bounded(session: Any, managed_id: int) -> int:
-    """Delete only this account's known recovery keys with one SQL DELETE."""
+    """Delete one account's recovery keys for an explicit fresh Start only."""
 
     prefixes = (
         f"aidr_split_remaining:{managed_id}",
@@ -93,9 +93,6 @@ def _delete_runtime_preferences_bounded(session: Any, managed_id: int) -> int:
 def _mark_stopped_now(request: Request, *, status: str, reason: str) -> tuple[int, str, str]:
     account = _current_account(request)
     managed_id = int(account["id"])
-    # Deliberately avoid SELECT ... FOR UPDATE here. The only authority needed to
-    # stop new purchases is enabled=False + a terminal lifecycle status. Keeping
-    # this transaction tiny lets the manual-stop BUY guard observe it immediately.
     with base_api.DATABASE.session() as session:
         row = session.get(ManagedAccount, managed_id)
         if row is None:
@@ -105,8 +102,6 @@ def _mark_stopped_now(request: Request, *, status: str, reason: str) -> tuple[in
         row.execution_status_reason = reason[:160]
         row.execution_status_updated_at = utc_now()
         row.updated_at = utc_now()
-    # Never let a previously cached enabled=True / RUNNING payload overwrite the
-    # just-committed financial stop on the next dashboard render.
     try:
         performance._clear_response_caches()
     except Exception:
@@ -123,7 +118,6 @@ def _audit(event: str, client_host: str, payload: dict[str, Any]) -> None:
     try:
         base_api.REPOSITORY.audit(event, "personal_dashboard", client_host, payload)
     except Exception:
-        # Background audit transport must never affect execution controls.
         pass
 
 
@@ -132,9 +126,6 @@ def install_vps_fast_execution_controls(app: Any) -> None:
     if _INSTALLED:
         return
 
-    # Capture the current Custom Strategy auto-trade route so enabled=True keeps
-    # the canonical start/preflight implementation. Only enabled=False is replaced
-    # by the immediate durable Stop authority below.
     original_auto = _remove_route(app, "/me/auto-trade", "POST")
     _remove_route(app, "/me/stop-trading", "POST")
     _remove_route(app, "/me/pause-trading", "POST")
@@ -145,7 +136,7 @@ def install_vps_fast_execution_controls(app: Any) -> None:
         managed_id, _account_type, client_host = _mark_stopped_now(
             request,
             status="stopped",
-            reason="Auto trading stopped. No new proposal or BUY is permitted until Start.",
+            reason="Auto trading stopped manually. No new proposal or BUY is permitted until Start.",
         )
         background_tasks.add_task(
             _audit,
@@ -168,7 +159,7 @@ def install_vps_fast_execution_controls(app: Any) -> None:
         managed_id, _account_type, client_host = _mark_stopped_now(
             request,
             status="manual_pause",
-            reason="Auto trading paused. No new proposal or BUY is permitted until Resume.",
+            reason="Auto trading paused manually. No new proposal or BUY is permitted until Resume.",
         )
         background_tasks.add_task(
             _audit,
@@ -242,10 +233,12 @@ def install_vps_fast_execution_controls(app: Any) -> None:
 
             trade_result = session.execute(delete(Trade).where(trade_filter))
             virtual_result = session.execute(delete(VirtualTrade).where(virtual_filter))
-            _reset_risk_state_bounded(session, managed_id)
-            removed_preferences = _delete_runtime_preferences_bounded(session, managed_id)
+            # HISTORY ONLY. Never reset AccountRiskState, recovery debt, Split
+            # progress, Virtual Hook counters, TP/SL session P/L, or execution
+            # lifecycle here. Those remain financial state until recovered or an
+            # explicit fresh Start intentionally starts a new session.
             row.execution_status_reason = (
-                f"{scope.title()} run history reset from the main Run panel."
+                f"{scope.title()} visible run history cleared; financial execution state preserved."
             )[:160]
             row.execution_status_updated_at = utc_now()
             row.updated_at = utc_now()
@@ -266,7 +259,7 @@ def install_vps_fast_execution_controls(app: Any) -> None:
                 "scope": scope,
                 "deleted_trades": deleted_trades,
                 "deleted_virtual_trades": deleted_virtual,
-                "removed_runtime_preferences": removed_preferences,
+                "financial_state_preserved": True,
             },
         )
         try:
@@ -278,8 +271,10 @@ def install_vps_fast_execution_controls(app: Any) -> None:
             "scope": scope,
             "deleted_trades": deleted_trades,
             "deleted_virtual_trades": deleted_virtual,
-            "message": "Run panel reset complete.",
+            "financial_state_preserved": True,
+            "message": "Run history cleared. Recovery and risk state continue unchanged.",
         }
 
     app.state.vps_fast_execution_controls_installed = True
+    app.state.clear_trades_policy = "history_only_financial_state_preserved"
     _INSTALLED = True
