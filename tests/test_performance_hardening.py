@@ -9,9 +9,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class PerformanceHardeningSourceTests(unittest.TestCase):
     def test_worker_uses_bounded_account_connection_concurrency(self) -> None:
-        source = (ROOT / "app" / "rf_dir5_bot.py").read_text(encoding="utf-8")
-        self.assertIn("ACCOUNT_CONNECTION_CONCURRENCY", source)
-        self.assertIn("asyncio.Semaphore", source)
+        source = (ROOT / "app" / "vps_low_latency_runtime.py").read_text(encoding="utf-8")
+        compose = (ROOT / "docker-compose.vps.yml").read_text(encoding="utf-8")
+        self.assertIn("class _VpsBootstrapScheduler", source)
+        self.assertIn("asyncio.Condition", source)
+        self.assertIn('VPS_PRIVATE_WS_BOOTSTRAP_CONCURRENCY', source)
+        self.assertIn("otp_and_wss_atomic=true", source)
+        self.assertIn("VPS_PRIVATE_WS_BOOTSTRAP_CONCURRENCY", compose)
 
     def test_provider_requests_use_shared_broker(self) -> None:
         source = (ROOT / "app" / "deriv_request_broker.py").read_text(encoding="utf-8")
