@@ -1,7 +1,8 @@
 (() => {
   "use strict";
 
-  if (window.__DERIVADMIN_RUN_PANEL_USABILITY_V2__) return;
+  const VERSION = "20260819-run-panel-usability-v3-mobile-summary-lane";
+  if (window.DERIVADMIN_RUN_PANEL_USABILITY_V2?.version === VERSION) return;
   window.__DERIVADMIN_RUN_PANEL_USABILITY_V2__ = true;
 
   /* Presentation/safety only. Trading ownership stays with the direct engine. */
@@ -62,6 +63,7 @@
   window.addEventListener("derivadmin:hard-stop-cleared", queueSync);
   window.addEventListener("derivadmin:direct-trade", queueSync);
 
+  document.getElementById("run-panel-usability-v2-style")?.remove();
   const style = document.createElement("style");
   style.id = "run-panel-usability-v2-style";
   style.textContent = `
@@ -74,7 +76,10 @@
       pointer-events:none!important;
     }
 
-    /* On phones, keep primary navigation visible above the bottom-sheet control. */
+    /* Mobile Run-panel vertical stack is deliberately non-overlapping:
+       content/summary -> primary navigation -> Start/Stop. The navigation stays
+       fixed for reachability, while the open sheet reserves its full physical
+       lane so both rows of the six-card Summary grid remain visible. */
     @media(max-width:900px){
     html[data-run-panel-visibility="open"] .bottom-nav,
     html[data-run-panel-visibility="collapsed"] .bottom-nav{
@@ -83,12 +88,25 @@
       right:0!important;
       width:100%!important;
       max-width:100vw!important;
+      min-height:72px!important;
       z-index:420!important;
       pointer-events:auto!important;
       transform:none!important;
     }
     html[data-run-panel-visibility="open"] .bottom-nav{
       bottom:calc(52px + env(safe-area-inset-bottom, 0px))!important;
+    }
+    html[data-run-panel-visibility="open"] .global-run-panel.open .run-panel-sheet{
+      padding-bottom:calc(72px + env(safe-area-inset-bottom, 0px))!important;
+    }
+    html[data-run-panel-visibility="open"] .global-run-panel.open .run-panel-stats{
+      flex:0 0 auto!important;
+      min-height:106px!important;
+      height:auto!important;
+      max-height:none!important;
+      overflow:visible!important;
+      position:relative!important;
+      z-index:2!important;
     }
     html[data-run-panel-visibility="collapsed"] .bottom-nav{
       bottom:calc(88px + env(safe-area-inset-bottom, 0px))!important;
@@ -189,7 +207,7 @@
   document.head.appendChild(style);
 
   queueSync();
-  const api = Object.freeze({ version: "20260818-run-panel-usability-v2", refresh: queueSync });
+  const api = Object.freeze({ version: VERSION, refresh: queueSync });
   window.DERIVADMIN_RUN_PANEL_USABILITY_V1 = api;
   window.DERIVADMIN_RUN_PANEL_USABILITY_V2 = api;
 })();
