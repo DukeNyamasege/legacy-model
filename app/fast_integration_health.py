@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.route_utils import remove_route as _remove_route
+
 import copy
 import os
 import time
@@ -15,16 +17,6 @@ from app.production_integration_hardening import _validate_oauth_configuration
 _INSTALLED = False
 
 
-def _remove_route(app: Any, path: str, method: str) -> None:
-    expected = method.upper()
-    app.router.routes[:] = [
-        route
-        for route in app.router.routes
-        if not (
-            getattr(route, "path", None) == path
-            and expected in set(getattr(route, "methods", set()) or set())
-        )
-    ]
 
 
 def install_fast_integration_health(app: Any) -> None:

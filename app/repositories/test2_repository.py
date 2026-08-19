@@ -240,6 +240,33 @@ class Test2Repository:
         with self.database.session() as session:
             return int(session.scalar(select(func.count(ManagedAccount.id))) or 0)
 
+    @staticmethod
+    def _managed_account_payload(
+        row: ManagedAccount,
+        *,
+        include_secret: bool = False,
+        serialize_timestamps: bool = True,
+    ) -> dict[str, Any]:
+        created_at = row.created_at.isoformat() if serialize_timestamps else row.created_at
+        updated_at = row.updated_at.isoformat() if serialize_timestamps else row.updated_at
+        payload: dict[str, Any] = {
+            "id": int(row.id),
+            "label": row.label,
+            "enabled": bool(row.enabled),
+            "stake_amount": float(row.stake_amount),
+            "take_profit": float(row.take_profit),
+            "stop_loss": float(row.stop_loss),
+            "martingale_enabled": bool(row.martingale_enabled),
+            "execution_status": row.execution_status,
+            "execution_status_reason": row.execution_status_reason,
+            "created_at": created_at,
+            "updated_at": updated_at,
+        }
+        if include_secret:
+            payload["token_secret"] = row.token_secret
+            payload["execution_status_updated_at"] = row.execution_status_updated_at
+        return payload
+
     def add_managed_account(
         self, *, label: str, token_secret: str, enabled: bool = True
     ) -> dict[str, Any]:
@@ -251,19 +278,7 @@ class Test2Repository:
             )
             session.add(row)
             session.flush()
-            return {
-                "id": int(row.id),
-                "label": row.label,
-                "enabled": bool(row.enabled),
-                "stake_amount": float(row.stake_amount),
-                "take_profit": float(row.take_profit),
-                "stop_loss": float(row.stop_loss),
-                "martingale_enabled": bool(row.martingale_enabled),
-                "execution_status": row.execution_status,
-                "execution_status_reason": row.execution_status_reason,
-                "created_at": row.created_at.isoformat(),
-                "updated_at": row.updated_at.isoformat(),
-            }
+            return self._managed_account_payload(row)
 
     def update_managed_account(
         self,
@@ -284,40 +299,18 @@ class Test2Repository:
             if enabled is not None:
                 row.enabled = bool(enabled)
             row.updated_at = utc_now()
-            return {
-                "id": int(row.id),
-                "label": row.label,
-                "enabled": bool(row.enabled),
-                "stake_amount": float(row.stake_amount),
-                "take_profit": float(row.take_profit),
-                "stop_loss": float(row.stop_loss),
-                "martingale_enabled": bool(row.martingale_enabled),
-                "execution_status": row.execution_status,
-                "execution_status_reason": row.execution_status_reason,
-                "created_at": row.created_at.isoformat(),
-                "updated_at": row.updated_at.isoformat(),
-            }
+            return self._managed_account_payload(row)
 
     def managed_account(self, account_id: int) -> dict[str, Any] | None:
         with self.database.session() as session:
             row = session.get(ManagedAccount, int(account_id))
             if row is None:
                 return None
-            return {
-                "id": int(row.id),
-                "label": row.label,
-                "token_secret": row.token_secret,
-                "enabled": bool(row.enabled),
-                "stake_amount": float(row.stake_amount),
-                "take_profit": float(row.take_profit),
-                "stop_loss": float(row.stop_loss),
-                "martingale_enabled": bool(row.martingale_enabled),
-                "execution_status": row.execution_status,
-                "execution_status_reason": row.execution_status_reason,
-                "execution_status_updated_at": row.execution_status_updated_at,
-                "created_at": row.created_at,
-                "updated_at": row.updated_at,
-            }
+            return self._managed_account_payload(
+                row,
+                include_secret=True,
+                serialize_timestamps=False,
+            )
 
     def set_managed_account_enabled(self, account_id: int, enabled: bool) -> dict[str, Any]:
         result = self.update_managed_account(account_id, enabled=bool(enabled))

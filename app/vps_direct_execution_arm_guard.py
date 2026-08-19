@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.route_utils import remove_route as _remove_route
+
 """Atomic browser ownership acquisition for direct execution.
 
 The original direct-execution API owns the thin OTP/heartbeat/stop control plane.
@@ -39,16 +41,6 @@ from app.vps_fast_execution_controls import (
 _INSTALLED = False
 
 
-def _remove_route(app: Any, path: str, method: str) -> None:
-    expected = method.upper()
-    app.router.routes[:] = [
-        route
-        for route in app.router.routes
-        if not (
-            getattr(route, "path", None) == path
-            and expected in set(getattr(route, "methods", set()) or set())
-        )
-    ]
 
 
 def install_vps_direct_execution_arm_guard(app: Any) -> None:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.route_utils import remove_route as _remove_route
+
 import re
 from typing import Any
 
@@ -13,16 +15,6 @@ _MAX_WORDS = 250
 _SUPPORTED_MARKET_NUMBERS = (10, 25, 50, 75, 100)
 
 
-def _remove_route(app: Any, path: str, method: str) -> None:
-    expected = method.upper()
-    app.router.routes[:] = [
-        route
-        for route in app.router.routes
-        if not (
-            getattr(route, "path", None) == path
-            and expected in set(getattr(route, "methods", set()) or set())
-        )
-    ]
 
 
 def _words(text: str) -> list[str]:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.route_utils import remove_route as _remove_route
+
 """Keep linked-account discovery off the Full-VPS dashboard request path.
 
 The final 6F-2 selector correctly scopes accounts by Deriv login identity, but its
@@ -29,16 +31,6 @@ _CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _LOCK = threading.RLock()
 
 
-def _remove_route(app: Any, path: str, method: str) -> None:
-    expected = method.upper()
-    app.router.routes[:] = [
-        route
-        for route in app.router.routes
-        if not (
-            getattr(route, "path", None) == path
-            and expected in set(getattr(route, "methods", set()) or set())
-        )
-    ]
 
 
 def _record(managed_id: int) -> dict[str, Any]:

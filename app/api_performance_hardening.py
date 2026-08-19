@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.route_utils import remove_route as _remove_route
+
 import copy
 import threading
 import time
@@ -69,16 +71,6 @@ _IDENTITY_LOCK = threading.RLock()
 _RESPONSE_LOCK = threading.RLock()
 
 
-def _remove_route(app: Any, path: str, method: str) -> None:
-    expected = method.upper()
-    app.router.routes[:] = [
-        route
-        for route in app.router.routes
-        if not (
-            getattr(route, "path", None) == path
-            and expected in set(getattr(route, "methods", set()) or set())
-        )
-    ]
 
 
 def _aware(value: datetime) -> datetime:

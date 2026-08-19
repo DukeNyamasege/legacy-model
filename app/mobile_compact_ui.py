@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.route_utils import remove_route as _remove_route
+
 from typing import Any
 
 from fastapi.responses import Response
@@ -10,16 +12,6 @@ _INSTALLED = False
 UI_COMPACT_VERSION = "20260803-compact-session-nav"
 
 
-def _remove_route(app: Any, path: str, method: str) -> None:
-    expected = method.upper()
-    app.router.routes[:] = [
-        route
-        for route in app.router.routes
-        if not (
-            getattr(route, "path", None) == path
-            and expected in set(getattr(route, "methods", set()) or set())
-        )
-    ]
 
 
 def _compact_mobile_css() -> str:

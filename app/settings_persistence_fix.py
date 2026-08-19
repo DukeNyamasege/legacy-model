@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.route_utils import remove_route as _remove_route
+
 import math
 from typing import Any
 
@@ -28,16 +30,6 @@ class FinalTradingSettingsRequest(BaseModel):
     martingale_max_stake: float = Field(default=1000.0, ge=0.35, le=1_000_000.0)
 
 
-def _remove_route(app: Any, path: str, method: str) -> None:
-    expected = method.upper()
-    app.router.routes[:] = [
-        route
-        for route in app.router.routes
-        if not (
-            getattr(route, "path", None) == path
-            and expected in set(getattr(route, "methods", set()) or set())
-        )
-    ]
 
 
 def _validate_money(value: float, *, name: str, minimum: float, maximum: float) -> float:

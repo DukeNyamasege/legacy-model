@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.route_utils import remove_route as _remove_route
+
 """Full-VPS dashboard/session latency hotfix.
 
 The production VPS keeps trading execution in the worker process. This module only
@@ -20,16 +22,6 @@ from app.token_store import decrypt_auth_payload
 _INSTALLED = False
 
 
-def _remove_route(app: Any, path: str, method: str) -> None:
-    expected = method.upper()
-    app.router.routes[:] = [
-        route
-        for route in app.router.routes
-        if not (
-            getattr(route, "path", None) == path
-            and expected in set(getattr(route, "methods", set()) or set())
-        )
-    ]
 
 
 def _selected_session_account(request: Request) -> dict[str, Any] | None:

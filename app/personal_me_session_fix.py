@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.route_utils import remove_route as _remove_route
+
 from typing import Any
 
 from fastapi import Request
@@ -14,16 +16,6 @@ _INSTALLED = False
 _STALE_TOKEN_STATUSES = {"token_required", "bulk_execution_pat_required"}
 
 
-def _remove_route(app: Any, path: str, method: str) -> None:
-    expected = method.upper()
-    app.router.routes[:] = [
-        route
-        for route in app.router.routes
-        if not (
-            getattr(route, "path", None) == path
-            and expected in set(getattr(route, "methods", set()) or set())
-        )
-    ]
 
 
 def _apply_settled_trade_consistency(payload: dict[str, Any]) -> None:

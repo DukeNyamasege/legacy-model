@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.route_utils import remove_route as _remove_route
+
 """Immediate financial Stop authority for the Full-VPS hybrid runtime.
 
 The user-facing Stop action must not wait behind the worker's ManagedAccount row
@@ -46,16 +48,6 @@ _STOP_PATHS = {
 }
 
 
-def _remove_route(app: Any, path: str, method: str) -> None:
-    expected = method.upper()
-    app.router.routes[:] = [
-        route
-        for route in app.router.routes
-        if not (
-            getattr(route, "path", None) == path
-            and expected in set(getattr(route, "methods", set()) or set())
-        )
-    ]
 
 
 def _current_managed_id(request: Request) -> int:
