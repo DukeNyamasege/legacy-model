@@ -25,6 +25,16 @@ class ExecutionContinuityV10Contract(unittest.TestCase):
             'last_tick_age_ms',
         ):
             self.assertIn(marker, finalizer)
+        self.assertIn("ws.onopen = () => {\\n        state.publicConnectPromise = null;", finalizer)
+        self.assertIn("state.lastPublicMessageAt = Date.now();", finalizer)
+        self.assertIn("state.lastTickAt = Date.now();", finalizer)
+
+    def test_late_frontend_finalizers_normalize_newlines_before_anchor_matching(self) -> None:
+        for path in (
+            "scripts/finalize-scheduler-v2.mjs",
+            "scripts/finalize-execution-continuity-v1.mjs",
+        ):
+            self.assertIn('.replace(/\\r\\n/g, "\\n")', self.text(path))
 
     def test_runtime_never_uses_reset_to_mutate_financial_state(self) -> None:
         finalizer = self.text("scripts/finalize-execution-continuity-v1.mjs")

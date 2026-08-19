@@ -7,7 +7,7 @@ const guardPath = "dist/direct-interaction-guard-v3.js";
 
 function read(path) {
   if (!fs.existsSync(path)) throw new Error(`execution-continuity missing build artifact: ${path}`);
-  return fs.readFileSync(path, "utf8");
+  return fs.readFileSync(path, "utf8").replace(/\r\n/g, "\n");
 }
 function replaceOne(text, before, after, label) {
   const count = text.split(before).length - 1;
@@ -99,8 +99,8 @@ const helpers = `
 engine = replaceOne(engine, "  function connectPublic() {", helpers + "  function connectPublic() {", "continuity helpers");
 engine = replaceOne(
   engine,
-  "        state.publicConnectPromise = null;\n        state.subscribedMarkets.clear();",
-  "        state.publicConnectPromise = null;\n        state.lastPublicMessageAt = Date.now();\n        state.lastTickAt = Date.now();\n        state.subscribedMarkets.clear();",
+  "      ws.onopen = () => {\n        state.publicConnectPromise = null;\n        state.subscribedMarkets.clear();",
+  "      ws.onopen = () => {\n        state.publicConnectPromise = null;\n        state.lastPublicMessageAt = Date.now();\n        state.lastTickAt = Date.now();\n        state.subscribedMarkets.clear();",
   "public reconnect activation",
 );
 engine = replaceOne(
