@@ -20,7 +20,7 @@ const scripts = [
   ["direct-transaction-ledger-v6.js", "20260819-provider-ledger-v11"],
   ["direct-run-panel-authority-v6.js", "20260819-single-run-panel-v3"],
   ["mobile-layout-authority-v1.js", "20260819-right-quarter-drawer-v6-right-edge"],
-  ["run-panel-usability-v1.js", "20260819-summary-clear-v3"],
+  ["run-panel-usability-v1.js", "20260819-mobile-summary-nav-lane-v4"],
   ["scheduler-v2-ui.js", "20260819-live-fix-v2"],
 ];
 
