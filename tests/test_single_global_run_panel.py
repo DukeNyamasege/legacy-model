@@ -47,9 +47,6 @@ class SingleGlobalRunPanelTests(unittest.TestCase):
         ):
             self.assertIn(marker, layout)
 
-        # The final runtime authority must be able to replace any stale injected
-        # style and must not permanently short-circuit merely because an older V1
-        # marker exists in browser memory/cache.
         self.assertIn('document.getElementById("mobile-layout-authority-v1-style")?.remove()', layout)
         self.assertIn("window.DERIVADMIN_MOBILE_LAYOUT_AUTHORITY_V1?.version === VERSION", layout)
         self.assertNotIn("if (window.__DERIVADMIN_MOBILE_LAYOUT_AUTHORITY_V1__) return", layout)
@@ -70,6 +67,29 @@ class SingleGlobalRunPanelTests(unittest.TestCase):
         self.assertIn("width:100%!important", layout)
         self.assertIn("height:calc(100dvh - 72px)!important", layout)
         self.assertIn("safe-area-inset-bottom", layout)
+
+    def test_mobile_summary_reserves_navigation_lane_above_start_stop(self) -> None:
+        usability = (ROOT / "dashboard" / "run-panel-usability-v1.js").read_text(encoding="utf-8")
+        injector = (ROOT / "scripts" / "inject-frontend-assets.mjs").read_text(encoding="utf-8")
+
+        for marker in (
+            'const VERSION = "20260819-run-panel-usability-v3-mobile-summary-lane"',
+            'document.getElementById("run-panel-usability-v2-style")?.remove()',
+            'html[data-run-panel-visibility="open"] .bottom-nav',
+            'bottom:calc(52px + env(safe-area-inset-bottom, 0px))!important',
+            'html[data-run-panel-visibility="open"] .global-run-panel.open .run-panel-sheet',
+            'padding-bottom:calc(72px + env(safe-area-inset-bottom, 0px))!important',
+            'html[data-run-panel-visibility="open"] .global-run-panel.open .run-panel-stats',
+            'min-height:106px!important',
+            'min-height:72px!important',
+        ):
+            self.assertIn(marker, usability)
+
+        self.assertNotIn("if (window.__DERIVADMIN_RUN_PANEL_USABILITY_V2__) return", usability)
+        self.assertIn(
+            '["run-panel-usability-v1.js", "20260819-mobile-summary-nav-lane-v4"]',
+            injector,
+        )
 
 
 if __name__ == "__main__":
