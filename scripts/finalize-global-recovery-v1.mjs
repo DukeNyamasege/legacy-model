@@ -15,11 +15,11 @@ function replaceOnce(text, before, after, label) {
 }
 
 let engine = read(enginePath);
-for (const required of (
+for (const required of [
   "splitPartStake",
   "Math.max(0.50, fullOneShotStake / parts)",
   "split_part_stake: state.splitPartStake",
-)) {
+]) {
   if (!engine.includes(required)) throw new Error(`global-recovery engine invariant missing: ${required}`);
 }
 engine = engine.replace(
