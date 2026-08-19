@@ -91,13 +91,17 @@ class SchedulerV2AuthorityContract(unittest.TestCase):
 
     def test_frontend_build_runs_scheduler_then_execution_continuity(self) -> None:
         docker = self.text("Dockerfile.frontend")
+        assets = self.text("scripts/inject-frontend-assets.mjs")
         self.assertIn("COPY scripts/finalize-scheduler-v2.mjs", docker)
         self.assertIn("COPY scripts/finalize-execution-continuity-v1.mjs", docker)
-        self.assertIn("node scripts/finalize-scheduler-v2.mjs", docker)
-        self.assertIn("node scripts/finalize-execution-continuity-v1.mjs", docker)
+        scheduler = docker.index("node scripts/finalize-scheduler-v2.mjs")
+        continuity = docker.index("node scripts/finalize-execution-continuity-v1.mjs")
+        recovery = docker.index("node scripts/finalize-global-recovery-v1.mjs")
+        self.assertLess(scheduler, continuity)
+        self.assertLess(continuity, recovery)
         self.assertIn("cp dashboard/scheduler-v2-ui.js", docker)
-        self.assertIn("20260818-unified-ledger-v10-virtual", docker)
-        self.assertIn("20260819-live-fix-v2", docker)
+        self.assertIn('["direct-transaction-ledger-v6.js", "20260819-provider-ledger-v11"]', assets)
+        self.assertIn('["scheduler-v2-ui.js", "20260819-live-fix-v2"]', assets)
         self.assertIn("node --check dist/final-ui-shell-v2.js", docker)
 
     def test_vps_entrypoint_installs_scheduler_v2_after_action5(self) -> None:
