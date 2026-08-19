@@ -46,12 +46,14 @@ class GlobalRecoveryPolicyTests(unittest.TestCase):
             (ROOT / "scripts" / "finalize-production-controls-v6.mjs").read_text(encoding="utf-8"),
         )
 
-    def test_stale_split_basis_is_repaired_only_before_first_unconsumed_leg(self) -> None:
+    def test_stale_split_basis_repairs_zero_remaining_or_unconsumed_cycle(self) -> None:
         source = (ROOT / "app" / "stale_split_basis_reconciliation_authority.py").read_text(encoding="utf-8")
         fence = (ROOT / "app" / "direct_execution_worker_fence.py").read_text(encoding="utf-8")
-        self.assertIn("remaining == split_count", source)
+        self.assertIn("remaining <= 0 or remaining == split_count", source)
         self.assertIn("abs(basis - debt) > 0.009", source)
+        self.assertIn("manual._write_split_remaining(self, managed_id, split_count)", source)
         self.assertIn("equal_split._write_basis_debt(self, managed_id, debt)", source)
+        self.assertIn("global_policy._write_part_stake(self, managed_id, 0.0)", source)
         self.assertIn("GLOBAL_SPLIT_STALE_BASIS_REPAIRED", source)
         self.assertGreater(
             fence.index("install_stale_split_basis_reconciliation_authority()"),
@@ -70,6 +72,15 @@ class GlobalRecoveryPolicyTests(unittest.TestCase):
             fence.index("install_global_recovery_execution_policy()"),
             fence.index("_direct_execution_hard_stop_fence"),
         )
+
+    def test_legacy_manual_stop_and_start_paths_share_hard_stop_sentinel(self) -> None:
+        source = (ROOT / "app" / "vps_fast_execution_controls.py").read_text(encoding="utf-8")
+        self.assertIn("set_direct_hard_stop", source)
+        self.assertIn("clear_direct_hard_stop", source)
+        self.assertIn("_write_manual_hard_stop(managed_id, reason)", source)
+        self.assertIn("_clear_manual_hard_stop(managed_id)", source)
+        self.assertIn('"hard_stop": True', source)
+        self.assertIn('legacy_stop_policy = "independent_hard_stop_before_account_row"', source)
 
     def test_repository_quarantine_and_token_faults_become_retry_not_stop(self) -> None:
         source = (ROOT / "app" / "never_auto_stop_repository_authority.py").read_text(encoding="utf-8")
