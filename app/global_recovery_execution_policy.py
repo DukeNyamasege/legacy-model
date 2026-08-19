@@ -141,8 +141,8 @@ def equal_split_part_stake(
 
     The first proposal of a new loss pool prices the entire recovery target once.
     That full recovery stake is then divided by configured N. The resulting part
-    stake is persisted and reused, which keeps Split 2/3 legs equal apart from cent
-    rounding. A small recovery buffer absorbs ordinary provider cent rounding.
+    stake is persisted and reused, which keeps Split 2/3 legs equal apart from
+    cent rounding. It targets the actual loss pool only, with no hidden buffer.
     """
 
     debt = max(0.0, float(recovery_basis_debt or 0.0))
@@ -152,11 +152,10 @@ def equal_split_part_stake(
     if debt <= 0.009 or ratio <= 0:
         return minimum, minimum, 0.0
 
-    buffer = max(0.05, debt * 0.06)
-    target_profit = debt + buffer
-    full_recovery_stake = ceil_cents(max(minimum, target_profit / ratio))
-    part_stake = ceil_cents(max(minimum, full_recovery_stake / parts))
-    return part_stake, full_recovery_stake, target_profit / parts
+    target_profit = debt / parts
+    full_recovery_stake = ceil_cents(max(minimum, debt / ratio))
+    part_stake = ceil_cents(max(minimum, target_profit / ratio))
+    return part_stake, full_recovery_stake, target_profit
 
 
 def _hard_stop(repository: Any, managed_id: int) -> bool:

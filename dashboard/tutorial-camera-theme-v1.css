@@ -546,23 +546,12 @@ textarea:focus,
   color: var(--camera-muted) !important;
 }
 
-.run-panel-stats {
-  background: var(--camera-surface-2) !important;
-  border-top-color: var(--camera-line) !important;
-}
-
-.run-panel-stats b,
-.run-panel-stats span,
 .run-panel-execution b {
   color: var(--camera-text) !important;
 }
 
 .run-panel-execution small {
   color: var(--camera-muted) !important;
-}
-
-.run-help {
-  text-decoration-color: color-mix(in srgb, var(--camera-muted) 70%, transparent) !important;
 }
 
 /* Start/Stop remain unmistakable but less fluorescent when filmed. */
@@ -587,11 +576,104 @@ textarea:focus,
 .global-run-panel.global-run-panel .transaction-row-v6 small { color:#bed4e9!important; }
 .global-run-panel.global-run-panel .tx-time-market b { color:#66e7ff!important; }
 .global-run-panel.global-run-panel .tx-time-market small { color:#d7e8f6!important; }
-.global-run-panel.global-run-panel .run-panel-stats { background:#102b44!important; border-top-color:rgba(122,194,255,.24)!important; }
-.global-run-panel.global-run-panel .run-panel-stats small,.global-run-panel.global-run-panel .run-panel-stats span,.global-run-panel.global-run-panel .run-stat small { color:#e6f6ff!important; }
-.global-run-panel.global-run-panel .run-panel-stats b,.global-run-panel.global-run-panel .run-stat b { color:#ffffff!important; font-weight:800!important; }
 .global-run-panel.global-run-panel [data-run-start].run-panel-run { background:#11936f!important; color:#ffffff!important; }
 html[data-final-run-state="running"] .global-run-panel.global-run-panel [data-run-start].run-panel-run,.global-run-panel.global-run-panel[data-execution-state="running"] [data-run-start].run-panel-run { background:#d13f4d!important; }
+
+/* Canonical run summary: one theme authority for the six fixed metrics. */
+.global-run-panel.global-run-panel .run-panel-stats {
+  display: grid !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  gap: 8px !important;
+  margin: 0 !important;
+  padding: 12px !important;
+  background: #102b44 !important;
+  border-top: 1px solid rgba(122, 194, 255, .30) !important;
+  color: #f6fbff !important;
+  font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif !important;
+  font-variant-numeric: tabular-nums;
+}
+
+.global-run-panel.global-run-panel .run-panel-stats .run-stat {
+  min-width: 0;
+  min-height: 52px;
+  display: flex !important;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 7px 6px;
+  border: 1px solid rgba(158, 214, 255, .20);
+  background: rgba(4, 20, 38, .24);
+  text-align: center;
+}
+
+.global-run-panel.global-run-panel .run-panel-stats .run-stat small {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: #b9d7ee !important;
+  font-size: 10px !important;
+  font-weight: 700;
+  line-height: 1.15;
+}
+
+.global-run-panel.global-run-panel .run-panel-stats .run-stat b {
+  color: #f7fbff !important;
+  font-size: 14px !important;
+  font-weight: 800 !important;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.global-run-panel.global-run-panel .run-panel-stats .run-stat-stake b { color: #9ee7ff !important; }
+.global-run-panel.global-run-panel .run-panel-stats .run-stat-payout b { color: #b8c9ff !important; }
+.global-run-panel.global-run-panel .run-panel-stats .run-stat-wins b,
+.global-run-panel.global-run-panel .run-panel-stats .run-stat-profit b.positive { color: #5be3ae !important; }
+.global-run-panel.global-run-panel .run-panel-stats .run-stat-losses b,
+.global-run-panel.global-run-panel .run-panel-stats .run-stat-profit b.negative { color: #ff8b9b !important; }
+
+.global-run-panel.global-run-panel .run-help {
+  width: 15px;
+  height: 15px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  background: transparent;
+  color: #8fb7d2 !important;
+  font: inherit;
+  line-height: 1;
+}
+
+html[data-theme="light"] .global-run-panel.global-run-panel .run-panel-stats {
+  background: #e7f2fa !important;
+  border-top-color: #b7d1e2 !important;
+  color: #173850 !important;
+}
+
+html[data-theme="light"] .global-run-panel.global-run-panel .run-panel-stats .run-stat {
+  border-color: #c6dce9;
+  background: #f7fbfe;
+}
+
+html[data-theme="light"] .global-run-panel.global-run-panel .run-panel-stats .run-stat small { color: #54748b !important; }
+html[data-theme="light"] .global-run-panel.global-run-panel .run-panel-stats .run-stat b { color: #173850 !important; }
+html[data-theme="light"] .global-run-panel.global-run-panel .run-panel-stats .run-stat-stake b { color: #087ea4 !important; }
+html[data-theme="light"] .global-run-panel.global-run-panel .run-panel-stats .run-stat-payout b { color: #3864b8 !important; }
+html[data-theme="light"] .global-run-panel.global-run-panel .run-panel-stats .run-stat-wins b,
+html[data-theme="light"] .global-run-panel.global-run-panel .run-panel-stats .run-stat-profit b.positive { color: #087858 !important; }
+html[data-theme="light"] .global-run-panel.global-run-panel .run-panel-stats .run-stat-losses b,
+html[data-theme="light"] .global-run-panel.global-run-panel .run-panel-stats .run-stat-profit b.negative { color: #c43d53 !important; }
+html[data-theme="light"] .global-run-panel.global-run-panel .run-help { color: #5f839a !important; }
+
+@media (max-width: 520px) {
+  .global-run-panel.global-run-panel .run-panel-stats { gap: 6px !important; padding: 8px !important; }
+  .global-run-panel.global-run-panel .run-panel-stats .run-stat { min-height: 48px; padding: 6px 3px; }
+  .global-run-panel.global-run-panel .run-panel-stats .run-stat small { font-size: 9px !important; }
+  .global-run-panel.global-run-panel .run-panel-stats .run-stat b { font-size: 12px !important; }
+}
 
 /* Journal status chips remain readable after video compression. */
 .journal-condition-list > div > span {

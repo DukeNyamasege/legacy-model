@@ -130,10 +130,10 @@ class HybridBrowserDirectV2Contract(unittest.TestCase):
         self.assertIn("splitRemainingWins", finalizer)
         self.assertIn("splitPartStake", finalizer)
         self.assertIn("fullOneShotStake", finalizer)
-        self.assertIn("Math.max(0.50, fullOneShotStake / parts)", finalizer)
-        self.assertIn("Every loss starts a new enlarged equal-stake Split-N pool", finalizer)
-        self.assertIn("all successful legs use that same stake", finalizer)
-        self.assertIn("the same fixed part stake and one cleanup success", finalizer)
+        self.assertIn("targetProfitPerLeg = state.splitBasisDebt / parts", finalizer)
+        self.assertIn("state.splitPartStake = Math.ceil(Math.max(0.50, targetProfitPerLeg / ratio)", finalizer)
+        self.assertIn("A recovery loss becomes part of the total loss pool", finalizer)
+        self.assertIn("Split-N plan completes after exactly N successful recovery trades", finalizer)
 
     def test_split_state_survives_browser_to_vps_takeover(self) -> None:
         exporter = self.text("scripts/finalize-production-controls-v6b.mjs")

@@ -165,9 +165,8 @@ def split_recovery_stake(
 ) -> tuple[float, float]:
     """Split the exact debt target across the remaining successful recovery parts.
 
-    The final part always targets all remaining debt. Earlier parts divide the
-    full exact-recovery stake by the number of parts still outstanding. Actual
-    settled profit, not the quoted amount, is what reduces the debt ledger.
+    Each planned win targets an equal share of the loss pool. The live Deriv
+    proposal ratio converts that target profit into the stake before purchase.
     """
 
     base = ceil_cents(max(0.35, float(base_stake or 0.0)))
@@ -175,12 +174,10 @@ def split_recovery_stake(
     ratio = float(proposal_profit_ratio or 0.0)
     if debt <= 0.009 or ratio <= 0:
         return base, base
-    buffer = max(0.05, debt * 0.06)
-    full_exact_stake = ceil_cents(max(base, (debt + buffer) / ratio))
+    full_exact_stake = ceil_cents(max(base, debt / ratio))
     parts = max(1, min(3, int(remaining_parts or 1)))
-    if parts == 1:
-        return full_exact_stake, full_exact_stake
-    return ceil_cents(max(base, full_exact_stake / parts)), full_exact_stake
+    target_profit = debt / parts
+    return ceil_cents(max(base, target_profit / ratio)), full_exact_stake
 
 
 def _account_snapshot(repository: RFDir5Repository, managed_account_id: int) -> dict[str, Any]:
@@ -548,12 +545,26 @@ def install_manual_martingale_v2_worker() -> None:
                 return result
 
             remaining_after = max(0, remaining_before - 1)
-            cleanup = remaining_after <= 0
-            if cleanup:
-                # Never falsify P/L by erasing a provider residual. The last split
-                # part already targets all remaining debt with a buffer; if actual
-                # settlement still leaves debt, retain one transparent cleanup part.
-                remaining_after = 1
+            cleanup = False
+            if remaining_after <= 0:
+                # A requested Split-N cycle has exactly N successful parts. Do not
+                # create a hidden extra recovery trade after its final success.
+                _reset_manual_cycle(self, managed_id)
+                result.update(
+                    {
+                        "manual_martingale_mode": SPLIT_MODE,
+                        "manual_split_total": int(settings["split_count"]),
+                        "manual_split_remaining": 0,
+                        "manual_split_cleanup": False,
+                        "manual_split_residual_unrecovered": debt_after,
+                        "recovery_loss_debt": 0.0,
+                        "recovery_pending": False,
+                        "recovery_attempt_active": False,
+                        "protection_mode": NORMAL_MODE,
+                        "raw_protection_state": NORMAL_MODE,
+                    }
+                )
+                return result
             _arm_next_split(
                 self,
                 managed_id,

@@ -45,6 +45,7 @@ const productionAssets = [
   "index.html",
   "final-ui-shell-v2.css",
   "mobile-reference-ui.css",
+  "tutorial-camera-theme-v1.css",
   "real-account-flag.webp",
   "final-ui-shell-v2.js",
   "final-premium-6f3.css",
@@ -106,6 +107,7 @@ const required = [
   '/final-ui-shell-v2.css?v=20260817-6f2-1',
   '/final-premium-6f3.css?v=20260817-6f3-1',
   '/mobile-reference-ui.css?v=20260818-local-ui-12',
+  '/tutorial-camera-theme-v1.css?v=20260819-run-summary-v1',
   '/final-premium-6f3.js?v=20260818-local-ui-12',
   '/public-testing-runtime-v1.js?v=20260818-public-testing-run-v5',
 ];

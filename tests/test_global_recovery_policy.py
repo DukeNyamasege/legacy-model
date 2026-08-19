@@ -19,9 +19,9 @@ class GlobalRecoveryPolicyTests(unittest.TestCase):
             proposal_profit_ratio=0.52,
             split_count=2,
         )
-        self.assertEqual(stake, 1.02)
-        self.assertEqual(full, 2.04)
-        self.assertGreater(target, 0.5)
+        self.assertEqual(stake, 0.97)
+        self.assertEqual(full, 1.93)
+        self.assertEqual(target, 0.5)
 
     def test_split_three_never_falls_below_deriv_minimum(self) -> None:
         stake, _full, _target = equal_split_part_stake(
@@ -31,6 +31,16 @@ class GlobalRecoveryPolicyTests(unittest.TestCase):
         )
         self.assertEqual(DERIV_MINIMUM_STAKE, 0.50)
         self.assertEqual(stake, 0.50)
+
+    def test_split_uses_total_loss_and_live_payout_share_without_hidden_buffer(self) -> None:
+        stake, full, target = equal_split_part_stake(
+            recovery_basis_debt=1.95,
+            proposal_profit_ratio=0.56,
+            split_count=2,
+        )
+        self.assertEqual(target, 0.975)
+        self.assertEqual(full, 3.49)
+        self.assertEqual(stake, 1.75)
 
     def test_real_debt_is_final_recovery_classifier(self) -> None:
         source = (ROOT / "app" / "global_recovery_execution_policy.py").read_text(encoding="utf-8")

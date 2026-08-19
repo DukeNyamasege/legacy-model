@@ -30,14 +30,9 @@ def split_recovery_stake_by_parts(
     if debt <= 0.009 or ratio <= 0:
         return minimum, minimum
 
-    buffer = max(0.05, debt * 0.06)
-    full_exact_stake = ceil_cents(max(minimum, (debt + buffer) / ratio))
+    full_exact_stake = ceil_cents(max(minimum, debt / ratio))
     parts = max(1, min(3, int(remaining_parts or 1)))
-    part_stake = (
-        full_exact_stake
-        if parts == 1
-        else ceil_cents(max(minimum, full_exact_stake / parts))
-    )
+    part_stake = ceil_cents(max(minimum, (debt / parts) / ratio))
     return part_stake, full_exact_stake
 
 

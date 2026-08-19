@@ -471,22 +471,22 @@
   function topAccountControl() {
     if (!state.me?.authenticated) return `<a class="login-button" href="/oauth/start">Login</a>`;
     const accounts = state.accounts?.accounts || [];
-    const selected = accounts.find((account) => account.selected) || accounts[0] || {
+    const selected = selectedLinkedAccount(accounts) || {
       managed_account_id: "",
       account_id_masked: state.me.account_id || "",
       account_type: state.me.account_type || "demo",
       balance: state.me.balance || 0,
       currency: state.me.currency || "USD",
     };
-    const type = String(selected.account_type || "demo").toLowerCase();
+    const type = accountType(selected);
     const accountId = (account) => account.account_id || account.loginid || account.account_id_masked || account.label || "";
-    const accountForKind = (kind) => accounts.find((account) => String(account.account_type || "").toLowerCase() === kind);
+    const accountForKind = (kind) => accounts.find((account) => accountType(account) === kind);
     const tabs = ["real", "demo"].map((tab) => {
       const account = accountForKind(tab);
       return `<button class="${type === tab ? "active" : ""}" type="button" ${account ? `data-account-id="${esc(account.managed_account_id)}"` : ""} data-account-kind="${tab}">${tab[0].toUpperCase() + tab.slice(1)}</button>`;
     }).join("");
     const rows = accounts.map((account) => {
-      const rowType = String(account.account_type || "demo").toLowerCase();
+      const rowType = accountType(account);
       return `<button class="account-dropdown-row ${rowType}" type="button" data-account-id="${esc(account.managed_account_id)}" data-account-kind-row="${rowType}">
         ${iconMarkup(account)}
         <span><b>${esc(account.label || (rowType === "real" ? account.currency || "USD" : "Demo"))}</b><small>${esc(accountId(account))}</small></span>
@@ -508,8 +508,25 @@
     </div>`;
   }
 
+  function selectedLinkedAccount(accounts) {
+    const selectedId = Number(state.accounts?.selected_managed_account_id || 0);
+    return accounts.find((account) => Number(account.managed_account_id || 0) === selectedId)
+      || accounts.find((account) => account.selected)
+      || accounts[0]
+      || null;
+  }
+
+  function accountType(account) {
+    const accountId = String(account?.account_id || account?.loginid || account?.account_id_masked || "").trim().toUpperCase();
+    // Deriv virtual accounts use VRTC/DOT IDs. The immutable account identity
+    // wins over a stale cached label, so the header never shows the wrong mode.
+    if (accountId.startsWith("VRTC") || accountId.startsWith("DOT")) return "demo";
+    if (accountId) return "real";
+    return String(account?.account_type || "demo").trim().toLowerCase() === "real" ? "real" : "demo";
+  }
+
   function iconMarkup(account) {
-    return String(account.account_type || "demo").toLowerCase() === "real"
+    return accountType(account) === "real"
       ? `<span class="deriv-real-flag" aria-hidden="true"></span>`
       : `<span class="deriv-demo-coin" aria-hidden="true"></span>`;
   }
@@ -1366,14 +1383,14 @@
     const accounts = state.accounts?.accounts || [];
     const tz = state.preferences?.timezone || DEFAULT_TZ;
     const content = `<section class="profile-grid">
-      <article class="panel"><div class="panel-title"><div><span class="eyebrow">LINKED OPTIONS ACCOUNTS</span><h3>${accounts.length} account${accounts.length === 1 ? "" : "s"}</h3></div></div><div class="account-list">${accounts.map(accountRow).join("")}</div></article>
+      <article class="panel"><div class="panel-title"><div><span class="eyebrow">PROFILE & SETTINGS</span><h3>Linked Options Accounts (${accounts.length})</h3></div></div><div class="account-list">${accounts.map(accountRow).join("")}</div></article>
       <article class="panel"><div class="panel-title"><div><span class="eyebrow">TIMEZONE</span><h3>${esc(tz)}</h3></div><button class="text-button" data-route="timezone">Change</button></div><p class="muted">All future session times are interpreted in this timezone and persisted as UTC.</p></article>
     </section>`;
     return shell(content, { title: "Profile" });
   }
 
   function accountRow(account) {
-    const type = String(account.account_type || "demo").toLowerCase();
+    const type = accountType(account);
     return `<button class="account-row ${account.selected ? "selected" : ""}" data-account-id="${esc(account.managed_account_id)}"><span class="account-icon">${iconMarkup(account)}</span><span><b>${esc(account.label || account.account_id_masked)}</b><small>${esc(account.account_id_masked)} · ${type.toUpperCase()}</small></span><span class="account-money"><b>${money(account.balance, account.currency)}</b></span></button>`;
   }
 
@@ -1530,12 +1547,12 @@
   }
 
   function runPanelStatsMarkup(stats, currency) {
-    return `<article><b>Total stake</b><span>${money(stats.totalStake, currency)}</span></article>
-      <article><b>Total payout</b><span>${money(stats.totalPayout, currency)}</span></article>
-      <article><button type="button" class="run-help">What's this?</button><b>No. of runs</b><span>${stats.rows.length}</span></article>
-      <article><b>Contracts lost</b><span>${stats.losses}</span></article>
-      <article><b>Contracts won</b><span>${stats.wins}</span></article>
-      <article><b>Total profit/loss</b><span class="${stats.profit > 0 ? "positive" : stats.profit < 0 ? "negative" : ""}">${money(stats.profit, currency)}</span></article>`;
+    return `<article class="run-stat run-stat-stake"><small>Total stake</small><b>${money(stats.totalStake, currency)}</b></article>
+      <article class="run-stat run-stat-payout"><small>Total payout</small><b>${money(stats.totalPayout, currency)}</b></article>
+      <article class="run-stat run-stat-runs"><small>No. of runs <button type="button" class="run-help" aria-label="About run summary" title="Completed and active contracts in this run">?</button></small><b>${stats.rows.length}</b></article>
+      <article class="run-stat run-stat-losses"><small>Contracts lost</small><b>${stats.losses}</b></article>
+      <article class="run-stat run-stat-wins"><small>Contracts won</small><b>${stats.wins}</b></article>
+      <article class="run-stat run-stat-profit"><small>Total profit/loss</small><b class="${stats.profit > 0 ? "positive" : stats.profit < 0 ? "negative" : ""}">${money(stats.profit, currency)}</b></article>`;
   }
 
   function runPanelSummary(stats, currency) {
@@ -1620,11 +1637,12 @@
 
   function tradesPage() {
     const accounts = state.accounts?.accounts || [];
-    const selected = accounts.find((a) => a.selected) || accounts[0] || { account_type: state.me?.account_type, balance: state.me?.balance, currency: state.me?.currency, account_id_masked: state.me?.account_id };
+    const selected = selectedLinkedAccount(accounts) || { account_type: state.me?.account_type, balance: state.me?.balance, currency: state.me?.currency, account_id_masked: state.me?.account_id };
+    const selectedType = accountType(selected);
     const lifecycle = String(state.lifecycle?.lifecycle || state.lifecycle?.runtime_state || (state.me?.enabled ? "running" : "stopped")).toLowerCase();
     const content = `<section class="run-panel">
       <div class="run-account-bar">
-        <div class="account-select-visual"><span class="account-icon large">${quill(selected.account_type === "real" ? "realAccount" : "demoAccount")}</span><span><small>${esc(String(selected.account_type || "demo").toUpperCase())} ACCOUNT</small><b>${money(selected.balance, selected.currency)}</b><em>${esc(selected.account_id_masked || "")}</em></span>${quill("usd", "currency-icon")}</div>
+        <div class="account-select-visual"><span class="account-icon large">${quill(selectedType === "real" ? "realAccount" : "demoAccount")}</span><span><small>${esc(selectedType.toUpperCase())} ACCOUNT</small><b>${money(selected.balance, selected.currency)}</b><em>${esc(selected.account_id_masked || "")}</em></span>${quill("usd", "currency-icon")}</div>
         <label class="account-select-native"><span>Trading account</span><select id="run-account-select">${accounts.map((account) => `<option value="${esc(account.managed_account_id)}" ${account.selected ? "selected" : ""}>${esc(account.account_type.toUpperCase())} · ${esc(account.account_id_masked)} · ${money(account.balance, account.currency)}</option>`).join("")}</select></label>
       </div>
       <div class="run-status"><span class="live-led ${lifecycle}"></span><span><small>Execution</small><b>${esc(lifecycle.replaceAll("_", " "))}</b></span><div class="run-controls">${lifecycle.includes("running") || lifecycle.includes("active") ? `<button data-pause-trading>${miniIcon("pause")} Pause</button><button data-stop-trading>${miniIcon("stop")} Stop</button>` : `<button class="primary" data-start-trading>${miniIcon("play")} Start</button>`}<button data-clear-trades>${miniIcon("trash")} Clear</button></div></div>

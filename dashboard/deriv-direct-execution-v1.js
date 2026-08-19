@@ -692,9 +692,11 @@
     }
     const ratio = proposedProfitRatio(firstProposal, base) || state.lastProfitRatio;
     if (ratio <= 0) return base;
-    const buffer = Math.max(0.05, state.recoveryDebt * 0.06);
-    let exact = Math.ceil(Math.max(base, (state.recoveryDebt + buffer) / ratio) * 100) / 100;
-    if (settings.mode === "split") exact = Math.ceil(Math.max(base, exact / Math.max(1, Number(settings.split_count || 2))) * 100) / 100;
+    let exact = Math.ceil(Math.max(base, state.recoveryDebt / ratio) * 100) / 100;
+    if (settings.mode === "split") {
+      const parts = Math.max(1, Number(settings.split_count || 2));
+      exact = Math.ceil(Math.max(base, (state.recoveryDebt / parts) / ratio) * 100) / 100;
+    }
     return exact;
   }
 

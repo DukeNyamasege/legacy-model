@@ -232,12 +232,12 @@
   }
 
   function statsMarkup(value) {
-    return `<article><b>Total stake</b><span>${esc(money(value.totalStake))}</span></article>
-      <article><b>Total payout</b><span>${esc(money(value.totalPayout))}</span></article>
-      <article><button type="button" class="run-help">What's this?</button><b>No. of runs</b><span>${value.runs}</span></article>
-      <article><b>Contracts lost</b><span>${value.losses}</span></article>
-      <article><b>Contracts won</b><span>${value.wins}</span></article>
-      <article><b>Total profit/loss</b><span class="${value.profit >= 0 ? "positive" : "negative"}">${value.profit >= 0 ? "+" : ""}${esc(money(value.profit))}</span></article>`;
+    return `<article class="run-stat run-stat-stake"><small>Total stake</small><b>${esc(money(value.totalStake))}</b></article>
+      <article class="run-stat run-stat-payout"><small>Total payout</small><b>${esc(money(value.totalPayout))}</b></article>
+      <article class="run-stat run-stat-runs"><small>No. of runs <button type="button" class="run-help" aria-label="About run summary" title="Completed and active contracts in this run">?</button></small><b>${value.runs}</b></article>
+      <article class="run-stat run-stat-losses"><small>Contracts lost</small><b>${value.losses}</b></article>
+      <article class="run-stat run-stat-wins"><small>Contracts won</small><b>${value.wins}</b></article>
+      <article class="run-stat run-stat-profit"><small>Total profit/loss</small><b class="${value.profit >= 0 ? "positive" : "negative"}">${value.profit >= 0 ? "+" : ""}${esc(money(value.profit))}</b></article>`;
   }
 
   function activeTransactions() {

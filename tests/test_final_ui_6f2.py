@@ -19,6 +19,7 @@ class FinalUi6F2Tests(unittest.TestCase):
         self.assertIn('/deriv-quill-icons-v2.js?v=2.4.18', html)
         self.assertIn('/final-ui-shell-v2.css?v=20260817-6f2-1', html)
         self.assertIn('/final-premium-6f3.css?v=20260817-6f3-1', html)
+        self.assertIn('/tutorial-camera-theme-v1.css?v=20260819-run-summary-v1', html)
         self.assertIn('/final-premium-6f3.js?v=20260818-local-ui-12', html)
         self.assertIn('/public-testing-runtime-v1.js?v=20260818-public-testing-run-v5', html)
         self.assertNotIn('<script src="/vps-realtime-client-v2.js?v=20260817-6f2-1" defer>', html)
@@ -36,7 +37,7 @@ class FinalUi6F2Tests(unittest.TestCase):
         for text in (
             "Home of Automation", "Strategy Builder", "Text to Strategy", "Strategy Ready",
             "Schedule Trading", "Choose your timezone", "PROFILE & SETTINGS", "Live Runs",
-            "250 words", "Best possible interpretation", "Unsupported or adjusted items",
+            "250 words", "System Martingale", "Split Recovery",
         ):
             self.assertIn(text, js)
         for route in (
@@ -54,13 +55,21 @@ class FinalUi6F2Tests(unittest.TestCase):
         css = (ROOT / "dashboard" / "final-ui-shell-v2.css").read_text(encoding="utf-8")
         exporter = (ROOT / "scripts" / "export-deriv-quill-icons-v2.mjs").read_text(encoding="utf-8")
         for text in (
-            "Type", "Entry / Exit spot", "Stake and P/L", "Total stake", "Total payout", "No. of runs",
+            "Type", "entry_tick", "exit_tick", "Total stake", "Total payout", "No. of runs",
             "Contracts lost", "Contracts won", "Total profit/loss", "run-account-select", "managed_account_id",
         ):
             self.assertIn(text, js)
-        self.assertIn('state.me?.account_type === "real" ? "realAccount" : "demoAccount"', js)
-        self.assertIn('selected.account_type === "real" ? "realAccount" : "demoAccount"', js)
-        self.assertIn('type === "real" ? "realAccount" : "demoAccount"', js)
+        self.assertIn("function selectedLinkedAccount(accounts)", js)
+        self.assertIn("selected_managed_account_id", js)
+        self.assertIn("function accountType(account)", js)
+        self.assertIn('accountId.startsWith("VRTC") || accountId.startsWith("DOT")', js)
+        self.assertIn('accountType(account) === "real"', js)
+        self.assertIn("run-stat-profit", js)
+        self.assertIn('aria-label="About run summary"', js)
+        run_panel = (ROOT / "dashboard" / "direct-run-panel-authority-v6.js").read_text(encoding="utf-8")
+        self.assertIn("@media(min-width:901px)", run_panel)
+        self.assertIn("width:clamp(360px,25vw,460px)!important", run_panel)
+        self.assertIn("transform:translateX(calc(-100% + 48px))", run_panel)
         self.assertIn('quill("usd"', js)
         self.assertIn('quill("volatility")', js)
         self.assertIn("quill(contractKey(trade))", js)

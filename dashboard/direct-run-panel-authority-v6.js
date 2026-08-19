@@ -290,11 +290,6 @@
     .global-run-panel .tx-time-market b{color:#66e7ff!important}.global-run-panel .tx-time-market small{margin:0 0 2px!important;color:#d7e8f6!important}
     .global-run-panel .tx-spots b::before{content:"● ";color:#ff506b}.global-run-panel .tx-spots small::before{content:"○ ";color:#a9b8c8}
 
-    /* Compact fixed-footprint KPIs: tabular figures cannot resize the sheet. */
-    .global-run-panel .run-panel-stats{flex:0 0 auto!important;min-height:82px!important;max-height:96px!important;padding:8px 10px!important;margin:0!important;display:grid!important;grid-template-columns:repeat(3,1fr)!important;gap:5px 8px!important;align-items:center!important;border-top:1px solid rgba(122,194,255,.24)!important;background:#102b44!important;overflow:hidden!important;contain:layout paint;transition:none!important}
-    .global-run-panel .run-panel-stats>*,.global-run-panel .run-stat{padding:0!important;margin:0!important;min-width:0!important;text-align:center!important}
-    .global-run-panel .run-panel-stats small,.global-run-panel .run-panel-stats span,.global-run-panel .run-stat small{font-size:7px!important;line-height:1.1!important;color:#e6f6ff!important}
-    .global-run-panel .run-panel-stats b,.global-run-panel .run-stat b{font-size:10px!important;line-height:1.2!important;font-variant-numeric:tabular-nums;white-space:nowrap!important;color:#ffffff!important;font-weight:800!important}
     .global-run-panel .run-panel-reset{min-height:30px!important;height:30px!important;padding:0 14px!important;font-size:11px!important}
 
     @media(max-width:520px){
@@ -302,7 +297,32 @@
       .global-run-panel .transaction-row-v6{padding:7px 5px!important;font-size:8px!important}
       .global-run-panel .transaction-row-v6 b,.global-run-panel .transaction-row-v6 strong{font-size:8px!important}
       .global-run-panel .transaction-head-v6{padding:7px 5px!important;font-size:7px!important}
-      .global-run-panel .run-panel-stats{min-height:76px!important;max-height:90px!important;padding:6px 8px!important}
+    }
+
+    /* Desktop uses a left-docked drawer. Mobile remains the existing bottom sheet. */
+    @media(min-width:901px){
+      .global-run-panel{
+        position:fixed!important;
+        top:72px!important;
+        left:0!important;
+        right:auto!important;
+        bottom:0!important;
+        width:clamp(360px,25vw,460px)!important;
+        height:calc(100dvh - 72px)!important;
+        max-width:none!important;
+        display:flex!important;
+        flex-direction:column!important;
+        overflow:hidden!important;
+        background:#061526!important;
+        box-shadow:12px 0 34px rgba(0,0,0,.22)!important;
+        transform:translateX(calc(-100% + 48px));
+        transition:transform 220ms ease!important;
+      }
+      .global-run-panel.open{transform:translateX(0)!important;}
+      .global-run-panel:not(.open) .run-panel-bar{width:48px!important;min-width:48px!important;}
+      .global-run-panel:not(.open) .run-panel-run{width:48px!important;min-width:48px!important;padding:0!important;}
+      .global-run-panel:not(.open) .run-panel-run::after{display:none!important;}
+      .global-run-panel.open .run-panel-sheet{display:flex!important;}
     }
   `;
   document.head.appendChild(style);

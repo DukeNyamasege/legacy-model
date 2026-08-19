@@ -57,8 +57,8 @@ class ManualMartingaleV2Tests(unittest.TestCase):
             proposal_profit_ratio=0.85,
             remaining_parts=3,
         )
-        self.assertEqual(full, 1.25)
-        self.assertEqual(part, 0.42)
+        self.assertEqual(full, 1.18)
+        self.assertEqual(part, 0.40)
         self.assertLess(part, 1.00)
         self.assertGreaterEqual(part, 0.35)
 
@@ -70,7 +70,7 @@ class ManualMartingaleV2Tests(unittest.TestCase):
             remaining_parts=1,
         )
         self.assertEqual(part, full)
-        self.assertEqual(full, 1.25)
+        self.assertEqual(full, 1.18)
 
     def test_system_strategy_is_explicitly_excluded_from_manual_override(self) -> None:
         source = (ROOT / "app" / "manual_martingale_v2.py").read_text(encoding="utf-8")

@@ -11,7 +11,7 @@ function read(path) {
 let engine = read(enginePath);
 for (const required of [
   "splitPartStake",
-  "Math.max(0.50, fullOneShotStake / parts)",
+  "targetProfitPerLeg / ratio",
   "split_part_stake: state.splitPartStake",
 ]) {
   if (!engine.includes(required)) throw new Error(`global-recovery engine invariant missing: ${required}`);
@@ -32,4 +32,4 @@ if (!/state\.statusTimer\s*=\s*setInterval\([\s\S]*?10000\s*\);/.test(run)) {
 }
 fs.writeFileSync(runPath, run, "utf8");
 
-console.log("Global recovery v1 finalized: fixed equal Split stake, 0.50 minimum, lower status-poll load");
+console.log("Global recovery v1 finalized: exact quoted Split target, 0.50 minimum, lower status-poll load");

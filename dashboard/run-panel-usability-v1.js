@@ -131,19 +131,6 @@
       font-size:9.5px!important;
       line-height:1.25!important;
     }
-    .global-run-panel .run-panel-stats b,
-    .global-run-panel .run-stat b{
-      font-size:13px!important;
-      line-height:1.2!important;
-    }
-    .global-run-panel .run-panel-stats span,
-    .global-run-panel .run-panel-stats small,
-    .global-run-panel .run-stat span,
-    .global-run-panel .run-stat small{
-      font-size:10.5px!important;
-      line-height:1.2!important;
-    }
-    .global-run-panel .run-help{font-size:10px!important}
     .global-run-panel .run-panel-run{font-size:20px!important;font-weight:950!important}
     .global-run-panel .run-panel-chevron{min-width:40px!important;min-height:34px!important}
     .global-run-panel .run-panel-reopen-v1 b{font-size:13px!important}
@@ -196,12 +183,6 @@
       .global-run-panel .transaction-row-v6 b,
       .global-run-panel .transaction-row-v6 strong{font-size:10.5px!important}
       .global-run-panel .transaction-row-v6 small{font-size:9px!important}
-      .global-run-panel .run-panel-stats b,
-      .global-run-panel .run-stat b{font-size:12px!important}
-      .global-run-panel .run-panel-stats span,
-      .global-run-panel .run-panel-stats small,
-      .global-run-panel .run-stat span,
-      .global-run-panel .run-stat small{font-size:10px!important}
       .top-account-switch .account-switch-summary{column-gap:4px!important;padding-left:5px!important;padding-right:5px!important}
       .top-account-switch .account-switch-summary>strong{font-size:clamp(11px,3.35vw,15px)!important}
     }
