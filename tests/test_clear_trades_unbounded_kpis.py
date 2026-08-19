@@ -101,12 +101,12 @@ class ClearTradesUnboundedKpiTests(unittest.TestCase):
         self.assertNotIn("querySelectorAll", realtime)
         self.assertNotIn("innerHTML", realtime)
 
-        # F3 holds these heavy F2 modules behind Premium admission rather than
-        # loading them directly from index.html.
-        self.assertNotIn('<script src="/vps-realtime-client-v2.js?v=20260817-6f2-1" defer>', index)
-        self.assertNotIn('<script src="/final-ui-shell-v2.js?v=20260817-6f2-1" defer>', index)
-        self.assertIn("vps-realtime-client-v2.js?v=20260817-6f2-1", premium)
-        self.assertIn("final-ui-shell-v2.js?v=20260817-6f2-1", premium)
+        # Heavy VPS modules remain held behind the premium/bootstrap loader rather
+        # than being loaded directly by dashboard/index.html.
+        self.assertNotIn('<script src="/vps-realtime-client-v2.js?v=20260817-local-ui-2" defer>', index)
+        self.assertNotIn('<script src="/final-ui-shell-v2.js?v=20260818-local-ui-12" defer>', index)
+        self.assertIn("vps-realtime-client-v2.js?v=20260817-local-ui-2", premium)
+        self.assertIn("final-ui-shell-v2.js?v=20260818-local-ui-12", premium)
         self.assertIn("if (state.premium?.local_dev_preview || state.premium?.active)", premium)
         self.assertNotIn("final-ui-shell-v1.js", index)
         self.assertNotIn("virtual-kpi-neutrality.js", index)
