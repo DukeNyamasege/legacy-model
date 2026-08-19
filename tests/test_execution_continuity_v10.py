@@ -72,8 +72,21 @@ class ExecutionContinuityV10Contract(unittest.TestCase):
         self.assertIn("row?.entry_quote", finalizer)
         self.assertIn("row?.exit_quote", finalizer)
         self.assertIn("function spotDigit", finalizer)
-        self.assertIn("const entry = spotDigit(row.entry_spot)", finalizer)
-        self.assertIn("const exit = settled ? (spotDigit(row.exit_spot)", finalizer)
+        self.assertIn("DERIVADMIN_DIRECT_PIP_PRECISION_V1?.last_digit", finalizer)
+        self.assertIn("row?.actual_last_digit ?? row?.exit_digit", finalizer)
+        self.assertIn('"spotDigit(row.entry_spot, row.symbol, row.entry_digit)"', finalizer)
+        self.assertIn('"spotDigit(row.exit_spot, row.symbol, row.actual_last_digit)"', finalizer)
+
+    def test_browser_direct_uses_pip_precision_for_digit_display_and_settlement(self) -> None:
+        precision = self.text("dashboard/direct-pip-precision-v1.js")
+        engine = self.text("dashboard/deriv-direct-execution-v1.js")
+        self.assertIn("function lastDigit", precision)
+        self.assertIn("numeric.toFixed(pip)", precision)
+        self.assertIn("pip_size: (symbol)", precision)
+        self.assertIn("last_digit: lastDigit", precision)
+        self.assertIn("contract?.entry_tick ?? contract?.entry_tick_display_value", engine)
+        self.assertIn("contract?.exit_tick ?? contract?.exit_tick_display_value", engine)
+        self.assertIn("actual_last_digit:", engine)
 
     def test_start_flow_survives_shell_rerender_without_second_human_attempt(self) -> None:
         finalizer = self.text("scripts/finalize-execution-continuity-v1.mjs")

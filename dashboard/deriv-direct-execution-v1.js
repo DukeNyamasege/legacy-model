@@ -770,8 +770,11 @@
     const contractId = String(contract?.contract_id || "");
     if (!contractId || !state.openContracts.has(contractId)) return;
     const sold = Boolean(contract?.is_sold) || ["won", "lost", "sold"].includes(String(contract?.status || "").toLowerCase());
-    if (!sold) return;
     const open = state.openContracts.get(contractId);
+    const entrySpot = contract?.entry_tick ?? contract?.entry_tick_display_value ?? contract?.entry_spot ?? open.entrySpot ?? null;
+    const exitSpot = contract?.exit_tick ?? contract?.exit_tick_display_value ?? contract?.exit_spot ?? contract?.sell_spot ?? null;
+    if (entrySpot !== null && entrySpot !== undefined && entrySpot !== "") open.entrySpot = entrySpot;
+    if (!sold) return;
     state.openContracts.delete(contractId);
     const profit = finiteNumber(contract?.profit, 0);
     const credited = finiteNumber(contract?.sell_price ?? contract?.payout, NaN);
@@ -807,7 +810,9 @@
       outcome,
       profit,
       session_profit: state.sessionProfit,
-      exit_spot: contract?.exit_spot ?? contract?.current_spot ?? null,
+      entry_spot: entrySpot,
+      exit_spot: exitSpot ?? contract?.current_spot ?? null,
+      actual_last_digit: contract?.exit_tick ?? contract?.exit_tick_display_value ?? contract?.actual_last_digit ?? contract?.exit_digit ?? null,
     });
 
     const hook = state.strategy?.virtual_hook;

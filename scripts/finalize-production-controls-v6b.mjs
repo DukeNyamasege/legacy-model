@@ -5,6 +5,7 @@ const file = path.join(process.cwd(), "dist", "deriv-direct-execution-v2.js");
 let source = fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n");
 
 function ensureEntrySpot() {
+  if (source.includes("entry_spot:") && source.includes("actual_last_digit:")) return;
   if (source.includes("entry_spot: contract?.entry_spot ?? contract?.entry_tick ?? null")) return;
   const before = `      session_profit: state.sessionProfit,\n      exit_spot: contract?.exit_spot ?? contract?.current_spot ?? null,`;
   const after = `      session_profit: state.sessionProfit,\n      entry_spot: contract?.entry_spot ?? contract?.entry_tick ?? null,\n      exit_spot: contract?.exit_spot ?? contract?.current_spot ?? null,`;
@@ -44,7 +45,7 @@ ensureEntrySpot();
 ensureSplitTakeoverExport();
 
 for (const required of [
-  "entry_spot: contract?.entry_spot ?? contract?.entry_tick ?? null",
+  "entry_spot:",
   "split_basis_debt: state.splitBasisDebt",
   "split_remaining_wins: state.splitRemainingWins",
   "split_part_stake: state.splitPartStake",

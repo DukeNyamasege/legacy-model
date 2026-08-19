@@ -58,8 +58,23 @@
   }
   window.WebSocket = PrecisionWebSocket;
 
+  function lastDigit(symbol, quote, pipSize = null) {
+    const pip = Number.isInteger(Number(pipSize)) ? Number(pipSize) : pipBySymbol.get(String(symbol || "").toUpperCase());
+    const numeric = Number(quote);
+    if (Number.isFinite(numeric) && Number.isInteger(pip) && pip >= 0 && pip <= 12) {
+      const fixed = numeric.toFixed(pip);
+      for (let index = fixed.length - 1; index >= 0; index -= 1) {
+        if (/\d/.test(fixed[index])) return Number(fixed[index]);
+      }
+    }
+    const digits = String(quote ?? "").replace(/[^0-9]/g, "");
+    return digits ? Number(digits[digits.length - 1]) : null;
+  }
+
   window.DERIVADMIN_DIRECT_PIP_PRECISION_V1 = Object.freeze({
     version: "20260818-direct-pip-precision-v1",
     precision: (symbol) => pipBySymbol.get(String(symbol || "").toUpperCase()),
+    pip_size: (symbol) => pipBySymbol.get(String(symbol || "").toUpperCase()),
+    last_digit: lastDigit,
   });
 })();
