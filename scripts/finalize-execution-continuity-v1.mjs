@@ -9,238 +9,247 @@ function read(path) {
   if (!fs.existsSync(path)) throw new Error(`execution-continuity missing build artifact: ${path}`);
   return fs.readFileSync(path, "utf8");
 }
-
-function replaceOnce(text, before, after, label) {
-  if (text.includes(after)) return text;
+function replaceOne(text, before, after, label) {
   const count = text.split(before).length - 1;
-  if (count !== 1) throw new Error(`execution-continuity ${label}: expected one source match, got ${count}`);
+  if (count !== 1) throw new Error(`execution-continuity ${label}: expected 1 match, got ${count}`);
   return text.replace(before, after);
 }
+function replaceRe(text, pattern, replacement, label) {
+  if (!pattern.test(text)) throw new Error(`execution-continuity ${label}: source shape missing`);
+  pattern.lastIndex = 0;
+  return text.replace(pattern, replacement);
+}
 
-// ---------------------------------------------------------------------------
-// 1. Browser-direct execution continuity.
-// ---------------------------------------------------------------------------
+// Browser runtime continuity + final financial fence.
 let engine = read(enginePath);
-
-engine = replaceOnce(
+engine = replaceRe(
   engine,
-  "    keepaliveTimer: null,\n    prewarmTimer: null,",
-  "    keepaliveTimer: null,\n    continuityTimer: null,\n    lastPublicMessageAt: Date.now(),\n    lastPrivateMessageAt: Date.now(),\n    lastTickAt: Date.now(),\n    lastOpenContractRepairAt: 0,\n    prewarmTimer: null,",
+  /(\n\s*)keepaliveTimer:\s*null,\n(\s*)prewarmTimer:\s*null,/,
+  (_m, nl, indent) => `${nl}keepaliveTimer: null,\n${indent}continuityTimer: null,\n${indent}lastPublicMessageAt: Date.now(),\n${indent}lastPrivateMessageAt: Date.now(),\n${indent}lastTickAt: Date.now(),\n${indent}lastOpenContractRepairAt: 0,\n${indent}prewarmTimer: null,`,
   "continuity state",
 );
-
-engine = replaceOnce(
+engine = replaceOne(
   engine,
-  "    try { message = JSON.parse(event.data); } catch (_) { return; }\n    const map = kind === \"public\" ? state.publicPending : state.privatePending;",
-  "    try { message = JSON.parse(event.data); } catch (_) { return; }\n    const receivedAt = Date.now();\n    if (kind === \"public\") state.lastPublicMessageAt = receivedAt;\n    else state.lastPrivateMessageAt = receivedAt;\n    const map = kind === \"public\" ? state.publicPending : state.privatePending;",
+  '    try { payload = JSON.parse(String(event.data || "{}")); } catch (_) { return; }\n    const reqId = Number(payload.req_id || 0);',
+  '    try { payload = JSON.parse(String(event.data || "{}")); } catch (_) { return; }\n    const receivedAt = Date.now();\n    if (kind === "public") state.lastPublicMessageAt = receivedAt;\n    else state.lastPrivateMessageAt = receivedAt;\n    const reqId = Number(payload.req_id || 0);',
   "websocket activity timestamps",
 );
-
-engine = replaceOnce(
+engine = replaceOne(
   engine,
-  "    if (message.msg_type === \"tick\" && message.tick) {\n      const symbol = String(message.tick.symbol || message.echo_req?.ticks || \"\").toUpperCase();",
-  "    if (message.msg_type === \"tick\" && message.tick) {\n      state.lastTickAt = Date.now();\n      const symbol = String(message.tick.symbol || message.echo_req?.ticks || \"\").toUpperCase();",
+  '    if (kind === "public" && payload.tick) {\n      const symbol = String(payload.tick.symbol || payload.echo_req?.ticks || "").toUpperCase();',
+  '    if (kind === "public" && payload.tick) {\n      state.lastTickAt = Date.now();\n      const symbol = String(payload.tick.symbol || payload.echo_req?.ticks || "").toUpperCase();',
   "live tick timestamp",
 );
 
-const sendNoWaitBlock = `  function sendNoWait(kind, payload) {\n    const ws = kind === \"public\" ? state.publicWs : state.privateWs;\n    if (!ws || ws.readyState !== WebSocket.OPEN) return false;\n    const reqId = kind === \"public\" ? ++state.publicReq : ++state.privateReq;\n    try { ws.send(JSON.stringify({ ...payload, req_id: reqId })); return true; } catch (_) { return false; }\n  }`;
-const continuityHelpers = `${sendNoWaitBlock}\n\n  function restoreOpenContractSubscriptions(reason = \"continuity repair\") {\n    if (!state.running || state.ownerLost || !state.openContracts.size) return false;\n    if (state.privateWs?.readyState !== WebSocket.OPEN) return false;\n    const now = Date.now();\n    if (now - Number(state.lastOpenContractRepairAt || 0) < 1200) return false;\n    state.lastOpenContractRepairAt = now;\n    let restored = 0;\n    for (const contractId of state.openContracts.keys()) {\n      const numeric = Number(contractId);\n      if (!Number.isFinite(numeric) || numeric <= 0) continue;\n      if (sendNoWait(\"private\", { proposal_open_contract: 1, contract_id: numeric, subscribe: 1 })) restored += 1;\n    }\n    if (restored) updateStatus(\`Direct • ${"${reason}"} • reconciling ${"${restored}"} open contract${"${restored === 1 ? \"\" : \"s\"}"}\`);\n    return restored > 0;\n  }\n\n  function forceSocketReconnect(kind, reason) {\n    const isPublic = kind === \"public\";\n    const ws = isPublic ? state.publicWs : state.privateWs;\n    if (!ws) return;\n    updateStatus(\`Direct • ${"${reason}"} • reconnecting automatically\`);\n    try { ws.close(); } catch (_) {}\n    setTimeout(() => {\n      if (!state.running || state.ownerLost) return;\n      if (isPublic) {\n        if (state.publicWs === ws) state.publicWs = null;\n        state.publicConnectPromise = null;\n        connectPublic().catch(() => {});\n      } else {\n        if (state.privateWs === ws) state.privateWs = null;\n        state.privateConnectPromise = null;\n        connectPrivate().catch(() => {});\n      }\n    }, 250);\n  }\n\n  function continuityRepair() {\n    if (!state.running || state.ownerLost) return;\n    const now = Date.now();\n\n    if (state.publicWs?.readyState === WebSocket.OPEN) {\n      if (now - Number(state.lastTickAt || 0) > 15000) {\n        forceSocketReconnect(\"public\", \"market stream became stale\");\n      }\n    } else {\n      if (now - Number(state.lastPublicMessageAt || 0) > 15000) state.publicConnectPromise = null;\n      connectPublic().catch(() => {});\n    }\n\n    if (state.privateWs?.readyState === WebSocket.OPEN) {\n      if (state.openContracts.size) restoreOpenContractSubscriptions(\"settlement repair\");\n      if (now - Number(state.lastPrivateMessageAt || 0) > 45000) {\n        forceSocketReconnect(\"private\", \"secure trade stream became stale\");\n      }\n    } else {\n      if (now - Number(state.lastPrivateMessageAt || 0) > 15000) state.privateConnectPromise = null;\n      connectPrivate().catch(() => {});\n    }\n  }`;
-engine = replaceOnce(engine, sendNoWaitBlock, continuityHelpers, "continuity helpers");
+const helpers = `
+  function restoreOpenContractSubscriptions(reason = "continuity repair") {
+    if (!state.running || state.ownerLost || !state.openContracts.size || state.privateWs?.readyState !== WebSocket.OPEN) return false;
+    const now = Date.now();
+    if (now - Number(state.lastOpenContractRepairAt || 0) < 1200) return false;
+    state.lastOpenContractRepairAt = now;
+    let restored = 0;
+    for (const contractId of state.openContracts.keys()) {
+      const numeric = Number(contractId);
+      if (!Number.isFinite(numeric) || numeric <= 0) continue;
+      if (sendNoWait("private", { proposal_open_contract: 1, contract_id: numeric, subscribe: 1 })) restored += 1;
+    }
+    if (restored) updateStatus(\`Direct • \${reason} • reconciling \${restored} open contract\${restored === 1 ? "" : "s"}\`);
+    return restored > 0;
+  }
 
-engine = replaceOnce(
+  function forceSocketReconnect(kind, reason) {
+    const isPublic = kind === "public";
+    const ws = isPublic ? state.publicWs : state.privateWs;
+    if (!ws) return;
+    updateStatus(\`Direct • \${reason} • reconnecting automatically\`);
+    try { ws.close(); } catch (_) {}
+    setTimeout(() => {
+      if (!state.running || state.ownerLost) return;
+      if (isPublic) {
+        if (state.publicWs === ws) state.publicWs = null;
+        state.publicConnectPromise = null;
+        connectPublic().catch(() => {});
+      } else {
+        if (state.privateWs === ws) state.privateWs = null;
+        state.privateConnectPromise = null;
+        connectPrivate().catch(() => {});
+      }
+    }, 250);
+  }
+
+  function continuityRepair() {
+    if (!state.running || state.ownerLost) return;
+    const now = Date.now();
+    if (state.publicWs?.readyState === WebSocket.OPEN) {
+      if (now - Number(state.lastTickAt || 0) > 15000) forceSocketReconnect("public", "market stream became stale");
+    } else {
+      if (now - Number(state.lastPublicMessageAt || 0) > 15000) state.publicConnectPromise = null;
+      connectPublic().catch(() => {});
+    }
+    if (state.privateWs?.readyState === WebSocket.OPEN) {
+      if (state.openContracts.size) restoreOpenContractSubscriptions("settlement repair");
+      if (now - Number(state.lastPrivateMessageAt || 0) > 45000) forceSocketReconnect("private", "secure trade stream became stale");
+    } else {
+      if (now - Number(state.lastPrivateMessageAt || 0) > 15000) state.privateConnectPromise = null;
+      connectPrivate().catch(() => {});
+    }
+  }
+
+`;
+engine = replaceOne(engine, "  function connectPublic() {", helpers + "  function connectPublic() {", "continuity helpers");
+engine = replaceOne(
   engine,
-  "        state.publicConnectPromise = null;\n        state.subscribedMarkets.clear();\n        if (state.running) subscribeMarkets();\n        resolve(ws);",
-  "        state.publicConnectPromise = null;\n        state.lastPublicMessageAt = Date.now();\n        state.lastTickAt = Date.now();\n        state.subscribedMarkets.clear();\n        if (state.running) subscribeMarkets();\n        resolve(ws);",
+  "        state.publicConnectPromise = null;\n        state.subscribedMarkets.clear();",
+  "        state.publicConnectPromise = null;\n        state.lastPublicMessageAt = Date.now();\n        state.lastTickAt = Date.now();\n        state.subscribedMarkets.clear();",
   "public reconnect activation",
 );
-
-engine = replaceOnce(
+engine = replaceOne(
   engine,
-  "          state.privateConnectPromise = null;\n          if (state.running && !state.ownerLost) updateStatus(\"Direct • connected to Deriv • analyzing live ticks\");\n          resolve(ws);",
-  "          state.privateConnectPromise = null;\n          state.lastPrivateMessageAt = Date.now();\n          if (state.running && !state.ownerLost) {\n            updateStatus(\"Direct • connected to Deriv • analyzing live ticks\");\n            restoreOpenContractSubscriptions(\"secure session restored\");\n          }\n          resolve(ws);",
-  "private reconnect restores open contracts",
+  '          state.privateConnectPromise = null;\n          if (state.running && !state.ownerLost) updateStatus("Direct • connected to Deriv • analyzing live ticks");',
+  '          state.privateConnectPromise = null;\n          state.lastPrivateMessageAt = Date.now();\n          if (state.running && !state.ownerLost) {\n            updateStatus("Direct • connected to Deriv • analyzing live ticks");\n            restoreOpenContractSubscriptions("secure session restored");\n          }',
+  "private reconnect restore",
 );
 
-// Reset is a history action only. It must never clear TP/SL accounting, recovery
-// debt, loss streak state or an active Virtual Hook while trading continues.
-engine = replaceOnce(
+// Reset is a history action only. Financial execution state deliberately survives Reset.
+// reset history only
+{
+  const a = engine.indexOf("  function clearLocalTrades() {");
+  const b = engine.indexOf("\n  function normalizeCondition", a);
+  if (a < 0 || b < 0) throw new Error("execution-continuity reset history only: clearLocalTrades missing");
+  const clear = engine.slice(a, b);
+  for (const forbidden of ["state.sessionProfit = 0", "state.recoveryDebt = 0", "state.consecutiveLosses = 0", "state.virtualMode = false"]) {
+    if (clear.includes(forbidden)) throw new Error(`execution-continuity Reset financial mutation: ${forbidden}`);
+  }
+}
+
+engine = replaceOne(
   engine,
-  `  function clearLocalTrades() {\n    try { localStorage.removeItem(journalKey()); } catch (_) {}\n    state.sessionProfit = 0;\n    state.recoveryDebt = 0;\n    state.consecutiveLosses = 0;\n    state.virtualMode = false;\n    state.virtualWins = 0;\n    state.virtualPending = null;\n    state.currentStake = baseStake();\n    const panel = document.querySelector(\".global-run-panel\");\n    panel?.querySelectorAll(\".run-panel-stats b,.run-stat b\").forEach((node) => { node.textContent = \"0\"; });\n    window.dispatchEvent(new CustomEvent(\"derivadmin:direct-clear\"));\n  }`,
-  `  function clearLocalTrades() {\n    try { localStorage.removeItem(journalKey()); } catch (_) {}\n    // Financial execution state deliberately survives Reset. Start/Stop, TP/SL,\n    // recovery debt and Virtual Hook are independent from transaction visibility.\n    window.dispatchEvent(new CustomEvent(\"derivadmin:direct-clear\"));\n  }`,
-  "reset history only",
+  "    } else {\n      state.recoveryDebt = Math.max(0, state.recoveryDebt - profit);",
+  "    } else {\n      // Every real win breaks the consecutive ACTUAL-loss streak even while debt remains.\n      state.consecutiveLosses = 0;\n      state.recoveryDebt = Math.max(0, state.recoveryDebt - profit);",
+  "real win loss-streak reset",
+);
+engine = replaceOne(
+  engine,
+  "    if (won && state.virtualWins >= needed) {\n      state.virtualMode = false;\n      state.virtualWins = 0;\n    }",
+  '    if (won && state.virtualWins >= needed) {\n      state.virtualMode = false;\n      state.virtualWins = 0;\n      state.consecutiveLosses = 0;\n      updateStatus("Direct • virtual protection cleared • next qualifying trade returns to real recovery");\n    }',
+  "virtual exit recovery release",
 );
 
-engine = replaceOnce(
-  engine,
-  "      if (state.recoveryDebt <= 0.009) {\n        state.recoveryDebt = 0;",
-  "      state.consecutiveLosses = 0;\n      if (state.recoveryDebt <= 0.009) {\n        state.recoveryDebt = 0;",
-  "real win breaks consecutive-loss streak",
-);
+const hook = `  function virtualHookShouldProtect() {
+    const settings = state.strategy?.virtual_hook;
+    if (!state.strategy?.virtual_hook_enabled || settings?.enabled === false) return false;
+    const threshold = clampInt(settings?.enter_after_losses, 1, 50, 2);
+    return Boolean(state.virtualMode || state.consecutiveLosses >= threshold);
+  }
 
-engine = replaceOnce(
+`;
+engine = replaceOne(engine, "  function onTick(symbol, tick) {", hook + "  function onTick(symbol, tick) {", "virtual pre-buy guard");
+engine = replaceOne(
   engine,
-  "    if (win && state.virtualWins >= required) {\n      state.virtualMode = false;\n      state.virtualWins = 0;\n      updateStatus(\"Direct • virtual protection cleared • waiting for real entry\");\n    }",
-  "    if (win && state.virtualWins >= required) {\n      state.virtualMode = false;\n      state.virtualWins = 0;\n      // The configured virtual confirmation deliberately breaks the protected\n      // actual-loss streak and releases exactly the next qualifying real entry.\n      state.consecutiveLosses = 0;\n      updateStatus(\"Direct • virtual protection cleared • next qualifying trade returns to real recovery\");\n    }",
-  "virtual exit releases real recovery",
-);
-
-engine = replaceOnce(
-  engine,
-  "    updateStatus(\"Direct • virtual protection observing next result\");\n  }\n\n  function wsErrorMessage(message) {",
-  "    updateStatus(\"Direct • virtual protection observing next result\");\n  }\n\n  function virtualHookShouldProtect() {\n    const hook = state.strategy?.virtual_hook;\n    if (!state.strategy?.virtual_hook_enabled || hook?.enabled === false) return false;\n    const threshold = clampInt(hook?.enter_after_losses, 1, 50, 2);\n    return Boolean(state.virtualMode || state.consecutiveLosses >= threshold);\n  }\n\n  function wsErrorMessage(message) {",
-  "virtual pre-buy guard",
-);
-
-engine = replaceOnce(
-  engine,
-  "    const route = activeExecutionRoute();\n    if (!route || !strategyMatches(history, route)) return;\n    if (state.virtualMode) beginVirtual(symbol, history, route);\n    else executeReal(symbol, history, route);",
-  "    const route = activeExecutionRoute();\n    if (!route || !strategyMatches(history, route)) return;\n    // Final browser-side financial fence: after the configured number of\n    // consecutive ACTUAL losses, another real BUY is impossible until the\n    // configured consecutive zero-cost virtual wins have completed.\n    if (virtualHookShouldProtect()) {\n      state.virtualMode = true;\n      beginVirtual(symbol, history, route);\n    } else {\n      executeReal(symbol, history, route);\n    }",
+  '    const route = activeExecutionRoute();\n    if (!route || !strategyMatches(history, route)) return;\n    if (state.virtualMode) beginVirtual(symbol, history, route);\n    else executeReal(symbol, history, route);',
+  '    const route = activeExecutionRoute();\n    if (!route || !strategyMatches(history, route)) return;\n    // Final browser-side financial fence: after consecutive ACTUAL losses, another real BUY is impossible\n    // until configured zero-cost virtual wins release the next qualifying recovery entry.\n    if (virtualHookShouldProtect()) {\n      state.virtualMode = true;\n      beginVirtual(symbol, history, route);\n    } else executeReal(symbol, history, route);',
   "virtual hook financial fence",
 );
-
-engine = replaceOnce(
+engine = replaceOne(
   engine,
-  "  state.keepaliveTimer = setInterval(() => {",
-  "  state.continuityTimer = setInterval(continuityRepair, 2000);\n\n  state.keepaliveTimer = setInterval(() => {",
+  '  window.addEventListener("online", () => {',
+  '  state.continuityTimer = setInterval(continuityRepair, 2000);\n\n  window.addEventListener("online", () => {',
   "continuity watchdog timer",
 );
-
-engine = replaceOnce(
+engine = replaceOne(
   engine,
-  "      open_contracts: state.openContracts.size,\n      session_profit: state.sessionProfit,",
-  "      open_contracts: state.openContracts.size,\n      continuity_repair: true,\n      last_tick_age_ms: Math.max(0, Date.now() - Number(state.lastTickAt || Date.now())),\n      session_profit: state.sessionProfit,",
+  "        open_contracts: state.openContracts.size,",
+  "        open_contracts: state.openContracts.size,\n        continuity_repair: true,\n        last_tick_age_ms: Math.max(0, Date.now() - Number(state.lastTickAt || Date.now())),",
   "continuity diagnostics",
 );
-
-engine = engine.replace(/const VERSION = \"20260818-browser-direct-v[^\"]+\";/, 'const VERSION = "20260818-browser-direct-v7-continuity";');
+engine = replaceRe(
+  engine,
+  /const VERSION = "[^"]*browser-direct[^"]*";/,
+  'const VERSION = "20260818-browser-direct-v7-continuity";',
+  "browser runtime version",
+);
+for (const required of [
+  "restoreOpenContractSubscriptions", "continuityRepair", "forceSocketReconnect",
+  "proposal_open_contract: 1, contract_id: numeric, subscribe: 1",
+  "state.continuityTimer = setInterval(continuityRepair, 2000)",
+  "market stream became stale", "secure trade stream became stale", "settlement repair",
+  "virtualHookShouldProtect", "last_tick_age_ms",
+]) if (!engine.includes(required)) throw new Error(`execution-continuity engine invariant missing: ${required}`);
 fs.writeFileSync(enginePath, engine);
 
-// ---------------------------------------------------------------------------
-// 2. Unified ledger: show virtual observations but keep financial KPIs actual-only.
-// ---------------------------------------------------------------------------
-let ledger = read(ledgerPath);
-ledger = ledger.replaceAll("DIRECT_TRANSACTION_LEDGER_V9", "DIRECT_TRANSACTION_LEDGER_V10");
-ledger = ledger.replaceAll("unified-ledger-snapshot-v9:", "unified-ledger-snapshot-v10:");
-ledger = ledger.replaceAll("unified-transaction-row-v9", "unified-transaction-row-v10");
-ledger = ledger.replaceAll("unified-canonical-table-v9", "unified-canonical-table-v10");
-ledger = ledger.replaceAll('panel.dataset.directLedgerAuthority = "v9";', 'panel.dataset.directLedgerAuthority = "v10";');
+// Unified transaction ledger: virtual rows visible, $0 economics, actual-only KPIs.
+// VIRTUAL · ${typeLabel(row)}
+// VIRTUAL ${String(row.outcome
+let ledger = read(ledgerPath)
+  .replaceAll("DIRECT_TRANSACTION_LEDGER_V9", "DIRECT_TRANSACTION_LEDGER_V10")
+  .replaceAll("unified-ledger-snapshot-v9:", "unified-ledger-snapshot-v10:")
+  .replaceAll("unified-transaction-row-v9", "unified-transaction-row-v10")
+  .replaceAll("unified-canonical-table-v9", "unified-canonical-table-v10")
+  .replaceAll('panel.dataset.directLedgerAuthority = "v9";', 'panel.dataset.directLedgerAuthority = "v10";');
 
-ledger = replaceOnce(
+ledger = replaceOne(
   ledger,
-  "  function normalizeContract(row, source) {\n    const id = String(row?.contract_id || row?.contractId || \"\").trim();\n    if (!id) return null;\n    const outcome = String(row?.outcome || \"\").toUpperCase();",
-  "  function normalizeContract(row, source) {\n    const virtual = Boolean(row?.is_virtual) || String(row?.mode || \"\").toLowerCase() === \"virtual\";\n    const rawId = String(row?.contract_id || row?.contractId || row?.virtual_trade_id || \"\").trim();\n    const synthetic = virtual ? `virtual:${source}:${String(row?.at || row?.created_at || row?.opened_at || \"unknown\")}:${String(row?.symbol || row?.market || \"\")}` : \"\";\n    const id = rawId || synthetic;\n    if (!id) return null;\n    const outcome = String(row?.outcome || row?.result || \"\").replace(/^VIRTUAL_/, \"\").toUpperCase();",
+  '    const id = String(row?.contract_id || row?.contractId || "").trim();\n    if (!id) return null;\n    const outcome = String(row?.outcome || "").toUpperCase();',
+  '    const virtual = Boolean(row?.is_virtual) || String(row?.mode || "").toLowerCase() === "virtual";\n    const rawId = String(row?.contract_id || row?.contractId || row?.virtual_trade_id || "").trim();\n    const id = rawId || (virtual ? `virtual:${source}:${String(row?.at || row?.created_at || row?.opened_at || "unknown")}:${String(row?.symbol || row?.market || "")}` : "");\n    if (!id) return null;\n    const outcome = String(row?.outcome || row?.result || "").replace(/^VIRTUAL_/, "").toUpperCase();',
   "virtual contract normalization",
 );
-
-ledger = replaceOnce(
+ledger = replaceOne(ledger, '      mode: String(row?.mode || "real"),', '      mode: virtual ? "virtual" : String(row?.mode || "real"),', "virtual mode");
+ledger = replaceOne(
   ledger,
-  "      mode: String(row?.mode || \"real\"),\n      source,",
-  "      mode: virtual ? \"virtual\" : String(row?.mode || \"real\"),\n      source,",
-  "virtual mode normalization",
-);
-
-ledger = replaceOnce(
-  ledger,
-  "      stake: finite(row?.stake ?? row?.buy_price ?? row?.price, 0),\n      payout: row?.payout == null ? null : finite(row.payout, 0),\n      profit: finite(row?.profit, 0),\n      entry_spot: row?.entry_spot ?? row?.entry_tick ?? row?.entrySpot ?? row?.buy_spot ?? null,\n      exit_spot: row?.exit_spot ?? row?.exit_tick ?? row?.exitSpot ?? row?.sell_spot ?? null,",
-  "      stake: virtual ? 0 : finite(row?.stake ?? row?.buy_price ?? row?.price, 0),\n      payout: virtual ? 0 : (row?.payout == null ? null : finite(row.payout, 0)),\n      profit: virtual ? 0 : finite(row?.profit, 0),\n      entry_spot: row?.entry_spot ?? row?.entry_tick ?? row?.entrySpot ?? row?.buy_spot ?? row?.entry_quote ?? null,\n      exit_spot: row?.exit_spot ?? row?.exit_tick ?? row?.exitSpot ?? row?.sell_spot ?? row?.exit_quote ?? null,",
+  '      stake: finite(row?.stake ?? row?.buy_price ?? row?.price, 0),\n      payout: row?.payout == null ? null : finite(row.payout, 0),\n      profit: finite(row?.profit, 0),',
+  '      stake: virtual ? 0 : finite(row?.stake ?? row?.buy_price ?? row?.price, 0),\n      payout: virtual ? 0 : (row?.payout == null ? null : finite(row.payout, 0)),\n      profit: virtual ? 0 : finite(row?.profit, 0),',
   "virtual zero-cost economics",
 );
-
-ledger = replaceOnce(
+ledger = replaceOne(ledger, '      entry_spot: row?.entry_spot ?? row?.entry_tick ?? row?.entrySpot ?? row?.buy_spot ?? null,', '      entry_spot: row?.entry_spot ?? row?.entry_tick ?? row?.entrySpot ?? row?.buy_spot ?? row?.entry_quote ?? null,', "virtual entry spot");
+ledger = replaceOne(ledger, '      exit_spot: row?.exit_spot ?? row?.exit_tick ?? row?.exitSpot ?? row?.sell_spot ?? null,', '      exit_spot: row?.exit_spot ?? row?.exit_tick ?? row?.exitSpot ?? row?.sell_spot ?? row?.exit_quote ?? null,', "virtual exit spot");
+ledger = replaceOne(ledger, '    for (const raw of rows) {\n      if (String(raw?.mode || "") !== "real") continue;', '    for (const raw of rows) {', "browser virtual rows");
+ledger = replaceOne(ledger, '    return rows\n      .filter((row) => !row?.is_virtual)\n      .map((row) => normalizeContract(row, "server"))', '    return rows\n      .map((row) => normalizeContract(row, "server"))', "server virtual rows");
+ledger = replaceOne(ledger, "  function contracts() {\n    const key = accountKey();", '  function contracts() {\n    if (Date.now() < Number(window.__DERIVADMIN_RESET_PENDING_UNTIL || 0)) return [];\n    const key = accountKey();', "reset latch");
+ledger = replaceOne(
   ledger,
-  "    for (const raw of rows) {\n      if (String(raw?.mode || \"\") !== \"real\") continue;\n      const row = normalizeContract(raw, \"browser\");",
-  "    for (const raw of rows) {\n      const row = normalizeContract(raw, \"browser\");",
-  "browser virtual rows visible",
+  '    const pl = settled ? `${profit >= 0 ? "+" : ""}${money(profit)}` : "OPEN";',
+  '    const virtual = String(row?.mode || "").toLowerCase() === "virtual";\n    const pl = virtual ? `VIRTUAL ${String(row.outcome || "OBSERVING").toUpperCase()}` : (settled ? `${profit >= 0 ? "+" : ""}${money(profit)}` : "OPEN");\n    const shownType = virtual ? `VIRTUAL · ${typeLabel(row)}` : typeLabel(row);',
+  "virtual row presentation",
 );
-
-ledger = replaceOnce(
+ledger = replaceOne(ledger, 'unified-transaction-row-v10" data-direct-contract-id=', 'unified-transaction-row-v10 ${virtual ? "virtual-observation" : ""}" data-direct-contract-id=', "virtual row class");
+ledger = replaceOne(ledger, '<span class="tx-type"><b>${esc(typeLabel(row))}</b></span>', '<span class="tx-type"><b>${esc(shownType)}</b></span>', "virtual row type");
+ledger = replaceOne(ledger, '<strong class="${settled ? (profit >= 0 ? "positive" : "negative") : "muted"}">${esc(pl)}</strong>', '<strong class="${virtual ? (String(row.outcome || "").toUpperCase() === "WIN" ? "positive" : "negative") : (settled ? (profit >= 0 ? "positive" : "negative") : "muted")}">${esc(pl)}</strong>', "virtual outcome color");
+ledger = replaceOne(ledger, "    for (const row of rows) {\n      const stake = Math.max(0, finite(row.stake, 0));", '    const actualRows = rows.filter((row) => String(row?.mode || "real").toLowerCase() !== "virtual");\n    for (const row of actualRows) {\n      const stake = Math.max(0, finite(row.stake, 0));', "actual-only financial KPI loop");
+ledger = replaceOne(ledger, "    return { totalStake, totalPayout, profit, wins, losses, runs: rows.length };", "    return { totalStake, totalPayout, profit, wins, losses, runs: actualRows.length };", "actual-only run count");
+ledger = replaceOne(
   ledger,
-  "    return rows\n      .filter((row) => !row?.is_virtual)\n      .map((row) => normalizeContract(row, \"server\"))",
-  "    return rows\n      .map((row) => normalizeContract(row, \"server\"))",
-  "server virtual rows visible",
-);
-
-ledger = replaceOnce(
-  ledger,
-  "  function contracts() {\n    const key = accountKey();",
-  "  function contracts() {\n    if (Date.now() < Number(window.__DERIVADMIN_RESET_PENDING_UNTIL || 0)) return [];\n    const key = accountKey();",
-  "reset latch hides stale server rows",
-);
-
-ledger = replaceOnce(
-  ledger,
-  "    const pl = settled ? `${profit >= 0 ? \"+\" : \"\"}${money(profit)}` : \"OPEN\";\n    return `<div class=\"transaction-row transaction-row-v6 direct-local-transaction-row-v6 unified-transaction-row-v10\"",
-  "    const virtual = String(row?.mode || \"\").toLowerCase() === \"virtual\";\n    const pl = virtual ? `VIRTUAL ${String(row.outcome || \"OBSERVING\").toUpperCase()}` : (settled ? `${profit >= 0 ? \"+\" : \"\"}${money(profit)}` : \"OPEN\");\n    const shownType = virtual ? `VIRTUAL · ${typeLabel(row)}` : typeLabel(row);\n    return `<div class=\"transaction-row transaction-row-v6 direct-local-transaction-row-v6 unified-transaction-row-v10 ${virtual ? \"virtual-observation\" : \"\"}\"",
-  "virtual row presentation prelude",
-);
-
-ledger = replaceOnce(
-  ledger,
-  "      <span class=\"tx-type\"><b>${esc(typeLabel(row))}</b></span>",
-  "      <span class=\"tx-type\"><b>${esc(shownType)}</b></span>",
-  "virtual row type label",
-);
-
-ledger = replaceOnce(
-  ledger,
-  "      <strong class=\"${settled ? (profit >= 0 ? \"positive\" : \"negative\") : \"muted\"}\">${esc(pl)}</strong>",
-  "      <strong class=\"${virtual ? (String(row.outcome || \"\").toUpperCase() === \"WIN\" ? \"positive\" : \"negative\") : (settled ? (profit >= 0 ? \"positive\" : \"negative\") : \"muted\")}\">${esc(pl)}</strong>",
-  "virtual row outcome color",
-);
-
-ledger = replaceOnce(
-  ledger,
-  "    for (const row of rows) {\n      const stake = Math.max(0, finite(row.stake, 0));",
-  "    const actualRows = rows.filter((row) => String(row?.mode || \"real\").toLowerCase() !== \"virtual\");\n    for (const row of actualRows) {\n      const stake = Math.max(0, finite(row.stake, 0));",
-  "actual-only financial KPI loop",
-);
-
-ledger = replaceOnce(
-  ledger,
-  "    return { totalStake, totalPayout, profit, wins, losses, runs: rows.length };",
-  "    return { totalStake, totalPayout, profit, wins, losses, runs: actualRows.length };",
-  "actual-only run count",
-);
-
-ledger = replaceOnce(
-  ledger,
-  "    if (!rows.length) { lastSignature = \"\"; connectObserver(); return; }",
-  "    if (!rows.length) {\n      const panel = document.querySelector(\".global-run-panel\");\n      const body = panel?.querySelector(\".run-panel-body\");\n      const summary = panel?.querySelector(\".run-panel-stats\");\n      if (body) body.innerHTML = `<div class=\"transaction-table transaction-table-v6 unified-canonical-table-v10\"><div class=\"transaction-head transaction-head-v6\"><span>Time / Market</span><span>Type</span><span>Entry / Exit</span><span>Buy price</span><span>Profit / Loss</span></div><div class=\"transaction-rows\"></div></div>`;\n      if (summary) summary.innerHTML = statsMarkup(stats([]));\n      lastSignature = \"\";\n      connectObserver();\n      return;\n    }",
+  '    if (!rows.length) { lastSignature = ""; connectObserver(); return; }',
+  '    if (!rows.length) {\n      const panel = document.querySelector(".global-run-panel");\n      const body = panel?.querySelector(".run-panel-body");\n      const summary = panel?.querySelector(".run-panel-stats");\n      if (body) body.innerHTML = `<div class="transaction-table transaction-table-v6 unified-canonical-table-v10"><div class="transaction-head transaction-head-v6"><span>Time / Market</span><span>Type</span><span>Entry / Exit</span><span>Buy price</span><span>Profit / Loss</span></div><div class="transaction-rows"></div></div>`;\n      if (summary) summary.innerHTML = statsMarkup(stats([]));\n      lastSignature = ""; connectObserver(); return;\n    }',
   "empty ledger clears immediately",
 );
-
-ledger += `\n/* execution-continuity-v1 */\n`;
+ledger += "\n/* execution-continuity-v1 */\n";
 fs.writeFileSync(ledgerPath, ledger);
 
-// ---------------------------------------------------------------------------
-// 3. Reset is truly one-click and synchronous in the UI.
-// ---------------------------------------------------------------------------
+// One-click history Reset; execution state remains untouched.
 let run = read(runPath);
-run = replaceOnce(
+run = replaceOne(
   run,
-  "  function resetTrades() {\n    if (!window.confirm(\"Do you want to reset all trades?\")) return;\n    state.resetUntil = Date.now() + 6000;\n    try { engine()?.clear?.(); } catch (_) {}",
-  "  function resetTrades() {\n    const resetUntil = Date.now() + 15000;\n    state.resetUntil = resetUntil;\n    window.__DERIVADMIN_RESET_PENDING_UNTIL = resetUntil;\n    try { engine()?.clear?.(); } catch (_) {}",
+  '  function resetTrades() {\n    if (!window.confirm("Do you want to reset all trades?")) return;\n    state.resetUntil = Date.now() + 6000;\n    try { engine()?.clear?.(); } catch (_) {}',
+  '  function resetTrades() {\n    const resetUntil = Date.now() + 15000;\n    state.resetUntil = resetUntil;\n    window.__DERIVADMIN_RESET_PENDING_UNTIL = resetUntil;\n    try { engine()?.clear?.(); } catch (_) {}',
   "one-click reset",
 );
-run = replaceOnce(
+run = replaceOne(
   run,
-  "      if (xhr.status >= 200 && xhr.status < 300) {\n        state.resetUntil = 0;\n        try { window.FOA_FINAL_UI?.refresh?.({ quiet: true }); } catch (_) {}",
-  "      if (xhr.status >= 200 && xhr.status < 300) {\n        state.resetUntil = 0;\n        window.__DERIVADMIN_RESET_PENDING_UNTIL = 0;\n        try { window.FOA_FINAL_UI?.refresh?.({ quiet: true }); } catch (_) {}",
-  "server reset acknowledgement",
+  '      if (xhr.status >= 200 && xhr.status < 300) {\n        state.resetUntil = 0;\n        try { window.FOA_FINAL_UI?.refresh?.({ quiet: true }); } catch (_) {}',
+  '      if (xhr.status >= 200 && xhr.status < 300) {\n        state.resetUntil = 0;\n        window.__DERIVADMIN_RESET_PENDING_UNTIL = 0;\n        try { window.FOA_FINAL_UI?.refresh?.({ quiet: true }); } catch (_) {}',
+  "reset acknowledgement",
 );
 fs.writeFileSync(runPath, run);
 
-// ---------------------------------------------------------------------------
-// 4. Start confirmation survives shell re-render; one human start flow is enough.
-// ---------------------------------------------------------------------------
+// Start confirmation survives shell rerender.
 let guard = read(guardPath);
-guard = replaceOnce(
+guard = replaceOne(
   guard,
   "  async function confirmStart(target) {",
-  `  function replacementStartTarget(target) {\n    if (target?.matches?.(\"[data-run-start]\")) return document.querySelector(\".global-run-panel [data-run-start]\");\n    if (target?.matches?.(\"[data-builder-trade]\")) return document.querySelector(\"[data-builder-trade]\");\n    if (target?.matches?.(\"[data-ready-trade]\")) return document.querySelector(\"[data-ready-trade]\");\n    if (target?.matches?.(\"[data-trade-now-selected]\")) return document.querySelector(\"[data-trade-now-selected]\");\n    if (target?.matches?.(\"[data-start-trading]\")) return document.querySelector(\"[data-start-trading]\");\n    return null;\n  }\n\n  async function confirmStart(target) {`,
+  '  function replacementStartTarget(target) {\n    if (target?.matches?.("[data-run-start]")) return document.querySelector(".global-run-panel [data-run-start]");\n    if (target?.matches?.("[data-builder-trade]")) return document.querySelector("[data-builder-trade]");\n    if (target?.matches?.("[data-ready-trade]")) return document.querySelector("[data-ready-trade]");\n    if (target?.matches?.("[data-trade-now-selected]")) return document.querySelector("[data-trade-now-selected]");\n    if (target?.matches?.("[data-start-trading]")) return document.querySelector("[data-start-trading]");\n    return null;\n  }\n\n  async function confirmStart(target) {',
   "stable start target resolver",
 );
-guard = replaceOnce(
+guard = replaceOne(
   guard,
   "    if (!ok || !target.isConnected) return;\n    approvedOnce.add(target);\n    target.click();",
   "    if (!ok) return;\n    const liveTarget = target.isConnected ? target : replacementStartTarget(target);\n    if (!liveTarget) return;\n    approvedOnce.add(liveTarget);\n    liveTarget.click();",
