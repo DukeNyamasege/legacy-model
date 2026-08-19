@@ -31,8 +31,12 @@ class SingleGlobalRunPanelTests(unittest.TestCase):
 
         for marker in (
             "@media(min-width:901px)",
+            ".global-run-panel.global-run-panel{",
+            ".global-run-panel.global-run-panel.open{",
+            ".global-run-panel.global-run-panel.collapsed{",
             "position:fixed!important",
             "right:0!important",
+            "left:auto!important",
             "width:clamp(320px,25vw,460px)!important",
             "height:calc(100dvh - 72px)!important",
             "transform:translateX(calc(100% - 48px))!important",
@@ -43,13 +47,20 @@ class SingleGlobalRunPanelTests(unittest.TestCase):
         ):
             self.assertIn(marker, layout)
 
+        # The final runtime authority must be able to replace any stale injected
+        # style and must not permanently short-circuit merely because an older V1
+        # marker exists in browser memory/cache.
+        self.assertIn('document.getElementById("mobile-layout-authority-v1-style")?.remove()', layout)
+        self.assertIn("window.DERIVADMIN_MOBILE_LAYOUT_AUTHORITY_V1?.version === VERSION", layout)
+        self.assertNotIn("if (window.__DERIVADMIN_MOBILE_LAYOUT_AUTHORITY_V1__) return", layout)
+
         self.assertIn("var(--camera-surface", layout)
         self.assertIn("var(--camera-surface-2", layout)
         self.assertIn("var(--camera-text", layout)
         self.assertIn("var(--camera-line-strong", layout)
-        self.assertIn("20260819-right-quarter-drawer-v5", layout)
+        self.assertIn("20260819-right-quarter-drawer-v6-right-edge", layout)
         self.assertIn(
-            '["mobile-layout-authority-v1.js", "20260819-right-quarter-drawer-v5"]',
+            '["mobile-layout-authority-v1.js", "20260819-right-quarter-drawer-v6-right-edge"]',
             injector,
         )
 
