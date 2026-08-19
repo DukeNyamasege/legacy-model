@@ -96,6 +96,7 @@ class GlobalRecoveryPolicyTests(unittest.TestCase):
 
     def test_fresh_start_clears_stale_checkpoint_but_reset_is_history_only(self) -> None:
         source = (ROOT / "app" / "vps_runtime_policy_hotfix.py").read_text(encoding="utf-8")
+        controls = (ROOT / "app" / "vps_fast_execution_controls.py").read_text(encoding="utf-8")
         browser = (ROOT / "dashboard" / "deriv-direct-execution-v1.js").read_text(encoding="utf-8")
         for prefix in (
             "direct_execution:checkpoint:v1:",
@@ -107,6 +108,15 @@ class GlobalRecoveryPolicyTests(unittest.TestCase):
         self.assertIn('"/me/direct-execution/arm"', source)
         self.assertNotIn('"/me/clear-trades",', source)
         self.assertIn('reset_trades_financial_state_policy = "history_only"', source)
+
+        server_start = controls.index("def fast_clear_personal_trades(")
+        server_end = controls.index("app.state.vps_fast_execution_controls_installed", server_start)
+        clear_route = controls[server_start:server_end]
+        self.assertIn("HISTORY ONLY", clear_route)
+        self.assertIn('"financial_state_preserved": True', clear_route)
+        self.assertNotIn("_reset_risk_state_bounded(session, managed_id)", clear_route)
+        self.assertNotIn("_delete_runtime_preferences_bounded(session, managed_id)", clear_route)
+
         start = browser.index("function clearLocalTrades()")
         end = browser.index("function normalizeCondition", start)
         clear_body = browser[start:end]
