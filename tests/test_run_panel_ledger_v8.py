@@ -39,7 +39,7 @@ class RunPanelLedgerV10Contract(unittest.TestCase):
         self.assertIn('html[data-run-panel-visibility="open"] .bottom-nav', ux)
         self.assertIn('html[data-run-panel-visibility="collapsed"] .bottom-nav', ux)
         self.assertIn("z-index:420!important", ux)
-        self.assertIn("margin-bottom:64px!important", ux)
+        self.assertNotIn("margin-bottom:64px!important", ux)
         self.assertIn(".top-account-switch .account-switch-summary", ux)
         self.assertIn("grid-template-columns:auto auto minmax(0,1fr) auto", ux)
         self.assertIn("text-align:center!important", ux)

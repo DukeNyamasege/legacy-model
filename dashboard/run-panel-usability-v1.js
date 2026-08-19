@@ -92,9 +92,6 @@
     html[data-run-panel-visibility="collapsed"] .bottom-nav{
       bottom:calc(88px + env(safe-area-inset-bottom, 0px))!important;
     }
-    html[data-run-panel-visibility="open"] .global-run-panel .run-panel-stats{
-      margin-bottom:64px!important;
-    }
     .bottom-nav .nav-item{
       min-width:0!important;
       pointer-events:auto!important;
