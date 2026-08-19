@@ -97,8 +97,8 @@ engine = ensureOnce(
   engine,
   "open journal route identity",
   "route_key: route.route_key",
-  `        trade_type: state.strategy.trade_type,\n        prediction: state.strategy.prediction,\n        stake,`,
-  `        trade_type: route.trade_type,\n        prediction: route.prediction,\n        route_key: route.route_key,\n        stake,`,
+  `        trade_type: state.strategy.trade_type,\n        prediction: state.strategy.prediction,\n        stake: buyPrice,`,
+  `        trade_type: route.trade_type,\n        prediction: route.prediction,\n        route_key: route.route_key,\n        stake: buyPrice,`,
 );
 
 engine = ensureOnce(

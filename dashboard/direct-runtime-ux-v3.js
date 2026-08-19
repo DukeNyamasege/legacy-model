@@ -516,6 +516,24 @@
     queueRender();
   });
 
+  window.addEventListener("derivadmin:direct-balance-live", (event) => {
+    const detail = event.detail || {};
+    const currency = String(detail.currency || providerCurrency || selectedAccount()?.currency || "USD").toUpperCase();
+    const absolute = Number(detail.balance);
+    const delta = Number(detail.delta);
+    if (Number.isFinite(absolute)) providerBalance = absolute;
+    else if (Number.isFinite(delta)) providerBalance = Number(providerBalance ?? selectedAccount()?.balance ?? 0) + delta;
+    else return;
+    providerBalance = Math.round(Number(providerBalance) * 100000000) / 100000000;
+    providerCurrency = currency;
+    const account = selectedAccount();
+    if (account) {
+      account.balance = providerBalance;
+      account.currency = providerCurrency;
+    }
+    queueRender();
+  });
+
   window.addEventListener("derivadmin:demo-balance-reset", (event) => {
     const detail = event.detail || {};
     providerBalance = detail.balance ?? 10000;

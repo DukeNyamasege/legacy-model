@@ -82,6 +82,19 @@ class ExecutionContinuityV10Contract(unittest.TestCase):
         self.assertIn("approvedOnce.add(liveTarget)", finalizer)
         self.assertIn("liveTarget.click()", finalizer)
 
+    def test_browser_direct_balance_updates_from_purchase_and_settlement_events(self) -> None:
+        engine = self.text("dashboard/deriv-direct-execution-v1.js")
+        runtime_ux = self.text("dashboard/direct-runtime-ux-v3.js")
+        self.assertIn("function emitBalanceUpdate", engine)
+        self.assertIn("derivadmin:direct-balance-live", engine)
+        self.assertIn("buy.balance_after", engine)
+        self.assertIn("emitBalanceUpdate({ delta: -buyPrice", engine)
+        self.assertIn("contract?.balance_after", engine)
+        self.assertIn("contract?.sell_price ?? contract?.payout", engine)
+        self.assertIn("emitBalanceUpdate({ delta: Math.max(0, credited)", engine)
+        self.assertIn('window.addEventListener("derivadmin:direct-balance-live"', runtime_ux)
+        self.assertIn("providerBalance = Number(providerBalance ?? selectedAccount()?.balance ?? 0) + delta", runtime_ux)
+
     def test_finalizer_runs_after_scheduler_and_after_copied_execution_assets(self) -> None:
         docker = self.text("Dockerfile.frontend")
         scheduler = docker.index("node scripts/finalize-scheduler-v2.mjs")

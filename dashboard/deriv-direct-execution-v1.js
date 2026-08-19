@@ -388,6 +388,15 @@
     }));
   }
 
+  function emitBalanceUpdate(detail) {
+    window.dispatchEvent(new CustomEvent("derivadmin:direct-balance-live", {
+      detail: {
+        currency: String(state.account?.currency || "USD").toUpperCase(),
+        ...detail,
+      },
+    }));
+  }
+
   function rejectPending(map, reason) {
     for (const [id, item] of map.entries()) {
       clearTimeout(item.timer);
@@ -719,13 +728,20 @@
       const buy = buyResponse?.buy || {};
       const contractId = String(buy.contract_id || "");
       if (!contractId) throw new Error("Deriv buy response did not include a contract ID");
+      const buyPrice = finiteNumber(buy.buy_price ?? buy.price ?? stake, stake);
+      const balanceAfterBuy = finiteNumber(buy.balance_after, NaN);
+      if (Number.isFinite(balanceAfterBuy)) {
+        emitBalanceUpdate({ balance: balanceAfterBuy, reason: "purchase", contract_id: contractId });
+      } else if (buyPrice > 0) {
+        emitBalanceUpdate({ delta: -buyPrice, reason: "purchase", contract_id: contractId });
+      }
       const ratio = proposedProfitRatio(proposal, stake);
       state.lastProfitRatio = ratio;
       state.currentStake = stake;
       state.openContracts.set(contractId, {
         contractId,
         symbol,
-        stake,
+        stake: buyPrice,
         tradeType: state.strategy.trade_type,
         prediction: state.strategy.prediction,
         purchasedAt: Date.now(),
@@ -738,7 +754,7 @@
         symbol,
         trade_type: state.strategy.trade_type,
         prediction: state.strategy.prediction,
-        stake,
+        stake: buyPrice,
         profit: 0,
       });
       sendNoWait("private", { proposal_open_contract: 1, contract_id: Number(contractId), subscribe: 1 });
@@ -758,6 +774,15 @@
     const open = state.openContracts.get(contractId);
     state.openContracts.delete(contractId);
     const profit = finiteNumber(contract?.profit, 0);
+    const credited = finiteNumber(contract?.sell_price ?? contract?.payout, NaN);
+    const balanceAfterSettlement = finiteNumber(contract?.balance_after, NaN);
+    if (Number.isFinite(balanceAfterSettlement)) {
+      emitBalanceUpdate({ balance: balanceAfterSettlement, reason: "settlement", contract_id: contractId });
+    } else if (Number.isFinite(credited)) {
+      emitBalanceUpdate({ delta: Math.max(0, credited), reason: "settlement", contract_id: contractId });
+    } else if (profit > 0) {
+      emitBalanceUpdate({ delta: open.stake + profit, reason: "settlement", contract_id: contractId });
+    }
     const outcome = profit >= 0 ? "WIN" : "LOSS";
     state.sessionProfit = Math.round((state.sessionProfit + profit) * 100000000) / 100000000;
     if (profit < 0) {
