@@ -53,11 +53,12 @@ def test_direct_fail_closed_is_converted_to_runtime_repair() -> None:
     assert "lifecycle_stop=false auto_retry=true" in text
 
 
-def test_direct_database_automatic_disables_are_repaired() -> None:
+def test_direct_database_automatic_disables_are_repaired_continuously() -> None:
     text = source(AUTHORITY)
     assert "ManagedAccount.enabled.is_(False)" in text
     assert "ManagedAccount.execution_status.in_" in text
     assert "TP_SL_MANUAL_ONLY_STALE_AUTO_STOP_REPAIRED" in text
+    assert "while True:" in text
 
 
 def test_final_authority_is_installed_after_global_and_stale_recovery_layers() -> None:
