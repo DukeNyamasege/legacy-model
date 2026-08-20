@@ -35,6 +35,17 @@ class RunPanelLedgerV10Contract(unittest.TestCase):
         self.assertNotIn("`${labels[raw]} · ${raw}`", ledger)
         self.assertIn("${esc(marketLabel(row.symbol))}", ledger)
 
+    def test_transactions_show_exit_digit_only(self) -> None:
+        ledger = self.text("dashboard/direct-transaction-ledger-v6.js")
+        finalizer = self.text("scripts/finalize-production-controls-v6.mjs")
+        self.assertIn("<span>Exit digit</span>", ledger)
+        self.assertIn("tx-spots tx-exit-digit", ledger)
+        self.assertNotIn("<span>Entry / Exit</span>", ledger)
+        self.assertIn("transactionExitDigit", finalizer)
+        self.assertIn("<span>Exit digit</span>", finalizer)
+        self.assertIn("tx-spots tx-exit-digit", finalizer)
+        self.assertNotIn("<span>Entry / Exit</span>", finalizer)
+
     def test_mobile_nav_is_above_run_panel_and_balance_is_centered(self) -> None:
         ux = self.text("dashboard/run-panel-usability-v1.js")
         self.assertIn('dataset.runPanelVisibility = panelState', ux)
@@ -49,12 +60,22 @@ class RunPanelLedgerV10Contract(unittest.TestCase):
         self.assertIn("text-align:center!important", ux)
         self.assertIn("text-overflow:clip!important", ux)
 
+    def test_desktop_run_drawer_reserves_workspace_instead_of_covering_it(self) -> None:
+        ux = self.text("dashboard/run-panel-usability-v1.js")
+        self.assertIn('html[data-run-panel-visibility="open"] .app-main', ux)
+        self.assertIn("padding-right:clamp(320px,25vw,460px)!important", ux)
+        self.assertIn('html[data-run-panel-visibility="collapsed"] .app-main', ux)
+        self.assertIn("padding-right:48px!important", ux)
+        self.assertIn("right:clamp(320px,25vw,460px)!important", ux)
+        self.assertIn("right:48px!important", ux)
+
     def test_frontend_cache_busts_continuity_v10_assets(self) -> None:
         dockerfile = self.text("Dockerfile.frontend")
         assets = self.text("scripts/inject-frontend-assets.mjs")
-        self.assertIn('["direct-transaction-ledger-v6.js", "20260819-provider-ledger-v11"]', assets)
+        self.assertIn('["direct-strategy-persistence-v1.js", "20260820-builder-persist-v2"]', assets)
+        self.assertIn('["direct-transaction-ledger-v6.js", "20260820-exit-digit-v12"]', assets)
         self.assertIn('["direct-run-panel-authority-v6.js", "20260819-single-run-panel-v3"]', assets)
-        self.assertIn('["run-panel-usability-v1.js", "20260819-mobile-summary-nav-lane-v4"]', assets)
+        self.assertIn('["run-panel-usability-v1.js", "20260820-workspace-shrink-v5"]', assets)
         self.assertIn("node scripts/finalize-execution-continuity-v1.mjs", dockerfile)
         self.assertIn("node scripts/finalize-global-recovery-v1.mjs", dockerfile)
         self.assertIn("node --check dist/direct-transaction-ledger-v6.js", dockerfile)
