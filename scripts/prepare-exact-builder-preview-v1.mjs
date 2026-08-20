@@ -123,10 +123,10 @@ for (const marker of [
 
 fs.writeFileSync(guardPath, guard, "utf8");
 
-// The finalized browser engine may expose additional public methods between
-// `prewarm` and `state`. The diagnostics finalizer intentionally installs its
-// method immediately before state(), so normalize only that object-member order
-// without changing any method implementation or financial behavior.
+// The finalized browser engine may or may not already expose `prewarm`. The
+// diagnostics finalizer installs its method immediately before state(), so keep
+// that boundary deterministic. If prewarm is absent, expose the already-existing
+// prewarmData function; if present elsewhere in the export, move only that member.
 let engine = fs.readFileSync(enginePath, "utf8").replace(/\r\n/g, "\n");
 const engineExportMarker = "window.DERIVADMIN_DIRECT_EXECUTION_V1 = Object.freeze({";
 const engineExportStart = engine.indexOf(engineExportMarker);
@@ -134,17 +134,19 @@ const engineExportEnd = engineExportStart >= 0 ? engine.indexOf("});", engineExp
 if (engineExportStart < 0 || engineExportEnd < 0) {
   throw new Error("prepare-exact-builder-preview could not resolve browser execution export");
 }
-const engineExport = engine.slice(engineExportStart, engineExportEnd);
 const prewarmLine = "    prewarm: prewarmData,\n";
 const stateLine = "    state() {";
-const prewarmAtRelative = engineExport.indexOf(prewarmLine);
+let engineExport = engine.slice(engineExportStart, engineExportEnd);
 const stateAtRelative = engineExport.indexOf(stateLine);
-if (prewarmAtRelative < 0 || stateAtRelative < 0) {
-  throw new Error("prepare-exact-builder-preview browser execution prewarm/state members missing");
+if (stateAtRelative < 0) {
+  throw new Error("prepare-exact-builder-preview browser execution state member missing");
 }
 if (!engineExport.includes(prewarmLine + stateLine)) {
-  const absolutePrewarm = engineExportStart + prewarmAtRelative;
-  engine = engine.slice(0, absolutePrewarm) + engine.slice(absolutePrewarm + prewarmLine.length);
+  const prewarmAtRelative = engineExport.indexOf(prewarmLine);
+  if (prewarmAtRelative >= 0) {
+    const absolutePrewarm = engineExportStart + prewarmAtRelative;
+    engine = engine.slice(0, absolutePrewarm) + engine.slice(absolutePrewarm + prewarmLine.length);
+  }
   const refreshedExportStart = engine.indexOf(engineExportMarker);
   const refreshedState = engine.indexOf(stateLine, refreshedExportStart + engineExportMarker.length);
   if (refreshedState < 0) throw new Error("prepare-exact-builder-preview browser execution state member disappeared during normalization");
@@ -152,7 +154,8 @@ if (!engineExport.includes(prewarmLine + stateLine)) {
 }
 const normalizedExportStart = engine.indexOf(engineExportMarker);
 const normalizedExportEnd = engine.indexOf("});", normalizedExportStart + engineExportMarker.length);
-if (!engine.slice(normalizedExportStart, normalizedExportEnd).includes(prewarmLine + stateLine)) {
+engineExport = engine.slice(normalizedExportStart, normalizedExportEnd);
+if (!engineExport.includes(prewarmLine + stateLine)) {
   throw new Error("browser execution diagnostics export boundary was not normalized");
 }
 fs.writeFileSync(enginePath, engine, "utf8");
