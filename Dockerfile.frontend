@@ -26,6 +26,7 @@ COPY scripts/prepare-exact-builder-preview-v1.mjs ./scripts/prepare-exact-builde
 COPY scripts/prepare-terminal-runpanel-v1.mjs ./scripts/prepare-terminal-runpanel-v1.mjs
 COPY scripts/finalize-exact-builder-live-diagnostics-v2.mjs ./scripts/finalize-exact-builder-live-diagnostics-v2.mjs
 COPY scripts/finalize-terminal-stop-only-v1.mjs ./scripts/finalize-terminal-stop-only-v1.mjs
+COPY scripts/finalize-canonical-bot-run-snapshot-v1.mjs ./scripts/finalize-canonical-bot-run-snapshot-v1.mjs
 COPY scripts/export-deriv-quill-icons-v2.mjs ./scripts/export-deriv-quill-icons-v2.mjs
 COPY scripts/inject-frontend-assets.mjs ./scripts/inject-frontend-assets.mjs
 
@@ -56,8 +57,10 @@ RUN node scripts/build-direct-runtime-v2.mjs \
 # browser-direct Start retires every leftover /resume-trading path, canonical
 # Builder preview is prepared from the actual shell export, the Run-panel status
 # boundary is normalized so only hard-stop/TP/SL/manual status is terminal, routed
-# exact live diagnostics observe the same active route the engine evaluates, and
-# terminal-stop-only runs last so only TP, SL or explicit manual Stop may end Auto Trading.
+# exact live diagnostics observe the same active route the engine evaluates,
+# terminal-stop-only preserves the TP/SL/manual lifecycle, and the canonical bot
+# snapshot finalizer runs last so loaded bot scope, current edits, explicit result
+# routing and the immutable Run snapshot are the final production authority.
 RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && cp dashboard/direct-financial-fence-v1.js dist/direct-financial-fence-v1.js \
   && cp dashboard/direct-socket-control-v1.js dist/direct-socket-control-v1.js \
@@ -91,6 +94,7 @@ RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && node --check scripts/prepare-terminal-runpanel-v1.mjs \
   && node --check scripts/finalize-exact-builder-live-diagnostics-v2.mjs \
   && node --check scripts/finalize-terminal-stop-only-v1.mjs \
+  && node --check scripts/finalize-canonical-bot-run-snapshot-v1.mjs \
   && node --check dist/final-premium-6f3.js \
   && node --check dist/final-ui-shell-v2.js \
   && node --check dist/deriv-direct-execution-v2.js \
@@ -124,6 +128,7 @@ RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && node scripts/prepare-terminal-runpanel-v1.mjs \
   && node scripts/finalize-exact-builder-live-diagnostics-v2.mjs \
   && node scripts/finalize-terminal-stop-only-v1.mjs \
+  && node scripts/finalize-canonical-bot-run-snapshot-v1.mjs \
   && node --check dist/final-premium-6f3.js \
   && node --check dist/final-ui-shell-v2.js \
   && node --check dist/deriv-direct-execution-v2.js \
