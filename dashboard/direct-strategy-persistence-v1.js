@@ -9,6 +9,7 @@
   const MARKET_OPEN_KEY = "derivadmin-builder-market-open-v1";
   let builderSyncTimer = 0;
   let marketObserver = null;
+  let restoreQueued = false;
 
   function pathFor(input) {
     try {
@@ -111,6 +112,7 @@
   }
 
   function restoreOrPersistBuilder() {
+    restoreQueued = false;
     if (!builderRoute()) return;
     const state = appState();
     if (!state) return;
@@ -132,6 +134,8 @@
   }
 
   function scheduleRestore() {
+    if (restoreQueued) return;
+    restoreQueued = true;
     window.setTimeout(restoreOrPersistBuilder, 0);
     window.setTimeout(bindMarketDropdown, 20);
   }
@@ -167,7 +171,10 @@
   if (root && "MutationObserver" in window) {
     marketObserver = new MutationObserver(() => {
       if (!builderRoute()) return;
-      bindMarketDropdown();
+      // The premium bootstrap can render the final shell after this asset runs.
+      // Re-check persisted state whenever Builder DOM arrives, then bind/open the
+      // market details control without depending on pageshow timing.
+      scheduleRestore();
     });
     marketObserver.observe(root, { childList: true, subtree: true });
   }
