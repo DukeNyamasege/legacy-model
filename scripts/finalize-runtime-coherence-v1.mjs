@@ -55,14 +55,14 @@ engine = replaceOne(
 engine = replaceOne(
   engine,
   `        ws.onmessage = (event) => handleWsMessage("private", event);\n        ws.onerror = () => {};\n        ws.onclose = () => {\n          clearTimeout(timer);`,
-  `        ws.onmessage = (event) => handleWsMessage("private", event);\n        ws.onerror = () => {\n          state.lastExecutionError = "Authenticated Deriv WebSocket reported a connection error";\n        };\n        ws.onclose = (event) => {\n          clearTimeout(timer);\n          const code = Number(event?.code || 0);\n          const reason = String(event?.reason || "").replace(/otp=[^&\\s]+/gi, "otp=[redacted]").slice(0, 120);\n          state.lastExecutionError = `Authenticated Deriv WebSocket closed${code ? ` code ${code}` : ""}${reason ? `: ${reason}` : ""}`;`,
+  `        ws.onmessage = (event) => handleWsMessage("private", event);\n        ws.onerror = () => {\n          state.lastExecutionError = "Authenticated Deriv WebSocket reported a connection error";\n        };\n        ws.onclose = (event) => {\n          clearTimeout(timer);\n          const code = Number(event?.code || 0);\n          const reason = String(event?.reason || "").replace(/otp=[^&\\s]+/gi, "otp=[redacted]").slice(0, 120);\n          state.lastExecutionError = "Authenticated Deriv WebSocket closed" + (code ? " code " + code : "") + (reason ? ": " + reason : "");`,
   "private WebSocket close diagnostics",
 );
 
 engine = replaceOne(
   engine,
   `    } catch (error) {\n      if (state.running && !state.ownerLost) updateStatus("Direct • analyzing • last entry was not purchased");\n    } finally {`,
-  `    } catch (error) {\n      const message = String(error?.message || error || "Deriv purchase failed")\n        .replace(/otp=[^&\\s]+/gi, "otp=[redacted]")\n        .replace(/bearer\\s+[^\\s]+/gi, "Bearer [redacted]")\n        .slice(0, 180);\n      state.lastExecutionError = message;\n      window.dispatchEvent(new CustomEvent("derivadmin:direct-execution-error", {\n        detail: { message, symbol, at: new Date().toISOString() },\n      }));\n      if (state.running && !state.ownerLost) updateStatus(`Direct • purchase not completed • ${message}`);\n    } finally {`,
+  `    } catch (error) {\n      const message = String(error?.message || error || "Deriv purchase failed")\n        .replace(/otp=[^&\\s]+/gi, "otp=[redacted]")\n        .replace(/bearer\\s+[^\\s]+/gi, "Bearer [redacted]")\n        .slice(0, 180);\n      state.lastExecutionError = message;\n      window.dispatchEvent(new CustomEvent("derivadmin:direct-execution-error", {\n        detail: { message, symbol, at: new Date().toISOString() },\n      }));\n      if (state.running && !state.ownerLost) updateStatus("Direct • purchase not completed • " + message);\n    } finally {`,
   "provider purchase error visibility",
 );
 
