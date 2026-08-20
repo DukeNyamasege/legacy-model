@@ -73,7 +73,7 @@ jobs:
           docker compose -f docker-compose.yml config --quiet
           PUBLIC_ORIGIN=https://release-gate.example PUBLIC_TESTING_FREE_ACCESS=true \
             docker compose -f docker-compose.yml -f docker-compose.vps.yml config --quiet
-          alembic heads | grep -q "20260817_0025 (head)"
+          alembic heads | grep -q "20260819_0026 (head)"
 
       - name: Compile Python
         run: python -m compileall -q app scripts tests migrations
@@ -117,6 +117,11 @@ jobs:
           node --check scripts/build-vps.mjs
           node --check scripts/finalize-execution-continuity-v1.mjs
           node --check scripts/finalize-global-recovery-v1.mjs
+          node --check scripts/finalize-runtime-coherence-v1.mjs
+          node --check scripts/prepare-runtime-safety-v2.mjs
+          node --check scripts/finalize-runtime-safety-v2.mjs
+          node --check scripts/finalize-runtime-safety-v2b.mjs
+          node --check scripts/finalize-sticky-stake-v1.mjs
 
       - name: Run VPS architecture and lifecycle regressions
         run: |
@@ -129,6 +134,9 @@ jobs:
           python -m unittest -q tests.test_provider_connection_resilience
           python -m unittest -q tests.test_websocket_hot_path_hardening
           python -m unittest -q tests.test_websocket_execution_hardening
+          python -m unittest -q tests.test_runtime_execution_safety_v2
+          python -m unittest -q tests.test_runtime_server_purchase_clock
+          python -m unittest -q tests.test_sticky_stake_persistence
 
       - name: Run full release suite
         run: sh scripts/run_legacy_release_tests.sh
