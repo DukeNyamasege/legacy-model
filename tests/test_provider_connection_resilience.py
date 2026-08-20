@@ -82,13 +82,13 @@ class DeploymentSourceInvariantTests(unittest.TestCase):
 
     def test_contabo_deploy_validates_backend_health_without_old_smoke(self) -> None:
         self.assertFalse((ROOT / "scripts" / "production_smoke.py").exists())
-        source = (ROOT / "scripts" / "deploy_dedicated_backend.sh").read_text(
+        source = (ROOT / "scripts" / "deploy_full_vps.sh").read_text(
             encoding="utf-8"
         )
         self.assertIn("/health/database", source)
-        self.assertIn("/health/frontend-backend", source)
-        self.assertIn("CONTABO BACKEND DEPLOYMENT PASSED", source)
-        self.assertIn("compose build api worker", source)
+        self.assertIn("127.0.0.1:8081/healthz", source)
+        self.assertIn("FULL VPS DEPLOYMENT PASSED", source)
+        self.assertIn("compose build frontend api worker", source)
         self.assertNotIn("DEPLOY_PROVIDER_WS_ATTEMPTS", source)
 
     def test_financial_execution_remains_private_websocket_only(self) -> None:
