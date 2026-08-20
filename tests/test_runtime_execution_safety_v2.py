@@ -46,6 +46,23 @@ class RuntimeExecutionSafetyV2Tests(unittest.TestCase):
         self.assertGreater(safety, coherence)
         self.assertIn("COPY scripts/finalize-runtime-safety-v2.mjs", dockerfile)
 
+    def test_runtime_safety_preparation_accepts_post_global_recovery_ledger(self) -> None:
+        preparer = self.read("scripts/prepare-runtime-safety-v2.mjs")
+        global_recovery = self.read("scripts/finalize-global-recovery-v1.mjs")
+        continuity = self.read("scripts/finalize-execution-continuity-v1.mjs")
+        self.assertIn('replaceAll("<span>Entry / Exit</span>", "<span>Exit digit</span>")', global_recovery)
+        self.assertIn("unified-canonical-table-v10", continuity)
+        for marker in (
+            "const ledgerExpandedEntryExit =",
+            "const ledgerExpandedExitDigit =",
+            "const ledgerNormalized =",
+            "exitDigitCount === 1 && legacyCount === 0",
+            "legacyCount === 1 && exitDigitCount === 0",
+            "expected exactly one supported shape",
+            "legacy Entry / Exit header survived global recovery",
+        ):
+            self.assertIn(marker, preparer)
+
     def test_frontend_gate_enforces_cross_device_stop_clear_and_diagnostics(self) -> None:
         finalizer = self.read("scripts/finalize-runtime-safety-v2.mjs")
         for marker in (
