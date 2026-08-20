@@ -10,7 +10,7 @@ from fastapi import Request
 from sqlalchemy import case, func, or_, select
 
 import app.api_performance_hardening as performance
-import app.netlify_realtime_gateway as gateway
+import app.vps_realtime_gateway as gateway
 from app.final_public_controls import ClearTradesRequest, _today_bounds_utc
 from app.global_trade_history_cutoff import _read_cutoff
 from app.models import Trade, VirtualTrade
@@ -144,7 +144,6 @@ def _route_endpoint(app: Any, path: str, method: str) -> Callable[..., Any] | No
 
 
 
-
 def install_final_trade_history_cutoff_authority(app: Any) -> None:
     """Keep Clear Trades global while allowing unlimited KPI totals afterward.
 
@@ -220,7 +219,7 @@ def install_final_trade_history_cutoff_authority(app: Any) -> None:
     performance._fast_trade_payload = cutoff_fast_trade_payload
     performance._me_payload = cutoff_me_payload
 
-    # netlify_realtime_gateway imported function aliases by value, so patch those
+    # The VPS realtime gateway imported function aliases by value, so patch those
     # aliases too. Otherwise WebSocket snapshots could restore pre-clear totals.
     gateway._fast_trade_payload = cutoff_fast_trade_payload
     gateway._me_payload = cutoff_me_payload
