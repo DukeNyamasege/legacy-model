@@ -109,7 +109,8 @@ class SchedulerV2AuthorityContract(unittest.TestCase):
         first = entry.index("install_automation_scheduler_action5(app)")
         second = entry.index("install_automation_scheduler_v2_authority()")
         self.assertGreater(second, first)
-        self.assertIn("hybrid_browser_direct_v2_global_recovery_policy", entry)
+        self.assertIn('production_architecture = "browser_deriv_direct_v3"', entry)
+        self.assertIn('live_manual_provider_path = "browser_to_deriv"', entry)
 
 
 if __name__ == "__main__":
