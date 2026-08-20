@@ -85,13 +85,16 @@ class FullVpsHostingTests(unittest.TestCase):
         source = self.text("scripts/deploy_full_vps.sh")
         build = source.index("compose build frontend api worker")
         backup = source.index("DATABASE_BACKUP_CREATED")
+        preflight = source.index("CANDIDATE_VPS_API_IMPORT_OK")
         api_cutover = source.index("compose up -d --force-recreate --no-deps api")
         remaining_cutover = source.index(
             "compose up -d --force-recreate --remove-orphans --no-deps worker frontend"
         )
         self.assertLess(build, api_cutover)
         self.assertLess(backup, api_cutover)
+        self.assertLess(preflight, api_cutover)
         self.assertLess(api_cutover, remaining_cutover)
+        self.assertIn("import app.vps_backend_api", source)
         self.assertIn("pg_dump --format=custom --no-owner --no-privileges", source)
         self.assertIn("alembic upgrade head", source)
         self.assertIn("command -v caddy", source)
