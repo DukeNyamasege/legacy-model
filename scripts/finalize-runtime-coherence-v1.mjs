@@ -141,12 +141,28 @@ engine = replaceOne(
   "start status reflects financial readiness",
 );
 
-engine = replaceOne(
-  engine,
-  `        open_contracts: state.openContracts.size,\n        last_execution_error: String(state.lastExecutionError || ""),`,
-  `        open_contracts: state.openContracts.size,\n        execution_ready: executionTransportReady(),\n        last_execution_error: String(state.lastExecutionError || ""),`,
-  "execution readiness state export",
-);
+const stateExportCurrent = `        open_contracts: state.openContracts.size,\n      };`;
+const stateExportWithError = `        open_contracts: state.openContracts.size,\n        last_execution_error: String(state.lastExecutionError || ""),\n      };`;
+const stateExportReady = `        open_contracts: state.openContracts.size,\n        execution_ready: executionTransportReady(),\n        last_execution_error: String(state.lastExecutionError || ""),\n      };`;
+if (engine.includes(stateExportCurrent)) {
+  engine = replaceOne(
+    engine,
+    stateExportCurrent,
+    stateExportReady,
+    "execution readiness state export from canonical source",
+  );
+} else if (engine.includes(stateExportWithError)) {
+  engine = replaceOne(
+    engine,
+    stateExportWithError,
+    stateExportReady,
+    "execution readiness state export from diagnostic source",
+  );
+} else if (!engine.includes(stateExportReady)) {
+  throw new Error(
+    "runtime-coherence execution readiness state export: neither canonical, diagnostic, nor installed shape found",
+  );
+}
 
 for (const required of [
   "secure session connection delayed after 15s",
