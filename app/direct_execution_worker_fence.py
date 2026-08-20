@@ -22,6 +22,8 @@ from sqlalchemy import select
 
 import app.custom_strategy_runtime as custom_runtime
 import app.shared_system_strategy_clock as shared_clock
+from app import custom_strategy_connection_stampede_guard as stampede
+from app import private_websocket_rate_limit as private_ws
 from app.account_mode_execution_lock import account_allows_new_execution
 from app.direct_execution_hard_stop_state import direct_hard_stop_active
 from app.direct_execution_lease import DIRECT_BROWSER_STATUS, direct_browser_lease_fresh
@@ -152,6 +154,59 @@ def _promote_expired_browser_leases(bot: Any) -> list[int]:
     return promoted
 
 
+async def _targeted_takeover(self: RFDir5TradingBot, promoted: list[int]) -> None:
+    """Admit and urgently connect only browser leases that actually expired."""
+
+    admitted: list[int] = []
+    admit = getattr(self, "_admit_custom_runtime_account", None)
+    for managed_id in promoted:
+        try:
+            token = admit(int(managed_id)) if callable(admit) else stampede._admit_one_runtime_account(self, int(managed_id))
+        except Exception as exc:
+            self.logger.warning(
+                "DIRECT_EXECUTION_TARGETED_TAKEOVER_DEFERRED managed_id=%s stage=admit error_type=%s",
+                int(managed_id),
+                type(exc).__name__,
+            )
+            continue
+        if token:
+            admitted.append(int(managed_id))
+
+    if admitted:
+        # Existing healthy siblings are retained. Only newly admitted accounts get
+        # a new ClientSession task; then each promoted account is explicitly woken.
+        await self._ensure_sessions_for_valid_clients()
+        for managed_id in admitted:
+            session = stampede._private_session_for_account(self, int(managed_id))
+            if session is not None and not bool(getattr(session, "is_connected", False)):
+                private_ws.wake_private_connection(session)
+
+    # Register local strategy/runtime state without provider-wide discovery.
+    try:
+        from app import custom_strategy_direct_runtime as direct_runtime
+
+        direct_runtime._refresh_direct_accounts(
+            self,
+            require_connected=False,
+            fail_invalid=False,
+        )
+    except Exception as exc:
+        self.logger.warning(
+            "DIRECT_EXECUTION_TARGETED_TAKEOVER_DEFERRED accounts=%s stage=runtime error_type=%s",
+            sorted(admitted),
+            type(exc).__name__,
+        )
+
+    self._managed_accounts_revision = self.repository.managed_accounts_revision()
+    self._runtime_mode_cache = self.repository.runtime_mode()
+    self.logger.warning(
+        "DIRECT_EXECUTION_TARGETED_TAKEOVER_READY promoted=%s admitted=%s "
+        "global_validation=false sibling_rebuild=false urgent_private_wake=true",
+        sorted(promoted),
+        sorted(admitted),
+    )
+
+
 def install_direct_execution_worker_fence() -> None:
     global _INSTALLED
     if _INSTALLED:
@@ -174,11 +229,7 @@ def install_direct_execution_worker_fence() -> None:
     async def refresh_with_direct_takeover(self: RFDir5TradingBot) -> None:
         promoted = _promote_expired_browser_leases(self)
         if promoted:
-            await self.validate_accounts()
-            self._sync_clients_with_runtime_accounts()
-            await self._ensure_sessions_for_valid_clients()
-            self._managed_accounts_revision = self.repository.managed_accounts_revision()
-            self._runtime_mode_cache = self.repository.runtime_mode()
+            await _targeted_takeover(self, promoted)
             return
         await original_refresh(self)
 
@@ -224,6 +275,7 @@ def install_direct_execution_worker_fence() -> None:
     RFDir5TradingBot._refresh_runtime_accounts_if_needed = refresh_with_direct_takeover
     RFDir5TradingBot._direct_execution_worker_fence_installed = True
     RFDir5TradingBot._direct_execution_hard_stop_fence = "uncached_final_pre_buy"
+    RFDir5TradingBot._direct_execution_takeover = "targeted_urgent_no_global_validation"
     _INSTALLED = True
 
     # Final worker-side authorities. Older cap/fail-closed/quarantine/global-P&L
