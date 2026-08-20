@@ -22,6 +22,7 @@ from app.public_testing_access import (
     install_public_testing_access_api,
 )
 from app.text_to_strategy_api import install_text_to_strategy_api
+from app.vps_cross_device_runtime_sync import install_vps_cross_device_runtime_sync
 from app.vps_dashboard_latency_hotfix import install_vps_dashboard_latency_hotfix
 from app.vps_demo_balance_reset import install_vps_demo_balance_reset
 from app.vps_direct_execution_api import install_vps_direct_execution_api
@@ -95,6 +96,11 @@ install_vps_fast_execution_controls(app)
 # polling uses one bounded account query plus one batched preference read without
 # caching financial Stop state.
 install_vps_runtime_policy_hotfix(app)
+# Account-global synchronization is deliberately after every direct/legacy control:
+# a Stop or TP/SL on one device is visible to every session for the same managed
+# account, a successful Clear gets a shared history revision, and transient browser
+# OTP bootstrap is retried without changing Auto Trading lifecycle state.
+install_vps_cross_device_runtime_sync(app)
 # Install last so every personal mutation route, including future feature routes,
 # passes through one subscription authority. Payment/setup and safe stop operations
 # are explicitly exempted inside the gate. During public testing the middleware is
