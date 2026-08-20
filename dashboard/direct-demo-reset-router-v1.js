@@ -92,8 +92,10 @@
         }
         const label = row.querySelector("span b");
         const accountId = row.querySelector("span small");
-        if (label && account?.label) label.textContent = String(account.label);
-        if (accountId && account?.account_id) accountId.textContent = String(account.account_id);
+        const expectedLabel = String(account?.label || "");
+        const expectedId = String(account?.account_id || "");
+        if (label && expectedLabel && label.textContent !== expectedLabel) label.textContent = expectedLabel;
+        if (accountId && expectedId && accountId.textContent !== expectedId) accountId.textContent = expectedId;
       });
     }
 
@@ -104,7 +106,11 @@
       badge.style.cssText = "margin:7px 12px 0;padding:6px 9px;border-radius:9px;border:1px solid rgba(84,200,255,.2);background:rgba(8,24,40,.72);display:flex;align-items:center;gap:7px;font-size:8px;line-height:1.2;letter-spacing:.02em";
       (panel.querySelector(".run-panel-sheet") || panel).prepend(badge);
     }
-    badge.innerHTML = '<span style="font-weight:900;text-transform:uppercase">Tutorial</span><b>Demo execution</b><small style="opacity:.7">ROT view · linked DOT demo</small>';
+    const signature = `${account?.account_id || "ROT"}|${presentationRatio(account)}`;
+    if (badge.dataset.signature !== signature) {
+      badge.dataset.signature = signature;
+      badge.innerHTML = '<span style="font-weight:900;text-transform:uppercase">Tutorial</span><b>Demo execution</b><small style="opacity:.7">ROT view · linked DOT demo</small>';
+    }
   }
 
   let renderTimer = 0;
