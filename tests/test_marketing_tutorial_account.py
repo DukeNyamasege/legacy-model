@@ -62,7 +62,14 @@ class MarketingTutorialAccountTests(unittest.TestCase):
             self.assertIn(route, source)
         self.assertIn("_ensure_dot_session(request, account, dot_row)", source)
         self.assertIn("Do not rewrite the bootstrap payload to ROT", source)
-        self.assertIn("The financial session NEVER switches to ROT", source)
+        self.assertIn("financial control path stay bound to DOT93427967", source)
+
+    def test_selector_hides_raw_real_account_and_keeps_only_dot_plus_rot(self) -> None:
+        source = (ROOT / "app" / "marketing_tutorial_account.py").read_text(encoding="utf-8")
+        self.assertIn("Deliberately exactly two visible accounts", source)
+        self.assertIn("No underlying/extra real", source)
+        self.assertIn("_project_dot_account(dot_row, dot_payload", source)
+        self.assertIn("_project_rot_account(dot_row, rot_row, rot_payload", source)
 
     def test_marketing_install_runs_after_browser_direct_transport(self) -> None:
         source = (ROOT / "app" / "vps_backend_api.py").read_text(encoding="utf-8")
@@ -78,6 +85,8 @@ class MarketingTutorialAccountTests(unittest.TestCase):
         self.assertIn("absolute * ratio", source)
         self.assertIn("delta * ratio", source)
         self.assertIn('delete detail.loginid', source)
+        self.assertIn("deriv-real-flag", source)
+        self.assertIn("expectedId", source)
         self.assertIn("Tutorial</span><b>Demo execution", source)
         self.assertIn("ROT view · linked DOT demo", source)
         self.assertIn("derivadmin:direct-balance-live", source)
