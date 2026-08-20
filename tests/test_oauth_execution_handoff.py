@@ -97,13 +97,21 @@ class OAuthExecutionHandoffTests(unittest.TestCase):
             "browser reconnecting directly",
         ):
             self.assertIn(marker, finalizer)
+
+        # These legacy server hot-path strings are intentionally present in the
+        # finalizer's fail-closed audit list. The production build executes this
+        # guard after rewriting the engine and fails if any survives in dist.
+        guard = finalizer.split("for (const forbidden of [", 1)[1].split(
+            "write(enginePath, engine);", 1
+        )[0]
         for forbidden in (
             'apiPath("/me/direct-execution/session")',
             'apiPath("/me/direct-execution/heartbeat")',
             'apiPath("/me/direct-execution/yield")',
             "VPS continuity takeover activated automatically",
         ):
-            self.assertNotIn(forbidden, finalizer)
+            self.assertIn(forbidden, guard)
+        self.assertIn("if (engine.includes(forbidden)) throw new Error", guard)
 
     def test_server_heartbeat_and_takeover_are_retired(self) -> None:
         api = self.read("app/browser_direct_deriv_transport_v3.py")
@@ -113,7 +121,7 @@ class OAuthExecutionHandoffTests(unittest.TestCase):
             '"heartbeat_required": False',
             '"takeover_requested": False',
             '"server_trade_transport": False',
-            '"live_server_provider_requests"',
+            "app.state.live_server_provider_requests = False",
         ):
             self.assertIn(marker, api)
         self.assertIn("_promote_expired_browser_leases = no_browser_takeover", worker)
