@@ -16,6 +16,10 @@
    * Real OPEN and SETTLED trade receipts are emitted by the execution engine and
    * posted once per event to the light control plane. Stop/Clear remain separate
    * account-global control events.
+   *
+   * Legacy takeover checkpoint fields split_basis_debt and split_remaining_wins
+   * remain named here only as migration documentation. They are browser-local
+   * runtime state in v3 and are never periodically POSTed to the VPS.
    */
 
   function checkpoint() {
