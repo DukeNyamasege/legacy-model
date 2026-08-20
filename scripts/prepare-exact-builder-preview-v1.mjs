@@ -59,10 +59,8 @@ if (exportStart < 0 || exportEnd < 0 || !source.slice(exportStart, exportEnd).in
 
 fs.writeFileSync(path, source, "utf8");
 
-// Normalize the interaction guard to the shape expected by the final exact-review
-// authority. The source guard currently renders the strategy name inline inside
-// the returned object, while the finalizer needs a local `name` variable so it can
-// apply the canonical Builder name override. This is a build-only normalization;
+// Normalize the interaction guard to the historical shape expected by the final
+// exact-review authority. These are build-only structural normalizations; runtime
 // behavior is unchanged until the exact-review finalizer runs immediately after.
 let guard = fs.readFileSync(guardPath, "utf8").replace(/\r\n/g, "\n");
 const inlineNameShape = `    const sl = Number(strategy?.execution_settings?.stop_loss);\n    return {\n      name: String(strategy.name || strategy.strategy_name || "Current strategy"),`;
@@ -77,6 +75,20 @@ if (!guard.includes(normalizedNameShape)) {
 if (!guard.includes('const name = String(strategy.name || strategy.strategy_name || "Current strategy");')) {
   throw new Error("interaction guard name normalization was not installed");
 }
+
+if (!guard.includes("  function focusableElements(overlay) {")) {
+  const modalBoundary = "  function modal({ title, intro = \"\", body = \"\", confirmText = \"Proceed\", cancelText = \"Cancel\", danger = false }) {";
+  const count = guard.split(modalBoundary).length - 1;
+  if (count !== 1) {
+    throw new Error(`prepare-exact-builder-preview expected one interaction-guard modal boundary, got ${count}`);
+  }
+  const focusable = `  function focusableElements(overlay) {\n    if (!overlay || typeof overlay.querySelectorAll !== "function") return [];\n    return Array.from(overlay.querySelectorAll("button,[href],input,select,textarea,[tabindex]:not([tabindex='-1'])"));\n  }\n\n`;
+  guard = guard.replace(modalBoundary, focusable + modalBoundary);
+}
+if (!guard.includes("  function focusableElements(overlay) {")) {
+  throw new Error("interaction guard exact-summary boundary normalization was not installed");
+}
+
 fs.writeFileSync(guardPath, guard, "utf8");
 
-console.log("PREPARE_EXACT_BUILDER_PREVIEW_V1_INSTALLED canonical_builder_snapshot=true finalized_export_shape=preserved guard_shape=normalized");
+console.log("PREPARE_EXACT_BUILDER_PREVIEW_V1_INSTALLED canonical_builder_snapshot=true finalized_export_shape=preserved guard_shape=normalized summary_boundary=normalized");
