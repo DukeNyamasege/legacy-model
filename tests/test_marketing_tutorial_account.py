@@ -109,7 +109,7 @@ class MarketingTutorialAccountTests(unittest.TestCase):
 
     def test_marketing_install_runs_after_reset_and_browser_direct_authorities(self) -> None:
         source = (ROOT / "app" / "vps_backend_api.py").read_text(encoding="utf-8")
-        reset_install = source.index("install_demo_balance_reset(app)")
+        reset_install = source.index("install_vps_demo_balance_reset(app)")
         cross = source.index("install_vps_cross_device_runtime_sync(app)")
         marketing_install = source.index("install_marketing_tutorial_account(app)")
         premium = source.index("install_premium_access_action6a(app)")
