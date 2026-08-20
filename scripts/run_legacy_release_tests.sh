@@ -93,14 +93,20 @@ docker compose -f docker-compose.yml run --rm --no-deps api sh -ec '
     app/vps_direct_execution_checkpoint.py \
     app/global_recovery_execution_policy.py \
     app/never_auto_stop_repository_authority.py \
+    app/tp_sl_manual_only_authority.py \
     app/account_identity_canonical_authority.py \
     app/account_trade_metrics_authority.py \
     app/vps_runtime_policy_hotfix.py \
     app/automation_scheduler_v2_authority.py \
+    app/vps_api_surface.py \
+    app/vps_realtime_gateway.py \
+    app/vps_core_api.py \
     app/custom_strategy_worker.py \
     app/vps_backend_api.py
 
   python -m unittest -q \
+    tests.test_full_vps_hosting \
+    tests.test_tp_sl_manual_only_authority \
     tests.test_vps_purchase_continuity_v2 \
     tests.test_global_recovery_policy \
     tests.test_tutorial_camera_theme \
@@ -139,4 +145,4 @@ docker build \
   -t legacy-model-frontend-release-check:latest \
   .
 
-echo "Release gate passed: Python tests and full frontend finalizer pipeline succeeded."
+echo "Release gate passed: VPS-only architecture, lifecycle policy, Python tests and frontend finalizers succeeded."
