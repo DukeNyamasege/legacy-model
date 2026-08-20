@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "20260819-run-panel-usability-v3-mobile-summary-lane";
+  const VERSION = "20260820-run-panel-usability-v4-workspace-clear";
   if (window.DERIVADMIN_RUN_PANEL_USABILITY_V2?.version === VERSION) return;
   window.__DERIVADMIN_RUN_PANEL_USABILITY_V2__ = true;
 
@@ -74,6 +74,67 @@
       filter:saturate(.35)!important;
       cursor:not-allowed!important;
       pointer-events:none!important;
+    }
+
+    /* Desktop Run drawer never covers the working page. Opening the fixed drawer
+       reserves its exact visual width inside app-main and bottom navigation. The
+       collapsed handle gets its own 48px lane too, so no Builder control sits
+       underneath an invisible/partially visible Run control. */
+    @media(min-width:901px){
+      html[data-run-panel-visibility="open"] .app-main{
+        box-sizing:border-box!important;
+        padding-right:clamp(320px,25vw,460px)!important;
+        scroll-padding-right:clamp(320px,25vw,460px)!important;
+        transition:padding-right .18s ease!important;
+      }
+      html[data-run-panel-visibility="collapsed"] .app-main{
+        box-sizing:border-box!important;
+        padding-right:48px!important;
+        scroll-padding-right:48px!important;
+        transition:padding-right .18s ease!important;
+      }
+      html[data-run-panel-visibility="open"] .bottom-nav{
+        left:0!important;
+        right:clamp(320px,25vw,460px)!important;
+        width:auto!important;
+        max-width:none!important;
+        transition:right .18s ease!important;
+      }
+      html[data-run-panel-visibility="collapsed"] .bottom-nav{
+        left:0!important;
+        right:48px!important;
+        width:auto!important;
+        max-width:none!important;
+        transition:right .18s ease!important;
+      }
+      html[data-run-panel-visibility="open"] .app-main .restored-builder,
+      html[data-run-panel-visibility="open"] .app-main .builder-panel,
+      html[data-run-panel-visibility="open"] .app-main .builder-block-workspace,
+      html[data-run-panel-visibility="collapsed"] .app-main .restored-builder{
+        min-width:0!important;
+        max-width:100%!important;
+        box-sizing:border-box!important;
+      }
+    }
+
+    /* Builder blocks are intentionally differentiated with deep accent-tinted
+       surfaces. Controls keep the shared camera palette, while each structural
+       block remains easy to recognize at a glance in dark and light mode. */
+    html[data-theme="dark"] .builder-workspace-block{
+      background:color-mix(in srgb,var(--builder-block-accent) 16%,#07111f)!important;
+      border-color:color-mix(in srgb,var(--builder-block-accent) 42%,var(--camera-line))!important;
+    }
+    html[data-theme="dark"] .builder-workspace-block .builder-section{
+      background:color-mix(in srgb,var(--builder-block-accent) 24%,#0a1728)!important;
+      border-bottom-color:color-mix(in srgb,var(--builder-block-accent) 38%,var(--camera-line))!important;
+    }
+    html[data-theme="light"] .builder-workspace-block{
+      background:color-mix(in srgb,var(--builder-block-accent) 11%,#edf3f8)!important;
+      border-color:color-mix(in srgb,var(--builder-block-accent) 36%,var(--camera-line))!important;
+    }
+    html[data-theme="light"] .builder-workspace-block .builder-section{
+      background:color-mix(in srgb,var(--builder-block-accent) 17%,#e4edf5)!important;
+      border-bottom-color:color-mix(in srgb,var(--builder-block-accent) 34%,var(--camera-line))!important;
     }
 
     /* Mobile Run-panel vertical stack is deliberately non-overlapping:
