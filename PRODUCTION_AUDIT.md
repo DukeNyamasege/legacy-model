@@ -1,140 +1,133 @@
 # Production Architecture and Deployment Audit
 
-Audit date: 2026-07-31
+Audit updated: 2026-08-20
 
-This document describes the authoritative runtime assembled by `app.api_v3:app` and `app.worker`. Older comments or README sections describing REST bulk execution, reserve-balance admission, or demo-only dashboard WebSockets are not the production behavior.
+## 1. Authoritative production topology
 
-## 1. Browser authentication and account linking
+`derivadmin.site` is a full-VPS application.
 
-1. The browser starts at `/oauth/start`.
-2. The API creates a cryptographically random OAuth state and PKCE verifier.
-3. The state hash, encrypted verifier and exact redirect URI are persisted in PostgreSQL and also bound to secure browser cookies.
-4. The browser is redirected to `https://auth.deriv.com/oauth2/auth` with `response_type=code`, PKCE `S256`, and least-privilege scopes `trade application_read`.
-5. `/oauth/callback` accepts the authorization code only when all of the following match:
-   - browser state cookie;
-   - submitted state;
-   - unexpired one-use database state;
-   - browser PKCE verifier cookie;
-   - encrypted database verifier;
-   - exact configured HTTPS redirect URI.
-6. The API exchanges the code server-side and requests the user's Options accounts with the registered Deriv App ID.
-7. Login identity and account metadata are encrypted before storage. Raw access tokens and PATs are never returned to the dashboard.
-8. OAuth establishes identity and account discovery. AutoTrade additionally requires a verified Personal Access Token with `trade` scope for that selected account.
+```text
+Internet
+  -> Caddy
+     -> frontend 127.0.0.1:8081
+     -> API/OAuth/WebSocket 127.0.0.1:8080
 
-## 2. Worker account loading
+Docker Compose
+  -> frontend
+  -> api: app.vps_backend_api:app
+  -> worker: python -m app.custom_strategy_worker
+  -> PostgreSQL
+```
 
-1. `app.worker` loads enabled managed accounts from PostgreSQL.
-2. Encrypted credentials are decrypted only inside the worker.
-3. Duplicate accounts, invalid credentials and disabled accounts are isolated per account; one bad account does not stop other traders.
-4. Account balance and account ownership are validated using the current Options accounts endpoint.
-5. Admission requires only the user's selected stake. There is no recovery reserve or safety-reserve requirement.
-6. When a later requested stake cannot be funded, the purchase is sent to Deriv and the provider's insufficient-funds response pauses only that account while preserving recovery state.
+Caddy is the public HTTPS/WSS edge. Application containers remain on Docker/loopback networking.
 
-## 3. Market data, proposal and purchase path
+## 2. Authentication and account linking
 
-1. Public market data uses `wss://api.derivws.com/trading/v1/options/ws/public`.
-2. The worker subscribes to the configured markets, maintains tick history and runs the strategy gates.
-3. A qualifying signal is persisted before execution.
-4. A public `proposal` request validates current contract economics using `underlying_symbol`, duration, barrier, currency and stake.
-5. Every production account obtains a short-lived authenticated WebSocket URL from `POST /trading/v1/options/accounts/{accountId}/otp` using `Deriv-App-ID` and the account's Bearer token.
-6. OTP requests are concurrency-limited to reduce provider rate limiting. Private WebSockets send a keepalive every 30 seconds and automatically reconnect.
-7. Production purchases are private WebSocket direct buys. The request uses `buy: "1"`, `price`, and direct contract `parameters`; no removed `loginid` field is sent.
-8. Account purchases are concurrent but isolated. A partial failure does not cancel successful contracts for other accounts.
-9. A successful provider contract is immediately persisted with account, signal, economics, timing and transport metadata.
+1. Browser authentication starts through the server OAuth route.
+2. OAuth state and PKCE verifier material are generated and validated server-side.
+3. The callback is `https://derivadmin.site/oauth/callback`.
+4. Account credentials and session material remain server-side; reusable Deriv trading credentials are not returned to browser JavaScript.
+5. Linked account identity is canonicalized before execution state is created.
 
-## 4. Contract monitoring and settlement
+## 3. Worker execution path
 
-1. Each purchased contract is subscribed through `proposal_open_contract` on its authenticated account WebSocket.
-2. The worker also polls unresolved contracts and can open a fresh OTP connection for reconciliation if the original stream is interrupted.
-3. Stale account contracts are isolated without globally locking healthy accounts.
-4. Terminal updates are processed idempotently; duplicate settlement messages cannot double-count a trade.
-5. Provider numeric fields are normalized, and settlement uses current fields including `exit_spot` when available.
-6. Trade outcome, profit, buy price, payout, markup, commission, entry/exit values and provider timestamps are committed to PostgreSQL.
-7. Recovery and virtual-protection state are updated per managed account.
-8. The private balance is refreshed after settlement.
+For an enabled Custom Strategy account:
 
-## 5. Database-to-dashboard delivery
+```text
+strategy qualification
+  -> exact account private WebSocket
+  -> proposal
+  -> validate economics
+  -> BUY exact proposal ID
+  -> persist contract
+  -> monitor proposal_open_contract
+  -> settlement
+  -> durable account/recovery update
+```
 
-1. The worker calls the internal API settlement-refresh endpoint after the committed settlement.
-2. That notification retries up to three times.
-3. The worker publishes again after the final balance reconciliation so personal balance and trade data cannot remain one settlement behind.
-4. The API marks the relevant dashboard caches dirty and rebuilds verified demo and real snapshots.
-5. A snapshot is published only when the dashboard consistency invariant passes, including `total_trades = wins + losses`.
-6. Snapshots are persisted with a monotonically increasing version and source watermark.
-7. WebSocket clients subscribe with `/ws/dashboard?mode=demo` or `/ws/dashboard?mode=real` and receive only that account mode.
-8. Settlement events trigger immediate WebSocket publication. A 20-second publication heartbeat protects against missed events.
-9. The browser rejects mismatched-mode snapshots, keeps separate last-good snapshots for demo and real, reconnects when account mode changes, and refreshes `/me` plus recent contracts after each live settlement update.
-10. A 30-second REST refresh remains as a fallback if WebSocket delivery is unavailable.
+An uncertain BUY acknowledgement is reconciled before another financial purchase. It is never blindly retried.
 
-## 6. Deployment and runtime security
+## 4. Terminal lifecycle authority
 
-- PostgreSQL is started and health-checked before migrations.
-- Alembic runs once before the API and worker are replaced.
-- API and worker images run as a non-root user.
-- The API binds to `127.0.0.1:8080`; Caddy is the public HTTPS boundary.
-- Trusted-host, CORS, mutation-origin, secure-cookie, request-size, rate-limit and security-header controls remain active.
-- API documentation routes are disabled in production.
-- Secrets are supplied only through `.env`; `.env` is ignored by Git.
-- Real-money execution requires `TRADING_MODE=real`, `ALLOW_REAL_TRADING=true`, `execution.real_enabled=true`, and the exact production acknowledgement. The default deployment remains demo-safe.
+Once the user has successfully started Auto Trading, only these events may terminate execution:
 
-## 7. Automatic release gates
+1. Take Profit reached.
+2. Stop Loss reached.
+3. Explicit user Stop.
 
-`scripts/deploy_vps.sh` now refuses to pass deployment unless all of these succeed:
+The manual Stop path is protected by an independent durable hard-stop sentinel and a final pre-BUY fence.
 
-1. Docker Compose validation.
-2. Python compilation for `app` and `scripts`.
-3. Dashboard JavaScript syntax validation when Node is installed on the host.
-4. API and worker image builds.
-5. PostgreSQL health and Docker DNS resolution.
-6. Alembic migrations.
-7. API liveness.
-8. Worker process stability and heartbeat readiness.
-9. Token-encryption and control-key checks.
-10. Exact OAuth redirect, PKCE, state and scope checks.
-11. Demo and real dashboard invariants.
-12. Demo and real dashboard WebSocket snapshots.
-13. Public Deriv WebSocket ping.
-14. Dashboard hardening-script injection.
-15. Fatal traceback and integration-log scan.
+The following are non-terminal recovery conditions for an already-running account:
 
-The deployment script preserves named volumes and never runs `docker compose down`.
+- provider/network disconnect;
+- OTP/bootstrap failure;
+- credential/session refresh problem;
+- proposal failure;
+- temporary insufficient balance response;
+- contract unavailable/registration problem;
+- ambiguous or unresolved contract state;
+- database/runtime exception;
+- synthetic `error`, `stopped`, `disabled` or `inactive` state produced by an automatic path.
 
-## 8. Required VPS preparation
+The final lifecycle authority keeps the account enabled and moves these conditions to retry/reconnect/waiting behavior unless TP, SL or the manual hard-stop sentinel applies. A periodic repair loop also restores automatic database disables that bypass normal setters.
 
-Copy `.env.vps.example` to `.env`, replace every placeholder, and keep real trading disabled for the first deployment. Generate independent secrets, for example:
+## 5. Connection resilience
+
+- Private WebSocket bootstrap is account-scoped and bounded.
+- Provider rate-limit backoff remains authoritative.
+- Ordinary network reconnects do not rebuild healthy sibling sessions.
+- Browser-to-VPS ownership takeover is targeted to the affected account.
+- The pooled OTP broker owns the bounded request/retry boundary; the low-latency wrapper no longer cancels normal OTP work after the historical short timeout.
+- Historical unresolved contracts are quarantined/reconciled without globally locking healthy accounts.
+
+## 6. Realtime dashboard
+
+The browser obtains a short-lived account/session-bound ticket and connects to:
+
+```text
+wss://derivadmin.site/ws/me/live
+```
+
+Realtime snapshots are account-scoped. Browser lifetime does not control the trading worker.
+
+The VPS gateway treats a send attempted after a normal client disconnect/close as a completed disconnect, preventing the historical `websocket.send` after `websocket.close` ASGI race from becoming an application traceback. Unexpected realtime processing errors are still logged.
+
+## 7. Database and settlement safety
+
+- PostgreSQL uses a persistent named volume.
+- Trade registration and settlement are idempotent.
+- Duplicate settlement cannot double-count a contract.
+- Open/unresolved contract state is reconciled account-by-account.
+- Clear Trades is history presentation/reset behavior only and must not erase active recovery/financial execution state.
+- Deployment never uses `docker compose down -v`.
+
+## 8. Deployment safety
+
+`scripts/deploy_full_vps.sh`:
+
+1. validates prerequisites and Compose;
+2. compiles source;
+3. builds frontend/API/worker candidate images before cutover;
+4. verifies PostgreSQL;
+5. creates a pre-deploy PostgreSQL dump;
+6. applies Alembic migrations;
+7. recreates API, worker and frontend;
+8. verifies service health;
+9. validates/reloads Caddy when required.
+
+The release gate additionally tests the VPS-only architecture, realtime disconnect guard, provider continuity and TP/SL/manual-only lifecycle authority.
+
+## 9. Required production evidence
+
+A healthy trade cycle should show qualification, proposal, confirmed BUY and settlement without a fatal API/worker traceback.
+
+Useful checks:
 
 ```bash
-python3 - <<'PY'
-from cryptography.fernet import Fernet
-import secrets
-print('DERIV_TOKEN_ENCRYPTION_KEY=' + Fernet.generate_key().decode())
-print('CONTROL_API_KEY=' + secrets.token_urlsafe(48))
-print('POSTGRES_PASSWORD=' + secrets.token_urlsafe(36))
-PY
+docker compose -f docker-compose.yml -f docker-compose.vps.yml ps
+curl -fsS http://127.0.0.1:8080/health
+curl -fsS http://127.0.0.1:8081/healthz
+curl -fsS https://derivadmin.site/backend-health
 ```
 
-The registered Deriv redirect URI must be exactly:
-
-```text
-https://derivadmin.site/oauth/callback
-```
-
-## 9. Expected execution evidence
-
-A healthy signal-to-settlement cycle produces logs similar to:
-
-```text
-SIGNAL_CREATED
-PROPOSAL_REQUESTED
-MODEL_DECISION ... action=PURCHASE
-PURCHASE_REQUESTED
-WEBSOCKET_ONLY_EXECUTION
-PRIVATE_PURCHASE_REQUEST
-PRIVATE_PURCHASE_RESPONSE
-PURCHASE_CONFIRMED
-CONTRACT_REGISTERED
-CONTRACT_ECONOMICS
-ACCOUNT_CONTRACT_SETTLED
-```
-
-Dashboard delivery problems surface explicitly as `DASHBOARD_SETTLEMENT_PUSH_FAILED` or `MODE_AWARE_DASHBOARD_BROADCAST_FAILED`; they are no longer silent.
+External provider, network or database failures cannot be made impossible. The production requirement is that such failures remain recoverable and do not automatically stop a running account.
