@@ -29,7 +29,7 @@ from app.direct_execution_lease import (
     DIRECT_BROWSER_STATUS,
     direct_browser_lease_remaining_seconds,
 )
-from app.models import ManagedAccount, RuntimePreference, utc_now
+from app.models import ManagedAccount, RuntimePreference, Trade, utc_now
 
 
 LOGGER = logging.getLogger("deriv_bot")
@@ -102,13 +102,11 @@ def _resilient_provider_otp(account_id: str, token: str) -> str:
 
     deadline = time.monotonic() + _TRANSIENT_SESSION_RETRY_SECONDS
     attempt = 0
-    last_error: HTTPException | None = None
     while True:
         attempt += 1
         try:
             return str(original(account_id, token))
         except HTTPException as exc:
-            last_error = exc
             # 502/503 are transport/provider availability faults. 4xx credential
             # faults are useful exact diagnostics and should not be hidden behind
             # another 45 seconds of identical calls.
@@ -130,9 +128,6 @@ def _resilient_provider_otp(account_id: str, token: str) -> str:
                     detail=f"Authenticated Deriv session recovery failed: {type(exc).__name__}",
                 ) from exc
             time.sleep(min(2.0, remaining))
-
-    if last_error is not None:  # pragma: no cover - loop exits by return/raise
-        raise last_error
 
 
 def install_vps_cross_device_runtime_sync(app: Any) -> None:
@@ -203,6 +198,12 @@ def install_vps_cross_device_runtime_sync(app: Any) -> None:
             reason = str(row.execution_status_reason or "")
             remaining = direct_browser_lease_remaining_seconds(row)
             owner_payload = _json_payload(session.get(RuntimePreference, _owner_key(managed_id)))
+            latest_trade = (
+                session.query(Trade)
+                .filter(Trade.managed_account_id == managed_id)
+                .order_by(Trade.purchase_time.desc())
+                .first()
+            )
 
             if hard_stop or status in {"take_profit", "stop_loss"} or not bool(row.enabled):
                 owner = "stopped"
@@ -230,6 +231,11 @@ def install_vps_cross_device_runtime_sync(app: Any) -> None:
                 "hard_stop": hard_stop,
                 "purchase_allowed": purchase_allowed,
                 "history_revision": _read_clear_revision(session, managed_id),
+                "last_purchase_at": (
+                    latest_trade.purchase_time.isoformat()
+                    if latest_trade is not None and latest_trade.purchase_time is not None
+                    else ""
+                ),
                 "updated_at": (
                     row.execution_status_updated_at.isoformat()
                     if row.execution_status_updated_at is not None
