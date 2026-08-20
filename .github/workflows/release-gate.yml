@@ -85,6 +85,7 @@ jobs:
             app/vps_api_surface.py \
             app/vps_realtime_gateway.py \
             app/vps_backend_api.py \
+            app/vps_direct_execution_api.py \
             app/tp_sl_manual_only_authority.py \
             app/direct_execution_worker_fence.py \
             app/global_recovery_execution_policy.py \
@@ -94,6 +95,7 @@ jobs:
             app/custom_strategy_worker.py \
             tests/test_full_vps_hosting.py \
             tests/test_tp_sl_manual_only_authority.py \
+            tests/test_oauth_execution_handoff.py \
             tests/test_vps_purchase_continuity_v2.py
 
       - name: Typecheck VPS bootstrap and lifecycle authority
@@ -104,6 +106,7 @@ jobs:
             app/vps_api_surface.py \
             app/vps_realtime_gateway.py \
             app/vps_backend_api.py \
+            app/vps_direct_execution_api.py \
             app/tp_sl_manual_only_authority.py
 
       - name: Check VPS frontend JavaScript syntax
@@ -122,11 +125,13 @@ jobs:
           node --check scripts/finalize-runtime-safety-v2.mjs
           node --check scripts/finalize-runtime-safety-v2b.mjs
           node --check scripts/finalize-sticky-stake-v1.mjs
+          node --check scripts/finalize-oauth-execution-handoff-v1.mjs
 
       - name: Run VPS architecture and lifecycle regressions
         run: |
           python -m unittest -q tests.test_full_vps_hosting
           python -m unittest -q tests.test_tp_sl_manual_only_authority
+          python -m unittest -q tests.test_oauth_execution_handoff
           python -m unittest -q tests.test_vps_purchase_continuity_v2
           python -m unittest -q tests.test_global_recovery_policy
           python -m unittest -q tests.test_execution_continuity_v10

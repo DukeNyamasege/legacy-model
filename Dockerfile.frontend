@@ -20,6 +20,7 @@ COPY scripts/prepare-runtime-safety-v2.mjs ./scripts/prepare-runtime-safety-v2.m
 COPY scripts/finalize-runtime-safety-v2.mjs ./scripts/finalize-runtime-safety-v2.mjs
 COPY scripts/finalize-runtime-safety-v2b.mjs ./scripts/finalize-runtime-safety-v2b.mjs
 COPY scripts/finalize-sticky-stake-v1.mjs ./scripts/finalize-sticky-stake-v1.mjs
+COPY scripts/finalize-oauth-execution-handoff-v1.mjs ./scripts/finalize-oauth-execution-handoff-v1.mjs
 COPY scripts/export-deriv-quill-icons-v2.mjs ./scripts/export-deriv-quill-icons-v2.mjs
 COPY scripts/inject-frontend-assets.mjs ./scripts/inject-frontend-assets.mjs
 
@@ -45,8 +46,9 @@ RUN node scripts/build-direct-runtime-v2.mjs \
 # stake continuity and throttles non-financial status polling. Runtime coherence
 # resolves the historical renderer/history-hydration conflicts. Runtime safety v2
 # installs account-global Stop/Clear and exact no-purchase diagnostics; v2b shares
-# that diagnostic clock with VPS purchases. Sticky stake is deliberately last so
-# no later UI finalizer can reset the trader's explicit stake value.
+# that diagnostic clock with VPS purchases. Sticky stake remains authoritative for
+# the Builder. OAuth execution handoff is last and touches only financial ownership:
+# an unhealthy browser may not keep fencing the VPS worker from BUY execution.
 RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && cp dashboard/direct-financial-fence-v1.js dist/direct-financial-fence-v1.js \
   && cp dashboard/direct-socket-control-v1.js dist/direct-socket-control-v1.js \
@@ -74,6 +76,7 @@ RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && node --check scripts/finalize-runtime-safety-v2.mjs \
   && node --check scripts/finalize-runtime-safety-v2b.mjs \
   && node --check scripts/finalize-sticky-stake-v1.mjs \
+  && node --check scripts/finalize-oauth-execution-handoff-v1.mjs \
   && node --check dist/final-premium-6f3.js \
   && node --check dist/final-ui-shell-v2.js \
   && node --check dist/deriv-direct-execution-v2.js \
@@ -101,6 +104,7 @@ RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && node scripts/finalize-runtime-safety-v2.mjs \
   && node scripts/finalize-runtime-safety-v2b.mjs \
   && node scripts/finalize-sticky-stake-v1.mjs \
+  && node scripts/finalize-oauth-execution-handoff-v1.mjs \
   && node --check dist/final-premium-6f3.js \
   && node --check dist/final-ui-shell-v2.js \
   && node --check dist/deriv-direct-execution-v2.js \
