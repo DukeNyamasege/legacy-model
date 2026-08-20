@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""VPS-native account realtime gateway.
+
+The browser reaches this FastAPI process through the same VPS Caddy reverse proxy
+that serves the frontend. Realtime tickets are short lived and account/session
+bound; the trading worker remains independent of browser lifetime.
+"""
+
 import asyncio
 import base64
 import hashlib
@@ -12,6 +19,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
+from starlette.websockets import WebSocketState
 
 import app.api as base_api
 from app.api_performance_hardening import (
@@ -32,8 +40,6 @@ _HEARTBEAT_SECONDS = 12.0
 
 
 class _RealtimeHub:
-    """Process-local wake-up fanout for dashboard WebSocket connections."""
-
     def __init__(self) -> None:
         self._generation = 0
         self._condition = asyncio.Condition()
@@ -210,19 +216,48 @@ def _snapshot_for_request(request: Request) -> dict[str, Any]:
     return _combined_snapshot(account)
 
 
-def _netlify_mode_enabled() -> bool:
-    return os.getenv("FRONTEND_HOSTING_MODE", "vps_compat").strip().lower() == "netlify"
+def _socket_can_send(websocket: WebSocket) -> bool:
+    return websocket.application_state == WebSocketState.CONNECTED
 
 
-def install_netlify_realtime_gateway(app: Any) -> None:
-    """Install the static-Netlify/frontend-to-VPS realtime boundary.
+def _normal_disconnect_runtime_error(exc: RuntimeError) -> bool:
+    text = str(exc).lower()
+    return (
+        "unexpected asgi message 'websocket.send'" in text
+        or "after sending 'websocket.close'" in text
+        or "cannot call \"send\" once a close message has been sent" in text
+        or "websocket is not connected" in text
+    )
 
-    REST and OAuth remain normal FastAPI routes and can be reached through a
-    same-origin Netlify proxy. Realtime uses a short-lived signed ticket followed
-    by a direct browser WebSocket to the backend, so the worker never depends on
-    the browser or a frontend polling cycle.
-    """
 
+async def _safe_send_json(websocket: WebSocket, payload: dict[str, Any]) -> bool:
+    """Send only while ASGI still permits writes; disconnect races are normal."""
+
+    if not _socket_can_send(websocket):
+        return False
+    try:
+        await websocket.send_json(payload)
+        return True
+    except WebSocketDisconnect:
+        return False
+    except RuntimeError as exc:
+        if _normal_disconnect_runtime_error(exc):
+            return False
+        raise
+
+
+async def _safe_close(websocket: WebSocket, *, code: int, reason: str) -> None:
+    if websocket.application_state == WebSocketState.DISCONNECTED:
+        return
+    try:
+        await websocket.close(code=code, reason=reason)
+    except (WebSocketDisconnect, RuntimeError):
+        # Closing an already-disconnected transport is idempotent. All unexpected
+        # send/processing errors are still allowed to escape their own call sites.
+        return
+
+
+def install_vps_realtime_gateway(app: Any) -> None:
     global _INSTALLED
     if _INSTALLED:
         return
@@ -235,23 +270,21 @@ def install_netlify_realtime_gateway(app: Any) -> None:
     ):
         _remove_route(app, path, method)
 
-    # The global model-summary builder is a historical VPS-dashboard feature. The
-    # Netlify Custom Strategy frontend never consumes it, and production logs show
-    # it can monopolize the API for tens of seconds. In split mode dashboard-dirty
-    # calls therefore become cheap realtime wake-ups rather than aggregate rebuilds.
-    if _netlify_mode_enabled():
-        def netlify_mark_dashboard_dirty(_account_type: str | None = None) -> None:
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                return
-            loop.create_task(_HUB.publish())
+    # The VPS frontend consumes account-scoped realtime state. A dashboard dirty
+    # event therefore only needs to wake connected clients; the historical global
+    # model-summary rebuild is deliberately not part of the production hot path.
+    def vps_mark_dashboard_dirty(_account_type: str | None = None) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(_HUB.publish())
 
-        base_api.mark_dashboard_dirty = netlify_mark_dashboard_dirty
-        app.state.legacy_dashboard_summary_disabled = True
+    base_api.mark_dashboard_dirty = vps_mark_dashboard_dirty
+    app.state.legacy_dashboard_summary_disabled = True
 
     @app.get("/me/live-ticket", include_in_schema=False)
-    def netlify_live_ticket(request: Request) -> dict[str, Any]:
+    def vps_live_ticket(request: Request) -> dict[str, Any]:
         account = base_api.get_current_account(request)
         if not account:
             raise HTTPException(status_code=401, detail="Not authenticated")
@@ -273,21 +306,21 @@ def install_netlify_realtime_gateway(app: Any) -> None:
             "authenticated": True,
             "ticket": ticket,
             "expires_in": _TICKET_TTL_SECONDS,
-            "transport": "direct_backend_websocket",
+            "transport": "same_origin_vps_websocket",
         }
 
     @app.get("/me/live-snapshot", include_in_schema=False)
-    def netlify_live_snapshot(request: Request) -> dict[str, Any]:
+    def vps_live_snapshot(request: Request) -> dict[str, Any]:
         return _snapshot_for_request(request)
 
     @app.get("/health/frontend-backend", include_in_schema=False)
-    def netlify_frontend_backend_health() -> dict[str, Any]:
+    def vps_frontend_backend_health() -> dict[str, Any]:
         return {
             "status": "ready",
-            "frontend": "netlify_static",
+            "frontend": "vps_frontend",
             "backend": "vps_api_worker_postgres",
-            "rest_transport": "netlify_same_origin_proxy",
-            "realtime_transport": "direct_signed_websocket",
+            "rest_transport": "same_origin_vps_reverse_proxy",
+            "realtime_transport": "same_origin_vps_websocket",
             "browser_controls_worker_lifetime": False,
             "legacy_summary_disabled": bool(
                 getattr(app.state, "legacy_dashboard_summary_disabled", False)
@@ -306,18 +339,18 @@ def install_netlify_realtime_gateway(app: Any) -> None:
         }
 
     @app.websocket("/ws/me/live")
-    async def netlify_live_websocket(websocket: WebSocket, ticket: str = "") -> None:
+    async def vps_live_websocket(websocket: WebSocket, ticket: str = "") -> None:
         if not _origin_allowed(websocket.headers.get("origin", "")):
-            await websocket.close(code=4403, reason="Frontend origin is not allowed")
+            await _safe_close(websocket, code=4403, reason="Frontend origin is not allowed")
             return
         try:
             payload = _decode_ticket(ticket, _ticket_secret())
         except (ValueError, RuntimeError):
-            await websocket.close(code=4401, reason="Realtime ticket is invalid")
+            await _safe_close(websocket, code=4401, reason="Realtime ticket is invalid")
             return
         account = await asyncio.to_thread(_ticket_session_account, payload)
         if not account:
-            await websocket.close(code=4401, reason="Realtime session has expired")
+            await _safe_close(websocket, code=4401, reason="Realtime session has expired")
             return
 
         managed_id = int(account["id"])
@@ -329,7 +362,7 @@ def install_netlify_realtime_gateway(app: Any) -> None:
             while True:
                 account = await asyncio.to_thread(_ticket_session_account, payload)
                 if not account or int(account.get("id") or 0) != managed_id:
-                    await websocket.close(code=4401, reason="Realtime session ended")
+                    await _safe_close(websocket, code=4401, reason="Realtime session ended")
                     return
 
                 revision = await asyncio.to_thread(_live_snapshot, managed_id)
@@ -337,7 +370,8 @@ def install_netlify_realtime_gateway(app: Any) -> None:
                 if not last_revision or revision_value != last_revision:
                     snapshot = await asyncio.to_thread(_combined_snapshot, account)
                     last_revision = str(snapshot.get("revision") or revision_value)
-                    await websocket.send_json(snapshot)
+                    if not await _safe_send_json(websocket, snapshot):
+                        return
                     last_heartbeat = time.monotonic()
 
                 next_generation = await _HUB.wait_after(
@@ -346,11 +380,14 @@ def install_netlify_realtime_gateway(app: Any) -> None:
                 )
                 if next_generation != generation:
                     generation = next_generation
-                    # Force an immediate revision check on the next loop.
                     continue
 
                 if time.monotonic() - last_heartbeat >= _HEARTBEAT_SECONDS:
-                    await websocket.send_json({"type": "heartbeat", "ts": time.time()})
+                    if not await _safe_send_json(
+                        websocket,
+                        {"type": "heartbeat", "ts": time.time()},
+                    ):
+                        return
                     last_heartbeat = time.monotonic()
         except WebSocketDisconnect:
             return
@@ -358,14 +395,15 @@ def install_netlify_realtime_gateway(app: Any) -> None:
             raise
         except Exception:
             base_api.LOGGER.exception(
-                "NETLIFY_REALTIME_WEBSOCKET_FAILED managed_id=%s",
+                "VPS_REALTIME_WEBSOCKET_FAILED managed_id=%s",
                 managed_id,
             )
-            try:
-                await websocket.close(code=1011, reason="Realtime connection restarting")
-            except Exception:
-                pass
+            await _safe_close(
+                websocket,
+                code=1011,
+                reason="Realtime connection restarting",
+            )
 
-    app.state.netlify_realtime_gateway_installed = True
-    app.state.frontend_architecture = "netlify-static-vps-backend-v1"
+    app.state.vps_realtime_gateway_installed = True
+    app.state.frontend_architecture = "vps-frontend-api-worker-postgres-v1"
     _INSTALLED = True

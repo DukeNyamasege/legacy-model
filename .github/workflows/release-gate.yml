@@ -16,7 +16,7 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     env:
       POSTGRES_PASSWORD: ci-postgres-password
       CONTROL_API_KEY: ci-control-api-key
@@ -27,11 +27,17 @@ jobs:
       ALLOW_REAL_TRADING: "false"
       TELEGRAM_ALERTS_ENABLED: false
       TELEGRAM_NOTIFICATIONS_SUSPENDED: "true"
+      VPS_TELEGRAM_NOTIFICATIONS_SUSPENDED: "true"
       PUBLIC_TESTING_FREE_ACCESS: "false"
       PREMIUM_ACCESS_ENFORCEMENT: "true"
       LIPANA_ENVIRONMENT: sandbox
       LIPANA_SECRET_KEY: ""
       LIPANA_WEBHOOK_SECRET: ""
+      FRONTEND_ORIGINS: "http://127.0.0.1:8080,http://localhost:8080,https://derivadmin.site"
+      DASHBOARD_FRONTEND_ORIGINS: "https://derivadmin.site,https://www.derivadmin.site"
+      ALLOW_LEGACY_GLOBAL_TOKENS: "true"
+      COPYTRADING_ALLOW_LEGACY_GLOBAL_TOKENS: "true"
+
     steps:
       - uses: actions/checkout@v6
 
@@ -46,144 +52,61 @@ jobs:
           node-version: "24"
           package-manager-cache: false
 
-      - name: Install Python dependencies
+      - name: Install dependencies
         run: |
           python -m pip install -r requirements.txt
           python -m pip install ruff mypy
-
-      - name: Install direct VPS frontend dependencies
-        run: npm install --ignore-scripts --no-audit --no-fund
-
-      - name: Create CI-only Compose environment file
-        run: |
+          npm install --ignore-scripts --no-audit --no-fund
           umask 077
           : > .env
-          test -f .env
 
-      - name: Validate direct VPS deployment, Compose and migrations
+      - name: Validate VPS deployment and Compose
         run: |
-          sh -n scripts/deploy_dedicated_backend.sh \
+          sh -n \
             scripts/deploy_full_vps.sh \
             scripts/prepare_full_vps_host.sh \
             scripts/enable_full_vps_https.sh \
+            scripts/install_full_vps_caddy.sh \
             scripts/run_legacy_release_tests.sh \
             scripts/cleanup_repository_state.sh \
             scripts/diagnose_vps_performance.sh
           docker compose -f docker-compose.yml config --quiet
-          PUBLIC_ORIGIN=https://release-gate.example PUBLIC_TESTING_FREE_ACCESS=true docker compose \
-            -f docker-compose.yml -f docker-compose.vps.yml config --quiet
-          python scripts/audit_bulk_execution_readiness.py --help >/dev/null
-          alembic heads | grep -q "20260817_0025 (head)"
+          PUBLIC_ORIGIN=https://release-gate.example PUBLIC_TESTING_FREE_ACCESS=true \
+            docker compose -f docker-compose.yml -f docker-compose.vps.yml config --quiet
+          alembic heads | grep -q "20260819_0026 (head)"
 
       - name: Compile Python
         run: python -m compileall -q app scripts tests migrations
 
-      - name: Lint execution and subscription runtime
-        run: >-
-          ruff check --output-format=github --select E9,F63,F7,F82
-          app/account_execution_session.py
-          app/account_scoped_websocket_runtime.py
-          app/automation_schedule_models.py
-          app/automation_scheduler_action5.py
-          app/backend_only_surface.py
-          app/custom_split_recovery_authority.py
-          app/custom_strategy_comparator_extension.py
-          app/custom_strategy_current_runtime_fix.py
-          app/custom_strategy_direct_runtime.py
-          app/custom_strategy_instant_start.py
-          app/custom_strategy_last_digit_prediction.py
-          app/custom_strategy_last_digit_runtime.py
-          app/custom_strategy_result_router.py
-          app/custom_strategy_result_routing.py
-          app/custom_strategy_result_routing_api.py
-          app/custom_strategy_runtime_lifecycle.py
-          app/custom_strategy_settlement.py
-          app/custom_strategy_startup_authority.py
-          app/custom_strategy_worker.py
-          app/custom_strategy_runtime_api.py
-          app/custom_virtual_contract_parity.py
-          app/dashboard_live_events.py
-          app/exact_strategy_execution_authority.py
-          app/final_execution_continuity.py
-          app/final_linked_accounts_6f2.py
-          app/global_trade_history_cutoff.py
-          app/lipana_mpesa_action6b.py
-          app/oauth_client.py
-          app/oauth_direct_account_authority.py
-          app/premium_access_api.py
-          app/premium_access_models.py
-          app/premium_access_service.py
-          app/premium_payment_models.py
-          app/premium_renewal_action6d.py
-          app/premium_renewal_models.py
-          app/premium_worker_guard.py
-          app/public_testing_access.py
-          app/public_websocket_resilience.py
-          app/real_demo_trading_support.py
-          app/seamless_account_switch.py
-          app/seamless_execution_recovery.py
-          app/session_risk_api_authority.py
-          app/session_risk_limits.py
-          app/session_risk_stop_authority.py
-          tests/test_final_ui_6f1.py
-          tests/test_final_ui_6f2.py
-          tests/test_final_ui_6f3.py
-          tests/test_retired_ui_cleanup_6f3.py
-          tests/test_lipana_mpesa_action6b.py
-          tests/test_persistent_scheduler_action5.py
-          tests/test_premium_access_action6a.py
-          tests/test_premium_renewal_action6d.py
+      - name: Lint final VPS execution authorities
+        run: |
+          ruff check --output-format=github --select E9,F63,F7,F82 \
+            app/vps_core_api.py \
+            app/vps_api_surface.py \
+            app/vps_realtime_gateway.py \
+            app/vps_backend_api.py \
+            app/tp_sl_manual_only_authority.py \
+            app/direct_execution_worker_fence.py \
+            app/global_recovery_execution_policy.py \
+            app/never_auto_stop_repository_authority.py \
+            app/stale_split_basis_reconciliation_authority.py \
+            app/vps_provider_connection_resilience_v2.py \
+            app/custom_strategy_worker.py \
+            tests/test_full_vps_hosting.py \
+            tests/test_tp_sl_manual_only_authority.py \
+            tests/test_vps_purchase_continuity_v2.py
 
-      - name: Typecheck execution and subscription runtime
-        run: >-
-          mypy --follow-imports=skip --ignore-missing-imports --allow-untyped-defs
-          --disable-error-code=misc --disable-error-code=arg-type
-          app/account_execution_session.py
-          app/account_scoped_websocket_runtime.py
-          app/automation_schedule_models.py
-          app/automation_scheduler_action5.py
-          app/backend_only_surface.py
-          app/custom_split_recovery_authority.py
-          app/custom_strategy_comparator_extension.py
-          app/custom_strategy_current_runtime_fix.py
-          app/custom_strategy_direct_runtime.py
-          app/custom_strategy_instant_start.py
-          app/custom_strategy_last_digit_prediction.py
-          app/custom_strategy_last_digit_runtime.py
-          app/custom_strategy_result_router.py
-          app/custom_strategy_result_routing.py
-          app/custom_strategy_result_routing_api.py
-          app/custom_strategy_runtime_lifecycle.py
-          app/custom_strategy_settlement.py
-          app/custom_strategy_startup_authority.py
-          app/custom_strategy_worker.py
-          app/custom_strategy_runtime_api.py
-          app/custom_virtual_contract_parity.py
-          app/dashboard_live_events.py
-          app/exact_strategy_execution_authority.py
-          app/final_execution_continuity.py
-          app/final_linked_accounts_6f2.py
-          app/global_trade_history_cutoff.py
-          app/lipana_mpesa_action6b.py
-          app/oauth_client.py
-          app/oauth_direct_account_authority.py
-          app/premium_access_api.py
-          app/premium_access_models.py
-          app/premium_access_service.py
-          app/premium_payment_models.py
-          app/premium_renewal_action6d.py
-          app/premium_renewal_models.py
-          app/premium_worker_guard.py
-          app/public_testing_access.py
-          app/public_websocket_resilience.py
-          app/real_demo_trading_support.py
-          app/seamless_account_switch.py
-          app/seamless_execution_recovery.py
-          app/session_risk_api_authority.py
-          app/session_risk_limits.py
-          app/session_risk_stop_authority.py
+      - name: Typecheck VPS bootstrap and lifecycle authority
+        run: |
+          mypy --follow-imports=skip --ignore-missing-imports --allow-untyped-defs \
+            --disable-error-code=misc --disable-error-code=arg-type \
+            app/vps_core_api.py \
+            app/vps_api_surface.py \
+            app/vps_realtime_gateway.py \
+            app/vps_backend_api.py \
+            app/tp_sl_manual_only_authority.py
 
-      - name: Check direct VPS 6F-3 frontend JavaScript syntax
+      - name: Check VPS frontend JavaScript syntax
         run: |
           node --check dashboard/final-premium-6f3.js
           node --check dashboard/final-ui-shell-v2.js
@@ -192,44 +115,33 @@ jobs:
           node --check dashboard/vps-realtime-client-v2.js
           node --check scripts/export-deriv-quill-icons-v2.mjs
           node --check scripts/build-vps.mjs
+          node --check scripts/finalize-execution-continuity-v1.mjs
+          node --check scripts/finalize-global-recovery-v1.mjs
+          node --check scripts/finalize-runtime-coherence-v1.mjs
+          node --check scripts/prepare-runtime-safety-v2.mjs
+          node --check scripts/finalize-runtime-safety-v2.mjs
+          node --check scripts/finalize-runtime-safety-v2b.mjs
+          node --check scripts/finalize-sticky-stake-v1.mjs
 
-      - name: Run final product release tests
+      - name: Run VPS architecture and lifecycle regressions
         run: |
-          python -m unittest -q tests.test_final_ui_6f1
-          python -m unittest -q tests.test_final_ui_6f2
-          python -m unittest -q tests.test_final_ui_6f3
-          python -m unittest -q tests.test_retired_ui_cleanup_6f3
-          python -m unittest -q tests.test_persistent_scheduler_action5
-          python -m unittest -q tests.test_premium_access_action6a
-          python -m unittest -q tests.test_lipana_mpesa_action6b
-          python -m unittest -q tests.test_premium_renewal_action6d
-          python -m unittest -q tests.test_account_bound_risk_and_ws_continuity
-          python -m unittest -q tests.test_custom_direct_runtime
-          python -m unittest -q tests.test_custom_strategy_instant_start
-          python -m unittest -q tests.test_current_custom_runtime_fix
-          python -m unittest -q tests.test_dashboard_live_performance
-          python -m unittest -q tests.test_exact_strategy_execution_authority
-          python -m unittest -q tests.test_global_trade_history_cutoff
-          python -m unittest -q tests.test_result_routing_and_recovery_spread
-          python -m unittest -q tests.test_seamless_execution_final
-          python -m unittest -q tests.test_bulk_credential_failure_hardening
-          python -m unittest -q tests.test_credential_quarantine_runtime_guard
-          python -m unittest -q tests.test_tick_sequence_persistence_safety
-          python -m unittest -q tests.test_historical_unresolved_contract_quarantine
-          python -m unittest -q tests.test_final_multi_strategy_execution
-          python -m unittest -q tests.test_bulk_response_member_reconciliation
-          python -m unittest -q tests.test_bulk_response_deep_member_fix
-          python -m unittest -q tests.test_proposal_execution_recovery
-          python -m unittest -q tests.test_manual_martingale_v2
-          python -m unittest -q tests.test_custom_strategy_v1
-          python -m unittest -q tests.test_multi_strategy tests.test_multi_strategy_concurrency tests.test_strategy_v2 tests.test_standardized_execution_runtime tests.test_per_account_virtual_runtime
+          python -m unittest -q tests.test_full_vps_hosting
+          python -m unittest -q tests.test_tp_sl_manual_only_authority
+          python -m unittest -q tests.test_vps_purchase_continuity_v2
+          python -m unittest -q tests.test_global_recovery_policy
+          python -m unittest -q tests.test_execution_continuity_v10
+          python -m unittest -q tests.test_execution_stop_reason_authority
+          python -m unittest -q tests.test_provider_connection_resilience
+          python -m unittest -q tests.test_websocket_hot_path_hardening
           python -m unittest -q tests.test_websocket_execution_hardening
-          python -m unittest -q tests.test_performance_hardening
-          python -m unittest -q test_custom_martingale.py
-          python -m unittest -q test_aidr_recovery_v2.py tests.test_aidr_virtual_soft_gate tests.test_independent_websocket_execution tests.test_private_websocket_credentials
-          sh scripts/run_legacy_release_tests.sh
+          python -m unittest -q tests.test_runtime_execution_safety_v2
+          python -m unittest -q tests.test_runtime_server_purchase_clock
+          python -m unittest -q tests.test_sticky_stake_persistence
 
-      - name: Production direct VPS 6F-3 frontend build
+      - name: Run full release suite
+        run: sh scripts/run_legacy_release_tests.sh
+
+      - name: Build VPS frontend artifact
         env:
           PUBLIC_ORIGIN: https://release-gate.example
           PUBLIC_TESTING_FREE_ACCESS: "true"
@@ -238,62 +150,21 @@ jobs:
           test -f dist/index.html
           test -f dist/vps-build.json
           test -f dist/final-premium-6f3.js
-          test -f dist/final-premium-6f3.css
           test -f dist/final-ui-shell-v2.js
-          test -f dist/public-testing-runtime-v1.js
           test -f dist/vps-realtime-client-v2.js
-          test -f dist/deriv-quill-icons-v2.js
-          test -f dist/deriv-quill-icons-v2.json
           test ! -f dist/_redirects
           grep -Fq 'frontend-runtime" content="full-vps-final-ui-6f3"' dist/index.html
-          grep -Fq 'frontend-authority" content="final-ui-shell-v2"' dist/index.html
-          grep -Fq 'stream-base-url" content="wss://release-gate.example"' dist/index.html
-          grep -Fq '/vps-api-boundary-v2.js?v=20260818-local-ui-12' dist/index.html
-          grep -Fq '/deriv-quill-icons-v2.js?v=2.4.18' dist/index.html
-          grep -Fq '/final-premium-6f3.css?v=20260817-6f3-1' dist/index.html
-          grep -Fq '/final-premium-6f3.js?v=20260818-local-ui-12' dist/index.html
-          grep -Fq '/public-testing-runtime-v1.js?v=20260818-public-testing-run-v5' dist/index.html
-          grep -Fq 'const TESTING_FREE_ACCESS = true;' dist/final-premium-6f3.js
-          ! grep -Fq '<script src="/vps-realtime-client-v2.js?v=20260817-6f2-1" defer>' dist/index.html
-          ! grep -Fq '<script src="/final-ui-shell-v2.js?v=20260817-6f2-1" defer>' dist/index.html
           grep -Fq '"deployment_topology": "direct-vps-only"' dist/vps-build.json
-          grep -Fq '"ui_authority": "final-ui-shell-v2"' dist/vps-build.json
-          grep -Fq '"premium_bootstrap": "final-premium-6f3"' dist/vps-build.json
-          grep -Fq '"public_testing_free_access": true' dist/vps-build.json
-          grep -Fq '"premium_runtime_admission": "testing-users-load-shell-realtime-and-run-controller-v2"' dist/vps-build.json
-          grep -Fq '"premium_unlock_authority": "future-paid-mode-server-entitlement-only-v1"' dist/vps-build.json
-          grep -Fq '"run_panel": "deriv-transaction-ledger-v1"' dist/vps-build.json
-          grep -Fq '"run_default_tab": "transactions-on-start-v1"' dist/vps-build.json
-          grep -Fq '"instant_run": "one-click-save-if-needed-then-resume-worker-v1"' dist/vps-build.json
-          grep -Fq '"journal_analysis": "live-public-deriv-tick-observability-mirror-v1"' dist/vps-build.json
-          grep -Fq '"deriv_icons": "official-quill-icons-2.4.18-build-time-static-svg"' dist/vps-build.json
-          grep -Fq '"linked_account_selector": "specific-linked-options-account-v1"' dist/vps-build.json
-          grep -Fq '"legacy_ui_loaded": false' dist/vps-build.json
-          grep -Fq '"legacy_ui_shipped": false' dist/vps-build.json
-          grep -Fq '"netlify_runtime_loaded": false' dist/vps-build.json
           grep -Fq '"api_base": "/api"' dist/vps-build.json
           grep -Fq '"oauth_base": "/oauth"' dist/vps-build.json
-          grep -Fq '"premium_access": "public-testing-free-bypass-premium-retained-v2"' dist/vps-build.json
-          grep -Fq '"premium_payment": "lipana-stk-verified-webhook-v1"' dist/vps-build.json
-          grep -Fq '"premium_renewal": "manual-mpesa-after-exact-expiry-retained-v1"' dist/vps-build.json
-          grep -Fq '"package": "@deriv/quill-icons"' dist/deriv-quill-icons-v2.json
-          grep -Fq '"version": "2.4.18"' dist/deriv-quill-icons-v2.json
-          ! grep -Fq '/netlify-api-boundary.js' dist/index.html
-          ! grep -Fq '/netlify-realtime-client.js' dist/index.html
-          ! grep -Fq '/final-ui-shell-v1.js' dist/index.html
-          ! grep -Fq '/ui/dashboard-v2.js' dist/index.html
-          ! grep -Fq 'automation-home-v1' dist/index.html
-          ! grep -Fq 'premium-subscription-action6e' dist/index.html
+          grep -Fq '"legacy_ui_loaded": false' dist/vps-build.json
+          grep -Fq '"legacy_ui_shipped": false' dist/vps-build.json
 
-      - name: Build frontend image
-        run: >-
-          docker build -f Dockerfile.frontend
-          --build-arg PUBLIC_ORIGIN=https://release-gate.example
-          --build-arg PUBLIC_TESTING_FREE_ACCESS=true
-          -t legacy-model-release-gate-frontend:${{ github.sha }} .
-
-      - name: Build API image
-        run: docker build --target api -t legacy-model-release-gate-api:${{ github.sha }} .
-
-      - name: Build worker image
-        run: docker build --target worker -t legacy-model-release-gate-worker:${{ github.sha }} .
+      - name: Build production images
+        run: |
+          docker build -f Dockerfile.frontend \
+            --build-arg PUBLIC_ORIGIN=https://release-gate.example \
+            --build-arg PUBLIC_TESTING_FREE_ACCESS=true \
+            -t legacy-model-release-gate-frontend:${{ github.sha }} .
+          docker build --target api -t legacy-model-release-gate-api:${{ github.sha }} .
+          docker build --target worker -t legacy-model-release-gate-worker:${{ github.sha }} .

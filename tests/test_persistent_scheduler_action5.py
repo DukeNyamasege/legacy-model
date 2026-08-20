@@ -212,7 +212,7 @@ class PersistentSchedulerAction5Tests(unittest.TestCase):
         self.assertNotIn("add_event_handler(", source)
         self.assertIn("install_automation_scheduler_action5(app)", entry)
         self.assertLess(
-            entry.index("from app.netlify_backend_api import app"),
+            entry.index("from app.vps_core_api import app"),
             entry.index("from app.automation_scheduler_action5 import"),
         )
 

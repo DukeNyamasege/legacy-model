@@ -1,54 +1,83 @@
 # Current Custom Strategy Runtime Architecture
 
-This document describes the production execution path introduced for the current Custom Strategy Builder runtime. It is deliberately scoped to the current application and does not depend on historical deployments.
+This document describes the current production Custom Strategy runtime on the full VPS deployment.
 
-## Production entry point
+## Production entry points
 
-`docker-compose.yml` starts the trading worker with:
+The API runs as:
+
+```text
+app.vps_backend_api:app
+```
+
+The worker runs as:
 
 ```text
 python -m app.custom_strategy_worker
 ```
 
-The production custom runtime is account-scoped:
+The public browser edge is Caddy. Frontend, API, WebSocket gateway, worker and PostgreSQL all run on the VPS.
+
+## Account-scoped execution path
 
 ```text
 Start Auto Trading
-  -> validate enabled managed account
-  -> validate stored trade-scope credential
-  -> synchronize composite runtime key into client execution state
-  -> establish exact account private Deriv WebSocket session
-  -> validate Custom Strategy ownership/configuration
+  -> admit enabled managed account
+  -> prepare exact account credential/session state
+  -> establish authenticated private Deriv WebSocket
+  -> validate Custom Strategy configuration
   -> WAITING_FOR_CONDITION
-  -> subscribe only markets required by active custom accounts
+  -> subscribe required markets
   -> evaluate bounded in-memory market windows
   -> CUSTOM_STRATEGY_SIGNAL_QUALIFIED
-  -> AccountExecutionSession
-  -> Deriv proposal
+  -> proposal on the exact account session
   -> validate proposal economics
-  -> PURCHASE_EXECUTION_REQUEST using that proposal ID on that exact account session
+  -> BUY exact proposal ID
   -> PURCHASE_CONFIRMED
   -> persist trade/contract
-  -> subscribe exact contract for settlement
-  -> settlement updates durable trade/risk state
+  -> monitor exact contract
+  -> settle
+  -> update durable account/recovery state
 ```
 
-If account preparation fails, the account is disabled before scanning and the backend execution status becomes `ERROR`. A missing client-state key is therefore a start/preparation failure, not an exception that is swallowed during a purchase loop.
+An uncertain BUY acknowledgement is never blindly retried. The runtime reconciles the account/contract state before permitting another financial purchase.
 
-## Runtime lifecycle
+## Lifecycle invariant
 
-The authoritative backend states are:
+After a successful explicit Start, the account remains enabled until one of these terminal events occurs:
 
-- `STOPPED`
+- Take Profit is reached.
+- Stop Loss is reached.
+- The user explicitly presses Stop.
+
+Preparation, credential refresh, provider connection, OTP, proposal, temporary balance, contract registration, contract reconciliation, database and runtime failures are **recovery states**, not automatic Stop events.
+
+The final lifecycle authority converts automatic `error`, `stopped`, `disabled`, `inactive` and related synthetic states back to retry/reconnect states for an already-running account unless TP, SL or the durable manual hard-stop sentinel applies. A periodic worker repair scan also restores direct database automatic disables that bypass normal setter wrappers.
+
+Explicit manual Stop is enforced independently by the durable hard-stop sentinel at the final pre-BUY boundary. This protects the user's Stop even if account-row cleanup or another request is delayed.
+
+## Runtime states
+
+Operational states can include:
+
 - `STARTING`
 - `WAITING_FOR_CONDITION`
-- `EXECUTING`
 - `RUNNING`
-- `ERROR`
+- `EXECUTING`
+- `RECONNECTING`
+- other bounded waiting/recovery states
 
-`enabled=true` alone is not proof that execution is running. `Start Auto Trading` first writes `STARTING`; only the worker can advance the account after credential, client-state, session, configuration, and market preparation succeed.
+`take_profit` and `stop_loss` are deliberate terminal financial states. A genuine manual Stop is represented by the independent hard-stop sentinel and corresponding stopped lifecycle state.
 
-When no account is execution-ready, the public custom scanner is not started. When an account is stopped or otherwise removed from the active execution set, its custom scan task and custom market state are removed. A private account session may remain only as long as it is required to finish monitoring an already purchased open contract.
+## Connection and recovery behavior
+
+Private account WebSocket sessions are account-scoped. Provider/network interruptions reconnect the affected account without rebuilding healthy sibling sessions.
+
+Browser-to-VPS execution takeover is targeted to the account whose browser lease expired. It does not perform provider-wide account validation or rebuild all sibling sessions.
+
+OTP/private WebSocket bootstrap uses bounded concurrency and lets the shared provider broker own the request timeout/retry boundary. Provider rate-limit backoff remains authoritative.
+
+Stale or historical unresolved contracts are quarantined/reconciled per account so one old contract cannot globally lock healthy execution.
 
 ## Hot-path performance rules
 
@@ -57,50 +86,38 @@ The custom tick handler intentionally does not:
 - persist every tick;
 - write bot state every tick;
 - query trades/open contracts on every tick;
-- emit `EVERY_TICK` at INFO;
+- emit every tick at INFO level;
 - request a proposal before a user condition qualifies.
 
-Last-digit, percentage-window, and tick-direction conditions are evaluated from bounded in-memory deques populated from the subscribed market stream and bounded history bootstrap.
+Last-digit, percentage-window and tick-direction conditions are evaluated from bounded in-memory market state.
 
-The final `/me/execution-alert` compatibility route no longer scans global signal/decision/trade history. `/me/execution-runtime` is the lightweight account-scoped status endpoint used by the UI.
+## Shared infrastructure retained
 
-A Custom Strategy save is one server write request. Strategy, execution settings, martingale preferences, selection, risk reset, and stopped lifecycle state are written in one database transaction. The endpoint logs `CUSTOM_STRATEGY_SAVE_TIMING`.
+The worker retains reusable components for:
 
-## Retained shared infrastructure
-
-The custom worker intentionally keeps small shared components that are not strategy routers:
-
-- account credential discovery and reenrollment;
-- exact-account private WebSocket sessions;
-- public WebSocket resilience and provider rate-limit protection;
-- managed-account lifecycle and account-mode lock;
+- exact-account credential/session discovery;
+- private WebSocket lifecycle and provider rate-limit protection;
+- public market WebSocket resilience;
 - trade registration idempotency;
 - unresolved-contract settlement safety;
 - account risk/recovery persistence;
-- manual custom martingale configuration;
+- manual stake/recovery configuration;
 - virtual-protection persistence and settlement;
-- profit/account snapshot accuracy;
+- account/balance accuracy;
 - database repositories and models.
 
-These components are reusable account/session/persistence utilities; they do not rotate accounts or choose Custom Strategy signals.
+These utilities support the Custom Strategy runtime; they do not override the user's strategy qualification conditions.
 
-## Legacy strategy/execution modules removed from the production custom path
+## Deployment boundary
 
-The new production worker does **not** import or install the previous strategy-routing chain, including:
+The production stack is defined by:
 
-- `app.custom_strategy_runtime`
-- `app.shared_system_strategy_clock`
-- `app.rotating_execution_cohorts`
-- `app.scalable_group_execution`
-- `app.guaranteed_signal_delivery`
-- `app.standardized_execution_runtime`
-- `app.multi_strategy_concurrency`
-- `app.strategy_v2_runtime`
-- `app.multi_strategy_runtime`
-- `app.production_worker_integration`
-- tick persistence/logging installers used by the previous worker
-- RF/AIDR strategy scanner/install chains used by the previous worker
+- `docker-compose.yml`
+- `docker-compose.vps.yml`
+- `Caddyfile`
+- `scripts/build-vps.mjs`
+- `scripts/deploy_full_vps.sh`
+- `app.vps_backend_api`
+- `app.custom_strategy_worker`
 
-Those modules are intentionally not physically deleted in this critical fix where they are still referenced by compatibility routes, historical tests, release tests, or rollback tooling. Removing files merely because their names look obsolete would be unsafe. The production reachability boundary is established by the new worker entry point and is enforced by regression tests that fail if the banned legacy purchase-router imports return.
-
-A later repository-cleanup change can physically delete modules only after their remaining API/test/rollback references are migrated or removed and the full release gate is green.
+The release gate compiles and tests the VPS-native API/realtime bootstrap, the TP/SL/manual-only lifecycle authority, provider connection resilience and the production frontend build before a release can reach `main`.

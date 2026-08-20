@@ -58,7 +58,7 @@ class TutorialCameraThemeContract(unittest.TestCase):
         self.assertIn("cp dashboard/tutorial-camera-theme-v1.css dist/tutorial-camera-theme-v1.css", docker)
         self.assertIn("grep -q -- '--camera-bg' dist/tutorial-camera-theme-v1.css", docker)
         self.assertIn("node scripts/inject-frontend-assets.mjs", docker)
-        self.assertIn('/tutorial-camera-theme-v1.css?v=20260819-block-workspace-v5', injector)
+        self.assertIn('/tutorial-camera-theme-v1.css?v=20260820-deep-builder-blocks-v6', injector)
         self.assertIn("html.replace(\"</head>\", `${theme}\\n</head>`)", injector)
 
 

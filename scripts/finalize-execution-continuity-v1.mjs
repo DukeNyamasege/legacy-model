@@ -214,12 +214,19 @@ if (!ledger.includes("function spotDigit")) ledger = replaceOne(
   '  function money(value) { return `${finite(value, 0).toFixed(2)} USD`; }\n  function spotDigit(value, symbol = "", explicit = null) {\n    const hasExplicit = explicit !== null && explicit !== undefined && explicit !== "";\n    const explicitDigit = hasExplicit ? Number(explicit) : NaN;\n    if (Number.isInteger(explicitDigit) && explicitDigit >= 0 && explicitDigit <= 9) return String(explicitDigit);\n    if (typeof value === "string") {\n      const digits = value.trim().replace(/[^0-9]/g, "");\n      if (digits) return digits[digits.length - 1];\n    }\n    const precisionDigit = value !== null && value !== undefined && value !== "" ? window.DERIVADMIN_DIRECT_PIP_PRECISION_V1?.last_digit?.(symbol, value) : null;\n    return Number.isInteger(precisionDigit) && precisionDigit >= 0 && precisionDigit <= 9 ? String(precisionDigit) : null;\n  }\n  function isSettled(row) { return String(row?.state || "").toUpperCase() === "SETTLED" || Boolean(row?.outcome); }',
   "provider settlement digit authority",
 );
-if (!ledger.includes("spotDigit(row.entry_spot, row.symbol, row.entry_digit)")) ledger = replaceOne(
-  ledger,
-  '    const entry = row.entry_spot ?? "—";\n    const exit = settled ? (row.exit_spot ?? "—") : "OPEN";',
-  '    const entry = spotDigit(row.entry_spot) ?? "—";\n    const exit = settled ? (spotDigit(row.exit_spot) ?? "—") : "OPEN";',
-  "entry exit exact digit display",
-);
+const legacyEntryExit = '    const entry = row.entry_spot ?? "—";\n    const exit = settled ? (row.exit_spot ?? "—") : "OPEN";';
+const providerAwareExit = '    const exit = settled ? (spotDigit(row.exit_spot, row.symbol, row.actual_last_digit) ?? "—") : "OPEN";';
+if (!ledger.includes("spotDigit(row.entry_spot, row.symbol, row.entry_digit)") && ledger.includes(legacyEntryExit)) {
+  ledger = replaceOne(
+    ledger,
+    legacyEntryExit,
+    '    const entry = spotDigit(row.entry_spot) ?? "—";\n    const exit = settled ? (spotDigit(row.exit_spot) ?? "—") : "OPEN";',
+    "entry exit exact digit display",
+  );
+}
+if (!ledger.includes("spotDigit(row.entry_spot, row.symbol, row.entry_digit)") && !ledger.includes(providerAwareExit)) {
+  throw new Error("execution-continuity entry/exit exact digit display: neither legacy nor provider-aware ledger shape found");
+}
 if (ledger.includes("spotDigit(row.entry_spot)")) ledger = replaceOne(ledger, "spotDigit(row.entry_spot)", "spotDigit(row.entry_spot, row.symbol, row.entry_digit)", "entry provider digit");
 if (ledger.includes("spotDigit(row.exit_spot)")) ledger = replaceOne(ledger, "spotDigit(row.exit_spot)", "spotDigit(row.exit_spot, row.symbol, row.actual_last_digit)", "exit provider digit");
 ledger = replaceOne(

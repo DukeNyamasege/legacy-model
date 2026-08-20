@@ -2,13 +2,13 @@ from __future__ import annotations
 
 """Full-VPS production API entrypoint.
 
-The proven backend/realtime route stack is imported first so every compatibility
+The VPS-native backend/realtime route stack is imported first so every compatibility
 layer finishes installing before Full-VPS-only observability, Telegram control,
 preferences, persistent scheduling, direct-browser execution bootstrap, and the
 premium/payment layers wrap the final routes.
 """
 
-from app.netlify_backend_api import app
+from app.vps_core_api import app
 from app.automation_preferences_api import install_automation_preferences_api
 from app.automation_scheduler_action5 import install_automation_scheduler_action5
 from app.automation_scheduler_v2_authority import install_automation_scheduler_v2_authority
@@ -22,6 +22,7 @@ from app.public_testing_access import (
     install_public_testing_access_api,
 )
 from app.text_to_strategy_api import install_text_to_strategy_api
+from app.vps_cross_device_runtime_sync import install_vps_cross_device_runtime_sync
 from app.vps_dashboard_latency_hotfix import install_vps_dashboard_latency_hotfix
 from app.vps_demo_balance_reset import install_vps_demo_balance_reset
 from app.vps_direct_execution_api import install_vps_direct_execution_api
@@ -95,13 +96,18 @@ install_vps_fast_execution_controls(app)
 # polling uses one bounded account query plus one batched preference read without
 # caching financial Stop state.
 install_vps_runtime_policy_hotfix(app)
+# Account-global synchronization is deliberately after every direct/legacy control:
+# a Stop or TP/SL on one device is visible to every session for the same managed
+# account, a successful Clear gets a shared history revision, and transient browser
+# OTP bootstrap is retried without changing Auto Trading lifecycle state.
+install_vps_cross_device_runtime_sync(app)
 # Install last so every personal mutation route, including future feature routes,
 # passes through one subscription authority. Payment/setup and safe stop operations
 # are explicitly exempted inside the gate. During public testing the middleware is
 # still installed, but _enforcement_enabled() is false in this process.
 install_premium_access_action6a(app)
 
-app.state.production_frontend_host = "vps_nginx"
+app.state.production_frontend_host = "vps_frontend"
 app.state.production_backend_role = "control_plane_scheduler_offline_takeover"
 app.state.production_architecture = "hybrid_browser_direct_v2_global_recovery_policy"
 app.state.public_testing_free_access = PUBLIC_TESTING_FREE_ACCESS

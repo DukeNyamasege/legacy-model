@@ -15,6 +15,11 @@ COPY scripts/finalize-production-controls-v6b.mjs ./scripts/finalize-production-
 COPY scripts/finalize-scheduler-v2.mjs ./scripts/finalize-scheduler-v2.mjs
 COPY scripts/finalize-execution-continuity-v1.mjs ./scripts/finalize-execution-continuity-v1.mjs
 COPY scripts/finalize-global-recovery-v1.mjs ./scripts/finalize-global-recovery-v1.mjs
+COPY scripts/finalize-runtime-coherence-v1.mjs ./scripts/finalize-runtime-coherence-v1.mjs
+COPY scripts/prepare-runtime-safety-v2.mjs ./scripts/prepare-runtime-safety-v2.mjs
+COPY scripts/finalize-runtime-safety-v2.mjs ./scripts/finalize-runtime-safety-v2.mjs
+COPY scripts/finalize-runtime-safety-v2b.mjs ./scripts/finalize-runtime-safety-v2b.mjs
+COPY scripts/finalize-sticky-stake-v1.mjs ./scripts/finalize-sticky-stake-v1.mjs
 COPY scripts/export-deriv-quill-icons-v2.mjs ./scripts/export-deriv-quill-icons-v2.mjs
 COPY scripts/inject-frontend-assets.mjs ./scripts/inject-frontend-assets.mjs
 
@@ -37,7 +42,11 @@ RUN node scripts/build-direct-runtime-v2.mjs \
 # Hybrid execution frontend: browser-direct manual trading and server-owned durable
 # scheduling remain separate financial authorities. Continuity runs after the base
 # runtime patches, then the global recovery finalizer asserts fixed equal Split-N
-# stake continuity and throttles non-financial status polling.
+# stake continuity and throttles non-financial status polling. Runtime coherence
+# resolves the historical renderer/history-hydration conflicts. Runtime safety v2
+# installs account-global Stop/Clear and exact no-purchase diagnostics; v2b shares
+# that diagnostic clock with VPS purchases. Sticky stake is deliberately last so
+# no later UI finalizer can reset the trader's explicit stake value.
 RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && cp dashboard/direct-financial-fence-v1.js dist/direct-financial-fence-v1.js \
   && cp dashboard/direct-socket-control-v1.js dist/direct-socket-control-v1.js \
@@ -60,6 +69,11 @@ RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && node scripts/finalize-global-recovery-v1.mjs \
   && node --check scripts/finalize-execution-continuity-v1.mjs \
   && node --check scripts/finalize-global-recovery-v1.mjs \
+  && node --check scripts/finalize-runtime-coherence-v1.mjs \
+  && node --check scripts/prepare-runtime-safety-v2.mjs \
+  && node --check scripts/finalize-runtime-safety-v2.mjs \
+  && node --check scripts/finalize-runtime-safety-v2b.mjs \
+  && node --check scripts/finalize-sticky-stake-v1.mjs \
   && node --check dist/final-premium-6f3.js \
   && node --check dist/final-ui-shell-v2.js \
   && node --check dist/deriv-direct-execution-v2.js \
@@ -81,7 +95,18 @@ RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && node --check dist/run-panel-usability-v1.js \
   && node --check dist/scheduler-v2-ui.js \
   && grep -q -- '--camera-bg' dist/tutorial-camera-theme-v1.css \
-  && node scripts/inject-frontend-assets.mjs
+  && node scripts/inject-frontend-assets.mjs \
+  && node scripts/finalize-runtime-coherence-v1.mjs \
+  && node scripts/prepare-runtime-safety-v2.mjs \
+  && node scripts/finalize-runtime-safety-v2.mjs \
+  && node scripts/finalize-runtime-safety-v2b.mjs \
+  && node scripts/finalize-sticky-stake-v1.mjs \
+  && node --check dist/final-premium-6f3.js \
+  && node --check dist/final-ui-shell-v2.js \
+  && node --check dist/deriv-direct-execution-v2.js \
+  && node --check dist/direct-strategy-persistence-v1.js \
+  && node --check dist/direct-transaction-ledger-v6.js \
+  && node --check dist/direct-run-panel-authority-v6.js
 
 FROM nginx:1.27-alpine AS frontend
 

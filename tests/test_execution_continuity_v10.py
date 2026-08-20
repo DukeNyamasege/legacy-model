@@ -142,7 +142,7 @@ class ExecutionContinuityV10Contract(unittest.TestCase):
         self.assertGreater(scheduler, copied_run)
         self.assertGreater(continuity, scheduler)
         self.assertIn("20260819-provider-settlement-v9", assets)
-        self.assertIn("20260819-provider-ledger-v11", assets)
+        self.assertIn("20260820-exit-digit-v12", assets)
         self.assertIn("20260818-interaction-v4-one-flow", assets)
         self.assertIn("20260819-live-fix-v2", assets)
 

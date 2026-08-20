@@ -9,7 +9,7 @@ from app.final_trade_history_cutoff_authority import _row_visible_after_cutoff
 
 ROOT = Path(__file__).resolve().parents[1]
 AUTHORITY = ROOT / "app" / "final_trade_history_cutoff_authority.py"
-BACKEND = ROOT / "app" / "netlify_backend_api.py"
+BACKEND = ROOT / "app" / "vps_core_api.py"
 FINAL_UI_JS = ROOT / "dashboard" / "final-ui-shell-v2.js"
 PREMIUM_JS = ROOT / "dashboard" / "final-premium-6f3.js"
 VPS_REALTIME_JS = ROOT / "dashboard" / "vps-realtime-client-v2.js"
@@ -65,7 +65,7 @@ class ClearTradesUnboundedKpiTests(unittest.TestCase):
 
     def test_final_backend_installs_cutoff_authority_last(self) -> None:
         source = BACKEND.read_text(encoding="utf-8")
-        surface = source.index("install_backend_only_surface(app)")
+        surface = source.index("install_vps_api_surface(app)")
         cutoff = source.index("install_final_trade_history_cutoff_authority(app)")
         self.assertLess(surface, cutoff)
 

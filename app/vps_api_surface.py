@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""VPS-only API surface behind the Caddy reverse proxy."""
+
 from typing import Any
 
 from app.dashboard_stability_fix import _remove_route
@@ -8,8 +10,8 @@ from app.dashboard_stability_fix import _remove_route
 _INSTALLED = False
 
 
-def install_backend_only_surface(app: Any) -> None:
-    """Expose the dedicated VPS as API/realtime only in split mode."""
+def install_vps_api_surface(app: Any) -> None:
+    """Keep static frontend delivery in the VPS frontend container, not FastAPI."""
 
     global _INSTALLED
     if _INSTALLED:
@@ -26,30 +28,31 @@ def install_backend_only_surface(app: Any) -> None:
         _remove_route(app, path, "GET")
         _remove_route(app, path, "HEAD")
 
-    # Production logs showed the historical all-account summary consuming tens of
-    # seconds even though the current Custom Strategy frontend does not render it.
-    # Remove the expensive implementation entirely from the backend-only entrypoint
-    # so an old browser/client cannot accidentally monopolize the API process.
+    # The historical all-account summary is not used by the current account-scoped
+    # Custom Strategy frontend and can monopolize the API process. Keep it retired.
     _remove_route(app, "/metrics/summary", "GET")
 
     @app.get("/", include_in_schema=False)
-    def backend_root() -> dict[str, Any]:
+    def vps_api_root() -> dict[str, Any]:
         return {
-            "service": "legacy-model-backend",
-            "role": "api-worker-database-backend",
-            "frontend": "netlify",
+            "service": "legacy-model-vps-api",
+            "role": "api-control-plane",
+            "frontend": "vps-frontend",
             "realtime": "/ws/me/live",
             "health": "/health",
+            "hosting": "vps-only",
         }
 
     @app.get("/metrics/summary", include_in_schema=False)
     def retired_global_summary() -> dict[str, Any]:
         return {
             "retired": True,
-            "reason": "Netlify Custom Strategy frontend uses account-scoped realtime data",
+            "reason": "VPS frontend uses account-scoped realtime data",
             "performance_profile": "constant-time-retired-summary",
         }
 
-    app.state.backend_only_surface_installed = True
+    app.state.vps_api_surface_installed = True
+    app.state.frontend_served_by_api = False
     app.state.legacy_global_metrics_summary_retired = True
+    app.state.api_surface = "vps-api-behind-caddy"
     _INSTALLED = True

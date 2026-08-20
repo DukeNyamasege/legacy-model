@@ -123,7 +123,6 @@ for (const marker of [
 }
 
 const forbiddenProductionUi = [
-  '/netlify-api-boundary.js', '/netlify-realtime-client.js',
   '/vps-api-boundary.js?v=20260817-1', '/vps-realtime-client.js?v=20260817-6f1-2',
   '/final-ui-shell-v1.css', '/final-ui-shell-v1.js',
   '/ui/dashboard-v2.css', '/ui/dashboard-v2.js', '/ui/dashboard-actions-v2.js',
@@ -152,7 +151,6 @@ await writeFile(
     production_asset_policy: "final-authority-whitelist-only",
     legacy_ui_loaded: false,
     legacy_ui_shipped: false,
-    netlify_runtime_loaded: false,
     mockup_contract: "six-approved-mobile-screens-authoritative",
     run_panel: "deriv-transaction-ledger-v1",
     run_panel_source: "me-trades-today-real-and-virtual-stream",
@@ -205,4 +203,4 @@ console.log(publicTestingFreeAccess
   : "Premium: paid server entitlement gate is active");
 console.log("Run flow: manual start -> browser-direct engine; scheduled start -> persistent scheduler -> VPS worker");
 console.log("Journal: provider contract settlement via the owning execution engine; no duplicate public tick mirror");
-console.log("No Netlify or retired Action UI is shipped in the production artifact");
+console.log("VPS-only production artifact built successfully");

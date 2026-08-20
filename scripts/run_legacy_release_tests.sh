@@ -41,6 +41,11 @@ scripts/finalize-production-controls-v6b.mjs
 scripts/finalize-scheduler-v2.mjs
 scripts/finalize-execution-continuity-v1.mjs
 scripts/finalize-global-recovery-v1.mjs
+scripts/finalize-runtime-coherence-v1.mjs
+scripts/prepare-runtime-safety-v2.mjs
+scripts/finalize-runtime-safety-v2.mjs
+scripts/finalize-runtime-safety-v2b.mjs
+scripts/finalize-sticky-stake-v1.mjs
 "
 
 if command -v node >/dev/null 2>&1; then
@@ -85,22 +90,36 @@ docker compose -f docker-compose.yml run --rm --no-deps api sh -ec '
     app/vps_direct_runtime_rate_limit.py \
     app/vps_provider_connection_resilience_v2.py \
     app/vps_fast_execution_controls.py \
+    app/vps_cross_device_runtime_sync.py \
     app/direct_execution_worker_fence.py \
     app/custom_split_recovery_authority.py \
     app/custom_split_debt_continuity_authority.py \
     app/stale_split_basis_reconciliation_authority.py \
+    app/browser_direct_lease_preservation_authority.py \
     app/custom_virtual_post_loss_barrier_authority.py \
     app/vps_direct_execution_checkpoint.py \
     app/global_recovery_execution_policy.py \
     app/never_auto_stop_repository_authority.py \
+    app/tp_sl_manual_only_authority.py \
     app/account_identity_canonical_authority.py \
     app/account_trade_metrics_authority.py \
     app/vps_runtime_policy_hotfix.py \
     app/automation_scheduler_v2_authority.py \
+    app/vps_api_surface.py \
+    app/vps_realtime_gateway.py \
+    app/vps_core_api.py \
     app/custom_strategy_worker.py \
     app/vps_backend_api.py
 
   python -m unittest -q \
+    tests.test_full_vps_hosting \
+    tests.test_tp_sl_manual_only_authority \
+    tests.test_browser_direct_lease_preservation \
+    tests.test_execution_continuity_finalizer_compatibility \
+    tests.test_runtime_coherence_execution_gate \
+    tests.test_runtime_execution_safety_v2 \
+    tests.test_runtime_server_purchase_clock \
+    tests.test_sticky_stake_persistence \
     tests.test_vps_purchase_continuity_v2 \
     tests.test_global_recovery_policy \
     tests.test_tutorial_camera_theme \
@@ -139,4 +158,4 @@ docker build \
   -t legacy-model-frontend-release-check:latest \
   .
 
-echo "Release gate passed: Python tests and full frontend finalizer pipeline succeeded."
+echo "Release gate passed: VPS-only architecture, lifecycle policy, Python tests and frontend finalizers succeeded."

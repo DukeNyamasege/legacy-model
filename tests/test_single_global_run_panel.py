@@ -73,7 +73,7 @@ class SingleGlobalRunPanelTests(unittest.TestCase):
         injector = (ROOT / "scripts" / "inject-frontend-assets.mjs").read_text(encoding="utf-8")
 
         for marker in (
-            'const VERSION = "20260819-run-panel-usability-v3-mobile-summary-lane"',
+            'const VERSION = "20260820-run-panel-usability-v4-workspace-clear"',
             'document.getElementById("run-panel-usability-v2-style")?.remove()',
             'html[data-run-panel-visibility="open"] .bottom-nav',
             'bottom:calc(52px + env(safe-area-inset-bottom, 0px))!important',
@@ -87,7 +87,7 @@ class SingleGlobalRunPanelTests(unittest.TestCase):
 
         self.assertNotIn("if (window.__DERIVADMIN_RUN_PANEL_USABILITY_V2__) return", usability)
         self.assertIn(
-            '["run-panel-usability-v1.js", "20260819-mobile-summary-nav-lane-v4"]',
+            '["run-panel-usability-v1.js", "20260820-workspace-shrink-v5"]',
             injector,
         )
 
