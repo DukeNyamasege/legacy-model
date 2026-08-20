@@ -12,7 +12,7 @@ const scripts = [
   ["direct-interaction-guard-v3.js", "20260818-interaction-v4-one-flow"],
   ["deriv-direct-execution-v2.js", "20260819-provider-settlement-v9"],
   ["direct-strategy-persistence-v1.js", "20260820-builder-persist-v2"],
-  ["direct-continuity-checkpoint-v1.js", "20260819-direct-continuity-v3-fixed-split-stake"],
+  ["direct-continuity-checkpoint-v1.js", "20260820-direct-continuity-v4-no-retry-burst"],
   ["direct-ui-cleanup-v1.js", "20260819-direct-cleanup-v2-single-panel"],
   ["direct-builder-loaded-v2.js", "20260818-builder-loaded-v2"],
   ["direct-runtime-ux-v4.js", "20260818-runtime-ux-v6"],
@@ -29,7 +29,7 @@ for (const [file, version] of scripts) {
   if (!html.includes(tag)) html = html.replace("</body>", `${tag}\n</body>`);
 }
 
-const theme = '<link rel="stylesheet" href="/tutorial-camera-theme-v1.css?v=20260819-block-workspace-v5">';
+const theme = '<link rel="stylesheet" href="/tutorial-camera-theme-v1.css?v=20260820-deep-builder-blocks-v6">';
 if (!html.includes(theme)) html = html.replace("</head>", `${theme}\n</head>`);
 
 writeFileSync(path, html, "utf8");
