@@ -1,17 +1,11 @@
 from __future__ import annotations
 
-"""Account-global runtime synchronization for the Full-VPS browser-direct runtime.
+"""Account-global runtime synchronization for the Full-VPS browser runtime.
 
-This authority has four narrow jobs:
-
-* expose one no-cache account runtime snapshot that every logged-in device can poll;
-* publish a monotonic clear-history revision after a successful Clear Trades so all
-  devices clear the same account ledger;
-* preserve Stop/TP/SL as account-global state rather than browser-local state; and
-* keep transient direct-session OTP/bootstrap failures retryable without changing
-  Auto Trading lifecycle state.
-
-It never submits a proposal or BUY and never auto-starts an idle account.
+This compatibility layer installs account-global Stop/Clear synchronization first.
+Browser-direct Deriv v3 is installed immediately afterward and replaces the old
+lease/takeover/session routes with a light control plane. Keeping this order lets
+older control code remain available without leaving live provider traffic on VPS.
 """
 
 import json
@@ -89,11 +83,11 @@ def _read_clear_revision(session: Any, managed_id: int) -> str:
 
 
 def _resilient_provider_otp(account_id: str, token: str) -> str:
-    """Retry only transient direct-session bootstrap failures for up to 45 seconds.
+    """Legacy v2 compatibility only; browser-direct v3 restores the original helper.
 
-    Permanent credential/provider rejections are returned immediately so the
-    browser Journal can show the exact error. Auto Trading remains enabled and the
-    browser's own reconnect loop may retry after the user/provider condition changes.
+    This function remains so the older route stack can import cleanly. The v3
+    installer removes the server OTP session route and restores _provider_otp before
+    serving traffic, so live/manual execution never enters this retry loop.
     """
 
     original = _ORIGINAL_PROVIDER_OTP
@@ -107,9 +101,6 @@ def _resilient_provider_otp(account_id: str, token: str) -> str:
         try:
             return str(original(account_id, token))
         except HTTPException as exc:
-            # 502/503 are transport/provider availability faults. 4xx credential
-            # faults are useful exact diagnostics and should not be hidden behind
-            # another 45 seconds of identical calls.
             if int(exc.status_code) not in {502, 503}:
                 raise
             remaining = deadline - time.monotonic()
@@ -135,8 +126,6 @@ def install_vps_cross_device_runtime_sync(app: Any) -> None:
     if _INSTALLED:
         return
 
-    # The direct-session route resolves this module global at request time, so
-    # replacing it here hardens browser bootstrap without duplicating the route.
     _ORIGINAL_PROVIDER_OTP = direct_api._provider_otp
     direct_api._provider_otp = _resilient_provider_otp
 
@@ -175,9 +164,6 @@ def install_vps_cross_device_runtime_sync(app: Any) -> None:
                     revision,
                 )
             except Exception:
-                # The clear itself already succeeded. A later clear/snapshot can
-                # repair synchronization; never turn history clearing into an
-                # execution lifecycle fault.
                 LOGGER.exception(
                     "ACCOUNT_HISTORY_CLEAR_REVISION_FAILED managed_id=%s",
                     managed_id,
@@ -253,3 +239,12 @@ def install_vps_cross_device_runtime_sync(app: Any) -> None:
     app.state.clear_history_scope = "account_global_all_logged_in_devices"
     app.state.direct_session_transient_retry_seconds = _TRANSIENT_SESSION_RETRY_SECONDS
     _INSTALLED = True
+
+    # Absolutely last transport authority: removes server OTP/session/heartbeat/
+    # takeover semantics while preserving the account-global Stop/Clear controls
+    # installed above.
+    from app.browser_direct_deriv_transport_v3 import (
+        install_browser_direct_deriv_transport_v3,
+    )
+
+    install_browser_direct_deriv_transport_v3(app)

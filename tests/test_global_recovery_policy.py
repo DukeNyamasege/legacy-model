@@ -147,13 +147,15 @@ class GlobalRecoveryPolicyTests(unittest.TestCase):
         self.assertNotIn("state.consecutiveLosses = 0", clear_body)
         self.assertNotIn("state.virtualMode = false", clear_body)
 
-    def test_browser_and_server_handoff_preserve_fixed_split_stake(self) -> None:
+    def test_browser_split_recovery_stays_local_without_vps_handoff(self) -> None:
         checkpoint_js = (ROOT / "dashboard" / "direct-continuity-checkpoint-v1.js").read_text(encoding="utf-8")
-        checkpoint_api = (ROOT / "app" / "vps_direct_execution_checkpoint.py").read_text(encoding="utf-8")
         finalizer = (ROOT / "scripts" / "finalize-production-controls-v6b.mjs").read_text(encoding="utf-8")
-        self.assertIn("split_part_stake", checkpoint_js)
-        self.assertIn("split_part_stake", checkpoint_api)
         self.assertIn("split_part_stake: state.splitPartStake", finalizer)
+        self.assertIn("server_writes: false", checkpoint_js)
+        self.assertIn("server_takeover: false", checkpoint_js)
+        self.assertIn("trade_receipts_only: true", checkpoint_js)
+        self.assertNotIn("/api/me/direct-execution/checkpoint", checkpoint_js)
+        self.assertNotIn("setInterval(checkpoint, 5000)", checkpoint_js)
 
     def test_duplicate_identity_is_canonical_not_deleted(self) -> None:
         source = (ROOT / "app" / "account_identity_canonical_authority.py").read_text(encoding="utf-8")

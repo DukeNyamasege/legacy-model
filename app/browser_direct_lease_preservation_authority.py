@@ -2,10 +2,10 @@ from __future__ import annotations
 
 """Final ownership guard for browser-direct execution.
 
-A transient worker/provider failure must not overwrite a still-fresh browser
-execution lease.  TP, SL and the durable explicit-user hard-stop sentinel keep
-absolute priority.  Once the browser heartbeat actually expires, the existing
-VPS takeover/recovery path is allowed to proceed normally.
+A transient worker/provider failure must not overwrite active browser execution.
+TP, SL and the durable explicit-user hard-stop sentinel keep absolute priority.
+Browser-direct v3 installs an additional worker offload authority after this module,
+so live/manual browser accounts are never promoted into VPS provider execution.
 """
 
 import json
@@ -86,19 +86,14 @@ def _fresh_owner_heartbeat(
     row: ManagedAccount,
     managed_id: int,
 ) -> datetime | None:
-    """Return the real browser heartbeat time when the browser still owns execution.
-
-    The RuntimePreference heartbeat is used as a recovery fallback because an
-    older automatic error path may already have changed ``enabled`` or
-    ``execution_status`` before the final wrapper is reached.  We never refresh
-    this timestamp from a worker retry, so retries cannot extend browser ownership.
-    """
-
     if direct_browser_lease_fresh(row):
         return _aware(row.execution_status_updated_at)
 
     owner = _owner_payload(session, managed_id)
-    if str(owner.get("owner") or "browser").strip().lower() != "browser":
+    if str(owner.get("owner") or "browser").strip().lower() not in {
+        "browser",
+        "browser_direct_only",
+    }:
         return None
     if not str(owner.get("epoch") or "").strip():
         return None
@@ -131,11 +126,10 @@ def _preserve_browser_owner(
         row.enabled = True
         row.execution_status = DIRECT_BROWSER_STATUS
         row.execution_status_reason = (
-            "Browser execution remains active; authenticated Deriv session recovery "
-            f"will retry. {_clean_automatic_reason(reason)}"
-        )[:320]
-        # CRITICAL: preserve the real browser heartbeat as the lease timestamp.
-        # A worker retry must never manufacture a fresh browser lease.
+            "Browser execution remains active; transient execution fault will retry. "
+            f"{_clean_automatic_reason(reason)}"
+        )[:160]
+        # Never let a worker retry manufacture a new browser ownership timestamp.
         row.execution_status_updated_at = heartbeat_at
         row.updated_at = utc_now()
         return True
@@ -152,7 +146,7 @@ def _lease_aware_force_retry_state(
     if _preserve_browser_owner(repository, int(managed_id), reason or status):
         LOGGER.warning(
             "BROWSER_DIRECT_LEASE_PRESERVED managed_id=%s attempted_status=%s "
-            "browser_lease_fresh=true automatic_retry=true",
+            "browser_owner=true automatic_retry=true",
             int(managed_id),
             str(status or ""),
         )
@@ -183,19 +177,13 @@ def _lease_aware_set_status(
         return
 
     requested = str(execution_status or "inactive").strip().lower()
-
-    # TP/SL and a durable explicit user Stop remain terminal and must pass through.
     if lifecycle._terminal_allowed(self, int(account_id), requested):
         original(self, int(account_id), requested, reason)
         return
 
-    # Any automatic worker/provider status mutation must yield to a live browser
-    # lease. This includes nonterminal statuses such as reconnecting/waiting which
-    # otherwise bypass the TP/SL/manual-only terminal wrapper entirely.
     if _preserve_browser_owner(self, int(account_id), reason or requested):
         LOGGER.warning(
-            "BROWSER_DIRECT_STATUS_MUTATION_BLOCKED managed_id=%s attempted_status=%s "
-            "browser_lease_fresh=true",
+            "BROWSER_DIRECT_STATUS_MUTATION_BLOCKED managed_id=%s attempted_status=%s browser_owner=true",
             int(account_id),
             requested,
         )
