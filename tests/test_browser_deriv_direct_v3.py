@@ -23,13 +23,20 @@ class BrowserDerivDirectV3Tests(unittest.TestCase):
             "/me/direct-execution/receipt",
         ):
             self.assertIn(marker, finalizer)
+
+        # Legacy server hot-path strings intentionally remain in the build script
+        # only as fail-closed assertions against the generated production engine.
+        guard = finalizer.split("for (const forbidden of [", 1)[1].split(
+            "write(enginePath, engine);", 1
+        )[0]
         for forbidden in (
             'apiPath("/me/direct-execution/session")',
             'apiPath("/me/direct-execution/heartbeat")',
             'apiPath("/me/direct-execution/yield")',
             "VPS continuity takeover activated automatically",
         ):
-            self.assertNotIn(forbidden, finalizer)
+            self.assertIn(forbidden, guard)
+        self.assertIn("if (engine.includes(forbidden)) throw new Error", guard)
 
     def test_bootstrap_exposes_access_token_only(self) -> None:
         api = self.text("app/browser_direct_deriv_transport_v3.py")
@@ -59,7 +66,14 @@ class BrowserDerivDirectV3Tests(unittest.TestCase):
         self.assertNotIn("/direct-execution/checkpoint", checkpoint)
         self.assertIn("trade_receipts_only: true", checkpoint)
         self.assertIn("heartbeatOnce(_epoch)", finalizer)
-        self.assertNotIn('apiPath("/me/direct-execution/heartbeat")', finalizer)
+
+        # There is no heartbeat request in the generated engine. The finalizer
+        # names the legacy path solely so the production build fails if it survives.
+        guard = finalizer.split("for (const forbidden of [", 1)[1].split(
+            "write(enginePath, engine);", 1
+        )[0]
+        self.assertIn('apiPath("/me/direct-execution/heartbeat")', guard)
+        self.assertIn("if (engine.includes(forbidden)) throw new Error", guard)
 
     def test_browser_direct_accounts_never_promote_to_vps_provider_sessions(self) -> None:
         offload = self.text("app/browser_direct_worker_offload_v3.py")
