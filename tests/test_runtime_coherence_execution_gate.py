@@ -45,6 +45,21 @@ class RuntimeCoherenceExecutionGateTests(unittest.TestCase):
         ):
             self.assertIn(marker, text)
 
+    def test_runtime_finalizer_accepts_canonical_readiness_export_shape(self) -> None:
+        finalizer = FINALIZER.read_text(encoding="utf-8")
+        source = ENGINE_SOURCE.read_text(encoding="utf-8")
+        canonical = "        open_contracts: state.openContracts.size,\n      };"
+        self.assertIn(canonical, source)
+        self.assertIn("const stateExportCurrent =", finalizer)
+        self.assertIn("const stateExportWithError =", finalizer)
+        self.assertIn("const stateExportReady =", finalizer)
+        self.assertIn("engine.includes(stateExportCurrent)", finalizer)
+        self.assertIn("engine.includes(stateExportWithError)", finalizer)
+        self.assertIn(
+            "neither canonical, diagnostic, nor installed shape found",
+            finalizer,
+        )
+
     def test_running_private_session_failures_retry_automatically(self) -> None:
         text = FINALIZER.read_text(encoding="utf-8")
         self.assertIn("running private socket automatic retry", text)
