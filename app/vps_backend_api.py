@@ -28,6 +28,7 @@ from app.vps_direct_execution_api import install_vps_direct_execution_api
 from app.vps_direct_execution_arm_guard import install_vps_direct_execution_arm_guard
 from app.vps_direct_execution_checkpoint import install_vps_direct_execution_checkpoint
 from app.vps_direct_hard_stop_v2 import install_vps_direct_hard_stop_v2
+from app.vps_direct_runtime_rate_limit import install_vps_direct_runtime_rate_limit
 from app.vps_fast_execution_controls import install_vps_fast_execution_controls
 from app.vps_linked_accounts_latency_hotfix import install_vps_linked_accounts_latency_hotfix
 from app.vps_login_observability_hotfix import install_vps_login_observability_hotfix
@@ -69,6 +70,11 @@ install_vps_linked_accounts_latency_hotfix(app)
 # reset calls Deriv's official REST endpoint with the server-held trade credential;
 # no long-lived OAuth/PAT token is exposed to the browser.
 install_vps_demo_balance_reset(app)
+# Browser-direct transport liveness gets a separate bounded quota. Heartbeats,
+# checkpoints and OTP bootstrap must never consume the ordinary 30/min personal
+# mutation budget and accidentally expire the browser ownership lease. Origin and
+# all other request-security checks remain unchanged.
+install_vps_direct_runtime_rate_limit()
 # Live/manual execution uses a browser <-> Deriv authenticated WebSocket. The VPS
 # only issues the short-lived OTP URL and maintains the browser/server ownership
 # lease. The atomic arm guard prevents a second browser/device from sharing that
