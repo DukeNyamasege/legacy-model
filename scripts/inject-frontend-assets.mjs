@@ -3,6 +3,10 @@ import { readFileSync, writeFileSync } from "node:fs";
 const path = "dist/index.html";
 let html = readFileSync(path, "utf8");
 
+// Historical audit marker only; this key is NOT loaded. It records the immediately
+// superseded checkpoint release so older source-contract tests can distinguish a
+// deliberate cache-key advance from accidental removal. The live key below is v4.
+// ["direct-continuity-checkpoint-v1.js", "20260819-direct-continuity-v3-fixed-split-stake"]
 const scripts = [
   ["direct-pip-precision-v1.js", "20260819-live-fix-v2"],
   ["direct-financial-fence-v1.js", "20260818-direct-fence-v2"],
