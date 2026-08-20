@@ -80,3 +80,10 @@ def install_stale_split_basis_reconciliation_authority() -> None:
     RFDir5Repository.plan_stake = plan_stake
     RFDir5Repository._stale_split_basis_reconciliation_installed = True
     _INSTALLED = True
+
+    # This installer is already the final call in the worker fence. Attach the
+    # lifecycle authority here so no older fail-closed/repository wrapper can be
+    # installed outside it later in the same bootstrap.
+    from app.tp_sl_manual_only_authority import install_tp_sl_manual_only_authority
+
+    install_tp_sl_manual_only_authority()
