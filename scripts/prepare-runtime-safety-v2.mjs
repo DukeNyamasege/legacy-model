@@ -1,23 +1,50 @@
 import fs from "node:fs";
 
-const path = "dist/direct-run-panel-authority-v6.js";
-if (!fs.existsSync(path)) throw new Error(`runtime-safety preparation missing ${path}`);
-let source = fs.readFileSync(path, "utf8").replace(/\r\n/g, "\n");
+const runPath = "dist/direct-run-panel-authority-v6.js";
+const ledgerPath = "dist/direct-transaction-ledger-v6.js";
 
-const before = `      state.userStopLatch = false;\n      setTimeout(queueRender, 0);\n      setTimeout(queueRender, 80);`;
-const after = `      state.userStopLatch = false;\n      setTimeout(() => queueRender(), 0);\n      setTimeout(queueRender, 80);`;
-const count = source.split(before).length - 1;
-if (count === 1) {
-  source = source.replace(before, after);
-} else if (count === 0 && source.includes(after)) {
+for (const path of [runPath, ledgerPath]) {
+  if (!fs.existsSync(path)) throw new Error(`runtime-safety preparation missing ${path}`);
+}
+
+let run = fs.readFileSync(runPath, "utf8").replace(/\r\n/g, "\n");
+
+// The Run panel has two historical zero-delay renders. Make the Start-path form
+// syntactically distinct so the final safety gate can patch only the Journal-tab
+// render without weakening replaceOne fail-closed semantics.
+const runBefore = `      state.userStopLatch = false;\n      setTimeout(queueRender, 0);\n      setTimeout(queueRender, 80);`;
+const runAfter = `      state.userStopLatch = false;\n      setTimeout(() => queueRender(), 0);\n      setTimeout(queueRender, 80);`;
+const runCount = run.split(runBefore).length - 1;
+if (runCount === 1) {
+  run = run.replace(runBefore, runAfter);
+} else if (runCount === 0 && run.includes(runAfter)) {
   // Idempotent candidate rebuild.
 } else {
-  throw new Error(`runtime-safety preparation start-render target expected 1 match, got ${count}`);
+  throw new Error(`runtime-safety preparation start-render target expected 1 match, got ${runCount}`);
 }
-
-if ((source.split("setTimeout(queueRender, 0);").length - 1) !== 1) {
+if ((run.split("setTimeout(queueRender, 0);").length - 1) !== 1) {
   throw new Error("runtime-safety preparation did not leave exactly one Journal-tab render target");
 }
+fs.writeFileSync(runPath, run, "utf8");
 
-fs.writeFileSync(path, source, "utf8");
-console.log("Runtime safety preparation complete: final Run-panel target is unambiguous");
+// execution-continuity-v1 intentionally expands the no-row branch so an old
+// server response cannot leave stale rows visible. Runtime-safety-v2 takes final
+// ownership immediately afterwards and replaces the shorthand with one canonical
+// zero-row table. Normalize only this exact intermediate shape; unknown shapes fail.
+let ledger = fs.readFileSync(ledgerPath, "utf8").replace(/\r\n/g, "\n");
+const ledgerExpanded = `    const rows = contracts();\n    if (!rows.length) {\n      const panel = document.querySelector(".global-run-panel");\n      const body = panel?.querySelector(".run-panel-body");\n      const summary = panel?.querySelector(".run-panel-stats");\n      if (body) body.innerHTML = \`<div class="transaction-table transaction-table-v6 unified-canonical-table-v10"><div class="transaction-head transaction-head-v6"><span>Time / Market</span><span>Type</span><span>Entry / Exit</span><span>Buy price</span><span>Profit / Loss</span></div><div class="transaction-rows"></div></div>\`;\n      if (summary) summary.innerHTML = statsMarkup(stats([]));\n      lastSignature = ""; connectObserver(); return;\n    }\n    const panel = document.querySelector(".global-run-panel");`;
+const ledgerNormalized = `    const rows = contracts();\n    if (!rows.length) { lastSignature = ""; connectObserver(); return; }\n    const panel = document.querySelector(".global-run-panel");`;
+const ledgerCount = ledger.split(ledgerExpanded).length - 1;
+if (ledgerCount === 1) {
+  ledger = ledger.replace(ledgerExpanded, ledgerNormalized);
+} else if (ledgerCount === 0 && ledger.includes(ledgerNormalized)) {
+  // Idempotent candidate rebuild.
+} else {
+  throw new Error(`runtime-safety preparation ledger zero-row target expected 1 match, got ${ledgerCount}`);
+}
+if (!ledger.includes("unified-canonical-table-v10")) {
+  throw new Error("runtime-safety preparation expected continuity ledger v10 shape");
+}
+fs.writeFileSync(ledgerPath, ledger, "utf8");
+
+console.log("Runtime safety preparation complete: final Run-panel and ledger targets are unambiguous");
