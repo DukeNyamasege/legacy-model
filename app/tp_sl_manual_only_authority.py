@@ -74,15 +74,6 @@ def _retry_status(status: str, reason: str) -> str:
     return "waiting_for_condition"
 
 
-def _manual_hard_stop(repository: Test2Repository, managed_id: int) -> bool:
-    try:
-        with repository.database.session() as session:
-            return direct_hard_stop_active(session, int(managed_id))
-    except Exception:
-        # Never manufacture a manual stop from a lookup failure.
-        return False
-
-
 def _terminal_allowed(repository: Test2Repository, managed_id: int, status: str) -> bool:
     normalized = str(status or "").strip().lower()
     if normalized in _TARGET_STOPS:
@@ -267,7 +258,7 @@ def _final_discard_token(
 async def _repair_direct_automatic_stops(bot: RFDir5TradingBot) -> None:
     """Repair automatic direct DB disables that bypass repository status wrappers."""
 
-    while bot.is_running:
+    while True:
         repaired: list[int] = []
         try:
             with bot.repository.database.session() as session:
