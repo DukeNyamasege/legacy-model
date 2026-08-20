@@ -41,6 +41,7 @@ scripts/finalize-production-controls-v6b.mjs
 scripts/finalize-scheduler-v2.mjs
 scripts/finalize-execution-continuity-v1.mjs
 scripts/finalize-global-recovery-v1.mjs
+scripts/finalize-runtime-coherence-v1.mjs
 "
 
 if command -v node >/dev/null 2>&1; then
@@ -89,6 +90,7 @@ docker compose -f docker-compose.yml run --rm --no-deps api sh -ec '
     app/custom_split_recovery_authority.py \
     app/custom_split_debt_continuity_authority.py \
     app/stale_split_basis_reconciliation_authority.py \
+    app/browser_direct_lease_preservation_authority.py \
     app/custom_virtual_post_loss_barrier_authority.py \
     app/vps_direct_execution_checkpoint.py \
     app/global_recovery_execution_policy.py \
@@ -107,6 +109,7 @@ docker compose -f docker-compose.yml run --rm --no-deps api sh -ec '
   python -m unittest -q \
     tests.test_full_vps_hosting \
     tests.test_tp_sl_manual_only_authority \
+    tests.test_browser_direct_lease_preservation \
     tests.test_vps_purchase_continuity_v2 \
     tests.test_global_recovery_policy \
     tests.test_tutorial_camera_theme \
