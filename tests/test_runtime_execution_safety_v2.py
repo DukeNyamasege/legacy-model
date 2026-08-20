@@ -41,10 +41,34 @@ class RuntimeExecutionSafetyV2Tests(unittest.TestCase):
     def test_final_frontend_safety_gate_runs_after_runtime_coherence(self) -> None:
         dockerfile = self.read("Dockerfile.frontend")
         coherence = dockerfile.rfind("node scripts/finalize-runtime-coherence-v1.mjs")
+        preparation = dockerfile.rfind("node scripts/prepare-runtime-safety-v2.mjs")
         safety = dockerfile.rfind("node scripts/finalize-runtime-safety-v2.mjs")
         self.assertGreater(coherence, -1)
-        self.assertGreater(safety, coherence)
+        self.assertGreater(preparation, coherence)
+        self.assertGreater(safety, preparation)
         self.assertIn("COPY scripts/finalize-runtime-safety-v2.mjs", dockerfile)
+
+    def test_runtime_safety_preparation_normalizes_diagnostic_state_export(self) -> None:
+        preparer = self.read("scripts/prepare-runtime-safety-v2.mjs")
+        coherence = self.read("scripts/finalize-runtime-coherence-v1.mjs")
+        safety = self.read("scripts/finalize-runtime-safety-v2.mjs")
+        self.assertIn("const stateExportContinuityReady =", coherence)
+        for marker in (
+            "const engineContinuityReady =",
+            "const engineSafetyReady =",
+            "engineContinuityCount === 1",
+            "continuity_repair: true",
+            "last_tick_age_ms:",
+            "diagnostic state export expected continuity-ready or normalized shape",
+        ):
+            self.assertIn(marker, preparer)
+        safety_anchor = (
+            '        open_contracts: state.openContracts.size,\\n'
+            '        execution_ready: executionTransportReady(),\\n'
+            '        last_execution_error: String(state.lastExecutionError || ""),'
+        )
+        self.assertIn(safety_anchor, preparer)
+        self.assertIn(safety_anchor, safety)
 
     def test_runtime_safety_preparation_accepts_post_global_recovery_ledger(self) -> None:
         preparer = self.read("scripts/prepare-runtime-safety-v2.mjs")
