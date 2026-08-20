@@ -2,6 +2,7 @@ import fs from "node:fs";
 
 const path = "dist/final-ui-shell-v2.js";
 const guardPath = "dist/direct-interaction-guard-v3.js";
+const enginePath = "dist/deriv-direct-execution-v2.js";
 let source = fs.readFileSync(path, "utf8").replace(/\r\n/g, "\n");
 
 const previewFunction = `  function exactStrategyPreview() {\n    try {\n      if (state.route === "builder" && root.querySelector(".restored-builder")) return builderSnapshot();\n      if (state.route === "ready" && state.generated) {\n        const canonical = generatedCanonical();\n        if (canonical) return {\n          name: state.generated.name || state.generated.strategy_name || canonical.name || "AI Generated Strategy",\n          source: "ai",\n          strategy: canonical,\n        };\n      }\n      if (state.selectedStrategy?.strategy?.market_mode) return state.selectedStrategy;\n      if (state.custom?.config?.configured) return {\n        name: state.custom.config.name || state.custom.config.strategy_name || "Saved strategy",\n        source: "server",\n        strategy: state.custom.config,\n      };\n    } catch (_) {}\n    return null;\n  }\n\n`;
@@ -122,4 +123,38 @@ for (const marker of [
 
 fs.writeFileSync(guardPath, guard, "utf8");
 
-console.log("PREPARE_EXACT_BUILDER_PREVIEW_V1_INSTALLED canonical_builder_snapshot=true canonical_confirmation=true finalized_export_shape=preserved");
+// The finalized browser engine may expose additional public methods between
+// `prewarm` and `state`. The diagnostics finalizer intentionally installs its
+// method immediately before state(), so normalize only that object-member order
+// without changing any method implementation or financial behavior.
+let engine = fs.readFileSync(enginePath, "utf8").replace(/\r\n/g, "\n");
+const engineExportMarker = "window.DERIVADMIN_DIRECT_EXECUTION_V1 = Object.freeze({";
+const engineExportStart = engine.indexOf(engineExportMarker);
+const engineExportEnd = engineExportStart >= 0 ? engine.indexOf("});", engineExportStart + engineExportMarker.length) : -1;
+if (engineExportStart < 0 || engineExportEnd < 0) {
+  throw new Error("prepare-exact-builder-preview could not resolve browser execution export");
+}
+const engineExport = engine.slice(engineExportStart, engineExportEnd);
+const prewarmLine = "    prewarm: prewarmData,\n";
+const stateLine = "    state() {";
+const prewarmAtRelative = engineExport.indexOf(prewarmLine);
+const stateAtRelative = engineExport.indexOf(stateLine);
+if (prewarmAtRelative < 0 || stateAtRelative < 0) {
+  throw new Error("prepare-exact-builder-preview browser execution prewarm/state members missing");
+}
+if (!engineExport.includes(prewarmLine + stateLine)) {
+  const absolutePrewarm = engineExportStart + prewarmAtRelative;
+  engine = engine.slice(0, absolutePrewarm) + engine.slice(absolutePrewarm + prewarmLine.length);
+  const refreshedExportStart = engine.indexOf(engineExportMarker);
+  const refreshedState = engine.indexOf(stateLine, refreshedExportStart + engineExportMarker.length);
+  if (refreshedState < 0) throw new Error("prepare-exact-builder-preview browser execution state member disappeared during normalization");
+  engine = engine.slice(0, refreshedState) + prewarmLine + engine.slice(refreshedState);
+}
+const normalizedExportStart = engine.indexOf(engineExportMarker);
+const normalizedExportEnd = engine.indexOf("});", normalizedExportStart + engineExportMarker.length);
+if (!engine.slice(normalizedExportStart, normalizedExportEnd).includes(prewarmLine + stateLine)) {
+  throw new Error("browser execution diagnostics export boundary was not normalized");
+}
+fs.writeFileSync(enginePath, engine, "utf8");
+
+console.log("PREPARE_EXACT_BUILDER_PREVIEW_V1_INSTALLED canonical_builder_snapshot=true canonical_confirmation=true finalized_export_shape=preserved engine_diagnostics_boundary=normalized");
