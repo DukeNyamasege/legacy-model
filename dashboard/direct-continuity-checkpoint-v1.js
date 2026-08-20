@@ -5,6 +5,8 @@
   window.__DERIVADMIN_DIRECT_CONTINUITY_CHECKPOINT_V1__ = true;
 
   const JOURNAL_PREFIX = "derivadmin-direct-journal-v1:";
+  const CHECKPOINT_TIMEOUT_MS = 10000;
+  const RETRY_AFTER_FLIGHT_MS = 1000;
   let inFlight = false;
   let retryAfterFlight = false;
 
@@ -106,13 +108,16 @@
       const request = new XMLHttpRequest();
       request.open("POST", "/api/me/direct-execution/checkpoint", true);
       request.withCredentials = true;
-      request.timeout = 3500;
+      // The VPS can legitimately take several seconds while persisting the exact
+      // recovery handoff. Do not declare failure at 3.5s while the server is still
+      // writing, because that creates overlapping checkpoint retry bursts.
+      request.timeout = CHECKPOINT_TIMEOUT_MS;
       request.setRequestHeader("Content-Type", "application/json");
       const done = () => {
         inFlight = false;
         if (retryAfterFlight) {
           retryAfterFlight = false;
-          setTimeout(checkpoint, 40);
+          setTimeout(checkpoint, RETRY_AFTER_FLIGHT_MS);
         }
       };
       request.onloadend = done;
@@ -134,7 +139,7 @@
   }, { once: true });
 
   window.DERIVADMIN_DIRECT_CONTINUITY_CHECKPOINT_V1 = Object.freeze({
-    version: "20260819-direct-continuity-v3-fixed-split-stake",
+    version: "20260820-direct-continuity-v4-no-retry-burst",
     checkpoint,
   });
 })();
