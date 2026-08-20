@@ -8,6 +8,7 @@
   let queued = false;
   let lastNonTradesRoute = "home";
   let redirectingTradesRoute = false;
+  let canonicalRunPanel = null;
 
   function routeFromHash() {
     return String(location.hash || "#home")
@@ -27,7 +28,36 @@
     });
   }
 
+  function preserveCanonicalRunPanel() {
+    const current = document.querySelector(".global-run-panel");
+    if (!current) {
+      canonicalRunPanel = null;
+      return;
+    }
+
+    if (!canonicalRunPanel) {
+      canonicalRunPanel = current;
+      canonicalRunPanel.dataset.canonicalRunPanel = "v1";
+      return;
+    }
+
+    if (current === canonicalRunPanel) return;
+
+    // final-ui-shell-v2 periodically replaces root.innerHTML. That creates a new
+    // shell-owned Run panel and used to alternate with the direct transaction
+    // ledger. Throw the replacement away and reattach the already-live canonical
+    // panel so its ledger DOM, observers, tab state and event handlers survive.
+    current.replaceWith(canonicalRunPanel);
+    canonicalRunPanel.dataset.canonicalRunPanel = "v1";
+    queueMicrotask(() => {
+      try { window.DERIVADMIN_DIRECT_TRANSACTION_LEDGER_V6?.refresh?.(); } catch (_) {}
+      try { window.DERIVADMIN_DIRECT_RUN_PANEL_AUTHORITY_V6?.refresh?.(); } catch (_) {}
+    });
+  }
+
   function removeDuplicateRunPanel() {
+    preserveCanonicalRunPanel();
+
     // The fixed .global-run-panel is the one and only Run panel. The retired
     // page-level tradesPage() panel must not remain as a second ledger/status UI.
     document.querySelectorAll(".app-main .run-panel").forEach((page) => page.remove());
@@ -65,6 +95,9 @@
   }
 
   const observer = new MutationObserver(() => {
+    // Reconcile panel identity in the MutationObserver microtask, before the next
+    // paint, so the temporary shell replacement never becomes a visible frame.
+    preserveCanonicalRunPanel();
     if (queued) return;
     queued = true;
     requestAnimationFrame(() => {

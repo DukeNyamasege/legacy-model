@@ -21,9 +21,18 @@ class SingleGlobalRunPanelTests(unittest.TestCase):
         shell = (ROOT / "dashboard" / "final-ui-shell-v2.js").read_text(encoding="utf-8")
         cleanup = (ROOT / "dashboard" / "direct-ui-cleanup-v1.js").read_text(encoding="utf-8")
         authority = (ROOT / "dashboard" / "direct-run-panel-authority-v6.js").read_text(encoding="utf-8")
+        injector = (ROOT / "scripts" / "inject-frontend-assets.mjs").read_text(encoding="utf-8")
         self.assertIn('class=\"global-run-panel', shell)
         self.assertIn('document.querySelector(".global-run-panel")', authority)
         self.assertIn("The fixed .global-run-panel is the one and only Run panel", cleanup)
+        self.assertIn("canonicalRunPanel", cleanup)
+        self.assertIn("preserveCanonicalRunPanel", cleanup)
+        self.assertIn("current.replaceWith(canonicalRunPanel)", cleanup)
+        self.assertIn('canonicalRunPanel.dataset.canonicalRunPanel = "v1"', cleanup)
+        self.assertIn(
+            '["direct-ui-cleanup-v1.js", "20260820-direct-cleanup-v3-canonical-run-panel"]',
+            injector,
+        )
 
     def test_desktop_panel_is_fixed_right_quarter_width_drawer(self) -> None:
         layout = (ROOT / "dashboard" / "mobile-layout-authority-v1.js").read_text(encoding="utf-8")
