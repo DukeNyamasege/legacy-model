@@ -110,7 +110,10 @@ def install_vps_direct_execution_checkpoint(app: Any) -> None:
         runtime = dict(body.runtime or {})
 
         with base_api.DATABASE.session() as session:
-            row = _managed_row(session, managed_id, for_update=True)
+            # Checkpoint does not mutate ManagedAccount. Do not take the row-level
+            # FOR UPDATE lock used by the heartbeat, otherwise a slow checkpoint
+            # can starve the very heartbeat that owns the browser execution lease.
+            row = _managed_row(session, managed_id)
             owner = _preference_payload(session.get(RuntimePreference, _key(managed_id)))
             if str(owner.get("epoch") or "") != body.epoch:
                 raise HTTPException(status_code=409, detail="Direct execution ownership changed")
@@ -214,4 +217,5 @@ def install_vps_direct_execution_checkpoint(app: Any) -> None:
     app.state.vps_direct_execution_checkpoint_installed = True
     app.state.vps_direct_execution_checkpoint_split_continuity = True
     app.state.vps_direct_execution_checkpoint_fixed_split_stake = True
+    app.state.vps_direct_execution_checkpoint_heartbeat_lock_independent = True
     _INSTALLED = True
