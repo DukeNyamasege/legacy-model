@@ -220,13 +220,12 @@
   function rowMarkup(row) {
     const settled = isSettled(row);
     const profit = finite(row.profit, 0);
-    const entry = spotDigit(row.entry_spot, row.symbol, row.entry_digit) ?? "—";
     const exit = settled ? (spotDigit(row.exit_spot, row.symbol, row.actual_last_digit) ?? "—") : "OPEN";
     const pl = settled ? `${profit >= 0 ? "+" : ""}${money(profit)}` : "OPEN";
     return `<div class="transaction-row transaction-row-v6 direct-local-transaction-row-v6 unified-transaction-row-v9" data-direct-contract-id="${esc(row.contract_id)}">
       <span class="tx-time-market"><small>${esc(timeLabel(row.opened_at || row.at))}</small><b>${esc(marketLabel(row.symbol))}</b></span>
       <span class="tx-type"><b>${esc(typeLabel(row))}</b></span>
-      <span class="tx-spots"><b>${esc(entry)}</b><small>${esc(exit)}</small></span>
+      <span class="tx-spots tx-exit-digit"><b>${esc(exit)}</b></span>
       <span class="tx-buy"><b>${esc(money(row.stake))}</b></span>
       <strong class="${settled ? (profit >= 0 ? "positive" : "negative") : "muted"}">${esc(pl)}</strong>
     </div>`;
@@ -262,7 +261,7 @@
   }
 
   function signature(rows) {
-    return rows.map((row) => [row.contract_id, row.state, row.outcome, finite(row.stake, 0), finite(row.profit, 0), row.entry_spot ?? "", row.exit_spot ?? "", row.at || ""].join("|")).join(";");
+    return rows.map((row) => [row.contract_id, row.state, row.outcome, finite(row.stake, 0), finite(row.profit, 0), row.exit_spot ?? "", row.actual_last_digit ?? "", row.at || ""].join("|")).join(";");
   }
 
   function disconnectObserver() { try { observer?.disconnect(); } catch (_) {} }
@@ -318,7 +317,7 @@
     try {
       lastSignature = nextSignature;
       body.innerHTML = `<div class="transaction-table transaction-table-v6 unified-canonical-table-v9">
-        <div class="transaction-head transaction-head-v6"><span>Time / Market</span><span>Type</span><span>Entry / Exit</span><span>Buy price</span><span>Profit / Loss</span></div>
+        <div class="transaction-head transaction-head-v6"><span>Time / Market</span><span>Type</span><span>Exit digit</span><span>Buy price</span><span>Profit / Loss</span></div>
         <div class="transaction-rows">${rows.map(rowMarkup).join("")}</div>
       </div>`;
       summary.innerHTML = statsMarkup(values);
@@ -341,7 +340,7 @@
   connectObserver();
   renderNow();
   const api = Object.freeze({
-    version: "20260818-unified-transaction-ledger-v9",
+    version: "20260820-exit-digit-ledger-v10",
     refresh: renderNow,
     contracts,
     stats: () => stats(contracts()),
