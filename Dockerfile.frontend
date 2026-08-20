@@ -22,6 +22,7 @@ COPY scripts/finalize-runtime-safety-v2b.mjs ./scripts/finalize-runtime-safety-v
 COPY scripts/finalize-sticky-stake-v1.mjs ./scripts/finalize-sticky-stake-v1.mjs
 COPY scripts/finalize-oauth-execution-handoff-v1.mjs ./scripts/finalize-oauth-execution-handoff-v1.mjs
 COPY scripts/finalize-browser-direct-start-v1.mjs ./scripts/finalize-browser-direct-start-v1.mjs
+COPY scripts/finalize-exact-builder-live-diagnostics-v1.mjs ./scripts/finalize-exact-builder-live-diagnostics-v1.mjs
 COPY scripts/export-deriv-quill-icons-v2.mjs ./scripts/export-deriv-quill-icons-v2.mjs
 COPY scripts/inject-frontend-assets.mjs ./scripts/inject-frontend-assets.mjs
 
@@ -49,7 +50,9 @@ RUN node scripts/build-direct-runtime-v2.mjs \
 # installs account-global Stop/Clear and exact no-purchase diagnostics; v2b shares
 # that diagnostic clock with VPS purchases. Sticky stake remains authoritative for
 # the Builder. OAuth execution handoff removes the VPS from live Deriv transport,
-# and browser-direct Start finalization retires every leftover /resume-trading path.
+# browser-direct Start retires every leftover /resume-trading path, and exact
+# Builder/live diagnostics is the final authority for confirmation, condition
+# observability and TP/SL/manual-only terminal Stop semantics.
 RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && cp dashboard/direct-financial-fence-v1.js dist/direct-financial-fence-v1.js \
   && cp dashboard/direct-socket-control-v1.js dist/direct-socket-control-v1.js \
@@ -79,6 +82,7 @@ RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && node --check scripts/finalize-sticky-stake-v1.mjs \
   && node --check scripts/finalize-oauth-execution-handoff-v1.mjs \
   && node --check scripts/finalize-browser-direct-start-v1.mjs \
+  && node --check scripts/finalize-exact-builder-live-diagnostics-v1.mjs \
   && node --check dist/final-premium-6f3.js \
   && node --check dist/final-ui-shell-v2.js \
   && node --check dist/deriv-direct-execution-v2.js \
@@ -108,9 +112,11 @@ RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && node scripts/finalize-sticky-stake-v1.mjs \
   && node scripts/finalize-oauth-execution-handoff-v1.mjs \
   && node scripts/finalize-browser-direct-start-v1.mjs \
+  && node scripts/finalize-exact-builder-live-diagnostics-v1.mjs \
   && node --check dist/final-premium-6f3.js \
   && node --check dist/final-ui-shell-v2.js \
   && node --check dist/deriv-direct-execution-v2.js \
+  && node --check dist/direct-interaction-guard-v3.js \
   && node --check dist/direct-strategy-persistence-v1.js \
   && node --check dist/direct-transaction-ledger-v6.js \
   && node --check dist/direct-run-panel-authority-v6.js
