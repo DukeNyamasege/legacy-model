@@ -110,6 +110,19 @@ class RuntimeExecutionSafetyV2Tests(unittest.TestCase):
         self.assertIn(obsolete, finalizer)
         self.assertIn("running browser must still read global status", finalizer)
 
+    def test_authenticated_browser_socket_has_30_second_deriv_ping_keepalive(self) -> None:
+        socket = self.read("dashboard/direct-socket-control-v1.js")
+        injector = self.read("scripts/inject-frontend-assets.mjs")
+        self.assertIn("const KEEPALIVE_MS = 30000", socket)
+        self.assertIn("socket.send(JSON.stringify({ ping: 1 }))", socket)
+        self.assertIn('socket.addEventListener("open", () => startKeepalive(socket)', socket)
+        self.assertIn("stopKeepalive(socket)", socket)
+        self.assertIn("keepalive_count: () => keepaliveTimers.size", socket)
+        self.assertIn(
+            '["direct-socket-control-v1.js", "20260820-direct-socket-v2-private-ping"]',
+            injector,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
