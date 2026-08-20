@@ -59,21 +59,18 @@ if (exportStart < 0 || exportEnd < 0 || !source.slice(exportStart, exportEnd).in
 
 fs.writeFileSync(path, source, "utf8");
 
-// Normalize the interaction guard to the historical shape expected by the final
-// exact-review authority. These are build-only structural normalizations; runtime
-// behavior is unchanged until the exact-review finalizer runs immediately after.
+// Normalize and then wire the interaction guard itself to the canonical Builder
+// snapshot. The modal and the execution engine therefore receive one payload,
+// instead of independently reconstructing strategy values from rendered text.
 let guard = fs.readFileSync(guardPath, "utf8").replace(/\r\n/g, "\n");
 const inlineNameShape = `    const sl = Number(strategy?.execution_settings?.stop_loss);\n    return {\n      name: String(strategy.name || strategy.strategy_name || "Current strategy"),`;
 const normalizedNameShape = `    const sl = Number(strategy?.execution_settings?.stop_loss);\n    const name = String(strategy.name || strategy.strategy_name || "Current strategy");\n    return {\n      name,`;
-if (!guard.includes(normalizedNameShape)) {
+if (!guard.includes(normalizedNameShape) && !guard.includes("nameOverride || strategy.name")) {
   const count = guard.split(inlineNameShape).length - 1;
   if (count !== 1) {
     throw new Error(`prepare-exact-builder-preview expected one interaction-guard inline-name shape, got ${count}`);
   }
   guard = guard.replace(inlineNameShape, normalizedNameShape);
-}
-if (!guard.includes('const name = String(strategy.name || strategy.strategy_name || "Current strategy");')) {
-  throw new Error("interaction guard name normalization was not installed");
 }
 
 if (!guard.includes("  function focusableElements(overlay) {")) {
@@ -85,10 +82,44 @@ if (!guard.includes("  function focusableElements(overlay) {")) {
   const focusable = `  function focusableElements(overlay) {\n    if (!overlay || typeof overlay.querySelectorAll !== "function") return [];\n    return Array.from(overlay.querySelectorAll("button,[href],input,select,textarea,[tabindex]:not([tabindex='-1'])"));\n  }\n\n`;
   guard = guard.replace(modalBoundary, focusable + modalBoundary);
 }
-if (!guard.includes("  function focusableElements(overlay) {")) {
-  throw new Error("interaction guard exact-summary boundary normalization was not installed");
+
+if (!guard.includes("exactStrategyPreview?.()")) {
+  const savedOld = `  function savedSummary() {\n    const strategy = runtime().strategy || {};`;
+  const savedNew = `  function savedSummary(strategyOverride = null, nameOverride = "") {\n    const strategy = strategyOverride || runtime().strategy || {};`;
+  const savedCount = guard.split(savedOld).length - 1;
+  if (savedCount !== 1) {
+    throw new Error(`prepare-exact-builder-preview expected one savedSummary source shape, got ${savedCount}`);
+  }
+  guard = guard.replace(savedOld, savedNew);
+
+  const nameOld = `    const name = String(strategy.name || strategy.strategy_name || "Current strategy");`;
+  const nameNew = `    const name = String(nameOverride || strategy.name || strategy.strategy_name || "Current strategy");`;
+  const nameCount = guard.split(nameOld).length - 1;
+  if (nameCount !== 1) {
+    throw new Error(`prepare-exact-builder-preview expected one savedSummary name source shape, got ${nameCount}`);
+  }
+  guard = guard.replace(nameOld, nameNew);
+
+  const summaryStart = `  function summaryFor(target) {`;
+  const summaryEnd = `  function focusableElements(overlay) {`;
+  const a = guard.indexOf(summaryStart);
+  const b = a >= 0 ? guard.indexOf(summaryEnd, a + summaryStart.length) : -1;
+  if (a < 0 || b < 0) {
+    throw new Error("prepare-exact-builder-preview could not resolve summaryFor boundaries");
+  }
+  const summary = `  function summaryFor(target) {\n    try {\n      const exact = window.FOA_FINAL_UI?.exactStrategyPreview?.();\n      const exactStrategy = exact?.strategy || exact?.canonical || exact?.config || null;\n      if (exactStrategy?.market_mode) return savedSummary(exactStrategy, exact?.name || "");\n    } catch (_) {}\n\n    // Compatibility fallback only. Canonical Builder state is authoritative.\n    if (\n      target.closest(".builder-panel")\n      || target.closest(".builder-workspace")\n      || target.hasAttribute("data-builder-trade")\n    ) return builderSummary(target);\n    return savedSummary();\n  }\n\n`;
+  guard = guard.slice(0, a) + summary + guard.slice(b);
+}
+
+for (const marker of [
+  "exactStrategyPreview?.()",
+  "savedSummary(strategyOverride = null, nameOverride = \"\")",
+  "savedSummary(exactStrategy, exact?.name || \"\")",
+  "  function focusableElements(overlay) {",
+]) {
+  if (!guard.includes(marker)) throw new Error(`canonical Builder confirmation marker missing: ${marker}`);
 }
 
 fs.writeFileSync(guardPath, guard, "utf8");
 
-console.log("PREPARE_EXACT_BUILDER_PREVIEW_V1_INSTALLED canonical_builder_snapshot=true finalized_export_shape=preserved guard_shape=normalized summary_boundary=normalized");
+console.log("PREPARE_EXACT_BUILDER_PREVIEW_V1_INSTALLED canonical_builder_snapshot=true canonical_confirmation=true finalized_export_shape=preserved");
