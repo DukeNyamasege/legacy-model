@@ -79,6 +79,12 @@ compose run --rm --no-deps api sh -ec '
   alembic upgrade head
 ' || fail "Database migration failed."
 
+printf '%s\n' "5b. Import candidate VPS API before cutover"
+compose run --rm --no-deps api python -c '
+import app.vps_backend_api
+print("CANDIDATE_VPS_API_IMPORT_OK")
+' || fail "Candidate VPS API import failed; live API left untouched."
+
 printf '%s\n' "6. Recreate API"
 compose up -d --force-recreate --no-deps api \
   || fail "API cutover failed."
