@@ -28,22 +28,33 @@ if ((run.split("setTimeout(queueRender, 0);").length - 1) !== 1) {
 fs.writeFileSync(runPath, run, "utf8");
 
 // execution-continuity-v1 intentionally expands the no-row branch so an old
-// server response cannot leave stale rows visible. Runtime-safety-v2 takes final
-// ownership immediately afterwards and replaces the shorthand with one canonical
-// zero-row table. Normalize only this exact intermediate shape; unknown shapes fail.
+// server response cannot leave stale rows visible. global-recovery-v1 then
+// normalizes the visible ledger header from the historical "Entry / Exit" label
+// to the production "Exit digit" label. Runtime-safety-v2 takes final ownership
+// immediately afterwards and replaces either known intermediate form with one
+// canonical zero-row branch. Unknown shapes still fail closed.
 let ledger = fs.readFileSync(ledgerPath, "utf8").replace(/\r\n/g, "\n");
-const ledgerExpanded = `    const rows = contracts();\n    if (!rows.length) {\n      const panel = document.querySelector(".global-run-panel");\n      const body = panel?.querySelector(".run-panel-body");\n      const summary = panel?.querySelector(".run-panel-stats");\n      if (body) body.innerHTML = \`<div class="transaction-table transaction-table-v6 unified-canonical-table-v10"><div class="transaction-head transaction-head-v6"><span>Time / Market</span><span>Type</span><span>Entry / Exit</span><span>Buy price</span><span>Profit / Loss</span></div><div class="transaction-rows"></div></div>\`;\n      if (summary) summary.innerHTML = statsMarkup(stats([]));\n      lastSignature = ""; connectObserver(); return;\n    }\n    const panel = document.querySelector(".global-run-panel");`;
+const ledgerExpandedEntryExit = `    const rows = contracts();\n    if (!rows.length) {\n      const panel = document.querySelector(".global-run-panel");\n      const body = panel?.querySelector(".run-panel-body");\n      const summary = panel?.querySelector(".run-panel-stats");\n      if (body) body.innerHTML = \`<div class="transaction-table transaction-table-v6 unified-canonical-table-v10"><div class="transaction-head transaction-head-v6"><span>Time / Market</span><span>Type</span><span>Entry / Exit</span><span>Buy price</span><span>Profit / Loss</span></div><div class="transaction-rows"></div></div>\`;\n      if (summary) summary.innerHTML = statsMarkup(stats([]));\n      lastSignature = ""; connectObserver(); return;\n    }\n    const panel = document.querySelector(".global-run-panel");`;
+const ledgerExpandedExitDigit = `    const rows = contracts();\n    if (!rows.length) {\n      const panel = document.querySelector(".global-run-panel");\n      const body = panel?.querySelector(".run-panel-body");\n      const summary = panel?.querySelector(".run-panel-stats");\n      if (body) body.innerHTML = \`<div class="transaction-table transaction-table-v6 unified-canonical-table-v10"><div class="transaction-head transaction-head-v6"><span>Time / Market</span><span>Type</span><span>Exit digit</span><span>Buy price</span><span>Profit / Loss</span></div><div class="transaction-rows"></div></div>\`;\n      if (summary) summary.innerHTML = statsMarkup(stats([]));\n      lastSignature = ""; connectObserver(); return;\n    }\n    const panel = document.querySelector(".global-run-panel");`;
 const ledgerNormalized = `    const rows = contracts();\n    if (!rows.length) { lastSignature = ""; connectObserver(); return; }\n    const panel = document.querySelector(".global-run-panel");`;
-const ledgerCount = ledger.split(ledgerExpanded).length - 1;
-if (ledgerCount === 1) {
-  ledger = ledger.replace(ledgerExpanded, ledgerNormalized);
-} else if (ledgerCount === 0 && ledger.includes(ledgerNormalized)) {
+const legacyCount = ledger.split(ledgerExpandedEntryExit).length - 1;
+const exitDigitCount = ledger.split(ledgerExpandedExitDigit).length - 1;
+if (exitDigitCount === 1 && legacyCount === 0) {
+  ledger = ledger.replace(ledgerExpandedExitDigit, ledgerNormalized);
+} else if (legacyCount === 1 && exitDigitCount === 0) {
+  ledger = ledger.replace(ledgerExpandedEntryExit, ledgerNormalized);
+} else if (legacyCount === 0 && exitDigitCount === 0 && ledger.includes(ledgerNormalized)) {
   // Idempotent candidate rebuild.
 } else {
-  throw new Error(`runtime-safety preparation ledger zero-row target expected 1 match, got ${ledgerCount}`);
+  throw new Error(
+    `runtime-safety preparation ledger zero-row target expected exactly one supported shape, got legacy=${legacyCount} exit_digit=${exitDigitCount}`,
+  );
 }
 if (!ledger.includes("unified-canonical-table-v10")) {
   throw new Error("runtime-safety preparation expected continuity ledger v10 shape");
+}
+if (ledger.includes("<span>Entry / Exit</span>")) {
+  throw new Error("runtime-safety preparation legacy Entry / Exit header survived global recovery");
 }
 fs.writeFileSync(ledgerPath, ledger, "utf8");
 
