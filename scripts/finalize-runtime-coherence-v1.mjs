@@ -141,10 +141,27 @@ engine = replaceOne(
   "start status reflects financial readiness",
 );
 
+const stateExportContinuity = `        open_contracts: state.openContracts.size,\n        continuity_repair: true,\n        last_tick_age_ms: Math.max(0, Date.now() - Number(state.lastTickAt || Date.now())),\n      };`;
+const stateExportContinuityWithError = `        open_contracts: state.openContracts.size,\n        continuity_repair: true,\n        last_tick_age_ms: Math.max(0, Date.now() - Number(state.lastTickAt || Date.now())),\n        last_execution_error: String(state.lastExecutionError || ""),\n      };`;
+const stateExportContinuityReady = `        open_contracts: state.openContracts.size,\n        continuity_repair: true,\n        last_tick_age_ms: Math.max(0, Date.now() - Number(state.lastTickAt || Date.now())),\n        execution_ready: executionTransportReady(),\n        last_execution_error: String(state.lastExecutionError || ""),\n      };`;
 const stateExportCurrent = `        open_contracts: state.openContracts.size,\n      };`;
 const stateExportWithError = `        open_contracts: state.openContracts.size,\n        last_execution_error: String(state.lastExecutionError || ""),\n      };`;
 const stateExportReady = `        open_contracts: state.openContracts.size,\n        execution_ready: executionTransportReady(),\n        last_execution_error: String(state.lastExecutionError || ""),\n      };`;
-if (engine.includes(stateExportCurrent)) {
+if (engine.includes(stateExportContinuity)) {
+  engine = replaceOne(
+    engine,
+    stateExportContinuity,
+    stateExportContinuityReady,
+    "execution readiness state export after continuity diagnostics",
+  );
+} else if (engine.includes(stateExportContinuityWithError)) {
+  engine = replaceOne(
+    engine,
+    stateExportContinuityWithError,
+    stateExportContinuityReady,
+    "execution readiness state export after continuity diagnostics with error",
+  );
+} else if (engine.includes(stateExportCurrent)) {
   engine = replaceOne(
     engine,
     stateExportCurrent,
@@ -158,9 +175,9 @@ if (engine.includes(stateExportCurrent)) {
     stateExportReady,
     "execution readiness state export from diagnostic source",
   );
-} else if (!engine.includes(stateExportReady)) {
+} else if (!engine.includes(stateExportContinuityReady) && !engine.includes(stateExportReady)) {
   throw new Error(
-    "runtime-coherence execution readiness state export: neither canonical, diagnostic, nor installed shape found",
+    "runtime-coherence execution readiness state export: no supported pre-finalization or installed shape found",
   );
 }
 
