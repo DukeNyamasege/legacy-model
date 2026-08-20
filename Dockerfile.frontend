@@ -16,6 +16,7 @@ COPY scripts/finalize-scheduler-v2.mjs ./scripts/finalize-scheduler-v2.mjs
 COPY scripts/finalize-execution-continuity-v1.mjs ./scripts/finalize-execution-continuity-v1.mjs
 COPY scripts/finalize-global-recovery-v1.mjs ./scripts/finalize-global-recovery-v1.mjs
 COPY scripts/finalize-runtime-coherence-v1.mjs ./scripts/finalize-runtime-coherence-v1.mjs
+COPY scripts/prepare-runtime-safety-v2.mjs ./scripts/prepare-runtime-safety-v2.mjs
 COPY scripts/finalize-runtime-safety-v2.mjs ./scripts/finalize-runtime-safety-v2.mjs
 COPY scripts/export-deriv-quill-icons-v2.mjs ./scripts/export-deriv-quill-icons-v2.mjs
 COPY scripts/inject-frontend-assets.mjs ./scripts/inject-frontend-assets.mjs
@@ -66,6 +67,7 @@ RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && node --check scripts/finalize-execution-continuity-v1.mjs \
   && node --check scripts/finalize-global-recovery-v1.mjs \
   && node --check scripts/finalize-runtime-coherence-v1.mjs \
+  && node --check scripts/prepare-runtime-safety-v2.mjs \
   && node --check scripts/finalize-runtime-safety-v2.mjs \
   && node --check dist/final-premium-6f3.js \
   && node --check dist/final-ui-shell-v2.js \
@@ -90,6 +92,7 @@ RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && grep -q -- '--camera-bg' dist/tutorial-camera-theme-v1.css \
   && node scripts/inject-frontend-assets.mjs \
   && node scripts/finalize-runtime-coherence-v1.mjs \
+  && node scripts/prepare-runtime-safety-v2.mjs \
   && node scripts/finalize-runtime-safety-v2.mjs \
   && node --check dist/final-premium-6f3.js \
   && node --check dist/final-ui-shell-v2.js \
