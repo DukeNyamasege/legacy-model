@@ -1,6 +1,7 @@
 import fs from "node:fs";
 
 const path = "dist/final-ui-shell-v2.js";
+const guardPath = "dist/direct-interaction-guard-v3.js";
 let source = fs.readFileSync(path, "utf8").replace(/\r\n/g, "\n");
 
 const previewFunction = `  function exactStrategyPreview() {\n    try {\n      if (state.route === "builder" && root.querySelector(".restored-builder")) return builderSnapshot();\n      if (state.route === "ready" && state.generated) {\n        const canonical = generatedCanonical();\n        if (canonical) return {\n          name: state.generated.name || state.generated.strategy_name || canonical.name || "AI Generated Strategy",\n          source: "ai",\n          strategy: canonical,\n        };\n      }\n      if (state.selectedStrategy?.strategy?.market_mode) return state.selectedStrategy;\n      if (state.custom?.config?.configured) return {\n        name: state.custom.config.name || state.custom.config.strategy_name || "Saved strategy",\n        source: "server",\n        strategy: state.custom.config,\n      };\n    } catch (_) {}\n    return null;\n  }\n\n`;
@@ -57,4 +58,25 @@ if (exportStart < 0 || exportEnd < 0 || !source.slice(exportStart, exportEnd).in
 }
 
 fs.writeFileSync(path, source, "utf8");
-console.log("PREPARE_EXACT_BUILDER_PREVIEW_V1_INSTALLED canonical_builder_snapshot=true finalized_export_shape=preserved");
+
+// Normalize the interaction guard to the shape expected by the final exact-review
+// authority. The source guard currently renders the strategy name inline inside
+// the returned object, while the finalizer needs a local `name` variable so it can
+// apply the canonical Builder name override. This is a build-only normalization;
+// behavior is unchanged until the exact-review finalizer runs immediately after.
+let guard = fs.readFileSync(guardPath, "utf8").replace(/\r\n/g, "\n");
+const inlineNameShape = `    const sl = Number(strategy?.execution_settings?.stop_loss);\n    return {\n      name: String(strategy.name || strategy.strategy_name || "Current strategy"),`;
+const normalizedNameShape = `    const sl = Number(strategy?.execution_settings?.stop_loss);\n    const name = String(strategy.name || strategy.strategy_name || "Current strategy");\n    return {\n      name,`;
+if (!guard.includes(normalizedNameShape)) {
+  const count = guard.split(inlineNameShape).length - 1;
+  if (count !== 1) {
+    throw new Error(`prepare-exact-builder-preview expected one interaction-guard inline-name shape, got ${count}`);
+  }
+  guard = guard.replace(inlineNameShape, normalizedNameShape);
+}
+if (!guard.includes('const name = String(strategy.name || strategy.strategy_name || "Current strategy");')) {
+  throw new Error("interaction guard name normalization was not installed");
+}
+fs.writeFileSync(guardPath, guard, "utf8");
+
+console.log("PREPARE_EXACT_BUILDER_PREVIEW_V1_INSTALLED canonical_builder_snapshot=true finalized_export_shape=preserved guard_shape=normalized");
