@@ -82,6 +82,8 @@ docker compose -f docker-compose.yml run --rm --no-deps api sh -ec '
   python -m py_compile \
     app/direct_execution_hard_stop_state.py \
     app/vps_direct_hard_stop_v2.py \
+    app/vps_direct_runtime_rate_limit.py \
+    app/vps_provider_connection_resilience_v2.py \
     app/vps_fast_execution_controls.py \
     app/direct_execution_worker_fence.py \
     app/custom_split_recovery_authority.py \
@@ -95,9 +97,11 @@ docker compose -f docker-compose.yml run --rm --no-deps api sh -ec '
     app/account_trade_metrics_authority.py \
     app/vps_runtime_policy_hotfix.py \
     app/automation_scheduler_v2_authority.py \
+    app/custom_strategy_worker.py \
     app/vps_backend_api.py
 
   python -m unittest -q \
+    tests.test_vps_purchase_continuity_v2 \
     tests.test_global_recovery_policy \
     tests.test_tutorial_camera_theme \
     tests.test_execution_continuity_v10 \
