@@ -1,9 +1,10 @@
 import fs from "node:fs";
 
+const enginePath = "dist/deriv-direct-execution-v2.js";
 const runPath = "dist/direct-run-panel-authority-v6.js";
 const ledgerPath = "dist/direct-transaction-ledger-v6.js";
 
-for (const path of [runPath, ledgerPath]) {
+for (const path of [enginePath, runPath, ledgerPath]) {
   if (!fs.existsSync(path)) throw new Error(`runtime-safety preparation missing ${path}`);
 }
 
@@ -26,6 +27,34 @@ if ((run.split("setTimeout(queueRender, 0);").length - 1) !== 1) {
   throw new Error("runtime-safety preparation did not leave exactly one Journal-tab render target");
 }
 fs.writeFileSync(runPath, run, "utf8");
+
+// execution-continuity-v1 adds durable continuity diagnostics before runtime-
+// coherence-v1 adds execution_ready/last_execution_error. Runtime-safety-v2 has a
+// deliberately narrow insertion anchor for its no-purchase diagnostics, so put the
+// readiness/error pair directly after open_contracts while retaining both continuity
+// fields. This changes object-field order only; no state or behavior is removed.
+let engine = fs.readFileSync(enginePath, "utf8").replace(/\r\n/g, "\n");
+const engineContinuityReady = `        open_contracts: state.openContracts.size,\n        continuity_repair: true,\n        last_tick_age_ms: Math.max(0, Date.now() - Number(state.lastTickAt || Date.now())),\n        execution_ready: executionTransportReady(),\n        last_execution_error: String(state.lastExecutionError || ""),\n      };`;
+const engineSafetyReady = `        open_contracts: state.openContracts.size,\n        execution_ready: executionTransportReady(),\n        last_execution_error: String(state.lastExecutionError || ""),\n        continuity_repair: true,\n        last_tick_age_ms: Math.max(0, Date.now() - Number(state.lastTickAt || Date.now())),\n      };`;
+const engineContinuityCount = engine.split(engineContinuityReady).length - 1;
+if (engineContinuityCount === 1) {
+  engine = engine.replace(engineContinuityReady, engineSafetyReady);
+} else if (engineContinuityCount === 0 && engine.includes(engineSafetyReady)) {
+  // Idempotent candidate rebuild.
+} else {
+  throw new Error(
+    `runtime-safety preparation diagnostic state export expected continuity-ready or normalized shape, got ${engineContinuityCount}`,
+  );
+}
+for (const required of [
+  "execution_ready: executionTransportReady()",
+  'last_execution_error: String(state.lastExecutionError || "")',
+  "continuity_repair: true",
+  "last_tick_age_ms: Math.max(0, Date.now() - Number(state.lastTickAt || Date.now()))",
+]) {
+  if (!engine.includes(required)) throw new Error(`runtime-safety preparation state invariant missing: ${required}`);
+}
+fs.writeFileSync(enginePath, engine, "utf8");
 
 // execution-continuity-v1 intentionally expands the no-row branch so an old
 // server response cannot leave stale rows visible. global-recovery-v1 then
@@ -58,4 +87,4 @@ if (ledger.includes("<span>Entry / Exit</span>")) {
 }
 fs.writeFileSync(ledgerPath, ledger, "utf8");
 
-console.log("Runtime safety preparation complete: final Run-panel and ledger targets are unambiguous");
+console.log("Runtime safety preparation complete: final engine, Run-panel and ledger targets are unambiguous");
