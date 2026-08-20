@@ -3,6 +3,7 @@ import fs from "node:fs";
 const shellPath = "dist/final-ui-shell-v2.js";
 const enginePath = "dist/deriv-direct-execution-v2.js";
 const indexPath = "dist/index.html";
+const premiumPath = "dist/final-premium-6f3.js";
 
 function read(path) {
   if (!fs.existsSync(path)) throw new Error(`canonical-bot-run-snapshot-v1 missing build artifact: ${path}`);
@@ -23,6 +24,7 @@ function replaceOne(source, before, after, label) {
 let shell = read(shellPath);
 let engine = read(enginePath);
 let index = read(indexPath);
+let premium = read(premiumPath);
 
 // ---------------------------------------------------------------------------
 // 1. Loading a bot must preserve the bot's own market scope. Historically the
@@ -82,9 +84,11 @@ engine = replaceOne(
   "do not mutate active run on strategy save",
 );
 
-// Cache-bust the two authorities changed by this finalizer.
-index = index.replace(/final-ui-shell-v2\.js\?v=[^"']+/g, "final-ui-shell-v2.js?v=20260821-canonical-bot-snapshot-v1");
+// Cache-bust the two authorities changed by this finalizer. The execution engine
+// is injected directly into index.html, while the final shell is loaded by the
+// premium bootstrap. Update each authority at its actual production load site.
 index = index.replace(/deriv-direct-execution-v2\.js\?v=[^"']+/g, "deriv-direct-execution-v2.js?v=20260821-canonical-bot-snapshot-v1");
+premium = premium.replace(/final-ui-shell-v2\.js\?v=[^"']+/g, "final-ui-shell-v2.js?v=20260821-canonical-bot-snapshot-v1");
 
 // Fail closed if any old behavior survives the production artifact.
 for (const forbidden of [
@@ -109,14 +113,15 @@ for (const required of [
 ]) {
   if (!engine.includes(required)) throw new Error(`canonical-bot-run-snapshot-v1 engine invariant missing: ${required}`);
 }
-for (const required of [
-  "final-ui-shell-v2.js?v=20260821-canonical-bot-snapshot-v1",
-  "deriv-direct-execution-v2.js?v=20260821-canonical-bot-snapshot-v1",
-]) {
-  if (!index.includes(required)) throw new Error(`canonical-bot-run-snapshot-v1 cache-bust missing: ${required}`);
+if (!index.includes("deriv-direct-execution-v2.js?v=20260821-canonical-bot-snapshot-v1")) {
+  throw new Error("canonical-bot-run-snapshot-v1 execution cache-bust missing from index.html");
+}
+if (!premium.includes("final-ui-shell-v2.js?v=20260821-canonical-bot-snapshot-v1")) {
+  throw new Error("canonical-bot-run-snapshot-v1 shell cache-bust missing from premium bootstrap");
 }
 
 write(shellPath, shell);
 write(enginePath, engine);
 write(indexPath, index);
+write(premiumPath, premium);
 console.log("CANONICAL_BOT_RUN_SNAPSHOT_V1_INSTALLED preserve_bot_scope=true explicit_after_loss_only=true current_builder_edits=true active_run_immutable=true");
