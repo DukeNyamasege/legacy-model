@@ -23,6 +23,7 @@ COPY scripts/finalize-sticky-stake-v1.mjs ./scripts/finalize-sticky-stake-v1.mjs
 COPY scripts/finalize-oauth-execution-handoff-v1.mjs ./scripts/finalize-oauth-execution-handoff-v1.mjs
 COPY scripts/finalize-browser-direct-start-v1.mjs ./scripts/finalize-browser-direct-start-v1.mjs
 COPY scripts/prepare-exact-builder-preview-v1.mjs ./scripts/prepare-exact-builder-preview-v1.mjs
+COPY scripts/prepare-terminal-runpanel-v1.mjs ./scripts/prepare-terminal-runpanel-v1.mjs
 COPY scripts/finalize-exact-builder-live-diagnostics-v2.mjs ./scripts/finalize-exact-builder-live-diagnostics-v2.mjs
 COPY scripts/finalize-terminal-stop-only-v1.mjs ./scripts/finalize-terminal-stop-only-v1.mjs
 COPY scripts/export-deriv-quill-icons-v2.mjs ./scripts/export-deriv-quill-icons-v2.mjs
@@ -53,9 +54,10 @@ RUN node scripts/build-direct-runtime-v2.mjs \
 # that diagnostic clock with VPS purchases. Sticky stake remains authoritative for
 # the Builder. OAuth execution handoff removes the VPS from live Deriv transport,
 # browser-direct Start retires every leftover /resume-trading path, canonical
-# Builder preview is prepared from the actual shell export, routed exact live
-# diagnostics observe the same active route the engine evaluates, and terminal-
-# stop-only runs last so only TP, SL or explicit manual Stop may end Auto Trading.
+# Builder preview is prepared from the actual shell export, the Run-panel status
+# boundary is normalized so only hard-stop/TP/SL/manual status is terminal, routed
+# exact live diagnostics observe the same active route the engine evaluates, and
+# terminal-stop-only runs last so only TP, SL or explicit manual Stop may end Auto Trading.
 RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && cp dashboard/direct-financial-fence-v1.js dist/direct-financial-fence-v1.js \
   && cp dashboard/direct-socket-control-v1.js dist/direct-socket-control-v1.js \
@@ -86,6 +88,7 @@ RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && node --check scripts/finalize-oauth-execution-handoff-v1.mjs \
   && node --check scripts/finalize-browser-direct-start-v1.mjs \
   && node --check scripts/prepare-exact-builder-preview-v1.mjs \
+  && node --check scripts/prepare-terminal-runpanel-v1.mjs \
   && node --check scripts/finalize-exact-builder-live-diagnostics-v2.mjs \
   && node --check scripts/finalize-terminal-stop-only-v1.mjs \
   && node --check dist/final-premium-6f3.js \
@@ -118,6 +121,7 @@ RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && node scripts/finalize-oauth-execution-handoff-v1.mjs \
   && node scripts/finalize-browser-direct-start-v1.mjs \
   && node scripts/prepare-exact-builder-preview-v1.mjs \
+  && node scripts/prepare-terminal-runpanel-v1.mjs \
   && node scripts/finalize-exact-builder-live-diagnostics-v2.mjs \
   && node scripts/finalize-terminal-stop-only-v1.mjs \
   && node --check dist/final-premium-6f3.js \
