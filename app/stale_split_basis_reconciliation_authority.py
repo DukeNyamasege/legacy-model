@@ -81,9 +81,15 @@ def install_stale_split_basis_reconciliation_authority() -> None:
     RFDir5Repository._stale_split_basis_reconciliation_installed = True
     _INSTALLED = True
 
-    # This installer is already the final call in the worker fence. Attach the
-    # lifecycle authority here so no older fail-closed/repository wrapper can be
-    # installed outside it later in the same bootstrap.
+    # Final lifecycle order:
+    # 1. TP/SL/manual-only authority prevents automatic terminal stops.
+    # 2. Browser lease preservation prevents transient worker/provider status
+    #    mutations from stealing a still-live browser execution lease.
+    # TP, SL and the durable explicit-user hard-stop sentinel still pass through.
     from app.tp_sl_manual_only_authority import install_tp_sl_manual_only_authority
+    from app.browser_direct_lease_preservation_authority import (
+        install_browser_direct_lease_preservation_authority,
+    )
 
     install_tp_sl_manual_only_authority()
+    install_browser_direct_lease_preservation_authority()
