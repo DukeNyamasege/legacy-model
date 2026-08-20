@@ -46,6 +46,7 @@ scripts/prepare-runtime-safety-v2.mjs
 scripts/finalize-runtime-safety-v2.mjs
 scripts/finalize-runtime-safety-v2b.mjs
 scripts/finalize-sticky-stake-v1.mjs
+scripts/finalize-oauth-execution-handoff-v1.mjs
 "
 
 if command -v node >/dev/null 2>&1; then
@@ -86,6 +87,7 @@ docker compose -f docker-compose.yml run --rm --no-deps api sh -ec '
 
   python -m py_compile \
     app/direct_execution_hard_stop_state.py \
+    app/vps_direct_execution_api.py \
     app/vps_direct_hard_stop_v2.py \
     app/vps_direct_runtime_rate_limit.py \
     app/vps_provider_connection_resilience_v2.py \
@@ -120,6 +122,7 @@ docker compose -f docker-compose.yml run --rm --no-deps api sh -ec '
     tests.test_runtime_execution_safety_v2 \
     tests.test_runtime_server_purchase_clock \
     tests.test_sticky_stake_persistence \
+    tests.test_oauth_execution_handoff \
     tests.test_vps_purchase_continuity_v2 \
     tests.test_global_recovery_policy \
     tests.test_tutorial_camera_theme \
@@ -158,4 +161,4 @@ docker build \
   -t legacy-model-frontend-release-check:latest \
   .
 
-echo "Release gate passed: VPS-only architecture, lifecycle policy, Python tests and frontend finalizers succeeded."
+echo "Release gate passed: VPS-only architecture, lifecycle policy, OAuth session reuse, automatic browser-to-VPS handoff, Python tests and frontend finalizers succeeded."
