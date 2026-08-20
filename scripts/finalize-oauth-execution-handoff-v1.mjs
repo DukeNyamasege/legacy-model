@@ -112,7 +112,7 @@ for (const required of [
   "heartbeatOnce(_epoch)",
   "browser reconnecting directly",
   'parsedWsUrl.hostname !== "api.derivws.com"',
-  '[/"/trading/v1/options/ws/demo", "/trading/v1/options/ws/real"/]'.replaceAll("/", ""),
+  '["/trading/v1/options/ws/demo", "/trading/v1/options/ws/real"]',
 ]) {
   if (!engine.includes(required)) throw new Error(`browser-deriv-direct-v3 engine invariant missing: ${required}`);
 }
