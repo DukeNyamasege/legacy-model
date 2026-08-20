@@ -90,6 +90,7 @@ docker compose -f docker-compose.yml run --rm --no-deps api sh -ec '
     app/vps_direct_execution_api.py \
     app/browser_direct_deriv_transport_v3.py \
     app/browser_direct_worker_offload_v3.py \
+    app/marketing_tutorial_account.py \
     app/vps_direct_hard_stop_v2.py \
     app/vps_direct_runtime_rate_limit.py \
     app/vps_provider_connection_resilience_v2.py \
@@ -120,6 +121,7 @@ docker compose -f docker-compose.yml run --rm --no-deps api sh -ec '
     tests.test_tp_sl_manual_only_authority \
     tests.test_browser_direct_lease_preservation \
     tests.test_browser_deriv_direct_v3 \
+    tests.test_marketing_tutorial_account \
     tests.test_execution_continuity_finalizer_compatibility \
     tests.test_runtime_coherence_execution_gate \
     tests.test_runtime_execution_safety_v2 \
@@ -164,4 +166,4 @@ docker build \
   -t legacy-model-frontend-release-check:latest \
   .
 
-echo "Release gate passed: browser-direct Deriv v3, TP/SL/manual lifecycle, cross-device Stop/Clear, sticky stake, receipt-only live server writes, Python tests and frontend finalizers succeeded."
+echo "Release gate passed: browser-direct Deriv v3, TP/SL/manual lifecycle, cross-device Stop/Clear, sticky stake, DOT-backed ROT tutorial presentation, receipt-only live server writes, Python tests and frontend finalizers succeeded."
