@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FINALIZER = ROOT / "scripts" / "finalize-runtime-coherence-v1.mjs"
 FINANCIAL_FENCE = ROOT / "dashboard" / "direct-financial-fence-v1.js"
 ENGINE_SOURCE = ROOT / "dashboard" / "deriv-direct-execution-v1.js"
+CONTINUITY_FINALIZER = ROOT / "scripts" / "finalize-execution-continuity-v1.mjs"
 
 
 class RuntimeCoherenceExecutionGateTests(unittest.TestCase):
@@ -45,20 +46,28 @@ class RuntimeCoherenceExecutionGateTests(unittest.TestCase):
         ):
             self.assertIn(marker, text)
 
-    def test_runtime_finalizer_accepts_canonical_readiness_export_shape(self) -> None:
+    def test_runtime_finalizer_accepts_build_order_readiness_export_shapes(self) -> None:
         finalizer = FINALIZER.read_text(encoding="utf-8")
         source = ENGINE_SOURCE.read_text(encoding="utf-8")
+        continuity = CONTINUITY_FINALIZER.read_text(encoding="utf-8")
         canonical = "        open_contracts: state.openContracts.size,\n      };"
         self.assertIn(canonical, source)
-        self.assertIn("const stateExportCurrent =", finalizer)
-        self.assertIn("const stateExportWithError =", finalizer)
-        self.assertIn("const stateExportReady =", finalizer)
-        self.assertIn("engine.includes(stateExportCurrent)", finalizer)
-        self.assertIn("engine.includes(stateExportWithError)", finalizer)
-        self.assertIn(
-            "neither canonical, diagnostic, nor installed shape found",
-            finalizer,
-        )
+        self.assertIn("continuity_repair: true", continuity)
+        self.assertIn("last_tick_age_ms:", continuity)
+        for marker in (
+            "const stateExportContinuity =",
+            "const stateExportContinuityWithError =",
+            "const stateExportContinuityReady =",
+            "const stateExportCurrent =",
+            "const stateExportWithError =",
+            "const stateExportReady =",
+            "engine.includes(stateExportContinuity)",
+            "engine.includes(stateExportContinuityWithError)",
+            "engine.includes(stateExportCurrent)",
+            "engine.includes(stateExportWithError)",
+            "no supported pre-finalization or installed shape found",
+        ):
+            self.assertIn(marker, finalizer)
 
     def test_running_private_session_failures_retry_automatically(self) -> None:
         text = FINALIZER.read_text(encoding="utf-8")
