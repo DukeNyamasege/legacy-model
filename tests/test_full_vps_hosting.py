@@ -40,6 +40,7 @@ class FullVpsHostingTests(unittest.TestCase):
         core = self.text("app/vps_core_api.py")
         surface = self.text("app/vps_api_surface.py")
         realtime = self.text("app/vps_realtime_gateway.py")
+        cutoff = self.text("app/final_trade_history_cutoff_authority.py")
 
         self.assertIn("from app.vps_core_api import app", backend)
         self.assertIn("install_vps_realtime_gateway(app)", core)
@@ -48,6 +49,8 @@ class FullVpsHostingTests(unittest.TestCase):
         self.assertIn('app.state.api_surface = "vps-api-behind-caddy"', surface)
         self.assertIn('"same_origin_vps_websocket"', realtime)
         self.assertIn('"vps-frontend-api-worker-postgres-v1"', realtime)
+        self.assertIn("import app.vps_realtime_gateway as gateway", cutoff)
+        self.assertNotIn("netlify_realtime_gateway", cutoff)
 
     def test_realtime_send_after_close_race_is_guarded(self) -> None:
         source = self.text("app/vps_realtime_gateway.py")
@@ -82,9 +85,13 @@ class FullVpsHostingTests(unittest.TestCase):
         source = self.text("scripts/deploy_full_vps.sh")
         build = source.index("compose build frontend api worker")
         backup = source.index("DATABASE_BACKUP_CREATED")
-        cutover = source.index("compose up -d --force-recreate api worker frontend")
-        self.assertLess(build, cutover)
-        self.assertLess(backup, cutover)
+        api_cutover = source.index("compose up -d --force-recreate --no-deps api")
+        remaining_cutover = source.index(
+            "compose up -d --force-recreate --remove-orphans --no-deps worker frontend"
+        )
+        self.assertLess(build, api_cutover)
+        self.assertLess(backup, api_cutover)
+        self.assertLess(api_cutover, remaining_cutover)
         self.assertIn("pg_dump --format=custom --no-owner --no-privileges", source)
         self.assertIn("alembic upgrade head", source)
         self.assertIn("command -v caddy", source)
