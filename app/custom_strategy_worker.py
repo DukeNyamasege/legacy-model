@@ -72,6 +72,9 @@ from app.telegram_silence import install_telegram_silence
 from app.trade_registration_idempotency import install_trade_registration_idempotency
 from app.unresolved_contract_safety import install_unresolved_contract_safety
 from app.vps_low_latency_runtime import install_vps_low_latency_runtime
+from app.vps_provider_connection_resilience_v2 import (
+    install_vps_provider_connection_resilience_v2,
+)
 
 
 async def run_worker() -> None:
@@ -183,6 +186,10 @@ async def run_worker() -> None:
     # alter strategy qualification, stake, proposal, BUY, settlement or rate-limit
     # protection.
     install_vps_low_latency_runtime()
+    # The shared pooled broker is already bounded. Keep the low-latency wrapper
+    # from cancelling that broker after only 8 seconds, reduce ordinary OTP
+    # bootstrap concurrency, and preserve urgent priority for browser->VPS takeover.
+    install_vps_provider_connection_resilience_v2()
 
     # Transport/Virtual Hook/Multiplier consistency installs first. Split Recovery
     # is then wrapped so the configured spread width (1/2/3), not the number of
@@ -237,7 +244,8 @@ async def run_worker() -> None:
         "ambiguous_buy_policy=reconcile_before_next_real duplicate_buy_retry=false "
         "stop_reason_authority=durable execution_liveness_watchdog=browser_aware "
         "connection_repair=targeted_singleflight sibling_wake=false global_revalidation=false "
-        "vps_low_latency=true provider_rate_limit_backoff=preserved",
+        "vps_low_latency=true provider_connection_resilience_v2=true "
+        "provider_rate_limit_backoff=preserved",
         "public_testing_bypass" if public_testing else "exact_timestamp_before_proposal_and_buy",
     )
     loop = asyncio.get_running_loop()
