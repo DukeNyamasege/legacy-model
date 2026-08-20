@@ -36,6 +36,9 @@ shell = replaceOne(shell, shellBefore, shellAfter, "single Transactions DOM auth
 if (!shell.includes("directLedgerOwnsTransactions")) {
   throw new Error("runtime-coherence single Transactions renderer invariant missing");
 }
+if (shell.includes(shellBefore)) {
+  throw new Error("runtime-coherence unconditional Transactions renderer survived finalization");
+}
 write(shellPath, shell);
 
 // ---------------------------------------------------------------------------
@@ -66,11 +69,83 @@ engine = replaceOne(
   "provider purchase error visibility",
 );
 
+// ---------------------------------------------------------------------------
+// 3. One public-history owner and one financial-ready gate.
+// direct-financial-fence owns the 1,001-tick hydration for every live subscription.
+// The execution engine must not react to that provider history response by sending
+// another subscribe request, otherwise the fence starts another hydration cycle and
+// BUY remains blocked by hydrationPending. Synthetic hydration ticks fill history
+// only; they are never entry signals. Live market subscriptions begin only after
+// server arm + authenticated private WSS + browser financial lease are all ready.
+// ---------------------------------------------------------------------------
 engine = replaceOne(
   engine,
-  `        open_contracts: state.openContracts.size,`,
+  `    if (kind === "public" && payload.history && payload.echo_req?.ticks_history) {\n      const symbol = String(payload.echo_req.ticks_history || "").toUpperCase();\n      seedHistory(symbol, payload.history.prices || [], payload.history.times || []);\n      sendNoWait("public", { ticks: symbol, subscribe: 1 });\n      state.subscribedMarkets.add(symbol);\n    }`,
+  `    if (kind === "public" && payload.history && payload.echo_req?.ticks_history\n        && !window.DERIVADMIN_DIRECT_FINANCIAL_FENCE_V1) {\n      const symbol = String(payload.echo_req.ticks_history || "").toUpperCase();\n      seedHistory(symbol, payload.history.prices || [], payload.history.times || []);\n      sendNoWait("public", { ticks: symbol, subscribe: 1 });\n      state.subscribedMarkets.add(symbol);\n    }`,
+  "single public history hydration owner",
+);
+
+engine = replaceOne(
+  engine,
+  `  function onTick(symbol, tick) {\n    const history = recordTick(symbol, tick);\n    if (!history || !state.running || !state.strategy || state.ownerLost) return;`,
+  `  function onTick(symbol, tick) {\n    const history = recordTick(symbol, tick);\n    if (!history) return;\n    // History hydration builds the statistical window only. It is not a live entry\n    // boundary and may occur while the financial fence intentionally blocks BUY.\n    if (Boolean(tick?.__history_hydration)) return;\n    if (!state.running || !state.strategy || state.ownerLost) return;`,
+  "history ticks cannot trigger purchases",
+);
+
+const readinessHelper = `  function executionTransportReady() {\n    const financial = window.DERIVADMIN_DIRECT_FINANCIAL_FENCE_V1?.state?.();\n    const financialReady = !financial || financial.buy_allowed !== false;\n    return Boolean(\n      state.running\n      && !state.ownerLost\n      && state.armed\n      && state.privateWs?.readyState === WebSocket.OPEN\n      && financialReady\n    );\n  }\n\n`;
+engine = replaceOne(
+  engine,
+  `  function subscribeMarkets() {`,
+  readinessHelper + `  function subscribeMarkets() {`,
+  "execution-ready helper",
+);
+engine = replaceOne(
+  engine,
+  `    if (!state.running || !state.strategy || state.publicWs?.readyState !== WebSocket.OPEN) return;`,
+  `    if (!executionTransportReady() || !state.strategy || state.publicWs?.readyState !== WebSocket.OPEN) return;`,
+  "market subscription financial readiness gate",
+);
+
+engine = replaceOne(
+  engine,
+  `        if (await armOnce(epoch, strategy)) {\n          updateStatus("Direct • browser owns execution • offline continuation armed");\n          return;\n        }`,
+  `        if (await armOnce(epoch, strategy)) {\n          updateStatus("Direct • browser owns execution • secure trade channel arming");\n          subscribeMarkets();\n          return;\n        }`,
+  "arm readiness activates market stream",
+);
+
+engine = replaceOne(
+  engine,
+  `          if (state.running && !state.ownerLost) {\n            updateStatus("Direct • connected to Deriv • analyzing live ticks");\n            restoreOpenContractSubscriptions("secure session restored");\n          }`,
+  `          if (state.running && !state.ownerLost) {\n            updateStatus("Direct • connected to Deriv • execution channel ready");\n            restoreOpenContractSubscriptions("secure session restored");\n            subscribeMarkets();\n          }`,
+  "private socket readiness activates market stream",
+);
+
+engine = replaceOne(
+  engine,
+  `    })().catch((error) => {\n      state.privateConnectPromise = null;\n      if (!state.running) schedulePrewarm();\n      throw error;\n    });`,
+  `    })().catch((error) => {\n      state.privateConnectPromise = null;\n      const message = String(error?.message || error || "secure session unavailable").slice(0, 180);\n      state.lastExecutionError = message;\n      if (state.running && !state.ownerLost) {\n        updateStatus("Direct • restoring secure trade session • " + message);\n        setTimeout(() => {\n          if (state.running && !state.ownerLost) connectPrivate().catch(() => {});\n        }, 900);\n      } else if (!state.running) schedulePrewarm();\n      throw error;\n    });`,
+  "running private socket automatic retry",
+);
+
+engine = replaceOne(
+  engine,
+  `  async function executeReal(symbol, history, route = activeExecutionRoute()) {\n    if (!route || !state.running || state.ownerLost || state.inFlight || state.openContracts.size) return;`,
+  `  async function executeReal(symbol, history, route = activeExecutionRoute()) {\n    if (!route || !state.running || state.ownerLost || state.inFlight || state.openContracts.size) return;\n    if (!executionTransportReady()) {\n      updateStatus("Direct • condition qualified • securing execution channel before BUY");\n      connectPrivate().catch(() => {});\n      return;\n    }`,
+  "qualified signal financial readiness fence",
+);
+
+engine = replaceOne(
+  engine,
+  `    updateStatus("Direct • Run active • analyzing Deriv ticks now");`,
+  `    updateStatus("Direct • Run starting • securing Deriv execution channel");`,
+  "start status reflects financial readiness",
+);
+
+engine = replaceOne(
+  engine,
   `        open_contracts: state.openContracts.size,\n        last_execution_error: String(state.lastExecutionError || ""),`,
-  "execution error state export",
+  `        open_contracts: state.openContracts.size,\n        execution_ready: executionTransportReady(),\n        last_execution_error: String(state.lastExecutionError || ""),`,
+  "execution readiness state export",
 );
 
 for (const required of [
@@ -78,13 +153,19 @@ for (const required of [
   "derivadmin:direct-execution-error",
   "last_execution_error",
   "Authenticated Deriv WebSocket closed",
+  "executionTransportReady",
+  "execution_ready: executionTransportReady()",
+  "Boolean(tick?.__history_hydration)",
+  "!window.DERIVADMIN_DIRECT_FINANCIAL_FENCE_V1",
+  "secure trade channel arming",
+  "execution channel ready",
 ]) {
   if (!engine.includes(required)) throw new Error(`runtime-coherence engine invariant missing: ${required}`);
 }
 write(enginePath, engine);
 
 // ---------------------------------------------------------------------------
-// 3. Run-panel ownership label must not claim browser ownership after surrender.
+// 4. Run-panel ownership label must not claim browser ownership after surrender.
 // ---------------------------------------------------------------------------
 let run = read(runPath);
 run = replaceOne(
@@ -99,15 +180,15 @@ if (!run.includes('snapshot.owner || ""')) {
 write(runPath, run);
 
 // ---------------------------------------------------------------------------
-// 4. Cache-bust every asset changed by this finalizer, including the dynamically
-// loaded shell. This prevents an old browser cache from preserving the conflict.
+// 5. Cache-bust every asset changed by this finalizer, including the dynamically
+// loaded shell. This prevents an old browser cache from preserving either bug.
 // ---------------------------------------------------------------------------
 let premium = read(premiumPath);
 premium = premium.replace(
   /\/final-ui-shell-v2\.js\?v=[^"']+/g,
-  "/final-ui-shell-v2.js?v=20260820-single-ledger-v14",
+  "/final-ui-shell-v2.js?v=20260820-single-ledger-v16",
 );
-if (!premium.includes("/final-ui-shell-v2.js?v=20260820-single-ledger-v14")) {
+if (!premium.includes("/final-ui-shell-v2.js?v=20260820-single-ledger-v16")) {
   throw new Error("runtime-coherence shell cache-bust missing");
 }
 write(premiumPath, premium);
@@ -115,23 +196,23 @@ write(premiumPath, premium);
 let index = read(indexPath);
 index = index.replace(
   /\/final-premium-6f3\.js\?v=[^"']+/g,
-  "/final-premium-6f3.js?v=20260820-runtime-coherence-v15",
+  "/final-premium-6f3.js?v=20260820-runtime-coherence-v17",
 );
 index = index.replace(
   /\/deriv-direct-execution-v2\.js\?v=[^"']+/g,
-  "/deriv-direct-execution-v2.js?v=20260820-private-recovery-v10",
+  "/deriv-direct-execution-v2.js?v=20260820-execution-ready-v12",
 );
 index = index.replace(
   /\/direct-run-panel-authority-v6\.js\?v=[^"']+/g,
-  "/direct-run-panel-authority-v6.js?v=20260820-owner-truth-v7",
+  "/direct-run-panel-authority-v6.js?v=20260820-owner-truth-v8",
 );
 for (const required of [
-  "/final-premium-6f3.js?v=20260820-runtime-coherence-v15",
-  "/deriv-direct-execution-v2.js?v=20260820-private-recovery-v10",
-  "/direct-run-panel-authority-v6.js?v=20260820-owner-truth-v7",
+  "/final-premium-6f3.js?v=20260820-runtime-coherence-v17",
+  "/deriv-direct-execution-v2.js?v=20260820-execution-ready-v12",
+  "/direct-run-panel-authority-v6.js?v=20260820-owner-truth-v8",
 ]) {
   if (!index.includes(required)) throw new Error(`runtime-coherence index cache-bust missing: ${required}`);
 }
 write(indexPath, index);
 
-console.log("Runtime coherence v1 finalized: fresh browser recovery, observable BUY errors, single Transactions renderer, truthful run owner");
+console.log("Runtime coherence v1 finalized: one Transactions renderer, one history hydrator, purchase-ready market subscriptions, persistent private-session recovery");
