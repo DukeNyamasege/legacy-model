@@ -100,7 +100,7 @@ class SchedulerV2AuthorityContract(unittest.TestCase):
         self.assertLess(scheduler, continuity)
         self.assertLess(continuity, recovery)
         self.assertIn("cp dashboard/scheduler-v2-ui.js", docker)
-        self.assertIn('["direct-transaction-ledger-v6.js", "20260819-provider-ledger-v11"]', assets)
+        self.assertIn('["direct-transaction-ledger-v6.js", "20260820-exit-digit-v12"]', assets)
         self.assertIn('["scheduler-v2-ui.js", "20260819-live-fix-v2"]', assets)
         self.assertIn("node --check dist/final-ui-shell-v2.js", docker)
 
