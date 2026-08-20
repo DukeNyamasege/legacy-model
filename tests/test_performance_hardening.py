@@ -48,7 +48,8 @@ class PerformanceHardeningSourceTests(unittest.TestCase):
         self.assertTrue(full_vps.exists())
         content = full_vps.read_text(encoding="utf-8")
         self.assertIn("frontend:", content)
-        self.assertIn("FRONTEND_HOSTING_MODE: vps", content)
+        self.assertIn("dockerfile: Dockerfile.frontend", content)
+        self.assertIn('"127.0.0.1:8081:80"', content)
 
     def test_repository_cleanup_is_safe_and_volume_preserving(self) -> None:
         source = (ROOT / "scripts" / "cleanup_repository_state.sh").read_text(
@@ -64,23 +65,23 @@ class PerformanceHardeningSourceTests(unittest.TestCase):
         self.assertNotIn("docker volume prune", source)
 
     def test_contabo_deploy_is_single_compose_and_preserves_database(self) -> None:
-        source = (ROOT / "scripts" / "deploy_dedicated_backend.sh").read_text(
+        source = (ROOT / "scripts" / "deploy_full_vps.sh").read_text(
             encoding="utf-8"
         )
-        self.assertIn('docker compose -f docker-compose.yml "$@"', source)
-        self.assertIn("NETLIFY + CONTABO BACKEND DEPLOYMENT", source)
-        self.assertIn("compose build api worker", source)
+        self.assertIn("-f docker-compose.yml", source)
+        self.assertIn("-f docker-compose.vps.yml", source)
+        self.assertIn("FULL CONTABO VPS DEPLOYMENT", source)
+        self.assertIn("compose build frontend api worker", source)
         self.assertIn("compose up -d database", source)
         self.assertIn("pg_dump --format=custom", source)
         self.assertIn("alembic upgrade head", source)
-        self.assertIn("compose up -d --force-recreate --remove-orphans --no-deps api", source)
-        self.assertIn("Wait for backend health", source)
-        self.assertIn("compose up -d --force-recreate --remove-orphans --no-deps worker", source)
+        self.assertIn("compose up -d --force-recreate --no-deps api", source)
+        self.assertIn("Wait for API health", source)
+        self.assertIn("compose up -d --force-recreate --remove-orphans --no-deps worker frontend", source)
         self.assertLess(
-            source.index("compose up -d --force-recreate --remove-orphans --no-deps api"),
-            source.index("compose up -d --force-recreate --remove-orphans --no-deps worker"),
+            source.index("compose up -d --force-recreate --no-deps api"),
+            source.index("compose up -d --force-recreate --remove-orphans --no-deps worker frontend"),
         )
-        self.assertNotIn("docker-compose.vps.yml", source)
         self.assertNotIn("docker volume prune", source)
 
     def test_compose_rotates_logs_and_disables_tick_spam(self) -> None:
