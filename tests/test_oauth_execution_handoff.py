@@ -66,57 +66,81 @@ class OAuthExecutionHandoffTests(unittest.TestCase):
         self.assertEqual(updated["oauth_access_token"], "new-oauth")
         self.assertEqual(updated["oauth_refresh_token"], "new-refresh")
 
-    def test_provider_auth_rejection_is_recognized_for_one_refresh_retry(self) -> None:
-        self.assertTrue(direct_api._provider_rejected_login("Invalid or missing authentication credentials"))
-        self.assertTrue(direct_api._provider_rejected_login("Unauthorized token"))
-        self.assertFalse(direct_api._provider_rejected_login("Invalid account ID format"))
-
-    def test_session_route_reuses_login_and_yield_never_stops_account(self) -> None:
-        source = self.read("app/vps_direct_execution_api.py")
-        for marker in (
-            '"authorization": "existing_deriv_login_reused"',
-            '"second_login_required": False',
-            '@app.post("/me/direct-execution/yield")',
-            '"auto_trading_continues": True',
-            'row.execution_status_updated_at = now - timedelta(',
-            'DIRECT_BROWSER_LEASE_SECONDS + 1.0',
-            '_fresh_oauth_payload(session, row, _auth_payload(row))',
-            'force=True',
-        ):
-            self.assertIn(marker, source)
-
-        yield_section = source.split('def yield_direct_execution', 1)[1].split(
-            '@app.post("/me/direct-execution/stop")', 1
+    def test_browser_bootstrap_never_exposes_refresh_token(self) -> None:
+        source = self.read("app/browser_direct_deriv_transport_v3.py")
+        bootstrap = source.split('def browser_direct_bootstrap', 1)[1].split(
+            '@app.post("/me/direct-execution/session")', 1
         )[0]
-        self.assertNotIn("row.enabled = False", yield_section)
-        self.assertNotIn('row.execution_status = "stopped"', yield_section)
+        for marker in (
+            '"access_token": token',
+            '"deriv_app_id"',
+            '"api_base": "https://api.derivws.com"',
+            '"server_otp": False',
+            '"server_proposal": False',
+            '"server_buy": False',
+            '"refresh_token_exposed": False',
+        ):
+            self.assertIn(marker, bootstrap)
+        self.assertNotIn('"refresh_token":', bootstrap)
+        self.assertIn("oauth_trade_access_token(payload)", bootstrap)
 
-    def test_browser_heartbeat_requires_healthy_private_trade_channel(self) -> None:
+    def test_browser_calls_deriv_otp_directly_and_not_vps_session(self) -> None:
         finalizer = self.read("scripts/finalize-oauth-execution-handoff-v1.mjs")
         for marker in (
-            "yieldUnhealthyBrowserExecution",
-            'apiPath("/me/direct-execution/yield")',
-            "state.privateWs?.readyState !== WebSocket.OPEN",
-            "state.privateUnavailableSince",
-            "heartbeatOnce(state.epoch)",
-            "browser_financial_owner_healthy",
-            "VPS continuity takeover activated automatically",
+            "https://api.derivws.com/trading/v1/options/accounts/",
+            'Authorization: `Bearer ${auth.accessToken}`',
+            '"Deriv-App-ID": auth.derivAppId',
+            'credentials: "omit"',
+            'apiPath("/me/direct-execution/bootstrap")',
+            'apiPath("/me/direct-execution/receipt")',
+            "sendTradeReceipt",
+            "browser reconnecting directly",
         ):
             self.assertIn(marker, finalizer)
-        self.assertIn(
-            "Never renew it",
-            finalizer,
-        )
+        for forbidden in (
+            'apiPath("/me/direct-execution/session")',
+            'apiPath("/me/direct-execution/heartbeat")',
+            'apiPath("/me/direct-execution/yield")',
+            "VPS continuity takeover activated automatically",
+        ):
+            self.assertNotIn(forbidden, finalizer)
 
-    def test_finalizer_is_last_financial_ownership_gate(self) -> None:
+    def test_server_heartbeat_and_takeover_are_retired(self) -> None:
+        api = self.read("app/browser_direct_deriv_transport_v3.py")
+        worker = self.read("app/browser_direct_worker_offload_v3.py")
+        checkpoint = self.read("dashboard/direct-continuity-checkpoint-v1.js")
+        for marker in (
+            '"heartbeat_required": False',
+            '"takeover_requested": False',
+            '"server_trade_transport": False',
+            '"live_server_provider_requests"',
+        ):
+            self.assertIn(marker, api)
+        self.assertIn("_promote_expired_browser_leases = no_browser_takeover", worker)
+        self.assertIn("provider_requests=false", worker)
+        self.assertIn("browser_direct_takeover=false", worker)
+        self.assertNotIn("setInterval(checkpoint, 5000)", checkpoint)
+        self.assertNotIn("/api/me/direct-execution/checkpoint", checkpoint)
+        self.assertIn("trade_receipts_only: true", checkpoint)
+
+    def test_manual_stop_still_uses_server_hard_stop_control(self) -> None:
+        engine = self.read("dashboard/deriv-direct-execution-v1.js")
+        hard_stop = self.read("dashboard/direct-hard-stop-fence-v1.js")
+        api = self.read("app/browser_direct_deriv_transport_v3.py")
+        self.assertIn('/me/direct-execution/stop', engine)
+        self.assertIn("Trading is stopped; BUY blocked locally", hard_stop)
+        self.assertIn("clear_direct_hard_stop(session, managed_id)", api)
+        self.assertIn("Direct execution stopped", self.read("app/vps_direct_execution_api.py"))
+
+    def test_finalizer_is_last_transport_gate(self) -> None:
         docker = self.read("Dockerfile.frontend")
         self.assertIn("COPY scripts/finalize-oauth-execution-handoff-v1.mjs", docker)
         self.assertIn("node --check scripts/finalize-oauth-execution-handoff-v1.mjs", docker)
         self.assertIn("node scripts/finalize-oauth-execution-handoff-v1.mjs", docker)
         sticky = docker.rfind("node scripts/finalize-sticky-stake-v1.mjs")
-        handoff = docker.rfind("node scripts/finalize-oauth-execution-handoff-v1.mjs")
+        direct_v3 = docker.rfind("node scripts/finalize-oauth-execution-handoff-v1.mjs")
         self.assertGreater(sticky, -1)
-        self.assertGreater(handoff, sticky)
+        self.assertGreater(direct_v3, sticky)
 
 
 if __name__ == "__main__":
