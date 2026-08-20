@@ -83,13 +83,20 @@ def install_stale_split_basis_reconciliation_authority() -> None:
 
     # Final lifecycle order:
     # 1. TP/SL/manual-only authority prevents automatic terminal stops.
-    # 2. Browser lease preservation prevents transient worker/provider status
-    #    mutations from stealing a still-live browser execution lease.
+    # 2. Browser ownership preservation prevents transient worker/provider status
+    #    mutations from stealing live browser execution.
+    # 3. Browser-direct v3 offload is absolutely last: direct_browser accounts are
+    #    never promoted into VPS provider/OTP/private-WebSocket execution. Scheduled
+    #    and explicitly server-owned accounts remain untouched.
     # TP, SL and the durable explicit-user hard-stop sentinel still pass through.
     from app.tp_sl_manual_only_authority import install_tp_sl_manual_only_authority
     from app.browser_direct_lease_preservation_authority import (
         install_browser_direct_lease_preservation_authority,
     )
+    from app.browser_direct_worker_offload_v3 import (
+        install_browser_direct_worker_offload_v3,
+    )
 
     install_tp_sl_manual_only_authority()
     install_browser_direct_lease_preservation_authority()
+    install_browser_direct_worker_offload_v3()
