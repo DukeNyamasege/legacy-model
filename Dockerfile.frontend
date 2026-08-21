@@ -28,6 +28,7 @@ COPY scripts/finalize-exact-builder-live-diagnostics-v2.mjs ./scripts/finalize-e
 COPY scripts/finalize-terminal-stop-only-v1.mjs ./scripts/finalize-terminal-stop-only-v1.mjs
 COPY scripts/finalize-canonical-bot-run-snapshot-v1.mjs ./scripts/finalize-canonical-bot-run-snapshot-v1.mjs
 COPY scripts/finalize-history-preload-runpanel-v1.mjs ./scripts/finalize-history-preload-runpanel-v1.mjs
+COPY scripts/finalize-marketing-ui-layout-v1.mjs ./scripts/finalize-marketing-ui-layout-v1.mjs
 COPY scripts/export-deriv-quill-icons-v2.mjs ./scripts/export-deriv-quill-icons-v2.mjs
 COPY scripts/inject-frontend-assets.mjs ./scripts/inject-frontend-assets.mjs
 
@@ -60,8 +61,9 @@ RUN node scripts/build-direct-runtime-v2.mjs \
 # boundary is normalized so only hard-stop/TP/SL/manual status is terminal, routed
 # exact live diagnostics observe the same active route the engine evaluates,
 # terminal-stop-only preserves the TP/SL/manual lifecycle, the canonical bot
-# snapshot freezes the exact loaded bot, and history-preload-runpanel runs last to
-# require Deriv prior history before live ticks and keep panel metrics uniform.
+# snapshot freezes the exact loaded bot, history-preload requires provider history,
+# and marketing-ui-layout runs last to restore the approved visual layout without
+# changing the one-account Deriv/backend execution path.
 RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && cp dashboard/direct-financial-fence-v1.js dist/direct-financial-fence-v1.js \
   && cp dashboard/direct-socket-control-v1.js dist/direct-socket-control-v1.js \
@@ -97,6 +99,7 @@ RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && node --check scripts/finalize-terminal-stop-only-v1.mjs \
   && node --check scripts/finalize-canonical-bot-run-snapshot-v1.mjs \
   && node --check scripts/finalize-history-preload-runpanel-v1.mjs \
+  && node --check scripts/finalize-marketing-ui-layout-v1.mjs \
   && node --check dist/final-premium-6f3.js \
   && node --check dist/final-ui-shell-v2.js \
   && node --check dist/deriv-direct-execution-v2.js \
@@ -132,10 +135,13 @@ RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && node scripts/finalize-terminal-stop-only-v1.mjs \
   && node scripts/finalize-canonical-bot-run-snapshot-v1.mjs \
   && node scripts/finalize-history-preload-runpanel-v1.mjs \
+  && node scripts/finalize-marketing-ui-layout-v1.mjs \
   && node --check dist/final-premium-6f3.js \
   && node --check dist/final-ui-shell-v2.js \
   && node --check dist/deriv-direct-execution-v2.js \
+  && node --check dist/direct-runtime-ux-v4.js \
   && node --check dist/direct-financial-fence-v1.js \
+  && node --check dist/direct-demo-reset-router-v1.js \
   && node --check dist/direct-interaction-guard-v3.js \
   && node --check dist/direct-strategy-persistence-v1.js \
   && node --check dist/direct-transaction-ledger-v6.js \
