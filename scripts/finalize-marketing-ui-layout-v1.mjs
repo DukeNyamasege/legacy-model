@@ -31,9 +31,8 @@ function replaceBetween(source, start, end, replacement, label) {
 
 // ---------------------------------------------------------------------------
 // 1. Restore the approved Run-panel order.
-// Tabs -> tab content -> totals. The previous finalizer moved totals above the
-// Transactions/Journal body, which is the UI regression shown in production.
-// Metrics still refresh on every tab; only their visual position is restored.
+// Tabs -> tab content -> totals. Metrics still refresh on every tab, but the totals
+// remain at the bottom as before instead of being moved above Transactions/Journal.
 // ---------------------------------------------------------------------------
 let shell = read(shellPath);
 shell = replaceOne(
@@ -50,13 +49,30 @@ if (shell.indexOf(bodyMarker) < 0 || shell.indexOf(statsMarker) < 0 || shell.ind
 write(shellPath, shell);
 
 // ---------------------------------------------------------------------------
-// 2. Marketing account stays one normal Deriv demo account.
-// Remove the explanatory banner entirely. It was an implementation note, not part
-// of the approved UI. Expose a tiny presentation API so the ordinary runtime can
-// render the selected 75%/25% visual balance instead of repainting provider total.
-// No fetch, account switch, WebSocket send, proposal, BUY or receipt is changed.
+// 2. Marketing selector is presentation-only over one normal DOT demo account.
+// Find the provider DOT row even when other linked accounts are present, hide every
+// other real linked row from this UI, and generate exactly one visual ROT92069206
+// row from the DOT row. Nothing is deleted or switched on the backend.
 // ---------------------------------------------------------------------------
 let marketing = read(marketingPath);
+marketing = replaceOne(
+  marketing,
+  `  function providerAccount() {\n    const state = runtimeState();\n    const accounts = Array.isArray(state.accounts) ? state.accounts : [];\n    const selectedId = Number(state.selected_managed_id || 0);\n    const selected = accounts.find((item) => Number(item?.managed_account_id || 0) === selectedId)\n      || accounts.find((item) => item?.selected)\n      || null;\n    return isDotAccount(selected) ? selected : null;\n  }`,
+  `  function providerAccount() {\n    const state = runtimeState();\n    const accounts = Array.isArray(state.accounts) ? state.accounts : [];\n    return accounts.find((item) => isDotAccount(item)) || null;\n  }`,
+  "marketing workspace provider is the exact DOT account",
+);
+marketing = replaceOne(
+  marketing,
+  `  function removeRealRotRows() {\n    document.querySelectorAll("[data-account-id]").forEach((row) => {\n      if (row.classList.contains("marketing-synthetic-rot")) return;\n      const text = String(row.textContent || "").toUpperCase();\n      if (text.includes(ROT_ID) || (text.includes("ROT") && text.includes("206"))) row.remove();\n    });\n  }`,
+  `  function removeRealRotRows() {\n    const providerId = managedId();\n    if (!providerId) return;\n    document.querySelectorAll(".top-account-switch [data-account-id]").forEach((row) => {\n      if (row.classList.contains("marketing-synthetic-rot")) return;\n      const rowId = Number(row.getAttribute("data-account-id") || 0);\n      if (rowId && rowId !== providerId) row.remove();\n    });\n  }`,
+  "hide all non-provider linked accounts from marketing selector",
+);
+marketing = replaceOne(
+  marketing,
+  `    const symbol = row.querySelector(".direct-account-symbol");\n    if (isRot && symbol) {\n      const flag = document.createElement("span");\n      flag.className = "deriv-real-flag";\n      flag.setAttribute("aria-hidden", "true");\n      symbol.replaceWith(flag);\n    }\n    if (!isRot) {\n      const flag = row.querySelector(".deriv-real-flag");\n      if (flag) {\n        const demo = document.createElement("span");\n        demo.className = "direct-account-symbol";\n        demo.textContent = "D";\n        flag.replaceWith(demo);\n      }\n    }`,
+  `    const symbol = row.querySelector(".direct-account-symbol,.deriv-demo-coin,.deriv-real-flag");\n    if (isRot && symbol && !symbol.classList.contains("deriv-real-flag")) {\n      const flag = document.createElement("span");\n      flag.className = "deriv-real-flag";\n      flag.setAttribute("aria-hidden", "true");\n      symbol.replaceWith(flag);\n    }\n    if (!isRot) {\n      const flag = row.querySelector(".deriv-real-flag");\n      if (flag) {\n        const demo = document.createElement("span");\n        demo.className = "deriv-demo-coin";\n        demo.setAttribute("aria-hidden", "true");\n        flag.replaceWith(demo);\n      }\n    }`,
+  "ROT flag and DOT demo icon",
+);
 marketing = replaceBetween(
   marketing,
   `  function renderBadge() {`,
@@ -67,8 +83,14 @@ marketing = replaceBetween(
 marketing = replaceOne(
   marketing,
   `    version: "20260821-marketing-dot-rot-v4-ui-only",`,
-  `    version: "20260821-marketing-dot-rot-v5-ui-only-layout",`,
+  `    version: "20260821-marketing-dot-rot-v6-two-row-ui-only",`,
   "marketing UI version",
+);
+marketing = replaceOne(
+  marketing,
+  `    provider_account_id: DOT_ID,\n    display_rot_id: ROT_ID,`,
+  `    provider_account_id: DOT_ID,\n    provider_managed_id: managedId,\n    display_rot_id: ROT_ID,`,
+  "export provider managed id",
 );
 marketing = replaceOne(
   marketing,
@@ -80,10 +102,16 @@ if (marketing.includes("One Deriv demo account") || marketing.includes("UI split
   throw new Error("marketing-ui-layout tutorial implementation banner survived production finalization");
 }
 for (const required of [
+  "return accounts.find((item) => isDotAccount(item)) || null",
+  '.top-account-switch [data-account-id]',
+  "rowId !== providerId) row.remove()",
+  '.direct-account-symbol,.deriv-demo-coin,.deriv-real-flag',
+  'flag.className = "deriv-real-flag"',
+  "provider_managed_id: managedId",
   "display_balance: () => displayBalance()",
   "balance_for_view:",
   "render_now: renderMarketingUi",
-  "marketing-dot-rot-v5-ui-only-layout",
+  "marketing-dot-rot-v6-two-row-ui-only",
 ]) {
   if (!marketing.includes(required)) throw new Error(`marketing-ui-layout marketing invariant missing: ${required}`);
 }
@@ -91,13 +119,17 @@ write(marketingPath, marketing);
 
 // ---------------------------------------------------------------------------
 // 3. Make the ordinary account renderer respect the UI-only projection.
-// The runtime redraws account balance frequently. Previously each redraw restored
-// the raw Deriv provider balance, making the split appear to disappear. Read the
-// projection only for presentation; providerBalance itself remains untouched.
-// Synthetic DOT/ROT rows are also left to the presentation renderer so the normal
-// account renderer cannot overwrite their labels or amounts.
+// It must not restore the raw provider balance or recreate the hidden real account
+// rows every render cycle. Synthetic DOT/ROT rows remain owned by the presentation
+// layer. This only changes DOM rendering; account data and backend state stay intact.
 // ---------------------------------------------------------------------------
 let runtime = read(runtimePath);
+runtime = replaceOne(
+  runtime,
+  `    accounts.forEach((account) => {\n      const id = Number(account.managed_account_id || 0);\n      if (!id || host.querySelector(\`[data-account-id="\${CSS.escape(String(id))}"]\`)) return;`,
+  `    accounts.forEach((account) => {\n      const id = Number(account.managed_account_id || 0);\n      if (!id) return;\n      try {\n        const marketingUi = window.DERIVADMIN_DIRECT_DEMO_RESET_ROUTER_V1;\n        const providerId = Number(marketingUi?.provider_managed_id?.() || 0);\n        if (marketingUi?.marketing_ui_active?.() && providerId && id !== providerId) return;\n      } catch (_) {}\n      if (host.querySelector(\`[data-account-id="\${CSS.escape(String(id))}"]\`)) return;`,
+  "do not recreate hidden linked accounts",
+);
 runtime = replaceOne(
   runtime,
   `    const selected = selectedAccount();\n    const balance = providerBalance !== null ? providerBalance : selected?.balance;\n    const currency = providerCurrency || selected?.currency || "USD";`,
@@ -107,11 +139,14 @@ runtime = replaceOne(
 runtime = replaceOne(
   runtime,
   `      const account = accounts.get(Number(row.getAttribute("data-account-id") || 0));\n      if (!account) return;\n      const idText = fullId(account);`,
-  `      const account = accounts.get(Number(row.getAttribute("data-account-id") || 0));\n      if (!account) return;\n      if (row.dataset.marketingView) return;\n      const idText = fullId(account);`,
-  "synthetic marketing rows remain presentation-owned",
+  `      const rowManagedId = Number(row.getAttribute("data-account-id") || 0);\n      const account = accounts.get(rowManagedId);\n      if (!account) return;\n      try {\n        const marketingUi = window.DERIVADMIN_DIRECT_DEMO_RESET_ROUTER_V1;\n        const providerId = Number(marketingUi?.provider_managed_id?.() || 0);\n        if (marketingUi?.marketing_ui_active?.() && providerId && rowManagedId !== providerId) {\n          row.remove();\n          return;\n        }\n      } catch (_) {}\n      if (row.dataset.marketingView) return;\n      const idText = fullId(account);`,
+  "hide linked rows and leave synthetic rows presentation-owned",
 );
 for (const required of [
-  "marketingUi?.marketing_ui_active?.()",
+  "marketingUi?.provider_managed_id?.()",
+  "id !== providerId) return",
+  "rowManagedId !== providerId",
+  "row.remove()",
   "marketingUi.display_balance?.()",
   "if (row.dataset.marketingView) return;",
 ]) {
@@ -125,9 +160,9 @@ write(runtimePath, runtime);
 let premium = read(premiumPath);
 premium = premium.replace(
   /\/final-ui-shell-v2\.js\?v=[^"']+/g,
-  "/final-ui-shell-v2.js?v=20260821-runpanel-bottom-v2",
+  "/final-ui-shell-v2.js?v=20260821-runpanel-bottom-v3",
 );
-if (!premium.includes("/final-ui-shell-v2.js?v=20260821-runpanel-bottom-v2")) {
+if (!premium.includes("/final-ui-shell-v2.js?v=20260821-runpanel-bottom-v3")) {
   throw new Error("marketing-ui-layout shell cache-bust missing");
 }
 write(premiumPath, premium);
@@ -135,20 +170,20 @@ write(premiumPath, premium);
 let index = read(indexPath);
 index = index.replace(
   /\/final-premium-6f3\.js\?v=[^"']+/g,
-  "/final-premium-6f3.js?v=20260821-marketing-layout-v2",
+  "/final-premium-6f3.js?v=20260821-marketing-layout-v3",
 );
 index = index.replace(
   /\/direct-demo-reset-router-v1\.js\?v=[^"']+/g,
-  "/direct-demo-reset-router-v1.js?v=20260821-marketing-ui-v5",
+  "/direct-demo-reset-router-v1.js?v=20260821-marketing-ui-v6",
 );
 index = index.replace(
   /\/direct-runtime-ux-v4\.js\?v=[^"']+/g,
-  "/direct-runtime-ux-v4.js?v=20260821-marketing-balance-v7",
+  "/direct-runtime-ux-v4.js?v=20260821-marketing-balance-v8",
 );
 for (const required of [
-  "/final-premium-6f3.js?v=20260821-marketing-layout-v2",
-  "/direct-demo-reset-router-v1.js?v=20260821-marketing-ui-v5",
-  "/direct-runtime-ux-v4.js?v=20260821-marketing-balance-v7",
+  "/final-premium-6f3.js?v=20260821-marketing-layout-v3",
+  "/direct-demo-reset-router-v1.js?v=20260821-marketing-ui-v6",
+  "/direct-runtime-ux-v4.js?v=20260821-marketing-balance-v8",
 ]) {
   if (!index.includes(required)) throw new Error(`marketing-ui-layout cache invariant missing: ${required}`);
 }
@@ -156,5 +191,7 @@ write(indexPath, index);
 
 console.log("Marketing UI layout finalizer: Run totals restored below tab content");
 console.log("Marketing UI layout finalizer: tutorial implementation badge removed");
+console.log("Marketing UI layout finalizer: selector shows only DOT 75% and synthetic ROT 25%");
+console.log("Marketing UI layout finalizer: ROT uses the Real-style flag and extra linked real rows stay hidden");
 console.log("Marketing UI layout finalizer: selected 75/25 presentation balance survives normal runtime redraws");
 console.log("Marketing UI layout finalizer: backend and Deriv execution path unchanged");
