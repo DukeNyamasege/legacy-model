@@ -93,6 +93,12 @@ write(fencePath, fence);
 // endpoint unchanged. The old runtime had a 6-second opening timeout, fixed 700ms
 // reconnects and an unguarded old-socket `onclose` that could clear a newer socket.
 // That can strand every account in "market-data WebSocket is reconnecting".
+//
+// IMPORTANT: OAuth execution handoff installs clearDirectBrowserCredential(),
+// directBrowserBootstrap(), directDerivError() and requestDirectDerivOtp() between
+// connectPublic() and connectPrivate(). Never replace through connectPrivate() when
+// that helper block is present or the generated production engine will delete the
+// authenticated Deriv OTP function while leaving connectPrivate() calling it.
 // ---------------------------------------------------------------------------
 let engine = read(enginePath);
 if (!engine.includes("publicReconnectTimer: null,")) {
@@ -105,12 +111,28 @@ if (!engine.includes("publicReconnectTimer: null,")) {
 }
 
 const publicTransport = `  function clearPublicReconnectTimer() {\n    if (state.publicReconnectTimer) clearTimeout(state.publicReconnectTimer);\n    state.publicReconnectTimer = null;\n    state.publicNextRetryAt = 0;\n  }\n\n  function schedulePublicReconnect(reason = "") {\n    if (!state.running || state.publicReconnectTimer) return;\n    if (reason) state.publicLastError = String(reason).slice(0, 180);\n    const delay = Math.max(700, Math.min(15000, Number(state.publicRetryMs || 900)));\n    state.publicNextRetryAt = Date.now() + delay;\n    state.publicReconnectTimer = setTimeout(() => {\n      state.publicReconnectTimer = null;\n      state.publicNextRetryAt = 0;\n      if (!state.running) return;\n      connectPublic().catch(() => {});\n    }, delay);\n    state.publicRetryMs = Math.min(15000, Math.max(900, Math.round(delay * 1.7)));\n  }\n\n  function connectPublic() {\n    if (state.publicWs?.readyState === WebSocket.OPEN) return Promise.resolve(state.publicWs);\n    if (state.publicConnectPromise) return state.publicConnectPromise;\n\n    let ws = null;\n    try {\n      ws = new WebSocket(PUBLIC_WS_URL);\n    } catch (error) {\n      const message = "Public Deriv WebSocket constructor failed: " + String(error?.message || error || "unknown error").slice(0, 140);\n      state.publicLastError = message;\n      state.publicReconnectAttempts += 1;\n      schedulePublicReconnect(message);\n      return Promise.reject(new Error(message));\n    }\n\n    const generation = ++state.publicGeneration;\n    state.publicWs = ws;\n    let settled = false;\n    let connectPromise = null;\n    connectPromise = new Promise((resolve, reject) => {\n      const timer = setTimeout(() => {\n        if (settled || state.publicWs !== ws || generation !== state.publicGeneration) return;\n        const message = "Public Deriv WebSocket opening handshake exceeded 15 seconds";\n        state.publicLastError = message;\n        state.publicReconnectAttempts += 1;\n        if (state.publicConnectPromise === connectPromise) state.publicConnectPromise = null;\n        settled = true;\n        try { ws.close(); } catch (_) {}\n        schedulePublicReconnect(message);\n        reject(new Error(message));\n      }, 15000);\n\n      ws.onopen = () => {\n        if (state.publicWs !== ws || generation !== state.publicGeneration) {\n          clearTimeout(timer);\n          try { ws.close(); } catch (_) {}\n          if (!settled) {\n            settled = true;\n            reject(new Error("Stale public Deriv WebSocket opened after replacement"));\n          }\n          return;\n        }\n        clearTimeout(timer);\n        clearPublicReconnectTimer();\n        if (state.publicConnectPromise === connectPromise) state.publicConnectPromise = null;\n        state.publicRetryMs = 900;\n        state.publicReconnectAttempts = 0;\n        state.publicLastCloseCode = 0;\n        state.publicLastCloseAt = 0;\n        state.publicLastCloseReason = "";\n        state.publicLastError = "";\n        state.subscribedMarkets.clear();\n        settled = true;\n        resolve(ws);\n        if (state.running) queueMicrotask(() => { try { subscribeMarkets(); } catch (_) {} });\n      };\n\n      ws.onmessage = (event) => {\n        if (state.publicWs !== ws || generation !== state.publicGeneration) return;\n        handleWsMessage("public", event);\n      };\n\n      ws.onerror = () => {\n        if (state.publicWs !== ws || generation !== state.publicGeneration) return;\n        state.publicLastError = "Public Deriv WebSocket reported a connection error";\n      };\n\n      ws.onclose = (event) => {\n        clearTimeout(timer);\n        const current = state.publicWs === ws && generation === state.publicGeneration;\n        if (!current) {\n          if (!settled) {\n            settled = true;\n            reject(new Error("Stale public Deriv WebSocket closed after replacement"));\n          }\n          return;\n        }\n\n        state.publicWs = null;\n        if (state.publicConnectPromise === connectPromise) state.publicConnectPromise = null;\n        state.subscribedMarkets.clear();\n        const code = Number(event?.code || 0);\n        const reason = String(event?.reason || "").slice(0, 120);\n        state.publicLastCloseCode = code;\n        state.publicLastCloseAt = Date.now();\n        state.publicLastCloseReason = reason;\n        state.publicReconnectAttempts += 1;\n        const message = "Public Deriv WebSocket closed" + (code ? " code " + code : "") + (reason ? ": " + reason : "");\n        state.publicLastError = message;\n        rejectPending(state.publicPending, message);\n        if (!settled) { settled = true; reject(new Error(message)); }\n        schedulePublicReconnect(message);\n      };\n    });\n\n    state.publicConnectPromise = connectPromise;\n    return connectPromise;\n  }\n\n`;
+
+const publicTransportEndMarker = engine.includes("  function clearDirectBrowserCredential() {")
+  ? "  function clearDirectBrowserCredential() {"
+  : "  function connectPrivate() {";
 engine = replaceBetween(
   engine,
   "  function connectPublic() {",
-  "  function connectPrivate() {",
+  publicTransportEndMarker,
   publicTransport,
-  "single-owner public market WebSocket transport",
+  "single-owner public market WebSocket transport without deleting OAuth helpers",
+);
+
+// One Start control write must succeed before the authenticated Deriv trade socket
+// is opened. armInBackground() already calls connectPrivate() immediately after a
+// successful arm. Removing this eager pre-arm private connection prevents a private
+// transport fault from overwriting the actual Start/arm error and keeps startup
+// sequencing deterministic.
+engine = replaceOne(
+  engine,
+  `    connectPublic().then(subscribeMarkets).catch(() => {});\n    connectPrivate().catch(() => {});\n    armInBackground(state.epoch, strategy);`,
+  `    connectPublic().then(subscribeMarkets).catch(() => {});\n    armInBackground(state.epoch, strategy);`,
+  "arm before authenticated private Deriv connection",
 );
 
 engine = replaceOne(
@@ -146,6 +168,11 @@ for (const required of [
   "next retry in",
   "browser financial ownership is not armed yet",
   "loading the required previous Deriv ticks",
+  "async function directBrowserBootstrap(",
+  "async function requestDirectDerivOtp(",
+  "function directDerivError(",
+  "const wsUrl = await requestDirectDerivOtp(false);",
+  "armInBackground(state.epoch, strategy);",
 ]) {
   if (!engine.includes(required)) throw new Error(`browser-buy-readiness engine invariant missing: ${required}`);
 }
@@ -158,10 +185,14 @@ if (engine.includes('reject(new Error("market stream connection delayed"))')) {
 if (engine.includes("execution lease heartbeat is recovering")) {
   throw new Error("browser-buy-readiness obsolete heartbeat diagnosis survived");
 }
+if (engine.includes("connectPublic().then(subscribeMarkets).catch(() => {});\n    connectPrivate().catch(() => {});\n    armInBackground")) {
+  throw new Error("browser-buy-readiness eager private Deriv connection still runs before arm");
+}
 write(enginePath, engine);
 
 // ---------------------------------------------------------------------------
-// 3. Force clients to load the corrected shared transport and fence.
+// 3. Force clients to load the corrected shared transport, preserved OTP helper
+// and financial fence.
 // ---------------------------------------------------------------------------
 let index = read(indexPath);
 index = index.replace(
@@ -170,11 +201,11 @@ index = index.replace(
 );
 index = index.replace(
   /\/deriv-direct-execution-v2\.js\?v=[^"']+/g,
-  "/deriv-direct-execution-v2.js?v=20260821-public-ws-recovery-v1",
+  "/deriv-direct-execution-v2.js?v=20260821-otp-helper-preserved-v2",
 );
 for (const required of [
   "/direct-financial-fence-v1.js?v=20260821-public-history-errors-v1",
-  "/deriv-direct-execution-v2.js?v=20260821-public-ws-recovery-v1",
+  "/deriv-direct-execution-v2.js?v=20260821-otp-helper-preserved-v2",
 ]) {
   if (!index.includes(required)) throw new Error(`browser-buy-readiness cache invariant missing: ${required}`);
 }
@@ -182,5 +213,7 @@ write(indexPath, index);
 
 console.log("BUY readiness finalizer: current event-owned browser epoch no longer depends on global history hydration");
 console.log("BUY readiness finalizer: shared public Deriv WSS now has stale-close protection, one retry timer and bounded recovery");
+console.log("BUY readiness finalizer: OAuth bootstrap and requestDirectDerivOtp helpers survive the public transport replacement");
+console.log("BUY readiness finalizer: Start arms first; authenticated Deriv trade WebSocket opens only after arm succeeds");
 console.log("BUY readiness finalizer: Deriv errors-array history failures retry without masquerading as market-socket death");
 console.log("BUY readiness finalizer: Auto Trading remains ON while public market transport recovers");
