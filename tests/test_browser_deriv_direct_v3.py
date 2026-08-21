@@ -99,6 +99,25 @@ class BrowserDerivDirectV3Tests(unittest.TestCase):
         self.assertIn("Scheduling remains server-owned", backend)
         self.assertIn('production_architecture = "browser_deriv_direct_v3"', backend)
 
+    def test_run_panel_and_builder_share_one_manual_start_authority(self) -> None:
+        finalizer = self.text("scripts/finalize-browser-direct-start-v1.mjs")
+        self.assertIn('await startTradingFromContext("builder");', finalizer)
+        self.assertIn(
+            "browserStrategy = window.DERIVADMIN_DIRECT_EXECUTION_V1?.state?.().strategy || null",
+            finalizer,
+        )
+        self.assertIn('source: selected.source || "browser_direct_current"', finalizer)
+        self.assertIn("run_builder_start_identical=true", finalizer)
+
+        # Scope the negative assertion to the generated saveBuilder template.
+        # The finalizer intentionally contains the legacy string later as a
+        # fail-closed assertion that aborts the build if that old path survives.
+        save_builder = finalizer.split("const saveBuilder = `", 1)[1].split(
+            "`;\n\nshell = replaceBetween", 1
+        )[0]
+        self.assertIn('await startTradingFromContext("builder");', save_builder)
+        self.assertNotIn("await startBrowserDirectStrategy(snapshot.strategy);", save_builder)
+
     def test_status_reason_cannot_exceed_database_column(self) -> None:
         authority = self.text("app/browser_direct_lease_preservation_authority.py")
         self.assertIn(")[:160]", authority)
