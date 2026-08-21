@@ -35,13 +35,15 @@ class MarketingTutorialAccountTests(unittest.TestCase):
         self.assertNotIn('fetch("/api/me/switch-account"', source)
         self.assertNotIn('fetch("/me/switch-account"', source)
 
-    def test_provider_balance_events_change_only_selected_visual_partition(self) -> None:
+    def test_provider_balance_events_change_only_opening_visual_partition(self) -> None:
         source = (ROOT / "dashboard" / "direct-demo-reset-router-v1.js").read_text(encoding="utf-8")
         self.assertIn("const delta = provider - ledger.provider", source)
-        self.assertIn('if (view() === "rot") ledger.rot = roundMoney(ledger.rot + delta)', source)
+        self.assertIn('if (targetView === "rot") ledger.rot = roundMoney(ledger.rot + delta)', source)
         self.assertIn('else ledger.dot = roundMoney(ledger.dot + delta)', source)
         self.assertIn("ledger.provider = roundMoney(provider)", source)
         self.assertIn("detail.balance = visibleBalance(ledger)", source)
+        self.assertIn("rememberContractOwner(contractId, view())", source)
+        self.assertIn("movementView(detail)", source)
         self.assertNotIn("absolute * ROT_SHARE", source)
         self.assertNotIn("absolute * DOT_SHARE", source)
 
@@ -57,6 +59,7 @@ class MarketingTutorialAccountTests(unittest.TestCase):
         self.assertIn('window.addEventListener("derivadmin:demo-balance-reset"', source)
         self.assertIn("const ledger = splitReset(provider)", source)
         self.assertIn("detail.balance = visibleBalance(ledger)", source)
+        self.assertIn("writeOwners({})", source)
 
     def test_frontend_asset_is_cache_busted(self) -> None:
         source = (ROOT / "scripts" / "inject-frontend-assets.mjs").read_text(encoding="utf-8")
