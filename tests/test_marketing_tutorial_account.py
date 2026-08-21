@@ -71,6 +71,19 @@ class MarketingTutorialAccountTests(unittest.TestCase):
         self.assertIn("if (row.dataset.marketingView) return;", source)
         self.assertIn("backend and Deriv execution path unchanged", source)
 
+    def test_final_production_selector_is_exactly_dot_plus_synthetic_rot(self) -> None:
+        source = (ROOT / "scripts" / "finalize-marketing-ui-layout-v1.mjs").read_text(encoding="utf-8")
+        self.assertIn("selector shows only DOT 75% and synthetic ROT 25%", source)
+        self.assertIn("return accounts.find((item) => isDotAccount(item)) || null", source)
+        self.assertIn('.top-account-switch [data-account-id]', source)
+        self.assertIn("rowId !== providerId) row.remove()", source)
+        self.assertIn("id !== providerId) return", source)
+        self.assertIn("rowManagedId !== providerId", source)
+        self.assertIn("provider_managed_id: managedId", source)
+        self.assertIn('flag.className = "deriv-real-flag"', source)
+        self.assertIn('.direct-account-symbol,.deriv-demo-coin,.deriv-real-flag', source)
+        self.assertIn("extra linked real rows stay hidden", source)
+
     def test_marketing_layout_finalizer_runs_after_history_finalizer(self) -> None:
         source = (ROOT / "Dockerfile.frontend").read_text(encoding="utf-8")
         copy_history = source.index("COPY scripts/finalize-history-preload-runpanel-v1.mjs")
@@ -84,9 +97,9 @@ class MarketingTutorialAccountTests(unittest.TestCase):
 
     def test_frontend_asset_is_cache_busted_in_final_production_layer(self) -> None:
         source = (ROOT / "scripts" / "finalize-marketing-ui-layout-v1.mjs").read_text(encoding="utf-8")
-        self.assertIn("20260821-marketing-ui-v5", source)
-        self.assertIn("20260821-marketing-balance-v7", source)
-        self.assertIn("20260821-runpanel-bottom-v2", source)
+        self.assertIn("20260821-marketing-ui-v6", source)
+        self.assertIn("20260821-marketing-balance-v8", source)
+        self.assertIn("20260821-runpanel-bottom-v3", source)
 
 
 if __name__ == "__main__":
