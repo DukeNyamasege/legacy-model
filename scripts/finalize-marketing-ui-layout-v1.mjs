@@ -31,8 +31,8 @@ function replaceBetween(source, start, end, replacement, label) {
 
 // ---------------------------------------------------------------------------
 // 1. Restore the approved Run-panel order.
-// Tabs -> tab content -> totals. Metrics still refresh on every tab, but the totals
-// remain at the bottom as before instead of being moved above Transactions/Journal.
+// Tabs -> tab content -> totals. Metrics still refresh on every tab, but totals
+// remain below the Summary/Transactions/Journal body as in the approved UI.
 // ---------------------------------------------------------------------------
 let shell = read(shellPath);
 shell = replaceOne(
@@ -49,29 +49,65 @@ if (shell.indexOf(bodyMarker) < 0 || shell.indexOf(statsMarker) < 0 || shell.ind
 write(shellPath, shell);
 
 // ---------------------------------------------------------------------------
-// 2. Marketing selector is presentation-only over one normal DOT demo account.
-// Find the provider DOT row even when other linked accounts are present, hide every
-// other real linked row from this UI, and generate exactly one visual ROT92069206
-// row from the DOT row. Nothing is deleted or switched on the backend.
+// 2. Marketing selector is UI-only over the currently selected DOT demo account.
+// Start a fresh v6 browser ledger from the CURRENT provider demo balance so stale
+// v4 presentation state cannot survive this correction. Backend selection remains
+// DOT; Demo/Real tabs become visual DOT/ROT selectors and never submit a real ID.
 // ---------------------------------------------------------------------------
 let marketing = read(marketingPath);
 marketing = replaceOne(
   marketing,
-  `  function providerAccount() {\n    const state = runtimeState();\n    const accounts = Array.isArray(state.accounts) ? state.accounts : [];\n    const selectedId = Number(state.selected_managed_id || 0);\n    const selected = accounts.find((item) => Number(item?.managed_account_id || 0) === selectedId)\n      || accounts.find((item) => item?.selected)\n      || null;\n    return isDotAccount(selected) ? selected : null;\n  }`,
-  `  function providerAccount() {\n    const state = runtimeState();\n    const accounts = Array.isArray(state.accounts) ? state.accounts : [];\n    return accounts.find((item) => isDotAccount(item)) || null;\n  }`,
-  "marketing workspace provider is the exact DOT account",
+  `  const VIEW_KEY = "derivadmin-marketing-demo-view-v4";\n  const LEDGER_PREFIX = "derivadmin-marketing-demo-ui-ledger-v4:";\n  const OWNER_PREFIX = "derivadmin-marketing-demo-ui-contract-owners-v4:";`,
+  `  const VIEW_KEY = "derivadmin-marketing-demo-view-v6";\n  const LEDGER_PREFIX = "derivadmin-marketing-demo-ui-ledger-v6:";\n  const OWNER_PREFIX = "derivadmin-marketing-demo-ui-contract-owners-v6:";`,
+  "fresh marketing UI storage namespace",
+);
+marketing = replaceOne(
+  marketing,
+  `    return { version: 4, provider, dot, rot, updated_at: Date.now() };`,
+  `    return { version: 6, provider, dot, rot, updated_at: Date.now() };`,
+  "fresh ledger version",
+);
+marketing = replaceOne(
+  marketing,
+  `      && Number(value.version) === 4`,
+  `      && Number(value.version) === 6`,
+  "ledger validation version",
+);
+marketing = replaceOne(
+  marketing,
+  `      version: 4,\n      provider: roundMoney(parsed.provider),`,
+  `      version: 6,\n      provider: roundMoney(parsed.provider),`,
+  "ledger read version",
+);
+marketing = replaceOne(
+  marketing,
+  `      version: 4,\n      provider: roundMoney(ledger.provider),`,
+  `      version: 6,\n      provider: roundMoney(ledger.provider),`,
+  "ledger write version",
 );
 marketing = replaceOne(
   marketing,
   `  function removeRealRotRows() {\n    document.querySelectorAll("[data-account-id]").forEach((row) => {\n      if (row.classList.contains("marketing-synthetic-rot")) return;\n      const text = String(row.textContent || "").toUpperCase();\n      if (text.includes(ROT_ID) || (text.includes("ROT") && text.includes("206"))) row.remove();\n    });\n  }`,
-  `  function removeRealRotRows() {\n    const providerId = managedId();\n    if (!providerId) return;\n    document.querySelectorAll(".top-account-switch [data-account-id]").forEach((row) => {\n      if (row.classList.contains("marketing-synthetic-rot")) return;\n      const rowId = Number(row.getAttribute("data-account-id") || 0);\n      if (rowId && rowId !== providerId) row.remove();\n    });\n  }`,
-  "hide all non-provider linked accounts from marketing selector",
+  `  function removeRealRotRows() {\n    const providerId = managedId();\n    if (!providerId) return;\n    document.querySelectorAll(".top-account-switch [data-account-id]").forEach((row) => {\n      if (row.classList.contains("marketing-synthetic-rot")) return;\n      if (row.matches("[data-account-kind]")) return;\n      const rowId = Number(row.getAttribute("data-account-id") || 0);\n      if (rowId && rowId !== providerId) row.remove();\n    });\n  }`,
+  "hide all non-provider linked rows from marketing selector",
 );
 marketing = replaceOne(
   marketing,
-  `    const symbol = row.querySelector(".direct-account-symbol");\n    if (isRot && symbol) {\n      const flag = document.createElement("span");\n      flag.className = "deriv-real-flag";\n      flag.setAttribute("aria-hidden", "true");\n      symbol.replaceWith(flag);\n    }\n    if (!isRot) {\n      const flag = row.querySelector(".deriv-real-flag");\n      if (flag) {\n        const demo = document.createElement("span");\n        demo.className = "direct-account-symbol";\n        demo.textContent = "D";\n        flag.replaceWith(demo);\n      }\n    }`,
-  `    const symbol = row.querySelector(".direct-account-symbol,.deriv-demo-coin,.deriv-real-flag");\n    if (isRot && symbol && !symbol.classList.contains("deriv-real-flag")) {\n      const flag = document.createElement("span");\n      flag.className = "deriv-real-flag";\n      flag.setAttribute("aria-hidden", "true");\n      symbol.replaceWith(flag);\n    }\n    if (!isRot) {\n      const flag = row.querySelector(".deriv-real-flag");\n      if (flag) {\n        const demo = document.createElement("span");\n        demo.className = "deriv-demo-coin";\n        demo.setAttribute("aria-hidden", "true");\n        flag.replaceWith(demo);\n      }\n    }`,
-  "ROT flag and DOT demo icon",
+  `    row.classList.toggle("marketing-dot-view", !isRot);\n    row.classList.toggle("marketing-rot-view", isRot);\n    row.classList.toggle("selected", view() === selectedView);`,
+  `    row.classList.toggle("marketing-dot-view", !isRot);\n    row.classList.toggle("marketing-rot-view", isRot);\n    row.classList.toggle("demo", !isRot);\n    row.classList.toggle("real", isRot);\n    row.dataset.accountKindRow = isRot ? "real" : "demo";\n    row.classList.toggle("selected", view() === selectedView);`,
+  "DOT and ROT visual account kinds",
+);
+marketing = replaceOne(
+  marketing,
+  `    const symbol = row.querySelector(".direct-account-symbol");\n    if (isRot && symbol) {\n      const flag = document.createElement("span");\n      flag.className = "deriv-real-flag";\n      flag.setAttribute("aria-hidden", "true");\n      symbol.replaceWith(flag);\n    }\n    if (!isRot) {\n      const flag = row.querySelector(".deriv-real-flag");\n      if (flag) {\n        const demo = document.createElement("span");\n        demo.className = "direct-account-symbol";\n        demo.textContent = "D";\n        flag.replaceWith(demo);\n      }\n    }\n    if (isRot) row.querySelectorAll("[data-demo-reset],.direct-demo-reset").forEach((node) => node.remove());`,
+  `    const symbol = row.querySelector(".direct-account-symbol,.deriv-demo-coin,.deriv-real-flag");\n    if (isRot && symbol && !symbol.classList.contains("deriv-real-flag")) {\n      const flag = document.createElement("span");\n      flag.className = "deriv-real-flag";\n      flag.setAttribute("aria-hidden", "true");\n      symbol.replaceWith(flag);\n    }\n    if (!isRot) {\n      const flag = row.querySelector(".deriv-real-flag");\n      if (flag) {\n        const demo = document.createElement("span");\n        demo.className = "deriv-demo-coin";\n        demo.setAttribute("aria-hidden", "true");\n        flag.replaceWith(demo);\n      }\n    }\n    if (isRot) {\n      const em = row.querySelector("em");\n      if (em) {\n        const strong = document.createElement("strong");\n        strong.className = "marketing-rot-balance";\n        strong.textContent = money(ledger.rot);\n        em.replaceWith(strong);\n      }\n      row.querySelectorAll("[data-demo-reset],.direct-demo-reset").forEach((node) => node.remove());\n    }`,
+  "ROT flag and real-style balance row",
+);
+marketing = replaceOne(
+  marketing,
+  `  function renderTopAccount(ledger) {\n    const selectedView = view();\n    const visible = visibleBalance(ledger, selectedView);`,
+  `  function renderTopAccount(ledger) {\n    const selectedView = view();\n    const visible = visibleBalance(ledger, selectedView);\n    const topSwitch = document.querySelector(".top-account-switch");\n    if (topSwitch) {\n      topSwitch.classList.toggle("demo", selectedView === "dot");\n      topSwitch.classList.toggle("real", selectedView === "rot");\n      topSwitch.querySelectorAll("[data-account-kind]").forEach((tab) => {\n        const kind = String(tab.dataset.accountKind || "").toLowerCase();\n        const targetView = kind === "real" ? "rot" : "dot";\n        tab.dataset.marketingView = targetView;\n        tab.removeAttribute("data-account-id");\n        tab.classList.toggle("active", targetView === selectedView);\n      });\n      const summary = topSwitch.querySelector(".account-switch-summary");\n      const icon = summary?.querySelector(".direct-account-symbol,.deriv-demo-coin,.deriv-real-flag");\n      if (selectedView === "rot" && icon && !icon.classList.contains("deriv-real-flag")) {\n        const flag = document.createElement("span");\n        flag.className = "deriv-real-flag";\n        flag.setAttribute("aria-hidden", "true");\n        icon.replaceWith(flag);\n      } else if (selectedView === "dot" && icon?.classList.contains("deriv-real-flag")) {\n        const demo = document.createElement("span");\n        demo.className = "deriv-demo-coin";\n        demo.setAttribute("aria-hidden", "true");\n        icon.replaceWith(demo);\n      }\n    }`,
+  "top selector tabs and icon are UI-only",
 );
 marketing = replaceBetween(
   marketing,
@@ -83,7 +119,7 @@ marketing = replaceBetween(
 marketing = replaceOne(
   marketing,
   `    version: "20260821-marketing-dot-rot-v4-ui-only",`,
-  `    version: "20260821-marketing-dot-rot-v6-two-row-ui-only",`,
+  `    version: "20260821-marketing-dot-rot-v7-safe-two-view-ui",`,
   "marketing UI version",
 );
 marketing = replaceOne(
@@ -102,26 +138,29 @@ if (marketing.includes("One Deriv demo account") || marketing.includes("UI split
   throw new Error("marketing-ui-layout tutorial implementation banner survived production finalization");
 }
 for (const required of [
-  "return accounts.find((item) => isDotAccount(item)) || null",
+  "derivadmin-marketing-demo-ui-ledger-v6",
+  "Number(value.version) === 6",
   '.top-account-switch [data-account-id]',
   "rowId !== providerId) row.remove()",
-  '.direct-account-symbol,.deriv-demo-coin,.deriv-real-flag',
+  'row.dataset.accountKindRow = isRot ? "real" : "demo"',
   'flag.className = "deriv-real-flag"',
+  'strong.className = "marketing-rot-balance"',
+  'tab.removeAttribute("data-account-id")',
+  "tab.dataset.marketingView = targetView",
   "provider_managed_id: managedId",
   "display_balance: () => displayBalance()",
   "balance_for_view:",
   "render_now: renderMarketingUi",
-  "marketing-dot-rot-v6-two-row-ui-only",
+  "marketing-dot-rot-v7-safe-two-view-ui",
 ]) {
   if (!marketing.includes(required)) throw new Error(`marketing-ui-layout marketing invariant missing: ${required}`);
 }
 write(marketingPath, marketing);
 
 // ---------------------------------------------------------------------------
-// 3. Make the ordinary account renderer respect the UI-only projection.
-// It must not restore the raw provider balance or recreate the hidden real account
-// rows every render cycle. Synthetic DOT/ROT rows remain owned by the presentation
-// layer. This only changes DOM rendering; account data and backend state stay intact.
+// 3. The normal account renderer may retain backend account data, but it must not
+// recreate hidden real rows or repaint the UI split with provider total. These are
+// DOM-only filters; no account is deleted and no backend session is switched.
 // ---------------------------------------------------------------------------
 let runtime = read(runtimePath);
 runtime = replaceOne(
@@ -160,9 +199,9 @@ write(runtimePath, runtime);
 let premium = read(premiumPath);
 premium = premium.replace(
   /\/final-ui-shell-v2\.js\?v=[^"']+/g,
-  "/final-ui-shell-v2.js?v=20260821-runpanel-bottom-v3",
+  "/final-ui-shell-v2.js?v=20260821-runpanel-bottom-v4",
 );
-if (!premium.includes("/final-ui-shell-v2.js?v=20260821-runpanel-bottom-v3")) {
+if (!premium.includes("/final-ui-shell-v2.js?v=20260821-runpanel-bottom-v4")) {
   throw new Error("marketing-ui-layout shell cache-bust missing");
 }
 write(premiumPath, premium);
@@ -170,20 +209,20 @@ write(premiumPath, premium);
 let index = read(indexPath);
 index = index.replace(
   /\/final-premium-6f3\.js\?v=[^"']+/g,
-  "/final-premium-6f3.js?v=20260821-marketing-layout-v3",
+  "/final-premium-6f3.js?v=20260821-marketing-layout-v4",
 );
 index = index.replace(
   /\/direct-demo-reset-router-v1\.js\?v=[^"']+/g,
-  "/direct-demo-reset-router-v1.js?v=20260821-marketing-ui-v6",
+  "/direct-demo-reset-router-v1.js?v=20260821-marketing-ui-v7",
 );
 index = index.replace(
   /\/direct-runtime-ux-v4\.js\?v=[^"']+/g,
-  "/direct-runtime-ux-v4.js?v=20260821-marketing-balance-v8",
+  "/direct-runtime-ux-v4.js?v=20260821-marketing-balance-v9",
 );
 for (const required of [
-  "/final-premium-6f3.js?v=20260821-marketing-layout-v3",
-  "/direct-demo-reset-router-v1.js?v=20260821-marketing-ui-v6",
-  "/direct-runtime-ux-v4.js?v=20260821-marketing-balance-v8",
+  "/final-premium-6f3.js?v=20260821-marketing-layout-v4",
+  "/direct-demo-reset-router-v1.js?v=20260821-marketing-ui-v7",
+  "/direct-runtime-ux-v4.js?v=20260821-marketing-balance-v9",
 ]) {
   if (!index.includes(required)) throw new Error(`marketing-ui-layout cache invariant missing: ${required}`);
 }
@@ -191,7 +230,8 @@ write(indexPath, index);
 
 console.log("Marketing UI layout finalizer: Run totals restored below tab content");
 console.log("Marketing UI layout finalizer: tutorial implementation badge removed");
-console.log("Marketing UI layout finalizer: selector shows only DOT 75% and synthetic ROT 25%");
-console.log("Marketing UI layout finalizer: ROT uses the Real-style flag and extra linked real rows stay hidden");
-console.log("Marketing UI layout finalizer: selected 75/25 presentation balance survives normal runtime redraws");
+console.log("Marketing UI layout finalizer: fresh current provider balance is split 75% DOT / 25% ROT");
+console.log("Marketing UI layout finalizer: Demo/Real tabs are UI-only DOT/ROT selectors with no backend real-account ID");
+console.log("Marketing UI layout finalizer: selector shows only DOT plus synthetic ROT; extra linked real rows stay hidden");
+console.log("Marketing UI layout finalizer: ROT uses the Real-style flag and real-style balance row");
 console.log("Marketing UI layout finalizer: backend and Deriv execution path unchanged");
