@@ -98,8 +98,18 @@ class MarketingTutorialAccountTests(unittest.TestCase):
     def test_buy_ownership_is_not_blocked_by_global_history_hydration(self) -> None:
         source = (ROOT / "scripts" / "finalize-browser-buy-readiness-v1.mjs").read_text(encoding="utf-8")
         self.assertIn("account ownership no longer depends on global history hydration", source)
-        self.assertIn("if (!state.armed || !state.epoch || !state.lastAckAt) return false;", source)
-        self.assertNotIn("state.hydrationPending > 0) return false", source)
+        self.assertIn(
+            '`  function leaseAllowsBuy() {\\n    if (!state.armed || !state.epoch || !state.lastAckAt) return false;`',
+            source,
+        )
+        self.assertIn(
+            'if (fence.includes("state.hydrationPending > 0) return false"))',
+            source,
+        )
+        self.assertIn(
+            'throw new Error("browser-buy-readiness global hydration BUY lock survived")',
+            source,
+        )
         self.assertIn("ownership_ready:", source)
         self.assertIn("history_pending:", source)
         self.assertIn("each market remains unable to qualify until its own required Deriv history is ready", source)
