@@ -73,16 +73,27 @@ class MarketingTutorialAccountTests(unittest.TestCase):
 
     def test_final_production_selector_is_exactly_dot_plus_synthetic_rot(self) -> None:
         source = (ROOT / "scripts" / "finalize-marketing-ui-layout-v1.mjs").read_text(encoding="utf-8")
-        self.assertIn("selector shows only DOT 75% and synthetic ROT 25%", source)
-        self.assertIn("return accounts.find((item) => isDotAccount(item)) || null", source)
+        self.assertIn("selector shows only DOT plus synthetic ROT", source)
         self.assertIn('.top-account-switch [data-account-id]', source)
         self.assertIn("rowId !== providerId) row.remove()", source)
-        self.assertIn("id !== providerId) return", source)
-        self.assertIn("rowManagedId !== providerId", source)
-        self.assertIn("provider_managed_id: managedId", source)
+        self.assertIn('row.dataset.accountKindRow = isRot ? "real" : "demo"', source)
         self.assertIn('flag.className = "deriv-real-flag"', source)
-        self.assertIn('.direct-account-symbol,.deriv-demo-coin,.deriv-real-flag', source)
+        self.assertIn('strong.className = "marketing-rot-balance"', source)
         self.assertIn("extra linked real rows stay hidden", source)
+
+    def test_marketing_tabs_cannot_switch_to_hidden_real_backend_account(self) -> None:
+        source = (ROOT / "scripts" / "finalize-marketing-ui-layout-v1.mjs").read_text(encoding="utf-8")
+        self.assertIn('tab.removeAttribute("data-account-id")', source)
+        self.assertIn("tab.dataset.marketingView = targetView", source)
+        self.assertIn("Demo/Real tabs are UI-only DOT/ROT selectors", source)
+        self.assertIn("with no backend real-account ID", source)
+
+    def test_fresh_deploy_rebases_ui_split_from_current_provider_balance(self) -> None:
+        source = (ROOT / "scripts" / "finalize-marketing-ui-layout-v1.mjs").read_text(encoding="utf-8")
+        self.assertIn("derivadmin-marketing-demo-ui-ledger-v6", source)
+        self.assertIn("Number(value.version) === 6", source)
+        self.assertIn("fresh current provider balance is split 75% DOT / 25% ROT", source)
+        self.assertIn("marketing-dot-rot-v7-safe-two-view-ui", source)
 
     def test_buy_ownership_is_not_blocked_by_global_history_hydration(self) -> None:
         source = (ROOT / "scripts" / "finalize-browser-buy-readiness-v1.mjs").read_text(encoding="utf-8")
@@ -119,9 +130,9 @@ class MarketingTutorialAccountTests(unittest.TestCase):
     def test_frontend_asset_is_cache_busted_in_final_production_layers(self) -> None:
         marketing = (ROOT / "scripts" / "finalize-marketing-ui-layout-v1.mjs").read_text(encoding="utf-8")
         buy = (ROOT / "scripts" / "finalize-browser-buy-readiness-v1.mjs").read_text(encoding="utf-8")
-        self.assertIn("20260821-marketing-ui-v6", marketing)
-        self.assertIn("20260821-marketing-balance-v8", marketing)
-        self.assertIn("20260821-runpanel-bottom-v3", marketing)
+        self.assertIn("20260821-marketing-ui-v7", marketing)
+        self.assertIn("20260821-marketing-balance-v9", marketing)
+        self.assertIn("20260821-runpanel-bottom-v4", marketing)
         self.assertIn("20260821-buy-readiness-v4", buy)
         self.assertIn("20260821-buy-readiness-diagnostics-v2", buy)
 
