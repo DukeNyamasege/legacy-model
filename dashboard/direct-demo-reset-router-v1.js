@@ -40,8 +40,7 @@
     const selected = accounts.find((item) => Number(item?.managed_account_id || 0) === selectedId)
       || accounts.find((item) => item?.selected)
       || null;
-    if (isDotAccount(selected)) return selected;
-    return accounts.find(isDotAccount) || null;
+    return isDotAccount(selected) ? selected : null;
   }
 
   function active() {
@@ -293,7 +292,11 @@
       badge.style.cssText = "margin:7px 12px 0;padding:6px 9px;border-radius:9px;border:1px solid rgba(84,200,255,.2);background:rgba(8,24,40,.72);display:flex;align-items:center;gap:7px;font-size:8px;line-height:1.2;letter-spacing:.02em";
       (panel.querySelector(".run-panel-sheet") || panel).prepend(badge);
     }
-    badge.innerHTML = '<span style="font-weight:900;text-transform:uppercase">Tutorial</span><b>One Deriv demo account</b><small style="opacity:.7">UI split · DOT 75% · ROT 25%</small>';
+    const signature = "ui-only-v4";
+    if (badge.dataset.signature !== signature) {
+      badge.dataset.signature = signature;
+      badge.innerHTML = '<span style="font-weight:900;text-transform:uppercase">Tutorial</span><b>One Deriv demo account</b><small style="opacity:.7">UI split · DOT 75% · ROT 25%</small>';
+    }
   }
 
   function renderMarketingUi() {
