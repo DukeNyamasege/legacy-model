@@ -31,6 +31,7 @@ COPY scripts/finalize-history-preload-runpanel-v1.mjs ./scripts/finalize-history
 COPY scripts/finalize-browser-buy-readiness-v1.mjs ./scripts/finalize-browser-buy-readiness-v1.mjs
 COPY scripts/finalize-marketing-ui-layout-v1.mjs ./scripts/finalize-marketing-ui-layout-v1.mjs
 COPY scripts/finalize-start-arm-reconciliation-v1.mjs ./scripts/finalize-start-arm-reconciliation-v1.mjs
+COPY scripts/finalize-offline-browser-recovery-v1.mjs ./scripts/finalize-offline-browser-recovery-v1.mjs
 COPY scripts/export-deriv-quill-icons-v2.mjs ./scripts/export-deriv-quill-icons-v2.mjs
 COPY scripts/inject-frontend-assets.mjs ./scripts/inject-frontend-assets.mjs
 
@@ -66,8 +67,9 @@ RUN node scripts/build-direct-runtime-v2.mjs \
 # snapshot freezes the exact loaded bot, history-preload requires provider history,
 # BUY readiness keeps market history out of the account-wide ownership fence,
 # marketing-ui-layout restores the approved visual layout without changing the
-# one-account Deriv/backend execution path, and Start-arm reconciliation runs last
-# so a timed-out control POST can recover the already-persisted browser epoch.
+# one-account Deriv/backend execution path, Start-arm reconciliation recovers a
+# timed-out persisted browser epoch, and offline-browser recovery runs last so
+# network loss pauses socket/poll retries without stopping Auto Trading.
 RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && cp dashboard/direct-financial-fence-v1.js dist/direct-financial-fence-v1.js \
   && cp dashboard/direct-socket-control-v1.js dist/direct-socket-control-v1.js \
@@ -106,6 +108,7 @@ RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && node --check scripts/finalize-browser-buy-readiness-v1.mjs \
   && node --check scripts/finalize-marketing-ui-layout-v1.mjs \
   && node --check scripts/finalize-start-arm-reconciliation-v1.mjs \
+  && node --check scripts/finalize-offline-browser-recovery-v1.mjs \
   && node --check dist/final-premium-6f3.js \
   && node --check dist/final-ui-shell-v2.js \
   && node --check dist/deriv-direct-execution-v2.js \
@@ -144,6 +147,7 @@ RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && node scripts/finalize-browser-buy-readiness-v1.mjs \
   && node scripts/finalize-marketing-ui-layout-v1.mjs \
   && node scripts/finalize-start-arm-reconciliation-v1.mjs \
+  && node scripts/finalize-offline-browser-recovery-v1.mjs \
   && node --check dist/final-premium-6f3.js \
   && node --check dist/final-ui-shell-v2.js \
   && node --check dist/deriv-direct-execution-v2.js \
@@ -153,7 +157,8 @@ RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && node --check dist/direct-interaction-guard-v3.js \
   && node --check dist/direct-strategy-persistence-v1.js \
   && node --check dist/direct-transaction-ledger-v6.js \
-  && node --check dist/direct-run-panel-authority-v6.js
+  && node --check dist/direct-run-panel-authority-v6.js \
+  && node --check dist/vps-api-boundary-v2.js
 
 FROM nginx:1.27-alpine AS frontend
 
