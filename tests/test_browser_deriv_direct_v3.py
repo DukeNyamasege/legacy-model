@@ -118,6 +118,32 @@ class BrowserDerivDirectV3Tests(unittest.TestCase):
         self.assertIn('await startTradingFromContext("builder");', save_builder)
         self.assertNotIn("await startBrowserDirectStrategy(snapshot.strategy);", save_builder)
 
+    def test_browser_offline_pauses_socket_and_same_origin_polling(self) -> None:
+        finalizer = self.text("scripts/finalize-offline-browser-recovery-v1.mjs")
+        dockerfile = self.text("Dockerfile.frontend")
+        for marker in (
+            'const PUBLIC_WS_URL = "wss://api.derivws.com/trading/v1/options/ws/public"',
+            "function browserNetworkOnline()",
+            "navigator.onLine !== false",
+            "Browser internet connection is offline; waiting for connectivity",
+            'window.addEventListener("online"',
+            'window.addEventListener("offline"',
+            "browser_online: navigator.onLine !== false",
+            "execution will resume automatically when connectivity returns",
+            "function offlineCachedResponse(path)",
+            "sameOrigin && navigator.onLine === false",
+            'route === "/me/live-snapshot"',
+            '"X-DerivAdmin-Offline": "1"',
+            "writes_fail_closed=true",
+        ):
+            self.assertIn(marker, finalizer)
+        self.assertIn("new WebSocket(PUBLIC_WS_URL)", finalizer)
+        self.assertIn("finalize-offline-browser-recovery-v1.mjs", dockerfile)
+        self.assertGreater(
+            dockerfile.rfind("node scripts/finalize-offline-browser-recovery-v1.mjs"),
+            dockerfile.rfind("node scripts/finalize-start-arm-reconciliation-v1.mjs"),
+        )
+
     def test_status_reason_cannot_exceed_database_column(self) -> None:
         authority = self.text("app/browser_direct_lease_preservation_authority.py")
         self.assertIn(")[:160]", authority)
