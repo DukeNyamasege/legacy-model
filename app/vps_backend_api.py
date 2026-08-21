@@ -14,7 +14,6 @@ from app.automation_scheduler_action5 import install_automation_scheduler_action
 from app.automation_scheduler_v2_authority import install_automation_scheduler_v2_authority
 from app.final_linked_accounts_6f2 import install_final_linked_accounts_6f2
 from app.lipana_mpesa_action6b import install_lipana_mpesa_action6b
-from app.marketing_tutorial_account import install_marketing_tutorial_account
 from app.premium_access_api import install_premium_access_action6a
 from app.premium_renewal_action6d import install_premium_renewal_action6d
 from app.public_testing_access import (
@@ -73,12 +72,10 @@ install_vps_runtime_policy_hotfix(app)
 # last for live/manual transport: browser -> Deriv for OTP/WSS/proposal/BUY;
 # VPS -> control/settings plus OPEN/SETTLED receipts only.
 install_vps_cross_device_runtime_sync(app)
-# The marketing tutorial wrapper is intentionally after the final browser-direct
-# routes. It can present ROT92069206 while forcing the provider bootstrap, arm and
-# receipts to remain on DOT93427967 demo. Every ordinary account delegates to the
-# already-final fast production endpoints unchanged.
-install_marketing_tutorial_account(app)
-# Premium/payment middleware is still the final access-control layer.
+# Marketing/tutorial DOT/ROT splitting is presentation-only in the browser.
+# Do not wrap /me, /me/accounts, account switching, reset, bootstrap, arm, receipt,
+# or any financial/control route for that presentation. The provider and backend
+# see the same standard Deriv demo account used by every other demo user.
 install_premium_access_action6a(app)
 
 app.state.production_frontend_host = "vps_frontend"
