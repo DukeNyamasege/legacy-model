@@ -13,16 +13,9 @@ class MarketingTutorialAccountTests(unittest.TestCase):
         self.assertNotIn("from app.marketing_tutorial_account import", source)
         self.assertNotIn("install_marketing_tutorial_account(app)", source)
         self.assertIn("Marketing/tutorial DOT/ROT splitting is presentation-only in the browser", source)
-        for protected_path in (
-            "/me",
-            "/me/accounts",
-            "/me/switch-account",
-            "/me/reset-demo-balance",
-            "/me/direct-execution/bootstrap",
-            "/me/direct-execution/arm",
-            "/me/direct-execution/receipt",
-        ):
-            self.assertIn(protected_path, source)
+        self.assertIn("install_final_linked_accounts_6f2(app)", source)
+        self.assertIn("install_vps_demo_balance_reset(app)", source)
+        self.assertIn("install_vps_cross_device_runtime_sync(app)", source)
 
     def test_frontend_uses_exact_ui_pair_and_75_25_split(self) -> None:
         source = (ROOT / "dashboard" / "direct-demo-reset-router-v1.js").read_text(encoding="utf-8")
