@@ -99,6 +99,17 @@ class BrowserDerivDirectV3Tests(unittest.TestCase):
         self.assertIn("Scheduling remains server-owned", backend)
         self.assertIn('production_architecture = "browser_deriv_direct_v3"', backend)
 
+    def test_run_panel_and_builder_share_one_manual_start_authority(self) -> None:
+        finalizer = self.text("scripts/finalize-browser-direct-start-v1.mjs")
+        self.assertIn('await startTradingFromContext("builder");', finalizer)
+        self.assertIn(
+            "browserStrategy = window.DERIVADMIN_DIRECT_EXECUTION_V1?.state?.().strategy || null",
+            finalizer,
+        )
+        self.assertIn('source: selected.source || "browser_direct_current"', finalizer)
+        self.assertIn("run_builder_start_identical=true", finalizer)
+        self.assertNotIn("await startBrowserDirectStrategy(snapshot.strategy);", finalizer)
+
     def test_status_reason_cannot_exceed_database_column(self) -> None:
         authority = self.text("app/browser_direct_lease_preservation_authority.py")
         self.assertIn(")[:160]", authority)
