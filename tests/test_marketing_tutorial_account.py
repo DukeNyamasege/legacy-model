@@ -147,6 +147,18 @@ class MarketingTutorialAccountTests(unittest.TestCase):
         self.assertIn("firstError.message || firstError.code", source)
         self.assertIn("Deriv errors-array history failures retry", source)
 
+    def test_public_websocket_finalizer_preserves_oauth_otp_helper_scope(self) -> None:
+        source = (ROOT / "scripts" / "finalize-browser-buy-readiness-v1.mjs").read_text(encoding="utf-8")
+        self.assertIn('engine.includes("  function clearDirectBrowserCredential() {")', source)
+        self.assertIn('"async function directBrowserBootstrap("', source)
+        self.assertIn('"async function requestDirectDerivOtp("', source)
+        self.assertIn('"function directDerivError("', source)
+        self.assertIn('"const wsUrl = await requestDirectDerivOtp(false);"', source)
+        self.assertIn("single-owner public market WebSocket transport without deleting OAuth helpers", source)
+        self.assertIn("arm before authenticated private Deriv connection", source)
+        self.assertIn("eager private Deriv connection still runs before arm", source)
+        self.assertIn("OAuth bootstrap and requestDirectDerivOtp helpers survive", source)
+
     def test_finalizers_run_in_safe_order(self) -> None:
         source = (ROOT / "Dockerfile.frontend").read_text(encoding="utf-8")
         copy_history = source.index("COPY scripts/finalize-history-preload-runpanel-v1.mjs")
@@ -170,7 +182,7 @@ class MarketingTutorialAccountTests(unittest.TestCase):
         self.assertIn("20260821-marketing-balance-v9", marketing)
         self.assertIn("20260821-runpanel-bottom-v4", marketing)
         self.assertIn("20260821-public-history-errors-v1", buy)
-        self.assertIn("20260821-public-ws-recovery-v1", buy)
+        self.assertIn("20260821-otp-helper-preserved-v2", buy)
 
 
 if __name__ == "__main__":
