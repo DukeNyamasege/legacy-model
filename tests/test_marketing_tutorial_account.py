@@ -97,17 +97,17 @@ class MarketingTutorialAccountTests(unittest.TestCase):
 
     def test_buy_ownership_is_not_blocked_by_global_history_hydration(self) -> None:
         source = (ROOT / "scripts" / "finalize-browser-buy-readiness-v1.mjs").read_text(encoding="utf-8")
-        self.assertIn("account ownership no longer depends on global history hydration", source)
+        self.assertIn("current event-owned browser epoch no longer depends on global history hydration", source)
         self.assertIn(
-            '`  function leaseAllowsBuy() {\\n    if (!state.armed || !state.epoch || !state.lastAckAt) return false;`',
+            '`  function leaseAllowsBuy() {\\n    return Boolean(state.armed && state.epoch);\\n  }`',
             source,
         )
         self.assertIn(
-            'if (fence.includes("state.hydrationPending > 0) return false"))',
+            'if (fence.includes("state.armed && state.epoch && state.hydrationPending <= 0"))',
             source,
         )
         self.assertIn(
-            'throw new Error("browser-buy-readiness global hydration BUY lock survived")',
+            'throw new Error("browser-buy-readiness current global hydration BUY lock survived")',
             source,
         )
         self.assertIn("ownership_ready:", source)
@@ -116,10 +116,10 @@ class MarketingTutorialAccountTests(unittest.TestCase):
 
     def test_buy_diagnostics_separate_ownership_history_and_conditions(self) -> None:
         source = (ROOT / "scripts" / "finalize-browser-buy-readiness-v1.mjs").read_text(encoding="utf-8")
-        self.assertIn("browser financial ownership is not ready yet", source)
+        self.assertIn("browser financial ownership is not armed yet", source)
         self.assertIn("loading the required previous Deriv ticks", source)
         self.assertIn("financial.history_pending || financial.hydrationPending", source)
-        self.assertIn("60-second diagnostics distinguish ownership, history and unmet strategy conditions", source)
+        self.assertIn("60-second diagnostics distinguish Start ownership, history and unmet strategy conditions", source)
 
     def test_finalizers_run_in_safe_order(self) -> None:
         source = (ROOT / "Dockerfile.frontend").read_text(encoding="utf-8")
@@ -143,8 +143,8 @@ class MarketingTutorialAccountTests(unittest.TestCase):
         self.assertIn("20260821-marketing-ui-v7", marketing)
         self.assertIn("20260821-marketing-balance-v9", marketing)
         self.assertIn("20260821-runpanel-bottom-v4", marketing)
-        self.assertIn("20260821-buy-readiness-v4", buy)
-        self.assertIn("20260821-buy-readiness-diagnostics-v2", buy)
+        self.assertIn("20260821-buy-readiness-v5", buy)
+        self.assertIn("20260821-buy-readiness-diagnostics-v3", buy)
 
 
 if __name__ == "__main__":
