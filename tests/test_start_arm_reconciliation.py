@@ -36,6 +36,7 @@ class StartArmReconciliationTests(unittest.TestCase):
         self.assertIn('Bearer [redacted]', source)
         self.assertIn('otp=[redacted]', source)
         self.assertIn('diagnostics.last_execution_error', source)
+        self.assertIn('Patch that finalized engine directly', source)
 
     def test_reconciliation_is_final_frontend_production_layer(self) -> None:
         docker = self.text("Dockerfile.frontend")
@@ -48,11 +49,11 @@ class StartArmReconciliationTests(unittest.TestCase):
         reconciliation = docker.rfind("node scripts/finalize-start-arm-reconciliation-v1.mjs")
         self.assertGreater(reconciliation, marketing)
 
-    def test_new_engine_and_shell_assets_are_cache_busted(self) -> None:
+    def test_execution_engine_asset_is_cache_busted(self) -> None:
         source = self.text("scripts/finalize-start-arm-reconciliation-v1.mjs")
-        self.assertIn("20260821-start-arm-reconcile-v1", source)
-        self.assertIn("20260821-start-arm-diagnostics-v1", source)
-        self.assertIn("20260821-start-arm-shell-v1", source)
+        self.assertIn("20260821-start-arm-reconcile-v2", source)
+        self.assertNotIn("start-arm-diagnostics-v1", source)
+        self.assertNotIn("start-arm-shell-v1", source)
 
 
 if __name__ == "__main__":
