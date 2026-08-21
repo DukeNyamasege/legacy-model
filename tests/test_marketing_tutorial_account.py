@@ -84,22 +84,46 @@ class MarketingTutorialAccountTests(unittest.TestCase):
         self.assertIn('.direct-account-symbol,.deriv-demo-coin,.deriv-real-flag', source)
         self.assertIn("extra linked real rows stay hidden", source)
 
-    def test_marketing_layout_finalizer_runs_after_history_finalizer(self) -> None:
+    def test_buy_ownership_is_not_blocked_by_global_history_hydration(self) -> None:
+        source = (ROOT / "scripts" / "finalize-browser-buy-readiness-v1.mjs").read_text(encoding="utf-8")
+        self.assertIn("account ownership no longer depends on global history hydration", source)
+        self.assertIn("if (!state.armed || !state.epoch || !state.lastAckAt) return false;", source)
+        self.assertNotIn("state.hydrationPending > 0) return false", source)
+        self.assertIn("ownership_ready:", source)
+        self.assertIn("history_pending:", source)
+        self.assertIn("each market remains unable to qualify until its own required Deriv history is ready", source)
+
+    def test_buy_diagnostics_separate_ownership_history_and_conditions(self) -> None:
+        source = (ROOT / "scripts" / "finalize-browser-buy-readiness-v1.mjs").read_text(encoding="utf-8")
+        self.assertIn("browser financial ownership is not ready yet", source)
+        self.assertIn("loading the required previous Deriv ticks", source)
+        self.assertIn("financial.history_pending || financial.hydrationPending", source)
+        self.assertIn("60-second diagnostics distinguish ownership, history and unmet strategy conditions", source)
+
+    def test_finalizers_run_in_safe_order(self) -> None:
         source = (ROOT / "Dockerfile.frontend").read_text(encoding="utf-8")
         copy_history = source.index("COPY scripts/finalize-history-preload-runpanel-v1.mjs")
+        copy_buy = source.index("COPY scripts/finalize-browser-buy-readiness-v1.mjs")
         copy_layout = source.index("COPY scripts/finalize-marketing-ui-layout-v1.mjs")
         run_history = source.rindex("node scripts/finalize-history-preload-runpanel-v1.mjs")
+        run_buy = source.rindex("node scripts/finalize-browser-buy-readiness-v1.mjs")
         run_layout = source.rindex("node scripts/finalize-marketing-ui-layout-v1.mjs")
-        self.assertLess(copy_history, copy_layout)
-        self.assertLess(run_history, run_layout)
+        self.assertLess(copy_history, copy_buy)
+        self.assertLess(copy_buy, copy_layout)
+        self.assertLess(run_history, run_buy)
+        self.assertLess(run_buy, run_layout)
         self.assertIn("node --check dist/direct-runtime-ux-v4.js", source)
         self.assertIn("node --check dist/direct-demo-reset-router-v1.js", source)
+        self.assertIn("node --check dist/direct-financial-fence-v1.js", source)
 
-    def test_frontend_asset_is_cache_busted_in_final_production_layer(self) -> None:
-        source = (ROOT / "scripts" / "finalize-marketing-ui-layout-v1.mjs").read_text(encoding="utf-8")
-        self.assertIn("20260821-marketing-ui-v6", source)
-        self.assertIn("20260821-marketing-balance-v8", source)
-        self.assertIn("20260821-runpanel-bottom-v3", source)
+    def test_frontend_asset_is_cache_busted_in_final_production_layers(self) -> None:
+        marketing = (ROOT / "scripts" / "finalize-marketing-ui-layout-v1.mjs").read_text(encoding="utf-8")
+        buy = (ROOT / "scripts" / "finalize-browser-buy-readiness-v1.mjs").read_text(encoding="utf-8")
+        self.assertIn("20260821-marketing-ui-v6", marketing)
+        self.assertIn("20260821-marketing-balance-v8", marketing)
+        self.assertIn("20260821-runpanel-bottom-v3", marketing)
+        self.assertIn("20260821-buy-readiness-v4", buy)
+        self.assertIn("20260821-buy-readiness-diagnostics-v2", buy)
 
 
 if __name__ == "__main__":
