@@ -112,14 +112,40 @@ class MarketingTutorialAccountTests(unittest.TestCase):
         )
         self.assertIn("ownership_ready:", source)
         self.assertIn("history_pending:", source)
-        self.assertIn("each market remains unable to qualify until its own required Deriv history is ready", source)
 
     def test_buy_diagnostics_separate_ownership_history_and_conditions(self) -> None:
         source = (ROOT / "scripts" / "finalize-browser-buy-readiness-v1.mjs").read_text(encoding="utf-8")
         self.assertIn("browser financial ownership is not armed yet", source)
         self.assertIn("loading the required previous Deriv ticks", source)
         self.assertIn("financial.history_pending || financial.hydrationPending", source)
-        self.assertIn("60-second diagnostics distinguish Start ownership, history and unmet strategy conditions", source)
+        self.assertIn("observable public reconnect diagnosis", source)
+
+    def test_public_market_websocket_uses_one_current_socket_and_bounded_recovery(self) -> None:
+        source = (ROOT / "scripts" / "finalize-browser-buy-readiness-v1.mjs").read_text(encoding="utf-8")
+        self.assertIn("Public Deriv WebSocket opening handshake exceeded 15 seconds", source)
+        self.assertIn("state.publicWs !== ws || generation !== state.publicGeneration", source)
+        self.assertIn("publicReconnectTimer", source)
+        self.assertIn("publicRetryMs", source)
+        self.assertIn("Math.min(15000", source)
+        self.assertIn("connectPublic().catch(() => {})", source)
+        self.assertIn("if (!state.running || state.publicReconnectTimer) return", source)
+        self.assertIn("Auto Trading remains ON while public market transport recovers", source)
+        self.assertIn('if (engine.includes("setTimeout(connectPublic, 700)"))', source)
+        self.assertIn("legacy fixed public reconnect loop survived", source)
+
+    def test_public_socket_stale_close_cannot_clear_replacement(self) -> None:
+        source = (ROOT / "scripts" / "finalize-browser-buy-readiness-v1.mjs").read_text(encoding="utf-8")
+        self.assertIn("const current = state.publicWs === ws && generation === state.publicGeneration", source)
+        self.assertIn("if (!current)", source)
+        self.assertIn("state.publicWs = null", source)
+        self.assertIn("Stale public Deriv WebSocket closed after replacement", source)
+
+    def test_current_deriv_errors_array_is_handled_during_history_hydration(self) -> None:
+        source = (ROOT / "scripts" / "finalize-browser-buy-readiness-v1.mjs").read_text(encoding="utf-8")
+        self.assertIn("Array.isArray(message?.errors)", source)
+        self.assertIn("const firstError = message?.error", source)
+        self.assertIn("firstError.message || firstError.code", source)
+        self.assertIn("Deriv errors-array history failures retry", source)
 
     def test_finalizers_run_in_safe_order(self) -> None:
         source = (ROOT / "Dockerfile.frontend").read_text(encoding="utf-8")
@@ -143,8 +169,8 @@ class MarketingTutorialAccountTests(unittest.TestCase):
         self.assertIn("20260821-marketing-ui-v7", marketing)
         self.assertIn("20260821-marketing-balance-v9", marketing)
         self.assertIn("20260821-runpanel-bottom-v4", marketing)
-        self.assertIn("20260821-buy-readiness-v5", buy)
-        self.assertIn("20260821-buy-readiness-diagnostics-v3", buy)
+        self.assertIn("20260821-public-history-errors-v1", buy)
+        self.assertIn("20260821-public-ws-recovery-v1", buy)
 
 
 if __name__ == "__main__":
