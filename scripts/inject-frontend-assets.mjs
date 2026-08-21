@@ -20,7 +20,7 @@ const scripts = [
   ["direct-ui-cleanup-v1.js", "20260820-direct-cleanup-v3-canonical-run-panel"],
   ["direct-builder-loaded-v2.js", "20260818-builder-loaded-v2"],
   ["direct-runtime-ux-v4.js", "20260818-runtime-ux-v6"],
-  ["direct-demo-reset-router-v1.js", "20260821-marketing-dot-rot-v3-partitions"],
+  ["direct-demo-reset-router-v1.js", "20260821-marketing-dot-rot-v4-ui-only"],
   ["direct-transaction-ledger-v6.js", "20260820-exit-digit-v12"],
   ["direct-run-panel-authority-v6.js", "20260819-single-run-panel-v3"],
   ["mobile-layout-authority-v1.js", "20260819-right-quarter-drawer-v6-right-edge"],
