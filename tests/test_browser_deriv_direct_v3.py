@@ -108,7 +108,15 @@ class BrowserDerivDirectV3Tests(unittest.TestCase):
         )
         self.assertIn('source: selected.source || "browser_direct_current"', finalizer)
         self.assertIn("run_builder_start_identical=true", finalizer)
-        self.assertNotIn("await startBrowserDirectStrategy(snapshot.strategy);", finalizer)
+
+        # Scope the negative assertion to the generated saveBuilder template.
+        # The finalizer intentionally contains the legacy string later as a
+        # fail-closed assertion that aborts the build if that old path survives.
+        save_builder = finalizer.split("const saveBuilder = `", 1)[1].split(
+            "`;\n\nshell = replaceBetween", 1
+        )[0]
+        self.assertIn('await startTradingFromContext("builder");', save_builder)
+        self.assertNotIn("await startBrowserDirectStrategy(snapshot.strategy);", save_builder)
 
     def test_status_reason_cannot_exceed_database_column(self) -> None:
         authority = self.text("app/browser_direct_lease_preservation_authority.py")
