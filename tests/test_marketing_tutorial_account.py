@@ -24,7 +24,6 @@ class MarketingTutorialAccountTests(unittest.TestCase):
         self.assertIn("const DOT_SHARE = 0.75", source)
         self.assertIn("const ROT_SHARE = 0.25", source)
         self.assertIn("provider - rot", source)
-        self.assertIn("UI split · DOT 75% · ROT 25%", source)
 
     def test_frontend_switch_is_visual_only_and_keeps_one_managed_account(self) -> None:
         source = (ROOT / "dashboard" / "direct-demo-reset-router-v1.js").read_text(encoding="utf-8")
@@ -61,12 +60,91 @@ class MarketingTutorialAccountTests(unittest.TestCase):
         self.assertIn("detail.balance = visibleBalance(ledger)", source)
         self.assertIn("writeOwners({})", source)
 
-    def test_frontend_asset_is_cache_busted(self) -> None:
-        source = (ROOT / "scripts" / "inject-frontend-assets.mjs").read_text(encoding="utf-8")
+    def test_final_production_layer_removes_banner_and_restores_lower_stats(self) -> None:
+        source = (ROOT / "scripts" / "finalize-marketing-ui-layout-v1.mjs").read_text(encoding="utf-8")
+        self.assertIn("Run totals restored below tab content", source)
+        self.assertIn("tutorial implementation badge removed", source)
+        self.assertIn("run panel totals are not below tab content", source)
+        self.assertIn('document.querySelectorAll(".marketing-tutorial-runtime-badge")', source)
+        self.assertIn("display_balance: () => displayBalance()", source)
+        self.assertIn("marketingUi.display_balance?.()", source)
+        self.assertIn("if (row.dataset.marketingView) return;", source)
+        self.assertIn("backend and Deriv execution path unchanged", source)
+
+    def test_final_production_selector_is_exactly_dot_plus_synthetic_rot(self) -> None:
+        source = (ROOT / "scripts" / "finalize-marketing-ui-layout-v1.mjs").read_text(encoding="utf-8")
+        self.assertIn("selector shows only DOT plus synthetic ROT", source)
+        self.assertIn('.top-account-switch [data-account-id]', source)
+        self.assertIn("rowId !== providerId) row.remove()", source)
+        self.assertIn('row.dataset.accountKindRow = isRot ? "real" : "demo"', source)
+        self.assertIn('flag.className = "deriv-real-flag"', source)
+        self.assertIn('strong.className = "marketing-rot-balance"', source)
+        self.assertIn("extra linked real rows stay hidden", source)
+
+    def test_marketing_tabs_cannot_switch_to_hidden_real_backend_account(self) -> None:
+        source = (ROOT / "scripts" / "finalize-marketing-ui-layout-v1.mjs").read_text(encoding="utf-8")
+        self.assertIn('tab.removeAttribute("data-account-id")', source)
+        self.assertIn("tab.dataset.marketingView = targetView", source)
+        self.assertIn("Demo/Real tabs are UI-only DOT/ROT selectors", source)
+        self.assertIn("with no backend real-account ID", source)
+
+    def test_fresh_deploy_rebases_ui_split_from_current_provider_balance(self) -> None:
+        source = (ROOT / "scripts" / "finalize-marketing-ui-layout-v1.mjs").read_text(encoding="utf-8")
+        self.assertIn("derivadmin-marketing-demo-ui-ledger-v6", source)
+        self.assertIn("Number(value.version) === 6", source)
+        self.assertIn("fresh current provider balance is split 75% DOT / 25% ROT", source)
+        self.assertIn("marketing-dot-rot-v7-safe-two-view-ui", source)
+
+    def test_buy_ownership_is_not_blocked_by_global_history_hydration(self) -> None:
+        source = (ROOT / "scripts" / "finalize-browser-buy-readiness-v1.mjs").read_text(encoding="utf-8")
+        self.assertIn("current event-owned browser epoch no longer depends on global history hydration", source)
         self.assertIn(
-            '["direct-demo-reset-router-v1.js", "20260821-marketing-dot-rot-v4-ui-only"]',
+            '`  function leaseAllowsBuy() {\\n    return Boolean(state.armed && state.epoch);\\n  }`',
             source,
         )
+        self.assertIn(
+            'if (fence.includes("state.armed && state.epoch && state.hydrationPending <= 0"))',
+            source,
+        )
+        self.assertIn(
+            'throw new Error("browser-buy-readiness current global hydration BUY lock survived")',
+            source,
+        )
+        self.assertIn("ownership_ready:", source)
+        self.assertIn("history_pending:", source)
+        self.assertIn("each market remains unable to qualify until its own required Deriv history is ready", source)
+
+    def test_buy_diagnostics_separate_ownership_history_and_conditions(self) -> None:
+        source = (ROOT / "scripts" / "finalize-browser-buy-readiness-v1.mjs").read_text(encoding="utf-8")
+        self.assertIn("browser financial ownership is not armed yet", source)
+        self.assertIn("loading the required previous Deriv ticks", source)
+        self.assertIn("financial.history_pending || financial.hydrationPending", source)
+        self.assertIn("60-second diagnostics distinguish Start ownership, history and unmet strategy conditions", source)
+
+    def test_finalizers_run_in_safe_order(self) -> None:
+        source = (ROOT / "Dockerfile.frontend").read_text(encoding="utf-8")
+        copy_history = source.index("COPY scripts/finalize-history-preload-runpanel-v1.mjs")
+        copy_buy = source.index("COPY scripts/finalize-browser-buy-readiness-v1.mjs")
+        copy_layout = source.index("COPY scripts/finalize-marketing-ui-layout-v1.mjs")
+        run_history = source.rindex("node scripts/finalize-history-preload-runpanel-v1.mjs")
+        run_buy = source.rindex("node scripts/finalize-browser-buy-readiness-v1.mjs")
+        run_layout = source.rindex("node scripts/finalize-marketing-ui-layout-v1.mjs")
+        self.assertLess(copy_history, copy_buy)
+        self.assertLess(copy_buy, copy_layout)
+        self.assertLess(run_history, run_buy)
+        self.assertLess(run_buy, run_layout)
+        self.assertIn("node --check dist/direct-runtime-ux-v4.js", source)
+        self.assertIn("node --check dist/direct-demo-reset-router-v1.js", source)
+        self.assertIn("node --check dist/direct-financial-fence-v1.js", source)
+
+    def test_frontend_asset_is_cache_busted_in_final_production_layers(self) -> None:
+        marketing = (ROOT / "scripts" / "finalize-marketing-ui-layout-v1.mjs").read_text(encoding="utf-8")
+        buy = (ROOT / "scripts" / "finalize-browser-buy-readiness-v1.mjs").read_text(encoding="utf-8")
+        self.assertIn("20260821-marketing-ui-v7", marketing)
+        self.assertIn("20260821-marketing-balance-v9", marketing)
+        self.assertIn("20260821-runpanel-bottom-v4", marketing)
+        self.assertIn("20260821-buy-readiness-v5", buy)
+        self.assertIn("20260821-buy-readiness-diagnostics-v3", buy)
 
 
 if __name__ == "__main__":
