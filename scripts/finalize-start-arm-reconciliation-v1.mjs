@@ -1,8 +1,6 @@
 import fs from "node:fs";
 
 const enginePath = "dist/deriv-direct-execution-v2.js";
-const shellPath = "dist/final-ui-shell-v2.js";
-const premiumPath = "dist/final-premium-6f3.js";
 const indexPath = "dist/index.html";
 
 function read(path) {
@@ -45,6 +43,16 @@ engine = replaceBetween(
   "same-epoch Start arm reconciliation",
 );
 
+// The 60-second diagnosis is generated into the execution engine by the exact
+// Builder diagnostics finalizer. Patch that finalized engine directly so the
+// current Start failure is visible instead of being hidden by a generic message.
+engine = replaceOne(
+  engine,
+  '    if (!state.armed) return "Auto Trading is ON; Start control synchronization is retrying. Browser execution is not armed yet.";',
+  `    if (!state.armed) {\n      const startError = String(diagnostics.last_execution_error || \"\")\n        .replace(/bearer\\s+[^\\s]+/gi, \"Bearer [redacted]\")\n        .replace(/otp=[^&\\s]+/gi, \"otp=[redacted]\")\n        .slice(0, 160);\n      return startError\n        ? \`Auto Trading is ON; Start control synchronization is retrying. Browser execution is not armed yet. Last Start error: \${startError}\`\n        : \"Auto Trading is ON; Start control synchronization is retrying. Browser execution is not armed yet.\";\n    }`,
+  "visible Start failure diagnosis",
+);
+
 for (const required of [
   'apiPath("/me/runtime-sync")',
   "acceptReconciledArm",
@@ -52,6 +60,7 @@ for (const required of [
   "20000",
   "Start control returned a different browser execution epoch",
   "connectPrivate().catch(() => {})",
+  "Last Start error:",
 ]) {
   if (!engine.includes(required)) throw new Error(`start-arm-reconciliation engine invariant missing: ${required}`);
 }
@@ -60,44 +69,15 @@ if (engine.includes('apiPath("/me/direct-execution/heartbeat")')) {
 }
 write(enginePath, engine);
 
-// The previous 60-second diagnosis hid the actual arm failure. Preserve the clear
-// unarmed message, but append the current sanitized Start error when one exists.
-let shell = read(shellPath);
-shell = replaceOne(
-  shell,
-  '    if (!state.armed) return "Auto Trading is ON; Start control synchronization is retrying. Browser execution is not armed yet.";',
-  `    if (!state.armed) {\n      const startError = String(diagnostics.last_execution_error || \"\")\n        .replace(/bearer\\s+[^\\s]+/gi, \"Bearer [redacted]\")\n        .replace(/otp=[^&\\s]+/gi, \"otp=[redacted]\")\n        .slice(0, 160);\n      return startError\n        ? \`Auto Trading is ON; Start control synchronization is retrying. Browser execution is not armed yet. Last Start error: \${startError}\`\n        : \"Auto Trading is ON; Start control synchronization is retrying. Browser execution is not armed yet.\";\n    }`,
-  "visible Start failure diagnosis",
-);
-if (!shell.includes("Last Start error:")) throw new Error("start-arm-reconciliation visible Start diagnostic missing");
-write(shellPath, shell);
-
-// Cache-bust both the engine and the dynamically loaded shell so a browser cannot
-// keep the old non-reconciling Start logic after deployment.
-let premium = read(premiumPath);
-premium = premium.replace(
-  /\/final-ui-shell-v2\.js\?v=[^"']+/g,
-  "/final-ui-shell-v2.js?v=20260821-start-arm-diagnostics-v1",
-);
-if (!premium.includes("/final-ui-shell-v2.js?v=20260821-start-arm-diagnostics-v1")) {
-  throw new Error("start-arm-reconciliation shell cache-bust missing");
-}
-write(premiumPath, premium);
-
+// Cache-bust the browser execution engine. Both the reconciliation logic and its
+// 60-second diagnostic live in this same asset.
 let index = read(indexPath);
 index = index.replace(
   /\/deriv-direct-execution-v2\.js\?v=[^"']+/g,
-  "/deriv-direct-execution-v2.js?v=20260821-start-arm-reconcile-v1",
+  "/deriv-direct-execution-v2.js?v=20260821-start-arm-reconcile-v2",
 );
-index = index.replace(
-  /\/final-premium-6f3\.js\?v=[^"']+/g,
-  "/final-premium-6f3.js?v=20260821-start-arm-shell-v1",
-);
-for (const required of [
-  "/deriv-direct-execution-v2.js?v=20260821-start-arm-reconcile-v1",
-  "/final-premium-6f3.js?v=20260821-start-arm-shell-v1",
-]) {
-  if (!index.includes(required)) throw new Error(`start-arm-reconciliation index cache invariant missing: ${required}`);
+if (!index.includes("/deriv-direct-execution-v2.js?v=20260821-start-arm-reconcile-v2")) {
+  throw new Error("start-arm-reconciliation engine cache invariant missing");
 }
 write(indexPath, index);
 
