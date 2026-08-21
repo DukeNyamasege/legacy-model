@@ -11,6 +11,7 @@
   const ROT_SHARE = 0.25;
   const VIEW_KEY = "derivadmin-marketing-demo-view-v4";
   const LEDGER_PREFIX = "derivadmin-marketing-demo-ui-ledger-v4:";
+  const OWNER_PREFIX = "derivadmin-marketing-demo-ui-contract-owners-v4:";
   const EPSILON = 0.000001;
 
   function runtimeState() {
@@ -64,6 +65,10 @@
 
   function ledgerKey() {
     return `${LEDGER_PREFIX}${managedId() || "default"}`;
+  }
+
+  function ownersKey() {
+    return `${OWNER_PREFIX}${managedId() || "default"}`;
   }
 
   function finite(value, fallback = NaN) {
@@ -126,17 +131,54 @@
     return normalized;
   }
 
+  function readOwners() {
+    try {
+      const value = JSON.parse(localStorage.getItem(ownersKey()) || "{}");
+      return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    } catch (_) { return {}; }
+  }
+
+  function writeOwners(owners) {
+    const entries = Object.entries(owners || {}).slice(-120);
+    try { localStorage.setItem(ownersKey(), JSON.stringify(Object.fromEntries(entries))); } catch (_) {}
+  }
+
+  function rememberContractOwner(contractId, owner = view()) {
+    const id = String(contractId || "").trim();
+    if (!id) return;
+    const owners = readOwners();
+    owners[id] = owner === "rot" ? "rot" : "dot";
+    writeOwners(owners);
+  }
+
+  function forgetContractOwner(contractId) {
+    const id = String(contractId || "").trim();
+    if (!id) return;
+    const owners = readOwners();
+    delete owners[id];
+    writeOwners(owners);
+  }
+
+  function movementView(detail = {}) {
+    const id = String(detail?.contract_id || "").trim();
+    const owners = readOwners();
+    if (id && ["dot", "rot"].includes(owners[id])) return owners[id];
+    const openOwners = Object.values(owners).filter((owner) => owner === "dot" || owner === "rot");
+    if (!id && openOwners.length === 1) return openOwners[0];
+    return view();
+  }
+
   function visibleBalance(ledger = readLedger(), selectedView = view()) {
     return roundMoney(selectedView === "rot" ? ledger.rot : ledger.dot);
   }
 
-  function applyProviderAbsolute(absolute) {
+  function applyProviderAbsolute(absolute, targetView = view()) {
     const provider = finite(absolute, NaN);
     const ledger = readLedger();
     if (!Number.isFinite(provider)) return ledger;
     const delta = provider - ledger.provider;
     if (Math.abs(delta) > EPSILON) {
-      if (view() === "rot") ledger.rot = roundMoney(ledger.rot + delta);
+      if (targetView === "rot") ledger.rot = roundMoney(ledger.rot + delta);
       else ledger.dot = roundMoney(ledger.dot + delta);
       ledger.provider = roundMoney(provider);
       return writeLedger(ledger);
@@ -144,11 +186,11 @@
     return ledger;
   }
 
-  function applyProviderDelta(deltaValue) {
+  function applyProviderDelta(deltaValue, targetView = view()) {
     const delta = finite(deltaValue, NaN);
     const ledger = readLedger();
     if (!Number.isFinite(delta) || Math.abs(delta) <= EPSILON) return ledger;
-    if (view() === "rot") ledger.rot = roundMoney(ledger.rot + delta);
+    if (targetView === "rot") ledger.rot = roundMoney(ledger.rot + delta);
     else ledger.dot = roundMoney(ledger.dot + delta);
     ledger.provider = roundMoney(ledger.provider + delta);
     return writeLedger(ledger);
@@ -157,6 +199,7 @@
   function splitReset(providerBalance) {
     const ledger = newLedger(providerBalance);
     writeLedger(ledger);
+    writeOwners({});
     return ledger;
   }
 
@@ -165,11 +208,12 @@
     const detail = event?.detail;
     if (!detail || typeof detail !== "object" || detail.__marketing_ui_projection_applied) return;
 
+    const targetView = movementView(detail);
     let ledger;
     const absolute = finite(detail.balance, NaN);
     const delta = finite(detail.delta, NaN);
-    if (Number.isFinite(absolute)) ledger = applyProviderAbsolute(absolute);
-    else if (Number.isFinite(delta)) ledger = applyProviderDelta(delta);
+    if (Number.isFinite(absolute)) ledger = applyProviderAbsolute(absolute, targetView);
+    else if (Number.isFinite(delta)) ledger = applyProviderDelta(delta, targetView);
     else ledger = readLedger();
 
     // The backend and Deriv still receive/use the real provider balance. Only the
@@ -330,7 +374,18 @@
 
   window.addEventListener("pageshow", renderSoon);
   window.addEventListener("derivadmin:direct-run-state", renderSoon);
-  window.addEventListener("derivadmin:direct-trade", renderSoon);
+  window.addEventListener("derivadmin:direct-trade", (event) => {
+    if (!active()) return;
+    const row = event?.detail || {};
+    const contractId = String(row.contract_id || "").trim();
+    const mode = String(row.mode || "real").toLowerCase();
+    const state = String(row.state || "").toUpperCase();
+    if (mode === "real" && state === "OPEN" && contractId) rememberContractOwner(contractId, view());
+    if (mode === "real" && state === "SETTLED" && contractId) {
+      window.setTimeout(() => forgetContractOwner(contractId), 1500);
+    }
+    renderSoon();
+  });
   window.addEventListener("derivadmin:direct-clear", renderSoon);
   document.addEventListener("foa:vps-live", renderSoon);
 
