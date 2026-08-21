@@ -24,7 +24,6 @@ class MarketingTutorialAccountTests(unittest.TestCase):
         self.assertIn("const DOT_SHARE = 0.75", source)
         self.assertIn("const ROT_SHARE = 0.25", source)
         self.assertIn("provider - rot", source)
-        self.assertIn("UI split · DOT 75% · ROT 25%", source)
 
     def test_frontend_switch_is_visual_only_and_keeps_one_managed_account(self) -> None:
         source = (ROOT / "dashboard" / "direct-demo-reset-router-v1.js").read_text(encoding="utf-8")
@@ -61,12 +60,33 @@ class MarketingTutorialAccountTests(unittest.TestCase):
         self.assertIn("detail.balance = visibleBalance(ledger)", source)
         self.assertIn("writeOwners({})", source)
 
-    def test_frontend_asset_is_cache_busted(self) -> None:
-        source = (ROOT / "scripts" / "inject-frontend-assets.mjs").read_text(encoding="utf-8")
-        self.assertIn(
-            '["direct-demo-reset-router-v1.js", "20260821-marketing-dot-rot-v4-ui-only"]',
-            source,
-        )
+    def test_final_production_layer_removes_banner_and_restores_lower_stats(self) -> None:
+        source = (ROOT / "scripts" / "finalize-marketing-ui-layout-v1.mjs").read_text(encoding="utf-8")
+        self.assertIn("Run totals restored below tab content", source)
+        self.assertIn("tutorial implementation badge removed", source)
+        self.assertIn("run panel totals are not below tab content", source)
+        self.assertIn('document.querySelectorAll(".marketing-tutorial-runtime-badge")', source)
+        self.assertIn("display_balance: () => displayBalance()", source)
+        self.assertIn("marketingUi.display_balance?.()", source)
+        self.assertIn("if (row.dataset.marketingView) return;", source)
+        self.assertIn("backend and Deriv execution path unchanged", source)
+
+    def test_marketing_layout_finalizer_runs_after_history_finalizer(self) -> None:
+        source = (ROOT / "Dockerfile.frontend").read_text(encoding="utf-8")
+        copy_history = source.index("COPY scripts/finalize-history-preload-runpanel-v1.mjs")
+        copy_layout = source.index("COPY scripts/finalize-marketing-ui-layout-v1.mjs")
+        run_history = source.rindex("node scripts/finalize-history-preload-runpanel-v1.mjs")
+        run_layout = source.rindex("node scripts/finalize-marketing-ui-layout-v1.mjs")
+        self.assertLess(copy_history, copy_layout)
+        self.assertLess(run_history, run_layout)
+        self.assertIn("node --check dist/direct-runtime-ux-v4.js", source)
+        self.assertIn("node --check dist/direct-demo-reset-router-v1.js", source)
+
+    def test_frontend_asset_is_cache_busted_in_final_production_layer(self) -> None:
+        source = (ROOT / "scripts" / "finalize-marketing-ui-layout-v1.mjs").read_text(encoding="utf-8")
+        self.assertIn("20260821-marketing-ui-v5", source)
+        self.assertIn("20260821-marketing-balance-v7", source)
+        self.assertIn("20260821-runpanel-bottom-v2", source)
 
 
 if __name__ == "__main__":
