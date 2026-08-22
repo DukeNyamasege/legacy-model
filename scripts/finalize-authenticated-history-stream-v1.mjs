@@ -26,7 +26,15 @@ function replaceTopLevelFunction(source, name, replacement) {
   const startMarker = `  function ${name}(`;
   const start = source.indexOf(startMarker);
   if (start < 0) throw new Error(`authenticated-history-stream function missing: ${name}`);
-  const next = source.indexOf("\n  function ", start + startMarker.length);
+
+  // Top-level helpers can be either `function` or `async function`. The previous
+  // boundary searched only for plain `function`, so replacing connectPublic()
+  // skipped over `async function fetchWithTimeout(...)` and deleted it from the
+  // shipped engine. Recognize both declaration forms at the same indentation.
+  const boundary = /\n  (?:async )?function /g;
+  boundary.lastIndex = start + startMarker.length;
+  const nextMatch = boundary.exec(source);
+  const next = nextMatch?.index ?? -1;
   if (next < 0) throw new Error(`authenticated-history-stream next function boundary missing after: ${name}`);
   return source.slice(0, start) + replacement.trimEnd() + "\n" + source.slice(next + 1);
 }
@@ -56,6 +64,13 @@ const connectPublicReplacement = `  function connectPublic() {
   }
 `;
 engine = replaceTopLevelFunction(engine, "connectPublic", connectPublicReplacement);
+
+// The final authenticated-history mutation runs after the fetch-timeout finalizer.
+// It must preserve the bounded REST helper used by bootstrap, /arm and runtime-sync.
+const timeoutHelperMarker = "  async function fetchWithTimeout(";
+if ((engine.split(timeoutHelperMarker).length - 1) !== 1) {
+  throw new Error("authenticated-history-stream must preserve exactly one fetchWithTimeout helper after connectPublic replacement");
+}
 
 const subscribeReplacement = `  function requiredMarketHistoryCount() {
     const windows = [];
@@ -173,6 +188,7 @@ for (const required of [
   "seedHistory(marketHistory.symbol, prices, times)",
   'state.marketDataKind = "private"',
   "return Promise.resolve(null)",
+  "async function fetchWithTimeout(url, options, timeoutMs)",
   "armInBackground(state.epoch, strategy);",
   "function acceptReconciledArm(epoch, payload)",
   "accept_reconciled_arm: acceptReconciledArm",
@@ -190,6 +206,9 @@ if (engine.includes("new WebSocket(PUBLIC_WS_URL)")) {
 if (engine.includes(`connectPublic().then(subscribeMarkets).catch(() => {});\n    armInBackground(state.epoch, strategy);`)) {
   throw new Error("authenticated-history-stream pre-arm public Start path survived finalization");
 }
+if ((engine.split(timeoutHelperMarker).length - 1) !== 1) {
+  throw new Error("authenticated-history-stream final artifact lost or duplicated fetchWithTimeout");
+}
 
 write(enginePath, engine);
 write(fencePath, fence);
@@ -197,18 +216,18 @@ write(fencePath, fence);
 let index = read(indexPath);
 index = index.replace(
   /\/deriv-direct-execution-v2\.js\?v=[^"']+/g,
-  "/deriv-direct-execution-v2.js?v=20260823-auth-history-start-v2",
+  "/deriv-direct-execution-v2.js?v=20260823-auth-history-start-v3",
 );
 index = index.replace(
   /\/direct-financial-fence-v1\.js\?v=[^"']+/g,
-  "/direct-financial-fence-v1.js?v=20260823-reconciled-ownership-v2",
+  "/direct-financial-fence-v1.js?v=20260823-reconciled-ownership-v3",
 );
 for (const required of [
-  "/deriv-direct-execution-v2.js?v=20260823-auth-history-start-v2",
-  "/direct-financial-fence-v1.js?v=20260823-reconciled-ownership-v2",
+  "/deriv-direct-execution-v2.js?v=20260823-auth-history-start-v3",
+  "/direct-financial-fence-v1.js?v=20260823-reconciled-ownership-v3",
 ]) {
   if (!index.includes(required)) throw new Error(`authenticated-history-stream cache invariant missing: ${required}`);
 }
 write(indexPath, index);
 
-console.log("AUTHENTICATED_HISTORY_STREAM_V2_INSTALLED public_socket_for_active_trading=false authenticated_ticks_history_subscribe=true history_req_id_owned=true echo_req_dependency=false history_and_live_same_subscription=true start_arm_first=true reconciled_financial_fence_sync=true");
+console.log("AUTHENTICATED_HISTORY_STREAM_V3_INSTALLED public_socket_for_active_trading=false authenticated_ticks_history_subscribe=true history_req_id_owned=true echo_req_dependency=false history_and_live_same_subscription=true start_arm_first=true reconciled_financial_fence_sync=true fetch_timeout_helper_preserved=true");

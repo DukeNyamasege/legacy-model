@@ -50,6 +50,15 @@ class AuthenticatedHistoryStreamTests(unittest.TestCase):
         self.assertIn("state.strategy?.result_routing?.after_loss?.conditions", finalizer)
         self.assertIn("Math.min(1000", finalizer)
 
+    def test_function_replacement_preserves_async_fetch_timeout_helper(self) -> None:
+        finalizer = self.text("scripts/finalize-authenticated-history-stream-v1.mjs")
+        self.assertIn('const boundary = /\\n  (?:async )?function /g;', finalizer)
+        self.assertIn('const timeoutHelperMarker = "  async function fetchWithTimeout(";', finalizer)
+        self.assertIn('must preserve exactly one fetchWithTimeout helper', finalizer)
+        self.assertIn('final artifact lost or duplicated fetchWithTimeout', finalizer)
+        self.assertIn('"async function fetchWithTimeout(url, options, timeoutMs)"', finalizer)
+        self.assertIn('fetch_timeout_helper_preserved=true', finalizer)
+
     def test_finalizer_is_last_browser_engine_and_fence_mutation(self) -> None:
         dockerfile = self.text("Dockerfile.frontend")
         self.assertIn("COPY scripts/finalize-authenticated-history-stream-v1.mjs", dockerfile)
@@ -59,8 +68,8 @@ class AuthenticatedHistoryStreamTests(unittest.TestCase):
             dockerfile.rfind("node scripts/finalize-fetch-timeout-helper-v1.mjs"),
         )
         finalizer = self.text("scripts/finalize-authenticated-history-stream-v1.mjs")
-        self.assertIn("20260823-auth-history-start-v2", finalizer)
-        self.assertIn("20260823-reconciled-ownership-v2", finalizer)
+        self.assertIn("20260823-auth-history-start-v3", finalizer)
+        self.assertIn("20260823-reconciled-ownership-v3", finalizer)
 
 
 if __name__ == "__main__":
