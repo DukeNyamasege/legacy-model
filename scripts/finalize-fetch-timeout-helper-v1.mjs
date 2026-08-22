@@ -99,9 +99,16 @@ engine = replaceOne(
   "avoid second public socket while authenticated market transport is active",
 );
 
-const oldSubscribe = `  function subscribeMarkets() {\n    if (!state.running || !state.strategy || state.publicWs?.readyState !== WebSocket.OPEN) return;\n    for (const symbol of state.strategy.markets) {\n      if (state.subscribedMarkets.has(symbol)) continue;\n      if (sendNoWait("public", { ticks: symbol, subscribe: 1 })) state.subscribedMarkets.add(symbol);\n    }\n  }`;
-const newSubscribe = `  function currentMarketDataKind() {\n    if (state.armed && !state.ownerLost && state.privateWs?.readyState === WebSocket.OPEN) return "private";\n    if (state.publicWs?.readyState === WebSocket.OPEN) return "public";\n    return "";\n  }\n\n  function subscribeMarkets() {\n    if (!state.running || !state.strategy) return;\n    const kind = currentMarketDataKind();\n    if (!kind) return;\n    if (state.marketDataKind !== kind) {\n      state.marketDataKind = kind;\n      state.subscribedMarkets.clear();\n    }\n    for (const symbol of state.strategy.markets) {\n      if (state.subscribedMarkets.has(symbol)) continue;\n      if (sendNoWait(kind, { ticks: symbol, subscribe: 1 })) state.subscribedMarkets.add(symbol);\n    }\n  }`;
-engine = replaceOne(engine, oldSubscribe, newSubscribe, "canonical market subscription transport");
+const sourceSubscribe = `  function subscribeMarkets() {\n    if (!state.running || !state.strategy || state.publicWs?.readyState !== WebSocket.OPEN) return;\n    for (const symbol of state.strategy.markets) {\n      if (state.subscribedMarkets.has(symbol)) continue;\n      if (sendNoWait("public", { ticks: symbol, subscribe: 1 })) state.subscribedMarkets.add(symbol);\n    }\n  }`;
+const finalizedSubscribe = `  function subscribeMarkets() {\n    if (!executionTransportReady() || !state.strategy || state.publicWs?.readyState !== WebSocket.OPEN) return;\n    for (const symbol of state.strategy.markets) {\n      if (state.subscribedMarkets.has(symbol)) continue;\n      if (sendNoWait("public", { ticks: symbol, subscribe: 1 })) state.subscribedMarkets.add(symbol);\n    }\n  }`;
+const canonicalSubscribe = `  function currentMarketDataKind() {\n    if (state.armed && !state.ownerLost && state.privateWs?.readyState === WebSocket.OPEN) return "private";\n    if (state.publicWs?.readyState === WebSocket.OPEN) return "public";\n    return "";\n  }\n\n  function subscribeMarkets() {\n    // Preserve the existing financial-readiness rule. Market subscription may use\n    // either Deriv Options transport, but a financial run still requires the\n    // authenticated execution channel and browser ownership before it is live.\n    if (!executionTransportReady() || !state.strategy) return;\n    const kind = currentMarketDataKind();\n    if (!kind) return;\n    if (state.marketDataKind !== kind) {\n      state.marketDataKind = kind;\n      state.subscribedMarkets.clear();\n    }\n    for (const symbol of state.strategy.markets) {\n      if (state.subscribedMarkets.has(symbol)) continue;\n      if (sendNoWait(kind, { ticks: symbol, subscribe: 1 })) state.subscribedMarkets.add(symbol);\n    }\n  }`;
+if (engine.includes(finalizedSubscribe)) {
+  engine = replaceOne(engine, finalizedSubscribe, canonicalSubscribe, "canonical finalized market subscription transport");
+} else if (engine.includes(sourceSubscribe)) {
+  engine = replaceOne(engine, sourceSubscribe, canonicalSubscribe, "canonical source market subscription transport");
+} else if (!engine.includes("function currentMarketDataKind()")) {
+  throw new Error("fetch-timeout-helper market subscription transport: no supported finalized or source shape found");
+}
 
 engine = replaceOne(
   engine,
@@ -109,21 +116,9 @@ engine = replaceOne(
   '    if ((kind === "public" || kind === "private") && payload.tick) {',
   "accept market ticks on authenticated Options socket",
 );
-engine = replaceOne(
-  engine,
-  '    if (kind === "public" && payload.history && payload.echo_req?.ticks_history) {',
-  '    if ((kind === "public" || kind === "private") && payload.history && payload.echo_req?.ticks_history) {',
-  "accept history on authenticated Options socket",
-);
-engine = replaceOne(
-  engine,
-  '      sendNoWait("public", { ticks: symbol, subscribe: 1 });',
-  '      sendNoWait(kind, { ticks: symbol, subscribe: 1 });',
-  "continue live ticks on the response transport",
-);
 
 if (!engine.includes("function promotePrivateMarketTransport(")) {
-  const transportHelpers = `  function promotePrivateMarketTransport(ws) {\n    if (!state.running || !state.armed || state.ownerLost) return;\n    if (!ws || state.privateWs !== ws || ws.readyState !== WebSocket.OPEN) return;\n    const switched = state.marketDataKind !== "private";\n    state.marketDataKind = "private";\n    if (switched) state.subscribedMarkets.clear();\n    try { clearPublicReconnectTimer(); } catch (_) {}\n\n    const publicWs = state.publicWs;\n    if (publicWs) {\n      state.publicGeneration += 1;\n      state.publicWs = null;\n      state.publicConnectPromise = null;\n      try { publicWs.close(1000, "authenticated Options market transport active"); } catch (_) {}\n    }\n    subscribeMarkets();\n  }\n\n  function fallbackToPublicMarketTransport() {\n    if (!state.running) return;\n    if (state.marketDataKind === "private") {\n      state.marketDataKind = "";\n      state.subscribedMarkets.clear();\n    }\n    if (browserNetworkOnline()) connectPublic().then(() => subscribeMarkets()).catch(() => {});\n  }\n\n`;
+  const transportHelpers = `  function promotePrivateMarketTransport(ws) {\n    if (!state.running || !state.armed || state.ownerLost) return;\n    if (!ws || state.privateWs !== ws || ws.readyState !== WebSocket.OPEN) return;\n    const switched = state.marketDataKind !== "private";\n    state.marketDataKind = "private";\n    if (switched) state.subscribedMarkets.clear();\n    try { clearPublicReconnectTimer(); } catch (_) {}\n\n    const publicWs = state.publicWs;\n    if (publicWs) {\n      // Invalidate the public generation before closing it. Its stale close handler\n      // can no longer clear or recreate the newer authenticated market authority.\n      state.publicGeneration += 1;\n      state.publicWs = null;\n      state.publicConnectPromise = null;\n      try { publicWs.close(1000, "authenticated Options market transport active"); } catch (_) {}\n    }\n    subscribeMarkets();\n  }\n\n  function fallbackToPublicMarketTransport() {\n    if (!state.running) return;\n    if (state.marketDataKind === "private") {\n      state.marketDataKind = "";\n      state.subscribedMarkets.clear();\n    }\n    // Public remains a transport fallback. The existing executionTransportReady()\n    // fence decides whether market subscriptions may resume while private recovers.\n    if (browserNetworkOnline()) connectPublic().then(() => subscribeMarkets()).catch(() => {});\n  }\n\n`;
   const markerIndex = engine.indexOf(credentialMarker);
   if (markerIndex < 0) throw new Error("fetch-timeout-helper OAuth credential boundary missing for transport helpers");
   engine = engine.slice(0, markerIndex) + transportHelpers + engine.slice(markerIndex);
@@ -191,9 +186,7 @@ fence = replaceOne(
 fence = replaceOne(
   fence,
   "      if (publicSocket && payload?.ticks && Number(payload?.subscribe || 0) === 1) {",
-  fence.includes("if (marketDataSocket && payload?.ticks")
-    ? "      if (marketDataSocket && payload?.ticks && Number(payload?.subscribe || 0) === 1) {"
-    : "      if (marketDataSocket && payload?.ticks && Number(payload?.subscribe || 0) === 1) {",
+  "      if (marketDataSocket && payload?.ticks && Number(payload?.subscribe || 0) === 1) {",
   "hydrate history on authenticated transport",
 );
 
@@ -221,6 +214,7 @@ for (const required of [
   "function currentMarketDataKind()",
   "function promotePrivateMarketTransport(ws)",
   "function fallbackToPublicMarketTransport()",
+  "if (!executionTransportReady() || !state.strategy) return;",
   "sendNoWait(kind, { ticks: symbol, subscribe: 1 })",
   "market_data_ready:",
   "market_data_kind:",
@@ -240,13 +234,13 @@ write(enginePath, engine);
 write(fencePath, fence);
 
 let index = read(indexPath);
-index = index.replace(/\/deriv-direct-execution-v2\.js\?v=[^"']+/g, "/deriv-direct-execution-v2.js?v=20260822-single-options-transport-v1");
-index = index.replace(/\/direct-financial-fence-v1\.js\?v=[^"']+/g, "/direct-financial-fence-v1.js?v=20260822-auth-market-history-v1");
+index = index.replace(/\/deriv-direct-execution-v2\.js\?v=[^"']+/g, "/deriv-direct-execution-v2.js?v=20260822-single-options-transport-v2");
+index = index.replace(/\/direct-financial-fence-v1\.js\?v=[^"']+/g, "/direct-financial-fence-v1.js?v=20260822-auth-market-history-v2");
 index = index.replace(/\/direct-socket-control-v1\.js\?v=[^"']+/g, "/direct-socket-control-v1.js?v=20260822-all-options-ping-v1");
 index = index.replace(/\/direct-pip-precision-v1\.js\?v=[^"']+/g, "/direct-pip-precision-v1.js?v=20260822-current-schema-v1");
 for (const required of [
-  "/deriv-direct-execution-v2.js?v=20260822-single-options-transport-v1",
-  "/direct-financial-fence-v1.js?v=20260822-auth-market-history-v1",
+  "/deriv-direct-execution-v2.js?v=20260822-single-options-transport-v2",
+  "/direct-financial-fence-v1.js?v=20260822-auth-market-history-v2",
   "/direct-socket-control-v1.js?v=20260822-all-options-ping-v1",
   "/direct-pip-precision-v1.js?v=20260822-current-schema-v1",
 ]) {
@@ -254,4 +248,4 @@ for (const required of [
 }
 write(indexPath, index);
 
-console.log("FETCH_TIMEOUT_HELPER_V1_INSTALLED helper_defined_once=true arm_fetch_bounded=true bootstrap_fetch_bounded=true runtime_sync_bounded=true authenticated_market_transport=true public_fallback_only=true public_private_ping_30s=true duplicate_subscriptions_prevented=true current_active_symbols_schema=true finalizer_last=true");
+console.log("FETCH_TIMEOUT_HELPER_V1_INSTALLED helper_defined_once=true arm_fetch_bounded=true bootstrap_fetch_bounded=true runtime_sync_bounded=true authenticated_market_transport=true public_fallback_only=true public_private_ping_30s=true duplicate_subscriptions_prevented=true current_active_symbols_schema=true financial_readiness_preserved=true finalizer_last=true");
