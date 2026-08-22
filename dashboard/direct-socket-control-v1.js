@@ -18,8 +18,9 @@
   function sendKeepalive(socket) {
     if (!socket || socket.readyState !== UpstreamWebSocket.OPEN) return false;
     try {
-      // Deriv's WebSocket ping endpoint requires only { ping: 1 }. Keeping req_id
-      // absent prevents collisions with the execution engine's request sequence.
+      // Deriv documents { ping: 1 } as the keepalive request and recommends a
+      // 30–60 second cadence. Keep req_id absent so keepalive traffic cannot
+      // collide with the execution engine's request correlation sequence.
       socket.send(JSON.stringify({ ping: 1 }));
       return true;
     } catch (_) {
@@ -28,6 +29,8 @@
   }
 
   function startKeepalive(socket) {
+    // Exactly one interval may own a socket. Re-entry clears any previous timer
+    // first, which prevents reconnect cycles from leaking intervals.
     stopKeepalive(socket);
     sendKeepalive(socket);
     const timer = setInterval(() => {
@@ -41,8 +44,12 @@
       ? new UpstreamWebSocket(url)
       : new UpstreamWebSocket(url, protocols);
 
-    if (/\/trading\/v1\/options\/ws\/(demo|real)(?:\?|$)/.test(String(url || ""))) {
-      authenticated.add(socket);
+    const urlText = String(url || "");
+    const optionsSocket = /\/trading\/v1\/options\/ws\/(public|demo|real)(?:\?|$)/.test(urlText);
+    const authenticatedOptionsSocket = /\/trading\/v1\/options\/ws\/(demo|real)(?:\?|$)/.test(urlText);
+
+    if (authenticatedOptionsSocket) authenticated.add(socket);
+    if (optionsSocket) {
       socket.addEventListener("open", () => startKeepalive(socket), { once: true });
       socket.addEventListener("close", () => {
         stopKeepalive(socket);
@@ -74,7 +81,7 @@
   });
 
   window.DERIVADMIN_DIRECT_SOCKET_CONTROL_V1 = Object.freeze({
-    version: "20260820-direct-socket-control-v2-private-ping",
+    version: "20260822-direct-socket-control-v3-all-options-ping",
     close_authenticated: closeAuthenticated,
     authenticated_count: () => authenticated.size,
     keepalive_count: () => keepaliveTimers.size,
