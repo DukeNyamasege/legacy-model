@@ -24,8 +24,6 @@ class BrowserDerivDirectV3Tests(unittest.TestCase):
         ):
             self.assertIn(marker, finalizer)
 
-        # Legacy server hot-path strings intentionally remain in the build script
-        # only as fail-closed assertions against the generated production engine.
         guard = finalizer.split("for (const forbidden of [", 1)[1].split(
             "write(enginePath, engine);", 1
         )[0]
@@ -67,8 +65,6 @@ class BrowserDerivDirectV3Tests(unittest.TestCase):
         self.assertIn("trade_receipts_only: true", checkpoint)
         self.assertIn("heartbeatOnce(_epoch)", finalizer)
 
-        # There is no heartbeat request in the generated engine. The finalizer
-        # names the legacy path solely so the production build fails if it survives.
         guard = finalizer.split("for (const forbidden of [", 1)[1].split(
             "write(enginePath, engine);", 1
         )[0]
@@ -109,9 +105,6 @@ class BrowserDerivDirectV3Tests(unittest.TestCase):
         self.assertIn('source: selected.source || "browser_direct_current"', finalizer)
         self.assertIn("run_builder_start_identical=true", finalizer)
 
-        # Scope the negative assertion to the generated saveBuilder template.
-        # The finalizer intentionally contains the legacy string later as a
-        # fail-closed assertion that aborts the build if that old path survives.
         save_builder = finalizer.split("const saveBuilder = `", 1)[1].split(
             "`;\n\nshell = replaceBetween", 1
         )[0]
@@ -143,6 +136,40 @@ class BrowserDerivDirectV3Tests(unittest.TestCase):
             dockerfile.rfind("node scripts/finalize-offline-browser-recovery-v1.mjs"),
             dockerfile.rfind("node scripts/finalize-start-arm-reconciliation-v1.mjs"),
         )
+
+    def test_current_deriv_options_transport_is_leak_resistant(self) -> None:
+        socket_control = self.text("dashboard/direct-socket-control-v1.js")
+        precision = self.text("dashboard/direct-pip-precision-v1.js")
+        finalizer = self.text("scripts/finalize-fetch-timeout-helper-v1.mjs")
+
+        # Deriv documents ping as a WebSocket keepalive. Exactly one timer is
+        # installed per public/demo/real Options socket and removed on close.
+        self.assertIn("KEEPALIVE_MS = 30000", socket_control)
+        self.assertIn("{ ping: 1 }", socket_control)
+        self.assertIn("(public|demo|real)", socket_control)
+        self.assertIn("stopKeepalive(socket);\n    sendKeepalive(socket);", socket_control)
+        self.assertIn('socket.addEventListener("close"', socket_control)
+
+        # Current active_symbols schema uses underlying_symbol and pip_size.
+        self.assertIn("underlying_symbol || item?.symbol", precision)
+        self.assertIn("item?.pip_size ?? item?.pip", precision)
+        self.assertIn("(public|demo|real)", precision)
+
+        # Authenticated Options WSS becomes the canonical market + trade transport;
+        # public WSS is only a fallback and duplicate subscriptions are cleared.
+        for marker in (
+            'marketDataKind: ""',
+            "function currentMarketDataKind()",
+            "function promotePrivateMarketTransport(ws)",
+            "function fallbackToPublicMarketTransport()",
+            "market_data_ready:",
+            "market_data_kind:",
+            "const marketDataSocket = publicSocket || authenticatedOptionsSocket;",
+            "marketDataSocket && payload?.ticks",
+            "public_fallback_only=true",
+            "public_private_ping_30s=true",
+        ):
+            self.assertIn(marker, finalizer)
 
     def test_status_reason_cannot_exceed_database_column(self) -> None:
         authority = self.text("app/browser_direct_lease_preservation_authority.py")
