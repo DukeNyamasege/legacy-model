@@ -43,8 +43,8 @@
     const socket = protocols === undefined
       ? new UpstreamWebSocket(url)
       : new UpstreamWebSocket(url, protocols);
-    const publicSocket = String(url || "").includes("/trading/v1/options/ws/public");
-    if (!publicSocket) return socket;
+    const optionsSocket = /\/trading\/v1\/options\/ws\/(public|demo|real)(?:\?|$)/.test(String(url || ""));
+    if (!optionsSocket) return socket;
 
     socket.addEventListener("message", (event) => {
       let message = null;
@@ -52,7 +52,9 @@
 
       if (message?.msg_type === "active_symbols") {
         for (const item of Array.isArray(message?.active_symbols) ? message.active_symbols : []) {
-          rememberPip(item?.symbol, item?.pip);
+          // Current Deriv API names these fields underlying_symbol/pip_size.
+          // Legacy aliases remain accepted only for backwards compatibility.
+          rememberPip(item?.underlying_symbol || item?.symbol, item?.pip_size ?? item?.pip);
         }
         return;
       }
@@ -87,8 +89,8 @@
       } catch (_) {}
     });
     socket.addEventListener("open", () => {
-      // Active Symbols is Deriv's authoritative market metadata. Defaults below
-      // only cover the short interval before this provider response arrives.
+      // Active Symbols is Deriv's authoritative market metadata. This request is
+      // supported on both public and authenticated Options WebSockets.
       try { socket.send(JSON.stringify({ active_symbols: "brief" })); } catch (_) {}
     }, { once: true });
     return socket;
@@ -116,7 +118,7 @@
   }
 
   window.DERIVADMIN_DIRECT_PIP_PRECISION_V1 = Object.freeze({
-    version: "20260818-direct-pip-precision-v1",
+    version: "20260822-direct-pip-precision-v2-current-options-schema",
     defaults: DEFAULT_PIP_BY_SYMBOL,
     precision: getPipSize,
     pip_size: getPipSize,
