@@ -33,6 +33,7 @@ COPY scripts/finalize-marketing-ui-layout-v1.mjs ./scripts/finalize-marketing-ui
 COPY scripts/finalize-start-arm-reconciliation-v1.mjs ./scripts/finalize-start-arm-reconciliation-v1.mjs
 COPY scripts/finalize-offline-browser-recovery-v1.mjs ./scripts/finalize-offline-browser-recovery-v1.mjs
 COPY scripts/finalize-fetch-timeout-helper-v1.mjs ./scripts/finalize-fetch-timeout-helper-v1.mjs
+COPY scripts/finalize-authenticated-history-stream-v1.mjs ./scripts/finalize-authenticated-history-stream-v1.mjs
 COPY scripts/export-deriv-quill-icons-v2.mjs ./scripts/export-deriv-quill-icons-v2.mjs
 COPY scripts/inject-frontend-assets.mjs ./scripts/inject-frontend-assets.mjs
 
@@ -70,8 +71,9 @@ RUN node scripts/build-direct-runtime-v2.mjs \
 # marketing-ui-layout restores the approved visual layout without changing the
 # one-account Deriv/backend execution path, Start-arm reconciliation recovers a
 # timed-out persisted browser epoch, offline-browser recovery handles browser
-# connectivity, and the final fetch-timeout helper guard guarantees Start/OAuth
-# bounded REST calls still have their required helper in the shipped engine.
+# connectivity, fetch-timeout restores bounded Start/OAuth REST calls, and the final
+# authenticated-history stream uses one OTP-authenticated Deriv socket for required
+# prior ticks + live ticks + trading without creating the public socket.
 RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && cp dashboard/direct-financial-fence-v1.js dist/direct-financial-fence-v1.js \
   && cp dashboard/direct-socket-control-v1.js dist/direct-socket-control-v1.js \
@@ -112,6 +114,7 @@ RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && node --check scripts/finalize-start-arm-reconciliation-v1.mjs \
   && node --check scripts/finalize-offline-browser-recovery-v1.mjs \
   && node --check scripts/finalize-fetch-timeout-helper-v1.mjs \
+  && node --check scripts/finalize-authenticated-history-stream-v1.mjs \
   && node --check dist/final-premium-6f3.js \
   && node --check dist/final-ui-shell-v2.js \
   && node --check dist/deriv-direct-execution-v2.js \
@@ -152,6 +155,7 @@ RUN cp dashboard/direct-pip-precision-v1.js dist/direct-pip-precision-v1.js \
   && node scripts/finalize-start-arm-reconciliation-v1.mjs \
   && node scripts/finalize-offline-browser-recovery-v1.mjs \
   && node scripts/finalize-fetch-timeout-helper-v1.mjs \
+  && node scripts/finalize-authenticated-history-stream-v1.mjs \
   && node --check dist/final-premium-6f3.js \
   && node --check dist/final-ui-shell-v2.js \
   && node --check dist/deriv-direct-execution-v2.js \
